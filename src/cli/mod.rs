@@ -266,7 +266,7 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
 
-**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking when you're ready.
+**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking as needed.
 
 Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
 
@@ -341,7 +341,7 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
 
-## GitHub pull requests (experimental)
+## GitHub pull requests
 
 The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
 
@@ -353,7 +353,7 @@ Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot 
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-## GitLab merge requests (experimental)
+## GitLab merge requests
 
 The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
 
@@ -1028,6 +1028,9 @@ wt step push
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `promote` — [experimental] Put a branch into the main worktree
+- `prune` — Remove worktrees and branches merged into the default branch
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
@@ -1036,7 +1039,9 @@ wt step push
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
 <!-- subdoc: copy-ignored -->
-<!-- subdoc: for-each -->"#
+<!-- subdoc: for-each -->
+<!-- subdoc: prune -->
+<!-- subdoc: relocate -->"#
     )]
     Step {
         #[command(subcommand)]
@@ -1071,7 +1076,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ### pre-switch
 
-Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (where you're switching from), not the destination. Failure aborts the switch.
+Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (the source), not the destination. Failure aborts the switch.
 
 ```toml
 [pre-switch]
@@ -1647,17 +1652,9 @@ For context:
 
 - [Project config](@/config.md#project-configuration) settings are shared with teammates.
 - User configs generally apply to all projects.
-- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as approved hook commands and worktree layout. That's what this section covers.
+- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-
-#### Approved hook commands
-
-When a project hook runs for the first time, Worktrunk asks for approval. Approved commands are saved to `~/.config/worktrunk/approvals.toml` (separate from user config to allow dotfile management of config.toml).
-
-To reset, run `wt hook approvals clear`.
-
-> **Migration note:** Approvals were previously stored as `approved-commands` in config.toml. Run `wt config show` to generate a migration file that removes stale entries.
 
 #### Setting overrides (Experimental)
 

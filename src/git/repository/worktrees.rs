@@ -88,7 +88,7 @@ impl Repository {
     /// Used as the default source for `copy-ignored` and the `{{ primary_worktree_path }}` template.
     /// Returns `None` for bare repos when no worktree has the default branch.
     pub fn primary_worktree(&self) -> anyhow::Result<Option<PathBuf>> {
-        if self.is_bare() {
+        if self.is_bare()? {
             let Some(branch) = self.default_branch() else {
                 return Ok(None);
             };
@@ -131,6 +131,30 @@ impl Repository {
     /// When `force` is true, passes `--force` to `git worktree remove`,
     /// allowing removal even when the worktree contains untracked files
     /// (like build artifacts such as `.vite/` or `node_modules/`).
+    ///
+    /// When the worktree contains initialized submodules, git refuses removal
+    /// even for clean worktrees. This method detects that case and automatically
+    /// retries with `--force`, which is safe because the caller has already
+    /// validated worktree cleanliness via `ensure_clean()`.
+    ///
+    /// # Why git requires `--force` for submodules
+    ///
+    /// Git's `--force` flag on `worktree remove` bypasses two unrelated
+    /// protections under one flag: dirty working tree checks AND the
+    /// submodule structural check. We separate these concerns — our
+    /// `ensure_clean()` handles dirty state, and the `--force` retry
+    /// handles the submodule restriction.
+    ///
+    /// # TOCTOU note
+    ///
+    /// Git checks for submodules *before* checking for dirty files. If a
+    /// file is modified between our `ensure_clean()` and the git command,
+    /// git reports the submodule error (not the dirty error), so the
+    /// `--force` retry fires and bypasses git's dirty check. This is the
+    /// same TOCTOU window that exists for all removal (between
+    /// `ensure_clean()` and the actual delete), but for non-submodule
+    /// worktrees git's own dirty check acts as an accidental backstop
+    /// that we lose here. The window is milliseconds.
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
@@ -145,8 +169,21 @@ impl Repository {
             args.push("--force");
         }
         args.push(path_str);
-        self.run_command(&args)?;
-        Ok(())
+
+        match self.run_command(&args) {
+            Ok(_) => Ok(()),
+            Err(e)
+                if !force
+                    && e.to_string()
+                        .contains("submodules cannot be moved or removed") =>
+            {
+                // Submodule retry — see doc comment above for safety analysis.
+                log::debug!("Retrying worktree removal with --force due to submodules");
+                self.run_command(&["worktree", "remove", "--force", path_str])?;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.

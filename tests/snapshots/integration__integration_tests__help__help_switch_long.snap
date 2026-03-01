@@ -117,7 +117,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
 
-[1mUpstream tracking:[0m Branches created with [2m--create[0m have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, [2m--base origin/main[0m would otherwise make [2mgit push[0m target [2mmain[0m. Use [2mgit push -u origin <branch>[0m to set up tracking when you're ready.
+[1mUpstream tracking:[0m Branches created with [2m--create[0m have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, [2m--base origin/main[0m would otherwise make [2mgit push[0m target [2mmain[0m. Use [2mgit push -u origin <branch>[0m to set up tracking as needed.
 
 Without [2m--create[0m, switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
 
@@ -141,11 +141,11 @@ When creating a worktree, worktrunk:
 
    Shortcut            Meaning            
    ──────── ───────────────────────────── 
-   ^        Default branch (main/master)  
-   @        Current branch/worktree       
-   -        Previous worktree (like cd -) 
-   pr:{N}   GitHub PR #N's branch         
-   mr:{N}   GitLab MR !N's branch         
+   [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)  
+   [2m@[0m        Current branch/worktree       
+   [2m-[0m        Previous worktree (like [2mcd -[0m) 
+   [2mpr:{N}[0m   GitHub PR #N's branch         
+   [2mmr:{N}[0m   GitLab MR !N's branch         
 
   [2mwt switch -                      # Back to previous[0m
   [2mwt switch ^                      # Default branch worktree[0m
@@ -161,14 +161,14 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
         Key                  Action             
    ───────────── ────────────────────────────── 
-   ↑/↓           Navigate worktree list         
+   [2m↑[0m/[2m↓[0m           Navigate worktree list         
    (type)        Filter worktrees               
-   Enter         Switch to selected worktree    
-   Alt-c         Create new worktree from query 
-   Esc           Cancel                         
-   1–5           Switch preview tab             
-   Alt-p         Toggle preview panel           
-   Ctrl-u/Ctrl-d Scroll preview up/down         
+   [2mEnter[0m         Switch to selected worktree    
+   [2mAlt-c[0m         Create new worktree from query 
+   [2mEsc[0m           Cancel                         
+   [2m1[0m–[2m5[0m           Switch preview tab             
+   [2mAlt-p[0m         Toggle preview panel           
+   [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down         
 
 [1mPreview tabs[0m (toggle with number keys):
 
@@ -185,7 +185,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
 
-[1m[32mGitHub pull requests (experimental)[0m
+[1m[32mGitHub pull requests[0m
 
 The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 
@@ -195,7 +195,7 @@ Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m 
 
 [1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
-[1m[32mGitLab merge requests (experimental)[0m
+[1m[32mGitLab merge requests[0m
 
 The [2mmr:<number>[0m syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches [2mrefs/merge-requests/N/head[0m and configures [2mpushRemote[0m to the fork URL.
 

@@ -7,7 +7,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{Repository, ResolvedWorktree, exit_code, set_base_path};
+use worktrunk::git::{Repository, ResolvedWorktree, current_or_recover, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -50,11 +50,11 @@ use commands::{
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
     handle_hook_show, handle_init, handle_kv_clear, handle_kv_get, handle_kv_list, handle_kv_set,
-    handle_list, handle_logs_get, handle_merge, handle_rebase, handle_remove,
+    handle_list, handle_logs_get, handle_merge, handle_promote, handle_rebase, handle_remove,
     handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
     handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
     handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
-    step_diff, step_for_each, step_relocate,
+    step_diff, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -78,7 +78,7 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
         if let Some(suggestion) = cli::suggest_nested_subcommand(&cmd, &unknown.to_string()) {
             ceprintln!(
                 "{}
-  <yellow>tip:</>  did you mean <cyan,bold>{suggestion}</cyan,bold>?",
+  <yellow>tip:</>  perhaps <cyan,bold>{suggestion}</cyan,bold>?",
                 err.render().ansi()
             );
             process::exit(2);
@@ -559,6 +559,26 @@ fn main() {
                 force,
             } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
             StepCommand::ForEach { args } => step_for_each(args),
+            StepCommand::Promote { branch } => {
+                use commands::PromoteResult;
+                handle_promote(branch.as_deref()).map(|result| match result {
+                    PromoteResult::Promoted => (),
+                    PromoteResult::AlreadyInMain(branch) => {
+                        eprintln!(
+                            "{}",
+                            info_message(cformat!(
+                                "Branch <bold>{branch}</> is already in main worktree"
+                            ))
+                        );
+                    }
+                })
+            }
+            StepCommand::Prune {
+                dry_run,
+                yes,
+                min_age,
+                foreground,
+            } => step_prune(dry_run, yes, &min_age, foreground),
             StepCommand::Relocate {
                 branches,
                 dry_run,
@@ -699,7 +719,7 @@ fn main() {
                 commands::statusline::run(effective_format)
             }
             None => (|| {
-                let repo = Repository::current()?;
+                let (repo, _recovered) = current_or_recover()?;
 
                 let progressive_opt = match (progressive, no_progressive) {
                     (true, _) => Some(true),
@@ -831,7 +851,7 @@ fn main() {
                     // "Approve at the Gate": approval happens AFTER validation passes
                     let run_hooks = verify && approve_remove(yes)?;
 
-                    handle_remove_output(&result, background, run_hooks)
+                    handle_remove_output(&result, background, run_hooks, false)
                 } else {
                     // Multi-worktree removal: validate ALL first, then approve, then execute
                     // This supports partial success - some may fail validation while others succeed.
@@ -950,17 +970,17 @@ fn main() {
                     // Phase 3: Execute all validated plans
                     // Remove other worktrees first
                     for result in plans_others {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Handle branch-only cases
                     for result in plans_branch_only {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(result) = plan_current {
-                        handle_remove_output(&result, background, run_hooks)?;
+                        handle_remove_output(&result, background, run_hooks, false)?;
                     }
 
                     // Exit with failure if any validation errors occurred
@@ -1011,11 +1031,16 @@ fn main() {
     };
 
     if let Err(e) = result {
-        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
+        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
+        // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
+        // skip eprintln! for those to avoid phantom blank lines.
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
-            eprintln!("{}", err);
+            let display = err.to_string();
+            if !display.is_empty() {
+                eprintln!("{display}");
+            }
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
             eprintln!("{}", err);
         } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
@@ -1048,6 +1073,18 @@ fn main() {
                     eprintln!("{}", error_message(&msg));
                 }
             }
+        }
+
+        // If the CWD has been deleted, hint the user to use `wt switch ^`.
+        // Check both: (1) explicit flag set by merge/remove when it knows the CWD
+        // worktree was removed (reliable on all platforms), and (2) OS-level detection
+        // for cases not covered by the flag (e.g., external worktree removal).
+        let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
+        if cwd_gone {
+            eprintln!(
+                "{}",
+                hint_message("Current directory was removed. Try: wt switch ^")
+            );
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)

@@ -1,5 +1,6 @@
 +++
 title = "wt hook"
+description = "Run configured hooks."
 weight = 17
 
 [extra]
@@ -35,7 +36,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ### pre-switch
 
-Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (where you're switching from), not the destination. Failure aborts the switch.
+Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (the source), not the destination. Failure aborts the switch.
 
 ```toml
 [pre-switch]

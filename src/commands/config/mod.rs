@@ -22,13 +22,12 @@ pub use update::handle_config_update;
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::path::PathBuf;
 
     use worktrunk::config::{ProjectConfig, UserConfig};
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
-    use super::state::{get_user_config_path, require_user_config_path, resolve_user_config_path};
+    use super::state::require_user_config_path;
 
     // ==================== comment_out_config tests ====================
 
@@ -228,46 +227,6 @@ mod tests {
         assert!(out.contains("authenticated"));
     }
 
-    // ==================== resolve_user_config_path tests ====================
-
-    #[test]
-    fn test_resolve_user_config_path_xdg_takes_priority() {
-        let path = resolve_user_config_path(Some("/custom/xdg"), Some("/home/user"));
-        assert_eq!(
-            path,
-            Some(PathBuf::from("/custom/xdg/worktrunk/config.toml"))
-        );
-    }
-
-    #[test]
-    fn test_resolve_user_config_path_home_fallback() {
-        let path = resolve_user_config_path(None, Some("/home/testuser"));
-        assert_eq!(
-            path,
-            Some(PathBuf::from(
-                "/home/testuser/.config/worktrunk/config.toml"
-            ))
-        );
-    }
-
-    #[test]
-    fn test_resolve_user_config_path_none_when_no_env() {
-        let path = resolve_user_config_path(None, None);
-        assert_eq!(path, None);
-    }
-
-    // ==================== get_user_config_path tests ====================
-
-    #[test]
-    fn test_get_user_config_path_returns_some() {
-        // In a normal environment, get_user_config_path should return Some
-        // (either from env vars or etcetera fallback)
-        let path = get_user_config_path();
-        assert!(path.is_some());
-        let path = path.unwrap();
-        assert!(path.ends_with("worktrunk/config.toml"));
-    }
-
     // ==================== require_user_config_path tests ====================
 
     #[test]
@@ -277,5 +236,19 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.ends_with("worktrunk/config.toml"));
+    }
+
+    #[test]
+    fn test_require_user_config_path_matches_get_config_path() {
+        // Verify that config create/show path matches config loading path.
+        // This was the root cause of #1134: the two paths diverged on Windows
+        // when XDG_CONFIG_HOME was set because config create had its own
+        // XDG/HOME resolution that differed from config loading.
+        let create_path = require_user_config_path().unwrap();
+        let load_path = worktrunk::config::get_config_path().unwrap();
+        assert_eq!(
+            create_path, load_path,
+            "config create path and config loading path must be identical"
+        );
     }
 }

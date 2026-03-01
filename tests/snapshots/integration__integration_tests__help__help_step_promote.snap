@@ -1,0 +1,90 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - step
+    - promote
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt step promote - [experimental] Put a branch into the main worktree[0m
+
+The displaced branch moves to the promoted branch's worktree.[0m
+
+Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
+
+[1m[32mArguments:[0m
+  [36m[BRANCH][0m
+          Branch to promote to main worktree[0m
+          
+          Defaults to current branch, or default branch from main worktree.[0m
+
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+[1mExperimental.[0m Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use [2mpromote[0m; instead each worktree has a full environment. [2mpromote[0m is the only Worktrunk command which changes a branch in an existing worktree.
+
+[1m[32mExample[0m
+
+  [2m# from ~/project (main worktree)[0m
+  [2m$ wt step promote feature[0m
+
+Before:
+
+  [2m  Branch   Path[0m
+  [2m@ main     ~/project[0m
+  [2m+ feature  ~/project.feature[0m
+
+After:
+
+  [2m  Branch   Path[0m
+  [2m@ feature  ~/project[0m
+  [2m+ main     ~/project.feature[0m
+
+To restore: [2mwt step promote main[0m from anywhere, or just [2mwt step promote[0m from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
+
+[1m[32mRequirements[0m
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+
+[1m[32mGitignored files[0m
+
+Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See copy-ignored for filtering with [2m.worktreeinclude[0m.

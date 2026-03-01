@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 // Re-export public types
 pub use merge::Merge;
 pub use path::{
-    default_system_config_path, get_config_path, get_system_config_path, set_config_path,
+    default_config_path, default_system_config_path, get_config_path, get_system_config_path,
+    set_config_path,
 };
 pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
@@ -184,7 +185,7 @@ impl UserConfig {
                 "{}",
                 crate::styling::warning_message(format!(
                     "Config file not found: {}",
-                    config_path.display()
+                    crate::path::format_path_for_display(config_path)
                 ))
             );
         }

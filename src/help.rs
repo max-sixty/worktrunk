@@ -40,6 +40,12 @@ pub fn maybe_handle_help_with_pager() -> bool {
         process::exit(0);
     }
 
+    // Check for --help-description flag (output meta description for docs)
+    if args.iter().any(|a| a == "--help-description") {
+        handle_help_description(&args);
+        process::exit(0);
+    }
+
     // Check for --help-md flag (output raw markdown without ANSI rendering)
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
@@ -209,6 +215,62 @@ fn find_after_help_start(help: &str) -> Option<usize> {
 /// Strip ANSI escape codes from a string for pattern matching.
 fn strip_ansi_codes(s: &str) -> String {
     s.ansi_strip().into_owned()
+}
+
+/// Extract the `about` (definition) and subtitle from a command's metadata.
+///
+/// The subtitle is the part of `long_about` beyond the short `about`.
+/// For `/// Short\n///\n/// Long description`, about = "Short", subtitle = "Long description".
+fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<String>) {
+    let about = cmd.get_about().map(|s| s.to_string());
+    let long_about = cmd.get_long_about().map(|s| s.to_string());
+    let subtitle = match (&about, &long_about) {
+        (Some(short), Some(long)) if long.starts_with(short) => {
+            let rest = long[short.len()..].trim_start();
+            if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            }
+        }
+        _ => None,
+    };
+    (about, subtitle)
+}
+
+/// Output the meta description for a command's docs page.
+///
+/// Combines the command's `about` (definition) and `long_about` subtitle into
+/// a single description suitable for `<meta name="description">`. This is used
+/// by the docs sync test to auto-populate the `description` field in frontmatter.
+fn handle_help_description(args: &[String]) {
+    let mut cmd = cli::build_command();
+    cmd = cmd.color(ColorChoice::Never);
+
+    let subcommand = args
+        .iter()
+        .filter(|a| *a != "--help-description" && !a.starts_with('-') && !a.ends_with("/wt"))
+        .find(|a| !a.contains("target/") && *a != "wt");
+
+    let Some(subcommand) = subcommand else {
+        eprintln!("Usage: wt <command> --help-description");
+        return;
+    };
+
+    let Some(sub) = cmd.find_subcommand(subcommand) else {
+        eprintln!("Unknown command: {subcommand}");
+        return;
+    };
+
+    let (about, subtitle) = extract_about_and_subtitle(sub);
+
+    let description = match (&about, &subtitle) {
+        (Some(def), Some(sub)) => format!("{def}. {sub}"),
+        (Some(def), None) => format!("{def}."),
+        _ => String::new(),
+    };
+
+    print!("{description}");
 }
 
 /// Generate a full documentation page for a command.
@@ -426,27 +488,11 @@ fn expand_subdoc_placeholders(text: &str, parent_cmd: &clap::Command, parent_nam
 /// - `subtitle` is the extra content in `long_about` beyond the `about`
 /// - If `long_about` doesn't extend `about`, subtitle is empty
 fn combine_command_docs(cmd: &clap::Command) -> String {
-    let about = cmd.get_about().map(|s| s.to_string());
-    let long_about = cmd.get_long_about().map(|s| s.to_string());
+    let (about, subtitle) = extract_about_and_subtitle(cmd);
     let after_long_help = cmd
         .get_after_long_help()
         .map(|s| s.to_string())
         .unwrap_or_default();
-
-    // Extract subtitle: the part of long_about beyond the short about
-    // Doc comments produce: "Short about\n\nLong description" in long_about
-    // We only want the long description part (subtitle) for web docs
-    let subtitle = match (&about, &long_about) {
-        (Some(short), Some(long)) if long.starts_with(short) => {
-            let rest = long[short.len()..].trim_start();
-            if rest.is_empty() {
-                None
-            } else {
-                Some(rest.to_string())
-            }
-        }
-        _ => None,
-    };
 
     // Combine: definition + subtitle as single lead paragraph, then after_long_help
     // Definition doesn't have trailing period, subtitle does, so join with ". "

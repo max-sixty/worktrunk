@@ -1,5 +1,6 @@
 +++
 title = "wt step"
+description = "Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities."
 weight = 16
 
 [extra]
@@ -36,6 +37,9 @@ wt step push
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
+- `promote` — [experimental] Put a branch into the main worktree
+- `prune` — Remove worktrees and branches merged into the default branch
+- `relocate` — [experimental] Move worktrees to expected paths
 
 ## See also
 
@@ -60,6 +64,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
+  <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
+  <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
 <b><span class=g>Options:</span></b>
@@ -429,6 +435,172 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Command template (see --help for all variables)
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step prune
+
+[experimental] Remove worktrees merged into the default branch.
+
+Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
+
+In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
+
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+
+### Min-age guard
+
+Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+
+```bash
+wt step prune --min-age=0s     # no age guard
+wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
+
+### Examples
+
+Preview what would be removed:
+
+```bash
+wt step prune --dry-run
+```
+
+Remove all merged worktrees:
+
+```bash
+wt step prune
+```
+
+### Command reference
+
+{% terminal() %}
+wt step prune - [experimental] Remove worktrees merged into the default branch
+
+Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show what would be removed
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
+          Skip worktrees younger than this
+
+          [default: 1h]
+
+      <b><span class=c>--foreground</span></b>
+          Run removal in foreground (block until complete)
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step relocate
+
+[experimental] Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+
+Moves worktrees to match the configured `worktree-path` template.
+
+### Examples
+
+Preview what would be moved:
+
+```bash
+wt step relocate --dry-run
+```
+
+Move all mismatched worktrees:
+
+```bash
+wt step relocate
+```
+
+Auto-commit and clobber blockers (never fails):
+
+```bash
+wt step relocate --commit --clobber
+```
+
+Move specific worktrees:
+
+```bash
+wt step relocate feature bugfix
+```
+
+### Swap handling
+
+When worktrees are at each other's expected locations (e.g., `alpha` at
+`repo.beta` and `beta` at `repo.alpha`), relocate automatically resolves
+this by using a temporary location.
+
+### Clobbering
+
+With `--clobber`, non-worktree paths at target locations are moved to
+`<path>.bak-<timestamp>` before relocating.
+
+### Main worktree behavior
+
+The main worktree can't be moved with `git worktree move`. Instead, relocate
+switches it to the default branch and creates a new linked worktree at the
+expected path. Untracked and gitignored files remain at the original location.
+
+### Skipped worktrees
+
+- **Dirty** (without `--commit`) — use `--commit` to auto-commit first
+- **Locked** — unlock with `git worktree unlock`
+- **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
+- **Detached HEAD** — no branch to compute expected path
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+{% terminal() %}
+wt step relocate - [experimental] Move worktrees to expected paths
+
+Relocates worktrees whose path doesn&#39;t match the <b>worktree-path</b> template.
+
+Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[BRANCHES]...</span>
+          Worktrees to relocate (defaults to all mismatched)
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show what would be moved
+
+      <b><span class=c>--commit</span></b>
+          Commit uncommitted changes before relocating
+
+      <b><span class=c>--clobber</span></b>
+          Backup non-worktree paths at target locations
+
+          Moves blocking paths to <b>&lt;path&gt;.bak-&lt;timestamp&gt;</b>.
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

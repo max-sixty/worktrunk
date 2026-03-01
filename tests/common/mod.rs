@@ -653,9 +653,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
             let index = words.len().saturating_sub(1);
             cmd.env("_CLAP_COMPLETE_INDEX", index.to_string());
         }
-        "fish" => {
-            // Fish doesn't set _CLAP_COMPLETE_INDEX - it appends the current token
-            // as the last argument, so the completion handler uses args.len() - 1
+        "fish" | "nu" => {
+            // Fish and Nushell don't set _CLAP_COMPLETE_INDEX - they append the
+            // current token as the last argument, so the completion handler uses
+            // args.len() - 1
         }
         _ => {}
     }
@@ -991,6 +992,17 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
+}
+
+/// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
+/// under `home`. Use this after `set_temp_home_env` in tests that write user
+/// config at the XDG path and need `config create`/`config show` to find it.
+pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
+    let home = canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        home.join(".config").join("worktrunk").join("config.toml"),
+    );
 }
 
 /// Check that a git command succeeded, panicking with diagnostics if not.
@@ -2766,7 +2778,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // wt version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
     // Format: "○ wt: <bold>VERSION</>" on its own line
     settings.add_filter(
-        r"(wt: \x1b\[1m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(wt: \x1b\[1m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40}(?:-dirty)?)",
         "${1}[VERSION]",
     );
     // git version format: "○ git: <bold>VERSION</>" (e.g., "2.47.1")
@@ -2777,7 +2789,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Version check: "Up to date (<bold>VERSION</>)" or "current: VERSION)"
     // version_str() can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, 0.8.5, or bare hash (8465a1f)
     settings.add_filter(
-        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(current: |Up to date \(\x1b\[1m)(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40}(?:-dirty)?)",
         "${1}[VERSION]",
     );
 

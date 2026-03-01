@@ -1,5 +1,6 @@
 +++
 title = "wt list"
+description = "List worktrees and their status."
 weight = 11
 
 [extra]

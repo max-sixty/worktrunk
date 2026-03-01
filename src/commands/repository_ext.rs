@@ -19,6 +19,8 @@ pub enum RemoveTarget<'a> {
     Branch(&'a str),
     /// Remove the current worktree (supports detached HEAD)
     Current,
+    /// Remove worktree by path (supports detached HEAD)
+    Path(&'a std::path::Path),
 }
 
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
@@ -137,15 +139,18 @@ impl RepositoryCliExt for Repository {
                     }
                 }
             }
-            RemoveTarget::Current => {
+            RemoveTarget::Current | RemoveTarget::Path(_) => {
+                let lookup_path = match target {
+                    RemoveTarget::Path(p) => p,
+                    _ => current_path.as_path(),
+                };
                 let wt = worktrees
                     .iter()
-                    .find(|wt| wt.path == current_path)
+                    .find(|wt| wt.path == lookup_path)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("Current worktree not found in worktree list")
+                        anyhow::anyhow!("Worktree not found at {}", lookup_path.display())
                     })?;
                 if wt.locked.is_some() {
-                    // Use branch name if available, otherwise use directory name
                     let name = wt
                         .branch
                         .clone()
@@ -157,7 +162,8 @@ impl RepositoryCliExt for Repository {
                     }
                     .into());
                 }
-                (wt.path.clone(), wt.branch.clone(), true)
+                let is_current = wt.path == current_path;
+                (wt.path.clone(), wt.branch.clone(), is_current)
             }
         };
 

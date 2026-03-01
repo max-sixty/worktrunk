@@ -16,10 +16,13 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -52,4 +55,23 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[32m{{[0m[2m repo_root [0m[2m[32m}}[0m[2m/target [0m[2m[32m{{[0m[2m worktree [0m[2m[32m}}[0m[2m/target[0m
 
 [2m○[22m Prompt formatting:
-[36m❯[39m [36mProceed? [y/N][39m
+[36m❯[39m [36mProceed? [y/N][39m 
+
+[2m○[22m Color palette:
+[107m [0m [31mred[0m
+[107m [0m [32mgreen[0m
+[107m [0m [33myellow[0m
+[107m [0m [34mblue[0m
+[107m [0m [36mcyan[0m
+[107m [0m [1mbold[0m
+[107m [0m [2mdim[0m
+[107m [0m [1m[31mbold red[0m
+[107m [0m [1m[32mbold green[0m
+[107m [0m [1m[33mbold yellow[0m
+[107m [0m [1m[36mbold cyan[0m
+[107m [0m [2m[90mdim bright-black[0m
+[107m [0m [2m[34mdim blue[0m
+[107m [0m [2m[32mdim green[0m
+[107m [0m [2m[36mdim cyan[0m
+[107m [0m [2m[35mdim magenta[0m
+[107m [0m [2m[33mdim yellow[0m

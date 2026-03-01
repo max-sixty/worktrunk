@@ -219,6 +219,8 @@ pub enum GitError {
         branch: String,
         path: PathBuf,
         error: String,
+        /// Top-level entries remaining in the directory (for "Directory not empty" diagnostics)
+        remaining_entries: Option<Vec<String>>,
     },
     CannotRemoveMainWorktree,
     WorktreeLocked {
@@ -549,12 +551,40 @@ impl GitError {
                 branch,
                 path,
                 error,
+                remaining_entries,
             } => {
                 let path_display = format_path_for_display(path);
                 let header = error_message(cformat!(
                     "Failed to remove worktree for <bold>{branch}</> @ <bold>{path_display}</>"
                 ));
-                write!(f, "{}", format_error_block(header, error))
+                write!(f, "{}", format_error_block(header, error))?;
+                if let Some(entries) = remaining_entries {
+                    const MAX_SHOWN: usize = 10;
+                    let listing = if entries.len() > MAX_SHOWN {
+                        let shown = entries[..MAX_SHOWN].join(", ");
+                        let remaining = entries.len() - MAX_SHOWN;
+                        format!("{shown}, and {remaining} more")
+                    } else {
+                        entries.join(", ")
+                    };
+                    write!(
+                        f,
+                        "\n{}",
+                        hint_message(cformat!(
+                            "Remaining in directory: <bright-black>{listing}</>"
+                        ))
+                    )?;
+                }
+                if error.contains("not empty") {
+                    write!(
+                        f,
+                        "\n{}",
+                        hint_message(cformat!(
+                            "A background process may be writing files; try <bright-black>wt remove</> (without --foreground)"
+                        ))
+                    )?;
+                }
+                Ok(())
             }
 
             GitError::CannotRemoveMainWorktree => {
@@ -644,7 +674,7 @@ impl GitError {
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "To rebase onto <bold>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
+                            "To rebase onto <bright-black>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
                         ))
                     )
                 }
@@ -759,7 +789,9 @@ impl GitError {
                     f,
                     "{}\n{}",
                     error_message("No project configuration found"),
-                    hint_message(cformat!("Create a config file at: <bold>{path_display}</>"))
+                    hint_message(cformat!(
+                        "Create a config file at: <bright-black>{path_display}</>"
+                    ))
                 )
             }
 

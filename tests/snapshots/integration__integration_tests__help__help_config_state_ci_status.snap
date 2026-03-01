@@ -17,10 +17,13 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -63,12 +66,12 @@ Results cache for 30-60 seconds. Indicators dim when local changes haven't been 
 
     Status                   Meaning                 
    ───────── ─────────────────────────────────────── 
-   passed    All checks passed                       
-   running   Checks in progress                      
-   failed    Checks failed                           
-   conflicts PR has merge conflicts                  
-   no-ci     No checks configured                    
-   error     Fetch error (rate limit, network, auth) 
+   [2mpassed[0m    All checks passed                       
+   [2mrunning[0m   Checks in progress                      
+   [2mfailed[0m    Checks failed                           
+   [2mconflicts[0m PR has merge conflicts                  
+   [2mno-ci[0m     No checks configured                    
+   [2merror[0m     Fetch error (rate limit, network, auth) 
 
 See [2mwt list[0m CI status for display symbols and colors.
 

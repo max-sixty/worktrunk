@@ -82,7 +82,7 @@ pub fn compute_worktree_path(
 ) -> anyhow::Result<PathBuf> {
     let repo_root = repo.repo_path();
     let default_branch = repo.default_branch().unwrap_or_default();
-    let is_bare = repo.is_bare();
+    let is_bare = repo.is_bare()?;
 
     // Default branch lives at repo root (main worktree), not a templated path.
     // Exception: bare repos have no main worktree, so all branches use templated paths.

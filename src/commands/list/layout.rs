@@ -117,8 +117,10 @@
 //!    - After all columns allocated, expands up to 70 using leftover space
 //!    - Expands BEFORE Message, so Summary gets priority for space
 //!
-//! 3. **Message** - Flexible sizing with post-allocation expansion
+//! 3. **Message** - Flexible sizing, gated on Summary readability
 //!    - Allocated at priority 13 with minimum width 10
+//!    - **Only kept if Summary reaches 40 chars** — below that, Summary needs
+//!      all flexible space and Message is dropped (its space reclaimed for Summary)
 //!    - After Summary expansion, expands up to max 100 using remaining leftover space
 //!
 //! ## Implementation
@@ -671,6 +673,9 @@ fn allocate_columns_with_priority(
     const MAX_SUMMARY: usize = 70;
     const MIN_MESSAGE: usize = 10;
     const MAX_MESSAGE: usize = 100;
+    // Message is only shown when Summary reaches this width — below this,
+    // Summary needs all the flexible space to be readable.
+    const SUMMARY_THRESHOLD_FOR_MESSAGE: usize = 40;
 
     let mut pending: Vec<PendingColumn> = Vec::new();
 
@@ -731,6 +736,8 @@ fn allocate_columns_with_priority(
     }
 
     // Post-allocation expansion: Summary first, then Message with leftovers.
+    // Message is only kept if Summary reaches SUMMARY_THRESHOLD_FOR_MESSAGE (40);
+    // below that, Summary needs all the flexible space to be readable.
     let mut max_summary_len = 0;
     if let Some(summary_col) = pending
         .iter_mut()
@@ -742,6 +749,30 @@ fn allocate_columns_with_priority(
             remaining -= expansion;
         }
         max_summary_len = summary_col.width;
+    }
+
+    // Drop Message if Summary didn't reach the readability threshold, reclaiming
+    // its width (+ spacing) so Summary can expand further.
+    if max_summary_len > 0
+        && max_summary_len < SUMMARY_THRESHOLD_FOR_MESSAGE
+        && let Some(pos) = pending
+            .iter()
+            .position(|col| col.spec.kind == ColumnKind::Message)
+    {
+        let reclaimed = pending[pos].width + spacing;
+        pending.remove(pos);
+        remaining += reclaimed;
+
+        // Give reclaimed space back to Summary.
+        if let Some(summary_col) = pending
+            .iter_mut()
+            .find(|col| col.spec.kind == ColumnKind::Summary)
+        {
+            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
+            summary_col.width += expansion;
+            remaining -= expansion;
+            max_summary_len = summary_col.width;
+        }
     }
 
     let mut max_message_len = 0;
@@ -1603,6 +1634,28 @@ mod tests {
         } else {
             panic!("Summary column should be present at width 500");
         }
+    }
+
+    #[test]
+    fn test_message_gated_on_summary_threshold() {
+        // Probe widths: when Summary is present but < 40, Message must be absent.
+        // At wide widths where Summary >= 40, Message can appear.
+        let mut found_below = false;
+        for width in 80..200 {
+            let l = layout_at_width(width, &full_skip_tasks());
+            if let Some(s) = find_column(&l, ColumnKind::Summary)
+                && s.width < 40
+            {
+                found_below = true;
+                assert!(find_column(&l, ColumnKind::Message).is_none());
+            }
+        }
+        assert!(found_below, "no width produced Summary < 40");
+
+        // At 200, Summary is well above threshold and Message appears.
+        let l = layout_at_width(200, &full_skip_tasks());
+        assert!(find_column(&l, ColumnKind::Summary).unwrap().width >= 40);
+        assert!(find_column(&l, ColumnKind::Message).is_some());
     }
 
     #[test]

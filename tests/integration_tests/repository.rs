@@ -282,8 +282,8 @@ fn test_project_identifier_ssh_protocol_with_port() {
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
-    // The port colon gets converted to /
-    assert_eq!(id, "gitlab.example.com/2222/team/project");
+    // Port is stripped — irrelevant to project identity
+    assert_eq!(id, "gitlab.example.com/team/project");
 }
 
 #[test]

@@ -44,11 +44,14 @@ jobs:
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-insta
+          version: "=1.46.3"
 
       - name: Install cargo-nextest
         uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-nextest
+          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+          version: "=0.9.128"
 
       - name: 💰 Cache
         uses: Swatinem/rust-cache@v2
@@ -151,7 +154,7 @@ jobs:
 
       - name: 📋 Upload Claude Code session logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-session-logs
           path: /home/runner/.claude/projects/

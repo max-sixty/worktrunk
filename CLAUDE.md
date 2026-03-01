@@ -119,7 +119,7 @@ Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/
 
 Documentation has three categories:
 
-1. **Command pages** (config, hook, list, merge, remove, select, step, switch):
+1. **Command pages** (config, hook, list, merge, remove, step, switch):
    ```
    src/cli/mod.rs (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync
@@ -283,7 +283,7 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 
 - Worktrees are **addressed by branch name**, not by filesystem path.
 - Each worktree should map to **exactly one branch**.
-- We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees.
+- We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees. (The sole exception is `wt step promote`, which exchanges branches between two worktrees as an experimental escape hatch.)
 
 ## Code Quality
 

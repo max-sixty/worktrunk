@@ -1740,7 +1740,6 @@ fn test_remove_pruned_worktree_directory_missing(mut repo: TestRepo) {
     );
 
     // `wt remove feature-pruned` should prune the stale metadata and delete the branch
-    // The info message should say "Worktree directory missing for feature-pruned; pruned stale metadata"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
@@ -1803,4 +1802,556 @@ fn test_remove_pruned_worktree_keep_branch(mut repo: TestRepo) {
             .is_empty(),
         "Branch should still exist"
     );
+}
+
+/// Test pruning a stale worktree with an unmerged branch: should prune metadata,
+/// retain branch, and show hint to force-delete
+#[rstest]
+fn test_remove_pruned_worktree_unmerged_branch(mut repo: TestRepo) {
+    // Create a worktree with a real change (unmerged with main)
+    let worktree_path = repo.add_worktree("feature-pruned-unmerged");
+    std::fs::write(worktree_path.join("unmerged.txt"), "unmerged work\n").unwrap();
+    repo.git_command()
+        .args(["add", "unmerged.txt"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "unmerged work"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Delete the worktree directory externally (simulating user running `rm -rf`)
+    std::fs::remove_dir_all(&worktree_path).expect("Failed to remove worktree directory");
+
+    // Remove: should prune stale metadata but retain the unmerged branch
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-pruned-unmerged"],
+        None
+    ));
+
+    // Verify the branch still exists (retained because unmerged)
+    let branch_exists = repo
+        .git_command()
+        .args(["branch", "--list", "feature-pruned-unmerged"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branch_exists.stdout)
+            .trim()
+            .is_empty(),
+        "Unmerged branch should be retained"
+    );
+}
+
+// ============================================================================
+// Instant Removal Tests (move-then-delete optimization)
+// ============================================================================
+
+/// Background removal should make the original worktree path unavailable immediately.
+///
+/// This tests the move-then-delete optimization: the worktree directory is renamed
+/// to a staging path synchronously, so the original path is gone before wt returns.
+/// The actual deletion (rm -rf) happens in the background.
+#[rstest]
+fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-instant");
+
+    // Verify the worktree exists
+    assert!(worktree_path.exists(), "Worktree should exist initially");
+
+    // Remove in background mode (default) - NOT using snapshot since we need to check state after
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-instant"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The original worktree path should be gone IMMEDIATELY (before background rm completes)
+    // This is the key behavior of the move-then-delete optimization
+    assert!(
+        !worktree_path.exists(),
+        "Worktree path should be gone immediately after wt remove returns"
+    );
+
+    // Note: The staging directory (.wt-removing-*) might already be deleted by the
+    // background process, or it might still exist. Both are valid outcomes.
+    // The key assertion above is that the original path is gone immediately.
+}
+
+/// Background removal should prune git worktree metadata synchronously.
+///
+/// After removal, `git worktree list` should NOT show the removed worktree,
+/// even before the background rm -rf completes.
+#[rstest]
+fn test_remove_background_git_metadata_pruned(mut repo: TestRepo) {
+    // Create a worktree
+    let _worktree_path = repo.add_worktree("feature-prune-test");
+
+    // Verify git knows about the worktree
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature-prune-test"),
+        "Git should list the worktree before removal"
+    );
+
+    // Remove in background mode
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-prune-test"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Git worktree metadata should be pruned IMMEDIATELY
+    let list_after = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&list_after.stdout).contains("feature-prune-test"),
+        "Git should NOT list the worktree after removal (metadata should be pruned)"
+    );
+}
+
+/// Background removal should delete the branch synchronously when it's merged.
+///
+/// On the fast path (rename-then-prune), the branch is deleted synchronously
+/// after pruning git metadata, before the background `rm -rf` runs.
+/// This prevents races where the user creates a new worktree with the same
+/// branch name before the background process completes.
+#[rstest]
+fn test_remove_background_deletes_merged_branch(mut repo: TestRepo) {
+    // Create a worktree with the branch already merged to main (same commit)
+    let _worktree_path = repo.add_worktree("feature-merged");
+
+    // Verify branch exists before removal
+    let branches_before = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&branches_before.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should exist before removal"
+    );
+
+    // Remove in background mode (default)
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-merged"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Branch should be deleted IMMEDIATELY (synchronously, not in background)
+    let branches_after = repo
+        .git_command()
+        .args(["branch", "--list", "feature-merged"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branches_after.stdout)
+            .trim()
+            .is_empty(),
+        "Branch should be deleted synchronously after wt remove returns"
+    );
+}
+
+/// Test that worktree paths containing special characters are handled correctly.
+///
+/// This tests that the `rm -rf -- <path>` command correctly handles paths
+/// that might be misinterpreted as options.
+#[rstest]
+fn test_remove_worktree_with_special_path_chars(mut repo: TestRepo) {
+    // Create a worktree with special characters in the branch name
+    // (which becomes part of the path)
+    let _worktree_path = repo.add_worktree("feature--double-dash");
+
+    // Verify worktree exists
+    let list_before = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list_before.stdout).contains("feature--double-dash"),
+        "Worktree should exist before removal"
+    );
+
+    // Remove the worktree
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature--double-dash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed for path with special chars: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for background worktree removal
+    crate::common::wait_for("worktree with special chars removed", || {
+        let list = repo
+            .git_command()
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&list.stdout).contains("feature--double-dash")
+    });
+}
+
+/// Test that background removal falls back to legacy git worktree remove
+/// when the instant rename fails.
+///
+/// This tests the fallback path: when std::fs::rename() fails (e.g., cross-filesystem,
+/// permissions, or in this case a blocking file), we fall back to the legacy
+/// `git worktree remove` command which handles cleanup properly.
+#[rstest]
+fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
+    // Create a worktree
+    let worktree_path = repo.add_worktree("feature-fallback");
+
+    // Calculate the expected staged path that the rename would use.
+    // The path is: <worktree>.wt-removing-<TEST_EPOCH>
+    // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Create a regular file at the staged path to block the rename.
+    // On POSIX systems, you cannot rename a directory to an existing file.
+    std::fs::write(&staged_path, "blocking file").unwrap();
+
+    // Verify worktree exists before removal
+    assert!(
+        worktree_path.exists(),
+        "Worktree should exist before removal"
+    );
+
+    // Remove in background mode - should fall back to legacy removal
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-fallback"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed even when instant rename fails: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+
+    // Poll for branch deletion (happens after worktree removal in background command)
+    crate::common::wait_for("branch deleted by legacy fallback", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-fallback"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
+
+    // Clean up the blocking file
+    let _ = std::fs::remove_file(&staged_path);
+}
+
+/// Stale `.wt-removing-*` directories from crashed removals accumulate on disk.
+///
+/// If `wt remove` is killed after `fs::rename()` succeeds but before the background
+/// `rm -rf` spawns, the staging directory is left behind. When the same worktree is
+/// re-created and removed again, the staging path collides (non-empty directory),
+/// forcing a fallback to legacy removal. The stale directory is never cleaned up.
+#[rstest]
+fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-crash");
+
+    // Calculate the deterministic staging path (TEST_EPOCH is fixed in tests)
+    let staged_path = worktree_path.with_file_name(format!(
+        "{}.wt-removing-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+
+    // Simulate a crashed removal: rename the worktree to the staging path manually,
+    // then prune git metadata — but never run the background rm -rf.
+    std::fs::rename(&worktree_path, &staged_path).unwrap();
+    repo.run_git(&["worktree", "prune"]);
+
+    // Verify the crash state: original path gone, stale staging dir remains
+    assert!(!worktree_path.exists());
+    assert!(staged_path.exists());
+
+    // Re-create the same worktree (branch was deleted by prune, so create fresh)
+    let _ = repo.add_worktree("feature-crash");
+
+    // Remove it again — staging path collides with stale dir, falls back to legacy
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-crash"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed despite stale staging dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
+    crate::common::wait_for("re-created worktree removed by fallback", || {
+        !worktree_path.exists()
+    });
+
+    // But the stale staging directory from the first crash is STILL there —
+    // nothing cleans it up. This is the accumulation risk.
+    assert!(
+        staged_path.exists(),
+        "Stale staging directory from crashed removal is never cleaned up"
+    );
+}
+
+/// Tests that foreground removal shows remaining directory entries when
+/// `git worktree remove` fails because a directory can't be deleted.
+///
+/// Uses Unix permissions (non-writable directory) to prevent deletion of
+/// a gitignored directory, triggering the `WorktreeRemovalFailed` error path
+/// that lists remaining entries.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_foreground_failure_shows_remaining_entries(mut repo: TestRepo) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree_path = repo.add_worktree("feature-stuck");
+
+    // Add .gitignore so the stuck directory passes the clean check
+    fs::write(worktree_path.join(".gitignore"), "stuck/\n").unwrap();
+    repo.run_git_in(&worktree_path, &["add", ".gitignore"]);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
+
+    // Create gitignored directory with a file inside
+    let stuck_dir = worktree_path.join("stuck");
+    fs::create_dir_all(&stuck_dir).unwrap();
+    fs::write(stuck_dir.join("file.txt"), "content").unwrap();
+
+    // Make directory non-writable so git can't unlink the file inside
+    fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
+
+    // Check if permissions actually restrict us (skip if running as root)
+    let test_file = stuck_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
+        let _ = fs::remove_file(&test_file);
+        fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-stuck"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Restore permissions before assertions so TempDir cleanup works
+    restore_dir_permissions(&stuck_dir);
+
+    assert!(
+        !output.status.success(),
+        "Remove should have failed, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Remaining in directory:"),
+        "Error should show remaining entries, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("stuck/"),
+        "Error should list the stuck directory, got: {stderr}"
+    );
+}
+
+/// Same as above but for the detached HEAD code path.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: TestRepo) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let worktree_path = repo.add_worktree("feature-stuck-detached");
+
+    // Commit .gitignore, then detach HEAD
+    fs::write(worktree_path.join(".gitignore"), "stuck/\n").unwrap();
+    repo.run_git_in(&worktree_path, &["add", ".gitignore"]);
+    repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
+    repo.detach_head_in_worktree("feature-stuck-detached");
+
+    // Create gitignored directory with a file inside
+    let stuck_dir = worktree_path.join("stuck");
+    fs::create_dir_all(&stuck_dir).unwrap();
+    fs::write(stuck_dir.join("file.txt"), "content").unwrap();
+    fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
+
+    // Skip if running as root
+    let test_file = stuck_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
+        let _ = fs::remove_file(&test_file);
+        fs::set_permissions(&stuck_dir, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    restore_dir_permissions(&stuck_dir);
+
+    assert!(
+        !output.status.success(),
+        "Remove should have failed, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Remaining in directory:"),
+        "Error should show remaining entries, got: {stderr}"
+    );
+}
+
+/// Worktrees with initialized git submodules should be removable.
+///
+/// Git refuses `git worktree remove` when submodules are initialized,
+/// requiring `--force`. This test verifies that `wt remove --foreground`
+/// handles this automatically (retries with `--force`).
+///
+/// Regression test for <https://github.com/max-sixty/worktrunk/issues/1194>.
+#[rstest]
+fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
+    // Create a local repo to use as a submodule source
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source");
+    std::fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init"]);
+    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+
+    // Add submodule to the main repo (requires protocol.file.allow=always)
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    // Create a worktree and initialize submodules in it
+    let worktree_path = repo.add_worktree("feature-submod");
+    let output = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify the submodule is actually initialized
+    assert!(
+        worktree_path.join("submod").join("sub.txt").exists(),
+        "Submodule should be initialized"
+    );
+
+    // Remove the worktree in foreground mode — should succeed despite submodules
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-submod"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Remove should succeed with submodules, got: {stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree directory should be removed"
+    );
+}
+
+/// Restore write permissions recursively so TempDir cleanup succeeds.
+#[cfg(unix)]
+fn restore_dir_permissions(dir: &std::path::Path) {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = fs::set_permissions(dir, Permissions::from_mode(0o755));
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                restore_dir_permissions(&entry.path());
+            }
+        }
+    }
 }

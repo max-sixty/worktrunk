@@ -37,7 +37,7 @@ pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, w
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
-pub use suggest::suggest_command;
+pub use suggest::{suggest_command, suggest_command_in_dir};
 
 // ============================================================================
 // Verbosity

@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, set_temp_home_env, setup_home_snapshot_settings,
-    setup_snapshot_settings, temp_home, wt_command,
+    TestRepo, make_snapshot_cmd, repo, set_temp_home_env, set_xdg_config_path,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -24,6 +24,7 @@ fn test_config_init_already_exists(temp_home: TempDir) {
         let mut cmd = wt_command();
         cmd.arg("config").arg("create");
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd, @"
         success: true
@@ -48,6 +49,7 @@ fn test_config_init_creates_file(temp_home: TempDir) {
         let mut cmd = wt_command();
         cmd.arg("config").arg("create");
         set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
 
         assert_cmd_snapshot!(cmd, @"
         success: true

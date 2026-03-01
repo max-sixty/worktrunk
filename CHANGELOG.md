@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.28.1
+
+### Improved
+
+- **Nushell tab completions**: `wt switch <TAB>` and subcommand completions now work in nushell. ([#1220](https://github.com/max-sixty/worktrunk/pull/1220), thanks @omerxx for reporting [#1215](https://github.com/max-sixty/worktrunk/issues/1215))
+
+- **`wt step prune` reliability**: Candidates are now removed inline as they're discovered instead of scan-then-remove, with per-candidate error handling (dirty worktrees are warned and skipped). Dry-run and execution summaries now distinguish worktrees, branches, and detached worktrees. Command marked `[experimental]`. ([#1234](https://github.com/max-sixty/worktrunk/pull/1234), [#1232](https://github.com/max-sixty/worktrunk/pull/1232), [#1223](https://github.com/max-sixty/worktrunk/pull/1223))
+
+- **`wt step diff` performance**: Copies the real git index instead of creating an empty one, preserving git's stat cache so unchanged tracked files are skipped. ([#1230](https://github.com/max-sixty/worktrunk/pull/1230))
+
+### Fixed
+
+- **Branch delete race on fast-path remove**: `wt remove` now deletes merged branches synchronously on the fast path instead of deferring to the background process, fixing a race where `wt switch --create <branch>` fails with "branch already exists". ([#1216](https://github.com/max-sixty/worktrunk/pull/1216))
+
+- **Panic in `is_bare()` on unusual repositories**: `is_bare()` now propagates errors instead of panicking. ([#1221](https://github.com/max-sixty/worktrunk/pull/1221), @bendrucker)
+
+- **Help text table coloring**: Status symbols and backtick-enclosed text in `--help` tables now render with proper ANSI colors. ([#1231](https://github.com/max-sixty/worktrunk/pull/1231))
+
+### Internal
+
+- **CI workflow**: Added concurrency group to claude-mention workflow, fixed external contributor PR review permissions. ([#1233](https://github.com/max-sixty/worktrunk/pull/1233), [#1226](https://github.com/max-sixty/worktrunk/pull/1226))
+
+## 0.28.0
+
+### Improved
+
+- **`wt step prune` command**: Remove worktrees whose branches are already merged into the default branch. Skips unmerged and recently created worktrees, with `--min-age` to control the staleness threshold. [Docs](https://worktrunk.dev/step/) ([#1191](https://github.com/max-sixty/worktrunk/pull/1191))
+
+- **Color palette in `wt config shell show-theme`**: Shows each color and style rendered in itself — base colors, modifiers, bold+color and dim+color variants — for diagnosing legibility issues on different terminal themes. ([#1185](https://github.com/max-sixty/worktrunk/pull/1185), thanks @jhigh2000 for reporting [#1184](https://github.com/max-sixty/worktrunk/issues/1184))
+
+- **Smarter column layout in `wt list`**: The Message column is hidden when the terminal is too narrow for Summary to reach 40 characters, preventing both columns from being truncated to unreadable widths. ([#1166](https://github.com/max-sixty/worktrunk/pull/1166))
+
+### Fixed
+
+- **Submodules in worktree removal**: `wt remove` now handles worktrees containing initialized git submodules, which previously failed with "working trees containing submodules cannot be moved or removed". ([#1196](https://github.com/max-sixty/worktrunk/pull/1196), thanks @dlecan for reporting [#1194](https://github.com/max-sixty/worktrunk/issues/1194))
+
+- **CWD recovery validation**: Recovery from a deleted worktree directory now validates that candidate repositories actually contain the deleted path as a worktree, preventing false matches when multiple repos share a parent directory. ([#1193](https://github.com/max-sixty/worktrunk/pull/1193))
+
+- **Shell-escape paths in `-C` flag hints**: Paths containing spaces or special characters in `-C` hints are now properly shell-escaped. ([#1173](https://github.com/max-sixty/worktrunk/pull/1173))
+
+- **ANSI handling in CWD recovery**: Recovery messages now use `anstream` for proper ANSI handling on terminals that don't support color. ([#1183](https://github.com/max-sixty/worktrunk/pull/1183))
+
+- **Worktree path in detached HEAD removal messages**: Removal output for detached HEAD worktrees now includes the worktree path for clarity. ([#1210](https://github.com/max-sixty/worktrunk/pull/1210))
+
+- **Pruned worktree output**: Worktree and branch deletion for pruned worktrees are combined into a single output line instead of two separate messages. ([#1211](https://github.com/max-sixty/worktrunk/pull/1211))
+
+### Documentation
+
+- **Page metadata and SEO**: All doc pages now have `<meta name="description">`, canonical URLs, and structured data (JSON-LD) for better search engine visibility. ([#1167](https://github.com/max-sixty/worktrunk/pull/1167))
+
+### Internal
+
+- **CI bot improvements**: Inline suggestions, confidence-based review scrutiny, consolidated review+CI analysis, self-poll prevention, verified-facts guideline for triage, and explicit issue-closing in nightly cleaner. ([#1172](https://github.com/max-sixty/worktrunk/pull/1172), [#1181](https://github.com/max-sixty/worktrunk/pull/1181), [#1199](https://github.com/max-sixty/worktrunk/pull/1199), [#1204](https://github.com/max-sixty/worktrunk/pull/1204), [#1212](https://github.com/max-sixty/worktrunk/pull/1212), [#1198](https://github.com/max-sixty/worktrunk/pull/1198), [#1209](https://github.com/max-sixty/worktrunk/pull/1209))
+
+## 0.27.0
+
+### Improved
+
+- **`wt step promote` command (experimental)**: Exchange branches between the main worktree and any linked worktree, including swapping gitignored files (build artifacts, `.env`, `node_modules/`). Shows mismatch state in `wt list` with ⚑ indicator; restore with no arguments from main worktree. [Docs](https://worktrunk.dev/step/) ([#789](https://github.com/max-sixty/worktrunk/pull/789), thanks @zpeleg for the feature request in [#738](https://github.com/max-sixty/worktrunk/issues/738))
+
+- **Instant worktree removal**: `wt remove` now renames the worktree to a staging path before spawning the background cleanup, making the path unavailable immediately instead of after a 1-second sleep. Falls back to legacy removal if rename fails (cross-filesystem, permissions). ([#773](https://github.com/max-sixty/worktrunk/pull/773))
+
+- **Graceful recovery from deleted worktree directory**: When a worktree is removed while a shell is still in that directory, `wt switch` and `wt list` now recover automatically — find the parent repository from `$PWD` and proceed without pre-switch hooks. ([#1146](https://github.com/max-sixty/worktrunk/pull/1146), thanks @davidbeesley for reporting [#1109](https://github.com/max-sixty/worktrunk/issues/1109))
+
+- **PR/MR support promoted out of experimental**: GitHub PR (`pr:<number>`) and GitLab MR (`mr:<number>`) targets in `wt switch` are now considered stable — 11 minor releases with no interface changes since v0.15.0. ([#1114](https://github.com/max-sixty/worktrunk/pull/1114))
+
+### Fixed
+
+- **SSH URLs with ports**: Remote matching now handles `ssh://git@host:2222/owner/repo.git` — ports are stripped during URL parsing instead of rejecting the URL. ([#1151](https://github.com/max-sixty/worktrunk/pull/1151))
+
+- **Config path resolution**: `wt config create` now resolves the same path as config loading, fixing a mismatch when using XDG directories. ([#1135](https://github.com/max-sixty/worktrunk/pull/1135), thanks @christopher-buss for reporting [#1134](https://github.com/max-sixty/worktrunk/issues/1134))
+
+- **PTY prompt echo interleaving**: Approval prompts no longer intermix with echoed input on slower systems. Uses quiescence detection instead of a fixed sleep. ([#1133](https://github.com/max-sixty/worktrunk/pull/1133))
+
+- **Better diagnostics when foreground removal fails**: When `wt remove --foreground` fails with "Directory not empty", now shows the remaining top-level entries (capped at 10) and suggests trying background removal. ([#1150](https://github.com/max-sixty/worktrunk/pull/1150))
+
+- **Output formatting consistency**: Hints use canonical "To X, run Y" phrasing, config update hints render in gutter blocks with correct `-C` flag for linked worktrees, and ANSI color nesting fixed in hint messages. ([#1138](https://github.com/max-sixty/worktrunk/pull/1138), [#1137](https://github.com/max-sixty/worktrunk/pull/1137))
+
+- **Panic-safe error propagation**: Replaced `.unwrap()` and `.expect()` calls in functions returning `Result` with proper `?` and `bail!` error propagation. ([#1127](https://github.com/max-sixty/worktrunk/pull/1127))
+
+### Documentation
+
+- **Bot trigger renamed**: CI bot responds to `@worktrunk-bot` instead of `@claude`, matching the actual GitHub username. ([#1149](https://github.com/max-sixty/worktrunk/pull/1149))
+
+- **`wt step promote` documented in worktree model**: The branch-exchange operation is noted as the sole exception to the "never retarget a worktree" rule. ([#1154](https://github.com/max-sixty/worktrunk/pull/1154))
+
+### Internal
+
+- **CI security model**: Rulesets, token consolidation, and environment protection hardened for GitHub Actions workflows. ([#1118](https://github.com/max-sixty/worktrunk/pull/1118))
+
+- **Nightly CI workflows**: Automated review of Claude CI session logs and 24-hour code quality sweep for bugs, missing tests, and stale docs. ([#1111](https://github.com/max-sixty/worktrunk/pull/1111))
+
+- **CI reviewer and bot improvements**: Better failure tracing, Dependabot PR reviews, thread resolution ordering, LGTM dedup, actionable feedback, automatic response to bot PR comments, and graceful handling of mentions on merged/closed PRs. ([#1117](https://github.com/max-sixty/worktrunk/pull/1117), [#1128](https://github.com/max-sixty/worktrunk/pull/1128), [#1129](https://github.com/max-sixty/worktrunk/pull/1129), [#1131](https://github.com/max-sixty/worktrunk/pull/1131), [#1141](https://github.com/max-sixty/worktrunk/pull/1141), [#1142](https://github.com/max-sixty/worktrunk/pull/1142), [#1145](https://github.com/max-sixty/worktrunk/pull/1145), [#1147](https://github.com/max-sixty/worktrunk/pull/1147), [#1153](https://github.com/max-sixty/worktrunk/pull/1153), [#1158](https://github.com/max-sixty/worktrunk/pull/1158), [#1164](https://github.com/max-sixty/worktrunk/pull/1164))
+
 ## 0.26.1
 
 ### Fixed

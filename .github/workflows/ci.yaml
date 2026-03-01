@@ -35,6 +35,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: lychee
+        version: "=0.23.0"
 
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
@@ -61,11 +62,15 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-insta
+        version: "=1.46.3"
 
     - name: Install cargo-nextest
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
+        # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+        # The claude-renovate workflow checks weekly for compatible updates.
+        version: "=0.9.128"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -113,18 +118,20 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: lychee
+        version: "=0.23.0"
 
     - name: Install wt
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
+        version: "=0.27.0"
 
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes
 
     - name: 📊 Upload test timing
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: junit-${{ matrix.name }}
         path: target/nextest/default/junit.xml
@@ -136,7 +143,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
 
-  # Check if Cargo files changed (for conditional jobs below)
+  # Check if Cargo/CI files changed (for conditional jobs below)
   changes:
     runs-on: ubuntu-24.04
     permissions:
@@ -155,6 +162,7 @@ jobs:
             - 'Cargo.toml'
             - 'Cargo.lock'
             - 'rust-toolchain.toml'
+            - '.github/workflows/ci.yaml'
 
   msrv:
     runs-on: ubuntu-24.04
@@ -170,6 +178,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-msrv
+        version: "=0.18.4"
 
     - name: Verify minimum rust version
       run: cargo msrv verify
@@ -191,6 +200,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-udeps
+        version: "=0.1.60"
 
     - uses: clechasseur/rs-cargo@v4.0.1
       with:
@@ -237,6 +247,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-llvm-cov
+        version: "=0.8.4"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -263,7 +274,7 @@ jobs:
       run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: code-coverage-report
         path: cobertura.xml
