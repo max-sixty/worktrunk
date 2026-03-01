@@ -125,8 +125,21 @@ Claude tends to mangle shell quoting in CI. Two common failure modes:
    )"
    ```
 
+3. **`!=` in jq expressions** — `jq 'select(.x != "y")'` breaks because `!`
+   triggers bash history expansion even inside single quotes when the outer
+   command uses double quotes. Use negated equality instead:
+
+   ```bash
+   # BAD — history expansion corrupts the expression
+   jq 'select(.status != "COMPLETED")'
+
+   # GOOD — equivalent, no ! character
+   jq 'select(.status == "COMPLETED" | not)'
+   ```
+
 **General rule:** When a `gh` command argument contains `$` or `!`, use either
 a temp file (`-F field=@file`) or a heredoc with a quoted delimiter (`<<'EOF'`).
+The same applies to jq filters — avoid `!=` entirely and use `| not` instead.
 
 ## Atomic PRs
 
