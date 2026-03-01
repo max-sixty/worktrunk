@@ -271,9 +271,17 @@ def render_tape(template_path: Path, replacements: dict, repo_root: Path) -> str
     return rendered
 
 
-def record_vhs(tape_path: Path, vhs_binary: str = "vhs"):
+def record_vhs(
+    tape_path: Path, vhs_binary: str = "vhs", expected_output: Path = None
+):
     """Record a demo GIF using VHS."""
     run([vhs_binary, str(tape_path)], check=True)
+
+    if expected_output and not expected_output.exists():
+        raise RuntimeError(
+            f"VHS exited 0 but {expected_output.name} was not created. "
+            "Check ffmpeg output above — likely missing libass support."
+        )
 
 
 def build_wt(repo_root: Path):
@@ -930,6 +938,25 @@ def check_dependencies(commands: list[str]):
             raise SystemExit(f"Missing dependency: {cmd}")
 
 
+def check_ffmpeg_libass():
+    """Check that ffmpeg has libass support (required for keystroke overlay)."""
+    if not shutil.which("ffmpeg"):
+        raise SystemExit(
+            "Missing dependency: ffmpeg\n"
+            "Install with: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg"
+        )
+    result = subprocess.run(
+        ["ffmpeg", "-filters"],
+        capture_output=True,
+        text=True,
+    )
+    if " ass " not in result.stdout:
+        raise SystemExit(
+            "ffmpeg missing libass support (required for keystroke overlay).\n"
+            "Install with: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg"
+        )
+
+
 def setup_demo_output(out_dir: Path) -> Path:
     """Set up demo output directory and copy starship config.
 
@@ -1232,6 +1259,6 @@ def record_all_themes(
 
         tape_rendered.write_text(rendered)
         print(f"\nRecording {theme_name} GIF...")
-        record_vhs(tape_rendered, vhs_binary)
+        record_vhs(tape_rendered, vhs_binary, expected_output=output_gif)
         tape_rendered.unlink(missing_ok=True)
         print(f"GIF saved to {output_gif}")

@@ -626,10 +626,13 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// Handle output for a remove operation
 ///
 /// Approval is handled at the gate (command entry point), not here.
+/// When `quiet` is true (prune context), suppresses informational messages
+/// like "No worktree found for branch X" that are noise in batch operations.
 pub fn handle_remove_output(
     result: &RemoveResult,
     background: bool,
     verify: bool,
+    quiet: bool,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -661,15 +664,19 @@ pub fn handle_remove_output(
             branch_name,
             deletion_mode,
             pruned,
-        } => handle_branch_only_output(branch_name, *deletion_mode, *pruned),
+        } => handle_branch_only_output(branch_name, *deletion_mode, *pruned, quiet),
     }
 }
 
 /// Handle output for BranchOnly removal (branch exists but no worktree)
+///
+/// When `quiet` is true, suppresses the "No worktree found for branch X"
+/// info line for non-pruned cases (noise in prune/batch context).
 fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
     pruned: bool,
+    quiet: bool,
 ) -> anyhow::Result<()> {
     let branch_info = if pruned {
         cformat!("Worktree directory missing for <bold>{branch_name}</>; pruned")
@@ -731,7 +738,9 @@ fn handle_branch_only_output(
                 ))
             );
         } else {
-            eprintln!("{}", info_message(&branch_info));
+            if !quiet {
+                eprintln!("{}", info_message(&branch_info));
+            }
             eprintln!(
                 "{}",
                 FormattedMessage::new(cformat!(

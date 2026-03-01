@@ -92,6 +92,12 @@ Currently `wt-zellij-omnibus` has checkpoints; other TUI demos are skipped until
 
 **Requires Go** — The VHS fork is built from source ([install Go](https://go.dev/dl/)).
 
+**Requires ffmpeg with libass** — The keystroke overlay uses ASS subtitles. The build script checks for this and exits with install instructions if missing. Homebrew's API-sourced bottle omits `libass`; install from the tap formula instead:
+
+```bash
+HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ffmpeg
+```
+
 External dependencies are downloaded/built automatically on first run:
 - **VHS** — Custom fork with keystroke overlay (cloned and built from source)
 - **Claude Code binary** — Downloaded from Anthropic's release bucket

@@ -22,6 +22,7 @@ from .lib import (
     prepare_demo_repo,
     # Demo recording infrastructure
     check_dependencies,
+    check_ffmpeg_libass,
     setup_demo_output,
     record_all_themes,
     # Text output recording
@@ -59,6 +60,7 @@ __all__ = [
     "format_theme_for_vhs",
     # Demo recording infrastructure
     "check_dependencies",
+    "check_ffmpeg_libass",
     "setup_demo_output",
     "record_all_themes",
     # Text output recording

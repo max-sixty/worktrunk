@@ -1419,15 +1419,13 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             config,
         ) {
             Ok(plan) => plan,
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    warning_message(format!("Skipping {}: {e:#}", candidate.label))
-                );
+            Err(_) => {
+                // prepare_worktree_removal is the gate: if the worktree can't
+                // be removed (dirty, locked, etc.), it's simply not selected.
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, !foreground, run_hooks)?;
+        handle_remove_output(&plan, !foreground, run_hooks, true)?;
         Ok(true)
     }
 

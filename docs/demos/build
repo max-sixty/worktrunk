@@ -38,6 +38,7 @@ from shared import (  # noqa: E402
     setup_zellij_config,
     setup_fish_config,
     check_dependencies,
+    check_ffmpeg_libass,
     setup_demo_output,
     record_all_themes,
     SIZE_DOCS,
@@ -487,6 +488,8 @@ Examples:
     # Check dependencies (VHS is built from source, not required in PATH)
     deps = ["wt", "starship", "zellij"]
     check_dependencies(deps)
+    if not args.text and not args.snapshot:
+        check_ffmpeg_libass()
 
     # Ensure VHS is built (requires Go)
     vhs_binary = str(ensure_vhs_binary())
