@@ -750,6 +750,11 @@ fn test_merge_cwd_removed_hint_fallback_to_list(mut repo: TestRepo) {
 
 /// When the CWD is removed and recovery can't find any repo,
 /// the hint should show just the message with no command suggestion.
+///
+/// Windows-only skip: on Windows, `current_dir()` succeeds even after
+/// directory deletion (process handle keeps it alive), so `Repository::current()`
+/// works and the hint correctly suggests `wt switch ^` instead.
+#[cfg(not(target_os = "windows"))]
 #[rstest]
 fn test_merge_cwd_removed_hint_no_recovery(mut repo: TestRepo) {
     // Create project config with failing post-merge command
