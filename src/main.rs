@@ -7,7 +7,9 @@ use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
-use worktrunk::git::{Repository, ResolvedWorktree, current_or_recover, exit_code, set_base_path};
+use worktrunk::git::{
+    Repository, ResolvedWorktree, current_or_recover, cwd_removed_hint, exit_code, set_base_path,
+};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
@@ -1066,16 +1068,13 @@ fn main() {
             }
         }
 
-        // If the CWD has been deleted, hint the user to use `wt switch ^`.
+        // If the CWD has been deleted, hint the user about recovery options.
         // Check both: (1) explicit flag set by merge/remove when it knows the CWD
         // worktree was removed (reliable on all platforms), and (2) OS-level detection
         // for cases not covered by the flag (e.g., external worktree removal).
         let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
         if cwd_gone {
-            eprintln!(
-                "{}",
-                hint_message("Current directory was removed. Try: wt switch ^")
-            );
+            eprintln!("{}", hint_message(cwd_removed_hint()));
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)
