@@ -715,13 +715,13 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
 
     let feature_wt = repo.add_feature();
 
-    // Merge with --yes - post-merge command should fail but merge should complete
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "merge",
-        &["main", "--yes"],
-        Some(&feature_wt)
-    ));
+    // Merge with --yes - post-merge command should fail but merge should complete.
+    // Set PWD to repo root so CWD recovery consistently finds the test repo
+    // (without this, $PWD is inherited from the test runner and recovery may
+    // find a different repo in CI).
+    let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
+    cmd.env("PWD", repo.root_path());
+    assert_cmd_snapshot!(cmd);
 }
 
 /// When the CWD is removed but the default branch can't be resolved,

@@ -145,8 +145,8 @@ fn find_validated_repo_near(dir: &Path, deleted_path: &Path) -> Option<Repositor
 /// and `Repository::at()` succeeds.
 ///
 /// Note: This only matches `.git` directories, so bare repos (which have no
-/// `.git` subdirectory) won't be discovered. The fallback hint in `main.rs`
-/// covers this gracefully.
+/// `.git` subdirectory) won't be discovered. `cwd_removed_hint()` handles
+/// this gracefully by falling back to progressively less specific hints.
 fn try_repo_at(dir: &Path) -> Option<Repository> {
     let git_path = dir.join(".git");
     // Only match .git directories (main repos), not .git files (linked worktrees)
