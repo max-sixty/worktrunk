@@ -496,10 +496,17 @@ mod tests {
     }
 
     #[test]
-    fn test_cwd_removed_hint_suggests_switch() {
-        // Tests run inside a git repo with a default branch worktree,
-        // so cwd_removed_hint should suggest `wt switch ^`.
-        let hint = cwd_removed_hint();
+    fn test_hint_for_repo_suggests_switch() {
+        // A normal repo with a main worktree should suggest `wt switch ^`.
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        Cmd::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(tmp.path())
+            .run()
+            .unwrap();
+        let repo = Repository::at(tmp.path()).unwrap();
+        let hint = hint_for_repo(&repo);
         insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
     }
 
