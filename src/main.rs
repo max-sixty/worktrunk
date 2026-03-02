@@ -227,6 +227,93 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
     }
 }
 
+fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
+    match action {
+        StepCommand::Commit {
+            yes,
+            verify,
+            stage,
+            show_prompt,
+        } => step_commit(yes, !verify, stage, show_prompt),
+        StepCommand::Squash {
+            target,
+            yes,
+            verify,
+            stage,
+            show_prompt,
+        } => {
+            // Handle --show-prompt early: just build and output the prompt
+            if show_prompt {
+                commands::step_show_squash_prompt(target.as_deref())
+            } else {
+                // Approval is handled inside handle_squash (like step_commit)
+                handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result {
+                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                    SquashResult::NoCommitsAhead(branch) => {
+                        eprintln!(
+                            "{}",
+                            info_message(format!(
+                                "Nothing to squash; no commits ahead of {branch}"
+                            ))
+                        );
+                    }
+                    SquashResult::AlreadySingleCommit => {
+                        eprintln!(
+                            "{}",
+                            info_message("Nothing to squash; already a single commit")
+                        );
+                    }
+                })
+            }
+        }
+        StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
+        StepCommand::Rebase { target } => {
+            handle_rebase(target.as_deref()).map(|result| match result {
+                RebaseResult::Rebased => (),
+                RebaseResult::UpToDate(branch) => {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!("Already up to date with <bold>{branch}</>"))
+                    );
+                }
+            })
+        }
+        StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
+        StepCommand::CopyIgnored {
+            from,
+            to,
+            dry_run,
+            force,
+        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
+        StepCommand::ForEach { args } => step_for_each(args),
+        StepCommand::Promote { branch } => {
+            handle_promote(branch.as_deref()).map(|result| match result {
+                commands::PromoteResult::Promoted => (),
+                commands::PromoteResult::AlreadyInMain(branch) => {
+                    eprintln!(
+                        "{}",
+                        info_message(cformat!(
+                            "Branch <bold>{branch}</> is already in main worktree"
+                        ))
+                    );
+                }
+            })
+        }
+        StepCommand::Prune {
+            dry_run,
+            yes,
+            min_age,
+            foreground,
+        } => step_prune(dry_run, yes, &min_age, foreground),
+        StepCommand::Relocate {
+            branches,
+            dry_run,
+            commit,
+            clobber,
+        } => step_relocate(branches, dry_run, commit, clobber),
+    }
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -628,92 +715,7 @@ fn main() {
                 StateCommand::Clear => handle_state_clear_all(),
             },
         },
-        Commands::Step { action } => match action {
-            StepCommand::Commit {
-                yes,
-                verify,
-                stage,
-                show_prompt,
-            } => step_commit(yes, !verify, stage, show_prompt),
-            StepCommand::Squash {
-                target,
-                yes,
-                verify,
-                stage,
-                show_prompt,
-            } => {
-                // Handle --show-prompt early: just build and output the prompt
-                if show_prompt {
-                    commands::step_show_squash_prompt(target.as_deref())
-                } else {
-                    // Approval is handled inside handle_squash (like step_commit)
-                    handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result
-                    {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            eprintln!(
-                                "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                ))
-                            );
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            eprintln!(
-                                "{}",
-                                info_message("Nothing to squash; already a single commit")
-                            );
-                        }
-                    })
-                }
-            }
-            StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
-            StepCommand::Rebase { target } => {
-                handle_rebase(target.as_deref()).map(|result| match result {
-                    RebaseResult::Rebased => (),
-                    RebaseResult::UpToDate(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!("Already up to date with <bold>{branch}</>"))
-                        );
-                    }
-                })
-            }
-            StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
-            StepCommand::CopyIgnored {
-                from,
-                to,
-                dry_run,
-                force,
-            } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
-            StepCommand::ForEach { args } => step_for_each(args),
-            StepCommand::Promote { branch } => {
-                use commands::PromoteResult;
-                handle_promote(branch.as_deref()).map(|result| match result {
-                    PromoteResult::Promoted => (),
-                    PromoteResult::AlreadyInMain(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!(
-                                "Branch <bold>{branch}</> is already in main worktree"
-                            ))
-                        );
-                    }
-                })
-            }
-            StepCommand::Prune {
-                dry_run,
-                yes,
-                min_age,
-                foreground,
-            } => step_prune(dry_run, yes, &min_age, foreground),
-            StepCommand::Relocate {
-                branches,
-                dry_run,
-                commit,
-                clobber,
-            } => step_relocate(branches, dry_run, commit, clobber),
-        },
+        Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
