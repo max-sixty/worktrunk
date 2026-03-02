@@ -293,11 +293,24 @@ description: new text here
 
 ### 5. Monitor CI
 
-After approving, check whether CI has finished. Exclude the current workflow's
-own check to avoid a circular wait (Claude polling itself):
+**Skip this step** if the verdict was "stay silent" (self-authored PR with no
+concerns). There is no approval to dismiss on failure, so monitoring adds no
+value.
+
+After approving, wait for CI to finish using `gh run watch` (consistent with
+the `running-in-ci` skill). Exclude the current workflow's own check to avoid
+a circular wait:
 
 ```bash
-# $GITHUB_WORKFLOW is set in CI; when unset, no checks are excluded.
+# Find the CI run triggered by this PR's HEAD commit.
+RUN_ID=$(gh run list --branch <branch> --commit "$HEAD_SHA" \
+  --workflow ci.yaml --json databaseId --jq '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status 2>&1 || true
+```
+
+After `gh run watch` completes, verify final status:
+
+```bash
 gh pr view <number> --json statusCheckRollup \
   --jq '[.statusCheckRollup[]
     | select(env.GITHUB_WORKFLOW == null
@@ -307,11 +320,6 @@ gh pr view <number> --json statusCheckRollup \
 ```
 
 - **All checks passed** → done, no further action.
-- **Checks still running** → poll until complete (sleep 30–60s between checks).
-  Polling is intentionally unbounded — CI compute is cheap and catching failures
-  before the author looks at the PR is more valuable than saving a few minutes
-  of polling. The results are always visible on the PR regardless, so the worst
-  case of a long poll is wasted compute, not missed information.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
   failure, no action needed. If the failure is related to the PR changes:
   1. Investigate the failure and post a follow-up review (COMMENT) with
