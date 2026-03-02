@@ -156,6 +156,77 @@ fn warn_select_deprecated() {
     );
 }
 
+fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
+    match action {
+        HookCommand::Show {
+            hook_type,
+            expanded,
+        } => handle_hook_show(hook_type.as_deref(), expanded),
+        HookCommand::PreSwitch { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PreSwitch, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PostCreate { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PostCreate, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PostStart {
+            name,
+            yes,
+            foreground,
+            no_background,
+            vars,
+        } => run_toggleable_hook(
+            HookType::PostStart,
+            yes,
+            foreground,
+            no_background,
+            name.as_deref(),
+            &vars,
+        ),
+        HookCommand::PostSwitch {
+            name,
+            yes,
+            foreground,
+            no_background,
+            vars,
+        } => run_toggleable_hook(
+            HookType::PostSwitch,
+            yes,
+            foreground,
+            no_background,
+            name.as_deref(),
+            &vars,
+        ),
+        HookCommand::PreCommit { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PreCommit, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PreMerge { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PreMerge, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PostMerge { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PostMerge, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PreRemove { name, yes, vars } => {
+            run_non_toggle_hook(HookType::PreRemove, yes, name.as_deref(), &vars)
+        }
+        HookCommand::PostRemove {
+            name,
+            yes,
+            foreground,
+            vars,
+        } => run_hook(
+            HookType::PostRemove,
+            yes,
+            Some(foreground),
+            name.as_deref(),
+            &vars,
+        ),
+        HookCommand::Approvals { action } => match action {
+            ApprovalsCommand::Add { all } => add_approvals(all),
+            ApprovalsCommand::Clear { global } => clear_approvals(global),
+        },
+    }
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -643,74 +714,7 @@ fn main() {
                 clobber,
             } => step_relocate(branches, dry_run, commit, clobber),
         },
-        Commands::Hook { action } => match action {
-            HookCommand::Show {
-                hook_type,
-                expanded,
-            } => handle_hook_show(hook_type.as_deref(), expanded),
-            HookCommand::PreSwitch { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PreSwitch, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PostCreate { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PostCreate, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PostStart {
-                name,
-                yes,
-                foreground,
-                no_background,
-                vars,
-            } => run_toggleable_hook(
-                HookType::PostStart,
-                yes,
-                foreground,
-                no_background,
-                name.as_deref(),
-                &vars,
-            ),
-            HookCommand::PostSwitch {
-                name,
-                yes,
-                foreground,
-                no_background,
-                vars,
-            } => run_toggleable_hook(
-                HookType::PostSwitch,
-                yes,
-                foreground,
-                no_background,
-                name.as_deref(),
-                &vars,
-            ),
-            HookCommand::PreCommit { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PreCommit, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PreMerge { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PreMerge, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PostMerge { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PostMerge, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PreRemove { name, yes, vars } => {
-                run_non_toggle_hook(HookType::PreRemove, yes, name.as_deref(), &vars)
-            }
-            HookCommand::PostRemove {
-                name,
-                yes,
-                foreground,
-                vars,
-            } => run_hook(
-                HookType::PostRemove,
-                yes,
-                Some(foreground),
-                name.as_deref(),
-                &vars,
-            ),
-            HookCommand::Approvals { action } => match action {
-                ApprovalsCommand::Add { all } => add_approvals(all),
-                ApprovalsCommand::Clear { global } => clear_approvals(global),
-            },
-        },
+        Commands::Hook { action } => handle_hook_command(action),
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
             // Deprecated: show warning and delegate to handle_select
