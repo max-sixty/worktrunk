@@ -606,6 +606,57 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     std::process::exit(1);
 }
 
+fn handle_switch_command(
+    branch: Option<String>,
+    branches: bool,
+    remotes: bool,
+    create: bool,
+    base: Option<String>,
+    execute: Option<String>,
+    execute_args: Vec<String>,
+    yes: bool,
+    clobber: bool,
+    no_cd: bool,
+    verify: bool,
+) -> anyhow::Result<()> {
+    UserConfig::load()
+        .context("Failed to load config")
+        .and_then(|mut config| {
+            // No branch argument: open interactive picker
+            let Some(branch) = branch else {
+                #[cfg(unix)]
+                {
+                    return handle_select(branches, remotes);
+                }
+
+                #[cfg(not(unix))]
+                {
+                    // Suppress unused variable warnings on Windows
+                    let _ = (branches, remotes);
+
+                    print_windows_picker_unavailable();
+                    std::process::exit(2);
+                }
+            };
+
+            handle_switch(
+                SwitchOptions {
+                    branch: &branch,
+                    create,
+                    base: base.as_deref(),
+                    execute: execute.as_deref(),
+                    execute_args: &execute_args,
+                    yes,
+                    clobber,
+                    change_dir: !no_cd,
+                    verify,
+                },
+                &mut config,
+                &binary_name(),
+            )
+        })
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -782,42 +833,19 @@ fn main() {
             clobber,
             no_cd,
             verify,
-        } => UserConfig::load()
-            .context("Failed to load config")
-            .and_then(|mut config| {
-                // No branch argument: open interactive picker
-                let Some(branch) = branch else {
-                    #[cfg(unix)]
-                    {
-                        return handle_select(branches, remotes);
-                    }
-
-                    #[cfg(not(unix))]
-                    {
-                        // Suppress unused variable warnings on Windows
-                        let _ = (branches, remotes);
-
-                        print_windows_picker_unavailable();
-                        std::process::exit(2);
-                    }
-                };
-
-                handle_switch(
-                    SwitchOptions {
-                        branch: &branch,
-                        create,
-                        base: base.as_deref(),
-                        execute: execute.as_deref(),
-                        execute_args: &execute_args,
-                        yes,
-                        clobber,
-                        change_dir: !no_cd,
-                        verify,
-                    },
-                    &mut config,
-                    &binary_name(),
-                )
-            }),
+        } => handle_switch_command(
+            branch,
+            branches,
+            remotes,
+            create,
+            base,
+            execute,
+            execute_args,
+            yes,
+            clobber,
+            no_cd,
+            verify,
+        ),
         Commands::Remove {
             branches,
             delete_branch,
