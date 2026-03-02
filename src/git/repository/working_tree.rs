@@ -9,6 +9,18 @@ use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
 
+/// Parse `git submodule status` output and detect whether any submodule is initialized.
+///
+/// Status lines start with a one-character state marker:
+/// - `-` = not initialized
+/// - ` ` / `+` / `U` = initialized variants
+fn has_initialized_submodules_from_status(status: &str) -> bool {
+    status.lines().any(|line| match line.chars().next() {
+        Some('-') | None => false,
+        Some(_) => true,
+    })
+}
+
 /// Get a short display name for a path, used in logging context.
 pub fn path_to_logging_context(path: &Path) -> String {
     if path.to_str() == Some(".") {
@@ -263,6 +275,15 @@ impl<'a> WorkingTree<'a> {
             .is_err())
     }
 
+    /// Check whether this worktree has initialized submodules.
+    ///
+    /// Uses `git submodule status --recursive` and parses its stable single-character
+    /// status prefix instead of relying on human-readable git error messages.
+    pub fn has_initialized_submodules(&self) -> anyhow::Result<bool> {
+        let output = self.run_command(&["submodule", "status", "--recursive"])?;
+        Ok(has_initialized_submodules_from_status(&output))
+    }
+
     /// Create a safety backup of current working tree state without affecting the working tree.
     ///
     /// This creates a backup commit containing all changes (staged, unstaged, and untracked files)
@@ -322,5 +343,36 @@ impl<'a> WorkingTree<'a> {
         .context("Failed to create backup ref")?;
 
         Ok(backup_sha[..7].to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_initialized_submodules_from_status;
+
+    #[test]
+    fn submodule_status_empty_is_not_initialized() {
+        assert!(!has_initialized_submodules_from_status(""));
+    }
+
+    #[test]
+    fn submodule_status_dash_is_not_initialized() {
+        assert!(!has_initialized_submodules_from_status(
+            "-9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod"
+        ));
+    }
+
+    #[test]
+    fn submodule_status_space_is_initialized() {
+        assert!(has_initialized_submodules_from_status(
+            " 9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
+        ));
+    }
+
+    #[test]
+    fn submodule_status_plus_is_initialized() {
+        assert!(has_initialized_submodules_from_status(
+            "+9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
+        ));
     }
 }

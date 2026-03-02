@@ -87,8 +87,12 @@ fn execute_instant_removal_or_fallback(
             // Git refuses to remove worktrees with initialized submodules without
             // --force. We preemptively set --force when .gitmodules exists — broader
             // than checking initialization, but harmless for clean worktrees.
-            // See remove_worktree() doc comment for why --force is safe here and
-            // the TOCTOU nuance around git's error ordering.
+            //
+            // TOCTOU note: the clean check runs during planning in
+            // prepare_worktree_removal(). In this fallback path, we may add --force
+            // later (at execution time) when .gitmodules is present. That creates a
+            // small check-vs-use window where newly introduced changes could be
+            // removed. See remove_worktree() docs for the detailed safety analysis.
             let force = force_worktree || worktree_path.join(".gitmodules").exists();
             build_remove_command(worktree_path, branch_to_delete, force)
         }

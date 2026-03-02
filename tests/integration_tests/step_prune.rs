@@ -268,6 +268,31 @@ fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
+/// Prune can remove a mix of branch-only and worktree candidates in one run.
+#[rstest]
+fn test_prune_mixed_worktree_and_orphan_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Branch-only candidate: integrated orphan branch without a worktree.
+    repo.create_branch("orphan-mixed");
+
+    // Worktree candidate: integrated worktree at the same commit as main.
+    repo.add_worktree("merged-mixed");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    let parent = repo.root_path().parent().unwrap();
+    assert!(
+        !parent.join("repo.merged-mixed").exists(),
+        "Merged worktree should be removed"
+    );
+}
+
 /// Prune from a merged worktree removes it last (CandidateKind::Current).
 ///
 /// Skipped on Windows: Windows locks the current working directory, preventing
