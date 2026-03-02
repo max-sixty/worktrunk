@@ -200,6 +200,29 @@ pub fn print_skipped_shells(
     Ok(())
 }
 
+fn shell_extension_label(shell: Shell) -> &'static str {
+    // For bash/zsh, completions are inline in the init script.
+    if matches!(shell, Shell::Bash | Shell::Zsh) {
+        "shell extension & completions"
+    } else {
+        "shell extension"
+    }
+}
+
+fn print_config_action_result(action: &ConfigAction, message: String) {
+    match action {
+        ConfigAction::Added | ConfigAction::Created => {
+            eprintln!("{}", success_message(message));
+        }
+        ConfigAction::AlreadyExists => {
+            eprintln!("{}", info_message(message));
+        }
+        ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
+            unreachable!("Preview actions handled by confirmation prompt")
+        }
+    }
+}
+
 /// Print the result of shell integration installation.
 ///
 /// Shows:
@@ -233,28 +256,12 @@ pub fn print_shell_install_result(
     for result in &scan_result.configured {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // For bash/zsh, completions are inline in the init script
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
-            "shell extension"
-        };
+        let what = shell_extension_label(shell);
         let message = cformat!(
             "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
             result.action.description()
         );
-
-        match result.action {
-            ConfigAction::Added | ConfigAction::Created => {
-                eprintln!("{}", success_message(message));
-            }
-            ConfigAction::AlreadyExists => {
-                eprintln!("{}", info_message(message));
-            }
-            ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                unreachable!("Preview actions handled by confirmation prompt")
-            }
-        }
+        print_config_action_result(&result.action, message);
 
         if matches!(shell, Shell::Nushell) && !matches!(result.action, ConfigAction::AlreadyExists)
         {
@@ -272,17 +279,7 @@ pub fn print_shell_install_result(
                 "{} completions for <bold>{shell}</> @ <bold>{comp_path}</>",
                 comp_result.action.description()
             );
-            match comp_result.action {
-                ConfigAction::Added | ConfigAction::Created => {
-                    eprintln!("{}", success_message(comp_message));
-                }
-                ConfigAction::AlreadyExists => {
-                    eprintln!("{}", info_message(comp_message));
-                }
-                ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                    unreachable!("Preview actions handled by confirmation prompt")
-                }
-            }
+            print_config_action_result(&comp_result.action, comp_message);
         }
     }
 
