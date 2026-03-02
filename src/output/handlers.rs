@@ -646,20 +646,20 @@ pub fn handle_remove_output(
             force_worktree,
             expected_path,
             removed_commit,
-        } => handle_removed_worktree_output(
+        } => handle_removed_worktree_output(RemovedWorktreeOutputContext {
             main_path,
             worktree_path,
-            *changed_directory,
-            branch_name.as_deref(),
-            *deletion_mode,
-            target_branch.as_deref(),
-            *integration_reason,
-            *force_worktree,
-            expected_path.as_ref(),
-            removed_commit.as_deref(),
+            changed_directory: *changed_directory,
+            branch_name: branch_name.as_deref(),
+            deletion_mode: *deletion_mode,
+            target_branch: target_branch.as_deref(),
+            pre_computed_integration: *integration_reason,
+            force_worktree: *force_worktree,
+            expected_path: expected_path.as_deref(),
+            removed_commit: removed_commit.as_deref(),
             background,
             verify,
-        ),
+        }),
         RemoveResult::BranchOnly {
             branch_name,
             deletion_mode,
@@ -1004,22 +1004,38 @@ impl RemovalDisplayInfo {
 
 // ============================================================================
 
-/// Handle output for RemovedWorktree removal
-#[allow(clippy::too_many_arguments)]
-fn handle_removed_worktree_output(
-    main_path: &std::path::Path,
-    worktree_path: &std::path::Path,
+struct RemovedWorktreeOutputContext<'a> {
+    main_path: &'a Path,
+    worktree_path: &'a Path,
     changed_directory: bool,
-    branch_name: Option<&str>,
+    branch_name: Option<&'a str>,
     deletion_mode: BranchDeletionMode,
-    target_branch: Option<&str>,
+    target_branch: Option<&'a str>,
     pre_computed_integration: Option<IntegrationReason>,
     force_worktree: bool,
-    expected_path: Option<&PathBuf>,
-    removed_commit: Option<&str>,
+    expected_path: Option<&'a Path>,
+    removed_commit: Option<&'a str>,
     background: bool,
     verify: bool,
-) -> anyhow::Result<()> {
+}
+
+/// Handle output for RemovedWorktree removal
+fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
+    let RemovedWorktreeOutputContext {
+        main_path,
+        worktree_path,
+        changed_directory,
+        branch_name,
+        deletion_mode,
+        target_branch,
+        pre_computed_integration,
+        force_worktree,
+        expected_path,
+        removed_commit,
+        background,
+        verify,
+    } = ctx;
+
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
     let repo = worktrunk::git::Repository::at(main_path)?;
