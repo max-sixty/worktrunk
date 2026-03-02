@@ -128,6 +128,34 @@ fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     }
 }
 
+fn run_non_toggle_hook(
+    hook_type: HookType,
+    yes: bool,
+    name: Option<&str>,
+    vars: &[(String, String)],
+) -> anyhow::Result<()> {
+    run_hook(hook_type, yes, None, name, vars)
+}
+
+fn run_toggleable_hook(
+    hook_type: HookType,
+    yes: bool,
+    foreground: bool,
+    no_background: bool,
+    name: Option<&str>,
+    vars: &[(String, String)],
+) -> anyhow::Result<()> {
+    let foreground = is_foreground_mode(foreground, no_background);
+    run_hook(hook_type, yes, Some(foreground), name, vars)
+}
+
+fn warn_select_deprecated() {
+    eprintln!(
+        "{}",
+        warning_message("wt select is deprecated; use wt switch instead")
+    );
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -621,10 +649,10 @@ fn main() {
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
             HookCommand::PreSwitch { name, yes, vars } => {
-                run_hook(HookType::PreSwitch, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PreSwitch, yes, name.as_deref(), &vars)
             }
             HookCommand::PostCreate { name, yes, vars } => {
-                run_hook(HookType::PostCreate, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PostCreate, yes, name.as_deref(), &vars)
             }
             HookCommand::PostStart {
                 name,
@@ -632,43 +660,39 @@ fn main() {
                 foreground,
                 no_background,
                 vars,
-            } => {
-                let foreground = is_foreground_mode(foreground, no_background);
-                run_hook(
-                    HookType::PostStart,
-                    yes,
-                    Some(foreground),
-                    name.as_deref(),
-                    &vars,
-                )
-            }
+            } => run_toggleable_hook(
+                HookType::PostStart,
+                yes,
+                foreground,
+                no_background,
+                name.as_deref(),
+                &vars,
+            ),
             HookCommand::PostSwitch {
                 name,
                 yes,
                 foreground,
                 no_background,
                 vars,
-            } => {
-                let foreground = is_foreground_mode(foreground, no_background);
-                run_hook(
-                    HookType::PostSwitch,
-                    yes,
-                    Some(foreground),
-                    name.as_deref(),
-                    &vars,
-                )
-            }
+            } => run_toggleable_hook(
+                HookType::PostSwitch,
+                yes,
+                foreground,
+                no_background,
+                name.as_deref(),
+                &vars,
+            ),
             HookCommand::PreCommit { name, yes, vars } => {
-                run_hook(HookType::PreCommit, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PreCommit, yes, name.as_deref(), &vars)
             }
             HookCommand::PreMerge { name, yes, vars } => {
-                run_hook(HookType::PreMerge, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PreMerge, yes, name.as_deref(), &vars)
             }
             HookCommand::PostMerge { name, yes, vars } => {
-                run_hook(HookType::PostMerge, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PostMerge, yes, name.as_deref(), &vars)
             }
             HookCommand::PreRemove { name, yes, vars } => {
-                run_hook(HookType::PreRemove, yes, None, name.as_deref(), &vars)
+                run_non_toggle_hook(HookType::PreRemove, yes, name.as_deref(), &vars)
             }
             HookCommand::PostRemove {
                 name,
@@ -690,19 +714,13 @@ fn main() {
         #[cfg(unix)]
         Commands::Select { branches, remotes } => {
             // Deprecated: show warning and delegate to handle_select
-            eprintln!(
-                "{}",
-                warning_message("wt select is deprecated; use wt switch instead")
-            );
+            warn_select_deprecated();
 
             handle_select(branches, remotes)
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
-            eprintln!(
-                "{}",
-                warning_message("wt select is deprecated; use wt switch instead")
-            );
+            warn_select_deprecated();
             print_windows_picker_unavailable();
             std::process::exit(1);
         }
