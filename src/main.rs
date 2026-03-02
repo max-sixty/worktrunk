@@ -592,6 +592,20 @@ fn handle_list_command(
     }
 }
 
+#[cfg(unix)]
+fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
+    // Deprecated: show warning and delegate to handle_select
+    warn_select_deprecated();
+    handle_select(branches, remotes)
+}
+
+#[cfg(not(unix))]
+fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
+    warn_select_deprecated();
+    print_windows_picker_unavailable();
+    std::process::exit(1);
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -738,19 +752,7 @@ fn main() {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
-        #[cfg(unix)]
-        Commands::Select { branches, remotes } => {
-            // Deprecated: show warning and delegate to handle_select
-            warn_select_deprecated();
-
-            handle_select(branches, remotes)
-        }
-        #[cfg(not(unix))]
-        Commands::Select { .. } => {
-            warn_select_deprecated();
-            print_windows_picker_unavailable();
-            std::process::exit(1);
-        }
+        Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List {
             subcommand,
             format,
