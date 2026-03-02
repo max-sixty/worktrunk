@@ -314,6 +314,49 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     }
 }
 
+fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
+    match action {
+        StateCommand::DefaultBranch { action } => match action {
+            Some(DefaultBranchAction::Get) | None => handle_state_get("default-branch", None),
+            Some(DefaultBranchAction::Set { branch }) => {
+                handle_state_set("default-branch", branch, None)
+            }
+            Some(DefaultBranchAction::Clear) => handle_state_clear("default-branch", None, false),
+        },
+        StateCommand::PreviousBranch { action } => match action {
+            Some(PreviousBranchAction::Get) | None => handle_state_get("previous-branch", None),
+            Some(PreviousBranchAction::Set { branch }) => {
+                handle_state_set("previous-branch", branch, None)
+            }
+            Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
+        },
+        StateCommand::CiStatus { action } => match action {
+            Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
+            None => handle_state_get("ci-status", None),
+            Some(CiStatusAction::Clear { branch, all }) => {
+                handle_state_clear("ci-status", branch, all)
+            }
+        },
+        StateCommand::Marker { action } => match action {
+            Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
+            None => handle_state_get("marker", None),
+            Some(MarkerAction::Set { value, branch }) => handle_state_set("marker", value, branch),
+            Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
+        },
+        StateCommand::Logs { action } => match action {
+            Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
+            None => handle_logs_get(None, None),
+            Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
+        },
+        StateCommand::Hints { action } => match action {
+            Some(HintsAction::Get) | None => handle_hints_get(),
+            Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+        },
+        StateCommand::Get { format } => handle_state_show(format),
+        StateCommand::Clear => handle_state_clear_all(),
+    }
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -662,58 +705,7 @@ fn main() {
             ConfigCommand::Create { project } => handle_config_create(project),
             ConfigCommand::Show { full } => handle_config_show(full),
             ConfigCommand::Update { yes } => handle_config_update(yes),
-            ConfigCommand::State { action } => match action {
-                StateCommand::DefaultBranch { action } => match action {
-                    Some(DefaultBranchAction::Get) | None => {
-                        handle_state_get("default-branch", None)
-                    }
-                    Some(DefaultBranchAction::Set { branch }) => {
-                        handle_state_set("default-branch", branch, None)
-                    }
-                    Some(DefaultBranchAction::Clear) => {
-                        handle_state_clear("default-branch", None, false)
-                    }
-                },
-                StateCommand::PreviousBranch { action } => match action {
-                    Some(PreviousBranchAction::Get) | None => {
-                        handle_state_get("previous-branch", None)
-                    }
-                    Some(PreviousBranchAction::Set { branch }) => {
-                        handle_state_set("previous-branch", branch, None)
-                    }
-                    Some(PreviousBranchAction::Clear) => {
-                        handle_state_clear("previous-branch", None, false)
-                    }
-                },
-                StateCommand::CiStatus { action } => match action {
-                    Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
-                    None => handle_state_get("ci-status", None),
-                    Some(CiStatusAction::Clear { branch, all }) => {
-                        handle_state_clear("ci-status", branch, all)
-                    }
-                },
-                StateCommand::Marker { action } => match action {
-                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
-                    None => handle_state_get("marker", None),
-                    Some(MarkerAction::Set { value, branch }) => {
-                        handle_state_set("marker", value, branch)
-                    }
-                    Some(MarkerAction::Clear { branch, all }) => {
-                        handle_state_clear("marker", branch, all)
-                    }
-                },
-                StateCommand::Logs { action } => match action {
-                    Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
-                    None => handle_logs_get(None, None),
-                    Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
-                },
-                StateCommand::Hints { action } => match action {
-                    Some(HintsAction::Get) | None => handle_hints_get(),
-                    Some(HintsAction::Clear { name }) => handle_hints_clear(name),
-                },
-                StateCommand::Get { format } => handle_state_show(format),
-                StateCommand::Clear => handle_state_clear_all(),
-            },
+            ConfigCommand::State { action } => handle_state_command(action),
         },
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
