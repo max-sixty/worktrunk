@@ -606,7 +606,7 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     std::process::exit(1);
 }
 
-fn handle_switch_command(
+struct SwitchCommandSpec {
     branch: Option<String>,
     branches: bool,
     remotes: bool,
@@ -618,21 +618,23 @@ fn handle_switch_command(
     clobber: bool,
     no_cd: bool,
     verify: bool,
-) -> anyhow::Result<()> {
+}
+
+fn handle_switch_command(spec: SwitchCommandSpec) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
-            let Some(branch) = branch else {
+            let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(branches, remotes);
+                    return handle_select(spec.branches, spec.remotes);
                 }
 
                 #[cfg(not(unix))]
                 {
                     // Suppress unused variable warnings on Windows
-                    let _ = (branches, remotes);
+                    let _ = (spec.branches, spec.remotes);
 
                     print_windows_picker_unavailable();
                     std::process::exit(2);
@@ -642,14 +644,14 @@ fn handle_switch_command(
             handle_switch(
                 SwitchOptions {
                     branch: &branch,
-                    create,
-                    base: base.as_deref(),
-                    execute: execute.as_deref(),
-                    execute_args: &execute_args,
-                    yes,
-                    clobber,
-                    change_dir: !no_cd,
-                    verify,
+                    create: spec.create,
+                    base: spec.base.as_deref(),
+                    execute: spec.execute.as_deref(),
+                    execute_args: &spec.execute_args,
+                    yes: spec.yes,
+                    clobber: spec.clobber,
+                    change_dir: !spec.no_cd,
+                    verify: spec.verify,
                 },
                 &mut config,
                 &binary_name(),
@@ -833,7 +835,7 @@ fn main() {
             clobber,
             no_cd,
             verify,
-        } => handle_switch_command(
+        } => handle_switch_command(SwitchCommandSpec {
             branch,
             branches,
             remotes,
@@ -845,7 +847,7 @@ fn main() {
             clobber,
             no_cd,
             verify,
-        ),
+        }),
         Commands::Remove {
             branches,
             delete_branch,
