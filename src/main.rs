@@ -555,6 +555,43 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
     }
 }
 
+fn handle_list_command(
+    subcommand: Option<ListSubcommand>,
+    format: OutputFormat,
+    branches: bool,
+    remotes: bool,
+    full: bool,
+    progressive: bool,
+    no_progressive: bool,
+) -> anyhow::Result<()> {
+    match subcommand {
+        Some(ListSubcommand::Statusline {
+            format,
+            claude_code,
+        }) => {
+            // Hidden --claude-code flag only applies when format is default (Table)
+            // Explicit --format=json takes precedence over --claude-code
+            let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
+                OutputFormat::ClaudeCode
+            } else {
+                format
+            };
+            commands::statusline::run(effective_format)
+        }
+        None => (|| {
+            let (repo, _recovered) = current_or_recover()?;
+
+            let progressive_opt = match (progressive, no_progressive) {
+                (true, _) => Some(true),
+                (_, true) => Some(false),
+                _ => None,
+            };
+            let render_mode = RenderMode::detect(progressive_opt);
+            handle_list(repo, format, branches, remotes, full, render_mode)
+        })(),
+    }
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -722,32 +759,15 @@ fn main() {
             full,
             progressive,
             no_progressive,
-        } => match subcommand {
-            Some(ListSubcommand::Statusline {
-                format,
-                claude_code,
-            }) => {
-                // Hidden --claude-code flag only applies when format is default (Table)
-                // Explicit --format=json takes precedence over --claude-code
-                let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
-                    OutputFormat::ClaudeCode
-                } else {
-                    format
-                };
-                commands::statusline::run(effective_format)
-            }
-            None => (|| {
-                let (repo, _recovered) = current_or_recover()?;
-
-                let progressive_opt = match (progressive, no_progressive) {
-                    (true, _) => Some(true),
-                    (_, true) => Some(false),
-                    _ => None,
-                };
-                let render_mode = RenderMode::detect(progressive_opt);
-                handle_list(repo, format, branches, remotes, full, render_mode)
-            })(),
-        },
+        } => handle_list_command(
+            subcommand,
+            format,
+            branches,
+            remotes,
+            full,
+            progressive,
+            no_progressive,
+        ),
         Commands::Switch {
             branch,
             branches,
