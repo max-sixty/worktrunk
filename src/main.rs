@@ -156,6 +156,17 @@ fn warn_select_deprecated() {
     );
 }
 
+fn shell_extension_descriptor(shell: worktrunk::shell::Shell) -> &'static str {
+    if matches!(
+        shell,
+        worktrunk::shell::Shell::Bash | worktrunk::shell::Shell::Zsh
+    ) {
+        "shell extension & completions"
+    } else {
+        "shell extension"
+    }
+}
+
 fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
     match action {
         HookCommand::Show {
@@ -417,15 +428,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                     for result in &scan_result.results {
                         let shell = result.shell;
                         let path = format_path_for_display(&result.path);
-                        // For bash/zsh, completions are inline in the init script
-                        let what = if matches!(
-                            shell,
-                            worktrunk::shell::Shell::Bash | worktrunk::shell::Shell::Zsh
-                        ) {
-                            "shell extension & completions"
-                        } else {
-                            "shell extension"
-                        };
+                        let what = shell_extension_descriptor(shell);
 
                         eprintln!(
                             "{}",
@@ -454,14 +457,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                     for (shell, path) in &scan_result.not_found {
                         let path = format_path_for_display(path);
                         // Use consistent terminology matching install/uninstall messages
-                        let what = if matches!(
-                            shell,
-                            worktrunk::shell::Shell::Bash | worktrunk::shell::Shell::Zsh
-                        ) {
-                            "shell extension & completions"
-                        } else {
-                            "shell extension"
-                        };
+                        let what = shell_extension_descriptor(*shell);
                         if explicit_shell {
                             eprintln!("{}", warning_message(format!("No {what} found in {path}")));
                         } else {
