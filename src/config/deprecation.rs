@@ -649,6 +649,15 @@ impl DeprecationInfo {
     }
 }
 
+fn migration_path(path: &Path) -> PathBuf {
+    // config.toml -> config.toml.new
+    // config -> config.new
+    match path.extension() {
+        Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
+        None => path.with_extension("new"),
+    }
+}
+
 /// Check config content for deprecated patterns and optionally create migration file
 ///
 /// Detects and migrates:
@@ -699,12 +708,7 @@ pub fn check_and_migrate(
         return Ok(None);
     }
 
-    // Build the .new path: "config.toml" -> "config.toml.new"
-    // For files without extension: "config" -> "config.new" (not "config..new")
-    let new_path = match path.extension() {
-        Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
-        None => path.with_extension("new"),
-    };
+    let new_path = migration_path(path);
 
     // Skip writing if: (a) this is a brief warning (not `wt config show`), AND
     //                  (b) migration file already exists
@@ -818,11 +822,7 @@ pub fn write_migration_file(
     deprecations: &Deprecations,
     repo: Option<&crate::git::Repository>,
 ) -> Option<PathBuf> {
-    // Build the .new path: "config.toml" -> "config.toml.new"
-    let new_path = path.with_extension(format!(
-        "{}.new",
-        path.extension().unwrap_or_default().to_string_lossy()
-    ));
+    let new_path = migration_path(path);
 
     // Apply all migrations to generate new content
     let mut new_content = content.to_string();
@@ -1370,10 +1370,7 @@ approved-commands = [
     fn test_migration_path_with_extension() {
         // config.toml -> config.toml.new
         let path = std::path::Path::new("/tmp/config.toml");
-        let new_path = match path.extension() {
-            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
-            None => path.with_extension("new"),
-        };
+        let new_path = migration_path(path);
         assert_eq!(new_path.to_str().unwrap(), "/tmp/config.toml.new");
     }
 
@@ -1381,10 +1378,7 @@ approved-commands = [
     fn test_migration_path_without_extension() {
         // config -> config.new (not config..new)
         let path = std::path::Path::new("/tmp/config");
-        let new_path = match path.extension() {
-            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
-            None => path.with_extension("new"),
-        };
+        let new_path = migration_path(path);
         assert_eq!(new_path.to_str().unwrap(), "/tmp/config.new");
     }
 
@@ -1393,10 +1387,7 @@ approved-commands = [
         // .hidden -> .hidden.new (not .hidden..new)
         // Note: .hidden has no extension (the dot is part of the filename)
         let path = std::path::Path::new("/tmp/.hidden");
-        let new_path = match path.extension() {
-            Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
-            None => path.with_extension("new"),
-        };
+        let new_path = migration_path(path);
         assert_eq!(new_path.to_str().unwrap(), "/tmp/.hidden.new");
     }
 
