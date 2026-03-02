@@ -545,6 +545,16 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
     }
 }
 
+fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
+    match action {
+        ConfigCommand::Shell { action } => handle_config_shell_command(action),
+        ConfigCommand::Create { project } => handle_config_create(project),
+        ConfigCommand::Show { full } => handle_config_show(full),
+        ConfigCommand::Update { yes } => handle_config_update(yes),
+        ConfigCommand::State { action } => handle_state_command(action),
+    }
+}
+
 fn main() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
@@ -688,13 +698,7 @@ fn main() {
     };
 
     let result = match command {
-        Commands::Config { action } => match action {
-            ConfigCommand::Shell { action } => handle_config_shell_command(action),
-            ConfigCommand::Create { project } => handle_config_create(project),
-            ConfigCommand::Show { full } => handle_config_show(full),
-            ConfigCommand::Update { yes } => handle_config_update(yes),
-            ConfigCommand::State { action } => handle_state_command(action),
-        },
+        Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
         #[cfg(unix)]
