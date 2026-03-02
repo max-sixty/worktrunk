@@ -332,25 +332,14 @@ pub fn run_hook_with_filter(
     spec: HookCommandSpec<'_, '_, '_, '_>,
     failure_strategy: HookFailureStrategy,
 ) -> anyhow::Result<()> {
+    let commands = prepare_hook_commands(ctx, spec)?;
     let HookCommandSpec {
         user_config,
         project_config,
         hook_type,
-        extra_vars,
         name_filter,
-        display_path,
+        ..
     } = spec;
-    let commands = prepare_hook_commands(
-        ctx,
-        HookCommandSpec {
-            user_config,
-            project_config,
-            hook_type,
-            extra_vars,
-            name_filter,
-            display_path,
-        },
-    )?;
 
     check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
 

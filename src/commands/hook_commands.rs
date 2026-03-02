@@ -32,6 +32,75 @@ use super::hooks::{
 };
 use super::project_config::collect_commands_for_hooks;
 
+fn run_filtered_hook(
+    ctx: &CommandContext,
+    user_config: Option<&CommandConfig>,
+    project_config: Option<&CommandConfig>,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    name_filter: Option<&str>,
+    failure_strategy: HookFailureStrategy,
+) -> anyhow::Result<()> {
+    run_hook_with_filter(
+        ctx,
+        HookCommandSpec {
+            user_config,
+            project_config,
+            hook_type,
+            extra_vars,
+            name_filter,
+            display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
+        },
+        failure_strategy,
+    )
+}
+
+fn run_post_hook(
+    ctx: &CommandContext,
+    foreground: Option<bool>,
+    user_config: Option<&CommandConfig>,
+    project_config: Option<&CommandConfig>,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    name_filter: Option<&str>,
+) -> anyhow::Result<()> {
+    // Default to background execution; --foreground is for debugging.
+    if !foreground.unwrap_or(false) {
+        let commands = prepare_hook_commands(
+            ctx,
+            HookCommandSpec {
+                user_config,
+                project_config,
+                hook_type,
+                extra_vars,
+                name_filter,
+                display_path: None,
+            },
+        )?;
+        check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+        return spawn_background_hooks(ctx, commands);
+    }
+
+    run_filtered_hook(
+        ctx,
+        user_config,
+        project_config,
+        hook_type,
+        extra_vars,
+        name_filter,
+        HookFailureStrategy::Warn,
+    )
+}
+
+fn build_target_vars<'a>(
+    target: Option<&'a str>,
+    custom_vars: &'a [(&'a str, &'a str)],
+) -> Vec<(&'a str, &'a str)> {
+    let mut vars: Vec<(&str, &str)> = target.into_iter().map(|t| ("target", t)).collect();
+    vars.extend(custom_vars.iter().copied());
+    vars
+}
+
 /// Handle `wt hook` command
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
@@ -103,119 +172,32 @@ pub fn run_hook(
 
     // Execute the hook based on type
     match hook_type {
-        HookType::PreSwitch => {
+        HookType::PreSwitch | HookType::PostCreate | HookType::PreRemove => {
             let (user_config, project_config) = hook_configs(hook_type);
             require_hooks(user_config, project_config, hook_type)?;
             // Manual wt hook: user stays at cwd (no cd happens)
-            run_hook_with_filter(
+            run_filtered_hook(
                 &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &custom_vars_refs,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
+                user_config,
+                project_config,
+                hook_type,
+                &custom_vars_refs,
+                name_filter,
                 HookFailureStrategy::FailFast,
             )
         }
-        HookType::PostCreate => {
+        HookType::PostStart | HookType::PostSwitch | HookType::PostRemove => {
             let (user_config, project_config) = hook_configs(hook_type);
             require_hooks(user_config, project_config, hook_type)?;
-            // Manual wt hook: user stays at cwd (no cd happens)
-            run_hook_with_filter(
+            run_post_hook(
                 &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &custom_vars_refs,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
-                HookFailureStrategy::FailFast,
+                foreground,
+                user_config,
+                project_config,
+                hook_type,
+                &custom_vars_refs,
+                name_filter,
             )
-        }
-        HookType::PostStart => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-
-            // Default to background (matching normal behavior during switch)
-            // Use --foreground to run in foreground for debugging
-            if !foreground.unwrap_or(false) {
-                let commands = prepare_hook_commands(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: None,
-                    },
-                )?;
-                check_name_filter_matched(
-                    name_filter,
-                    commands.len(),
-                    user_config,
-                    project_config,
-                )?;
-                spawn_background_hooks(&ctx, commands)
-            } else {
-                run_hook_with_filter(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                    },
-                    HookFailureStrategy::Warn,
-                )
-            }
-        }
-        HookType::PostSwitch => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-
-            // Default to background (matching normal behavior during switch)
-            // Use --foreground to run in foreground for debugging
-            if !foreground.unwrap_or(false) {
-                let commands = prepare_hook_commands(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: None,
-                    },
-                )?;
-                check_name_filter_matched(
-                    name_filter,
-                    commands.len(),
-                    user_config,
-                    project_config,
-                )?;
-                spawn_background_hooks(&ctx, commands)
-            } else {
-                run_hook_with_filter(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                    },
-                    HookFailureStrategy::Warn,
-                )
-            }
         }
         HookType::PreCommit => {
             let (user_config, project_config) = hook_configs(hook_type);
@@ -223,23 +205,15 @@ pub fn run_hook(
             // Pre-commit hook can optionally use target branch context
             // Custom vars take precedence (added last)
             let target_branch = repo.default_branch();
-            let mut extra_vars: Vec<(&str, &str)> = target_branch
-                .as_deref()
-                .into_iter()
-                .map(|t| ("target", t))
-                .collect();
-            extra_vars.extend(&custom_vars_refs);
+            let extra_vars = build_target_vars(target_branch.as_deref(), &custom_vars_refs);
             // Manual wt hook: user stays at cwd (no cd happens)
-            run_hook_with_filter(
+            run_filtered_hook(
                 &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &extra_vars,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
+                user_config,
+                project_config,
+                hook_type,
+                &extra_vars,
+                name_filter,
                 HookFailureStrategy::FailFast,
             )
         }
@@ -247,18 +221,14 @@ pub fn run_hook(
             let (user_config, project_config) = hook_configs(hook_type);
             require_hooks(user_config, project_config, hook_type)?;
             // Use current branch as target (matches approval prompt for wt hook)
-            let mut vars = vec![("target", ctx.branch_or_head())];
-            vars.extend(custom_vars_refs.iter().cloned());
-            run_hook_with_filter(
+            let vars = build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs);
+            run_filtered_hook(
                 &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &vars,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
+                user_config,
+                project_config,
+                hook_type,
+                &vars,
+                name_filter,
                 HookFailureStrategy::FailFast,
             )
         }
@@ -266,77 +236,16 @@ pub fn run_hook(
             let (user_config, project_config) = hook_configs(hook_type);
             require_hooks(user_config, project_config, hook_type)?;
             // Manual wt hook: user stays at cwd (no cd happens)
-            let mut vars = vec![("target", ctx.branch_or_head())];
-            vars.extend(custom_vars_refs.iter().cloned());
-            run_hook_with_filter(
+            let vars = build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs);
+            run_filtered_hook(
                 &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &vars,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
+                user_config,
+                project_config,
+                hook_type,
+                &vars,
+                name_filter,
                 HookFailureStrategy::Warn,
             )
-        }
-        HookType::PreRemove => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            // Manual wt hook: user stays at cwd (no cd happens)
-            run_hook_with_filter(
-                &ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars: &custom_vars_refs,
-                    name_filter,
-                    display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                },
-                HookFailureStrategy::FailFast,
-            )
-        }
-        HookType::PostRemove => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-
-            // Default to background (matching normal behavior during remove)
-            // Use --foreground to run in foreground for debugging
-            if !foreground.unwrap_or(false) {
-                let commands = prepare_hook_commands(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: None,
-                    },
-                )?;
-                check_name_filter_matched(
-                    name_filter,
-                    commands.len(),
-                    user_config,
-                    project_config,
-                )?;
-                spawn_background_hooks(&ctx, commands)
-            } else {
-                run_hook_with_filter(
-                    &ctx,
-                    HookCommandSpec {
-                        user_config,
-                        project_config,
-                        hook_type,
-                        extra_vars: &custom_vars_refs,
-                        name_filter,
-                        display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-                    },
-                    HookFailureStrategy::Warn,
-                )
-            }
         }
     }
 }
