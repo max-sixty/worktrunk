@@ -7,7 +7,7 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::HookFailureStrategy;
+use super::hooks::{HookCommandSpec, HookFailureStrategy};
 use super::repository_ext::RepositoryCliExt;
 
 // Re-export StageMode from config for use by CLI
@@ -182,15 +182,17 @@ impl CommitOptions<'_> {
             // Run pre-commit hooks (user first, then project)
             super::hooks::run_hook_with_filter(
                 self.ctx,
-                user_hooks.pre_commit.as_ref(),
-                project_config
-                    .as_ref()
-                    .and_then(|c| c.hooks.pre_commit.as_ref()),
-                HookType::PreCommit,
-                &extra_vars,
+                HookCommandSpec {
+                    user_config: user_hooks.pre_commit.as_ref(),
+                    project_config: project_config
+                        .as_ref()
+                        .and_then(|c| c.hooks.pre_commit.as_ref()),
+                    hook_type: HookType::PreCommit,
+                    extra_vars: &extra_vars,
+                    name_filter: None,
+                    display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
+                },
                 HookFailureStrategy::FailFast,
-                None,
-                crate::output::pre_hook_display_path(self.ctx.worktree_path),
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }

@@ -66,6 +66,9 @@ use cli::{
 };
 use worktrunk::HookType;
 
+const NO_BACKGROUND_DEPRECATED_MSG: &str =
+    "--no-background is deprecated; use --foreground instead";
+
 /// Enhance clap errors with command-specific hints, then exit.
 ///
 /// For unrecognized subcommands that match nested commands, suggests the full path.
@@ -90,6 +93,39 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     // so this error enhancement is no longer triggered for that case.
 
     err.exit()
+}
+
+fn warn_no_background_deprecated() {
+    eprintln!("{}", warning_message(NO_BACKGROUND_DEPRECATED_MSG));
+}
+
+#[cfg(not(unix))]
+fn print_windows_picker_unavailable() {
+    eprintln!(
+        "{}",
+        error_message("Interactive picker is not available on Windows")
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Specify a branch: <bright-black>wt switch BRANCH</>"
+        ))
+    );
+}
+
+fn is_foreground_mode(foreground: bool, no_background: bool) -> bool {
+    if no_background {
+        warn_no_background_deprecated();
+    }
+    foreground || no_background
+}
+
+fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+    match (positive, negative) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
 }
 
 fn main() {
@@ -597,16 +633,11 @@ fn main() {
                 no_background,
                 vars,
             } => {
-                if no_background {
-                    eprintln!(
-                        "{}",
-                        warning_message("--no-background is deprecated; use --foreground instead")
-                    );
-                }
+                let foreground = is_foreground_mode(foreground, no_background);
                 run_hook(
                     HookType::PostStart,
                     yes,
-                    Some(foreground || no_background),
+                    Some(foreground),
                     name.as_deref(),
                     &vars,
                 )
@@ -618,16 +649,11 @@ fn main() {
                 no_background,
                 vars,
             } => {
-                if no_background {
-                    eprintln!(
-                        "{}",
-                        warning_message("--no-background is deprecated; use --foreground instead")
-                    );
-                }
+                let foreground = is_foreground_mode(foreground, no_background);
                 run_hook(
                     HookType::PostSwitch,
                     yes,
-                    Some(foreground || no_background),
+                    Some(foreground),
                     name.as_deref(),
                     &vars,
                 )
@@ -677,16 +703,7 @@ fn main() {
                 "{}",
                 warning_message("wt select is deprecated; use wt switch instead")
             );
-            eprintln!(
-                "{}",
-                error_message("Interactive picker is not available on Windows")
-            );
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Specify a branch: <bright-black>wt switch BRANCH</>"
-                ))
-            );
+            print_windows_picker_unavailable();
             std::process::exit(1);
         }
         Commands::List {
@@ -750,16 +767,7 @@ fn main() {
                         // Suppress unused variable warnings on Windows
                         let _ = (branches, remotes);
 
-                        eprintln!(
-                            "{}",
-                            error_message("Interactive picker is not available on Windows")
-                        );
-                        eprintln!(
-                            "{}",
-                            hint_message(cformat!(
-                                "Specify a branch: <bright-black>wt switch BRANCH</>"
-                            ))
-                        );
+                        print_windows_picker_unavailable();
                         std::process::exit(2);
                     }
                 };
@@ -792,14 +800,7 @@ fn main() {
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
-                // Handle deprecated --no-background flag
-                if no_background {
-                    eprintln!(
-                        "{}",
-                        warning_message("--no-background is deprecated; use --foreground instead")
-                    );
-                }
-                let background = !(foreground || no_background);
+                let background = !is_foreground_mode(foreground, no_background);
 
                 // Validate conflicting flags
                 if !delete_branch && force_delete {
@@ -999,15 +1000,6 @@ fn main() {
             yes,
             stage,
         } => {
-            // Convert paired flags to Option<bool>
-            fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
-                match (positive, negative) {
-                    (true, _) => Some(true),
-                    (_, true) => Some(false),
-                    _ => None,
-                }
-            }
-
             // Pass CLI flags as options; handle_merge determines effective defaults
             // using per-project config merged with global config
             handle_merge(MergeOptions {

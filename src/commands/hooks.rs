@@ -75,6 +75,17 @@ pub enum HookFailureStrategy {
 // Re-export for backward compatibility with existing imports
 pub use super::hook_filter::{HookSource, ParsedFilter};
 
+/// Shared hook selection and rendering inputs for preparation/execution.
+#[derive(Clone, Copy)]
+pub struct HookCommandSpec<'cfg, 'vars, 'name, 'path> {
+    pub user_config: Option<&'cfg CommandConfig>,
+    pub project_config: Option<&'cfg CommandConfig>,
+    pub hook_type: HookType,
+    pub extra_vars: &'vars [(&'vars str, &'vars str)],
+    pub name_filter: Option<&'name str>,
+    pub display_path: Option<&'path Path>,
+}
+
 /// Prepare hook commands from both user and project configs.
 ///
 /// Collects commands from user config first, then project config, applying the name filter.
@@ -83,16 +94,19 @@ pub use super::hook_filter::{HookSource, ParsedFilter};
 ///
 /// `display_path`: When `Some`, the path is shown in hook announcements (e.g., "@ ~/repo").
 /// Use this when commands run in a different directory than where the user invoked the command.
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_hook_commands(
     ctx: &CommandContext,
-    user_config: Option<&CommandConfig>,
-    project_config: Option<&CommandConfig>,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
-    display_path: Option<&Path>,
+    spec: HookCommandSpec<'_, '_, '_, '_>,
 ) -> anyhow::Result<Vec<SourcedCommand>> {
+    let HookCommandSpec {
+        user_config,
+        project_config,
+        hook_type,
+        extra_vars,
+        name_filter,
+        display_path,
+    } = spec;
+
     let parsed_filter = name_filter.map(ParsedFilter::parse);
     let mut commands = Vec::new();
 
@@ -313,25 +327,29 @@ pub(crate) fn check_name_filter_matched(
 ///
 /// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
 /// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
-#[allow(clippy::too_many_arguments)]
 pub fn run_hook_with_filter(
     ctx: &CommandContext,
-    user_config: Option<&CommandConfig>,
-    project_config: Option<&CommandConfig>,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
+    spec: HookCommandSpec<'_, '_, '_, '_>,
     failure_strategy: HookFailureStrategy,
-    name_filter: Option<&str>,
-    display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let commands = prepare_hook_commands(
-        ctx,
+    let HookCommandSpec {
         user_config,
         project_config,
         hook_type,
         extra_vars,
         name_filter,
         display_path,
+    } = spec;
+    let commands = prepare_hook_commands(
+        ctx,
+        HookCommandSpec {
+            user_config,
+            project_config,
+            hook_type,
+            extra_vars,
+            name_filter,
+            display_path,
+        },
     )?;
 
     check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
@@ -437,13 +455,15 @@ pub fn execute_hook(
 
     run_hook_with_filter(
         ctx,
-        user_config,
-        proj_config,
-        hook_type,
-        extra_vars,
+        HookCommandSpec {
+            user_config,
+            project_config: proj_config,
+            hook_type,
+            extra_vars,
+            name_filter,
+            display_path,
+        },
         failure_strategy,
-        name_filter,
-        display_path,
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
@@ -470,12 +490,14 @@ pub(crate) fn prepare_background_hooks(
 
     prepare_hook_commands(
         ctx,
-        user_config,
-        proj_config,
-        hook_type,
-        extra_vars,
-        None, // no filter for automatic background hooks
-        display_path,
+        HookCommandSpec {
+            user_config,
+            project_config: proj_config,
+            hook_type,
+            extra_vars,
+            name_filter: None, // no filter for automatic background hooks
+            display_path,
+        },
     )
 }
 

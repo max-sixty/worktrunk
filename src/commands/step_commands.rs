@@ -32,7 +32,7 @@ use worktrunk::styling::{
 use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, run_hook_with_filter};
+use super::hooks::{HookCommandSpec, HookFailureStrategy, run_hook_with_filter};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
 use crate::output::handle_remove_output;
@@ -192,15 +192,17 @@ pub fn handle_squash(
         let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,
-            user_hooks.pre_commit.as_ref(),
-            project_config
-                .as_ref()
-                .and_then(|c| c.hooks.pre_commit.as_ref()),
-            HookType::PreCommit,
-            &extra_vars,
+            HookCommandSpec {
+                user_config: user_hooks.pre_commit.as_ref(),
+                project_config: project_config
+                    .as_ref()
+                    .and_then(|c| c.hooks.pre_commit.as_ref()),
+                hook_type: HookType::PreCommit,
+                extra_vars: &extra_vars,
+                name_filter: None,
+                display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
+            },
             HookFailureStrategy::FailFast,
-            None,
-            crate::output::pre_hook_display_path(ctx.worktree_path),
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
