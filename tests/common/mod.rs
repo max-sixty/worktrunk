@@ -683,6 +683,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
             cmd.env_remove(&key);
         }
     }
+    // Prevent host environment from disabling ANSI in snapshots.
+    // NO_COLOR can override CLICOLOR_FORCE in downstream output handling.
+    cmd.env_remove("NO_COLOR");
     // Set to non-existent path to prevent loading user's real config.
     // Tests that need config should use TestRepo::configure_wt_cmd() which overrides this.
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
