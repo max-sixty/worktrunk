@@ -968,11 +968,7 @@ fn test_copy_ignored_skips_vcs_metadata_dirs(mut repo: TestRepo) {
     // Also create a regular ignored file that SHOULD be copied
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
 
-    fs::write(
-        repo.root_path().join(".gitignore"),
-        ".jj/\n.hg/\n.env\n",
-    )
-    .unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".jj/\n.hg/\n.env\n").unwrap();
 
     // Run copy-ignored
     assert_cmd_snapshot!(make_snapshot_cmd(
