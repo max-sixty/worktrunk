@@ -27,7 +27,9 @@ gh issue view $ARGUMENTS --json title,body,labels,author
 Classify into one of:
 
 - **Bug report** — describes unexpected behavior, includes steps to reproduce or
-  error output
+  error output. **Regression language** in the title or body ("no longer works",
+  "stopped working", "used to work", "broken after", "are no longer") is a
+  strong signal for bug report even if the body is terse.
 - **Feature request** — asks for new functionality or behavior changes
 - **Question** — asks how to do something or how something works
 - **Other** — doesn't fit the above categories
