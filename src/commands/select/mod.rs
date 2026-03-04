@@ -21,12 +21,22 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, handle_remove, plan_switch,
 };
-use crate::output::handle_switch_output;
+use crate::output::{handle_remove_output, handle_switch_output};
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
+
+/// Action selected by the user in the picker.
+enum PickerAction {
+    /// Switch to the selected worktree (Enter key).
+    Switch,
+    /// Create a new worktree from the search query (alt-c).
+    Create,
+    /// Delete the selected worktree (alt-d).
+    Delete,
+}
 
 pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
@@ -203,6 +213,8 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
             ),
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
+            // Delete selected worktree (alt-d for "delete")
+            "alt-d:accept(delete)".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -288,78 +300,120 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     if let Some(out) = output
         && !out.is_abort
     {
-        // Determine if user wants to create a new worktree (alt-n) or switch to existing (enter)
-        let create_new =
-            matches!(out.final_event, Event::EvActAccept(Some(ref label)) if label == "create");
+        // Determine action: create (alt-c), delete (alt-d), or switch (enter)
+        let action = match &out.final_event {
+            Event::EvActAccept(Some(label)) if label == "create" => PickerAction::Create,
+            Event::EvActAccept(Some(label)) if label == "delete" => PickerAction::Delete,
+            _ => PickerAction::Switch,
+        };
 
-        // Get branch name: from query if creating new, from selected item if switching
-        let (identifier, should_create) = if create_new {
-            let query = out.query.trim().to_string();
-            if query.is_empty() {
-                anyhow::bail!("Cannot create worktree: no branch name entered");
+        match action {
+            PickerAction::Delete => {
+                // Get the selected worktree's branch name
+                let selected = out
+                    .selected_items
+                    .first()
+                    .expect("skim accept has selection");
+                let branch_name = selected.output().to_string();
+
+                let config = repo.user_config();
+
+                // Safe removal: no force-delete (-D), no force-worktree (-f)
+                let result = handle_remove(
+                    &branch_name,
+                    false, // no_delete_branch: delete branch (default behavior)
+                    false, // force_delete: no -D
+                    false, // force_worktree: no -f
+                    config,
+                )
+                .context("Failed to remove worktree")?;
+
+                // Execute removal in foreground, no hooks, not quiet
+                handle_remove_output(&result, false, false, false)?;
             }
-            (query, true)
-        } else {
-            // Enter pressed: skim accept always includes a selection (abort handled above)
-            let selected = out
-                .selected_items
-                .first()
-                .expect("skim accept has selection");
-            (selected.output().to_string(), false)
-        };
+            PickerAction::Create | PickerAction::Switch => {
+                let should_create = matches!(action, PickerAction::Create);
 
-        // Load config — reuse recovered repo if we recovered earlier
-        let repo = if is_recovered {
-            repo.clone()
-        } else {
-            Repository::current().context("Failed to switch worktree")?
-        };
-        let config = repo.user_config();
+                // Get branch name: from query if creating new, from selected item if switching
+                let identifier = if should_create {
+                    let query = out.query.trim().to_string();
+                    if query.is_empty() {
+                        anyhow::bail!("Cannot create worktree: no branch name entered");
+                    }
+                    query
+                } else {
+                    // Enter pressed: skim accept always includes a selection (abort handled above)
+                    let selected = out
+                        .selected_items
+                        .first()
+                        .expect("skim accept has selection");
+                    selected.output().to_string()
+                };
 
-        // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
-        // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-        if !is_recovered {
-            run_pre_switch_hooks(&repo, config, true)?;
-        }
+                // Load config — reuse recovered repo if we recovered earlier
+                let repo = if is_recovered {
+                    repo.clone()
+                } else {
+                    Repository::current().context("Failed to switch worktree")?
+                };
+                let config = repo.user_config();
 
-        // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
-        let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
-        let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
+                // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+                // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+                if !is_recovered {
+                    run_pre_switch_hooks(&repo, config, true)?;
+                }
 
-        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
-        let branch_info = match &result {
-            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
-                SwitchBranchInfo {
-                    expected_path,
-                    ..branch_info
+                // Switch to existing worktree or create new one
+                let plan =
+                    plan_switch(&repo, &identifier, should_create, None, false, config)?;
+                let skip_hooks =
+                    !approve_switch_hooks(&repo, config, &plan, false, true)?;
+                let (result, branch_info) =
+                    execute_switch(&repo, plan, config, false, skip_hooks)?;
+
+                // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+                let branch_info = match &result {
+                    SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                        let expected_path =
+                            get_path_mismatch(&repo, &branch_info.branch, path, config);
+                        SwitchBranchInfo {
+                            expected_path,
+                            ..branch_info
+                        }
+                    }
+                    _ => branch_info,
+                };
+
+                // Show success message; emit cd directive if shell integration is active
+                // Interactive picker always performs cd (change_dir: true)
+                // When recovered from a deleted worktree, fall back to repo_path().
+                let fallback_path = repo.repo_path()?.to_path_buf();
+                let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
+                let source_root =
+                    repo.current_worktree().root().unwrap_or(fallback_path);
+                let hooks_display_path = handle_switch_output(
+                    &result,
+                    &branch_info,
+                    true,
+                    Some(&source_root),
+                    &cwd,
+                )?;
+
+                // Spawn background hooks after success message
+                if !skip_hooks {
+                    let extra_vars = switch_extra_vars(&result);
+                    spawn_switch_background_hooks(
+                        &repo,
+                        config,
+                        &result,
+                        &branch_info.branch,
+                        false,
+                        &extra_vars,
+                        hooks_display_path.as_deref(),
+                    )?;
                 }
             }
-            _ => branch_info,
-        };
-
-        // Show success message; emit cd directive if shell integration is active
-        // Interactive picker always performs cd (change_dir: true)
-        // When recovered from a deleted worktree, fall back to repo_path().
-        let fallback_path = repo.repo_path()?.to_path_buf();
-        let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
-        let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-        let hooks_display_path =
-            handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
-
-        // Spawn background hooks after success message
-        if !skip_hooks {
-            let extra_vars = switch_extra_vars(&result);
-            spawn_switch_background_hooks(
-                &repo,
-                config,
-                &result,
-                &branch_info.branch,
-                false,
-                &extra_vars,
-                hooks_display_path.as_deref(),
-            )?;
         }
     }
 
