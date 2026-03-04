@@ -166,11 +166,23 @@ fn find_git_bash() -> Option<PathBuf> {
         }
     }
 
-    // Fallback: standard Git for Windows path (needed on some CI environments
+    // Fallback: standard Git for Windows paths (needed on some CI environments
     // where `which` doesn't find git even though it's installed)
     let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
     if bash_path.exists() {
         return Some(bash_path);
+    }
+
+    // Per-user Git for Windows installation (default path when installed without admin rights)
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let bash_path = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Git")
+            .join("bin")
+            .join("bash.exe");
+        if bash_path.exists() {
+            return Some(bash_path);
+        }
     }
 
     None
