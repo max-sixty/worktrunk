@@ -314,7 +314,7 @@ fn spawn_detached_windows(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const DETACHED_PROCESS: u32 = 0x00000008;
 
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get()?;
 
     // Build the command based on shell type
     let mut cmd = if shell.is_posix() {
