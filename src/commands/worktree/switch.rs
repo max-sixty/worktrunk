@@ -266,12 +266,14 @@ fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result
 
 /// Detect which PR provider to use based on the repo's remote URLs.
 ///
-/// Checks origin remote first, then falls back to any remote.
+/// Checks the primary remote first (respects `checkout.defaultRemote`),
+/// then falls back to any remote.
 fn detect_pr_provider(repo: &Repository) -> anyhow::Result<Box<dyn RemoteRefProvider>> {
     let urls = repo.all_remote_urls();
 
-    // Check origin first
-    if let Some((_, url)) = urls.iter().find(|(name, _)| name == "origin")
+    // Check primary remote first (checkout.defaultRemote, or first remote with a URL)
+    if let Ok(primary) = repo.primary_remote()
+        && let Some((_, url)) = urls.iter().find(|(name, _)| name == &primary)
         && let Some(parsed) = GitRemoteUrl::parse(url)
     {
         if parsed.is_github() {
