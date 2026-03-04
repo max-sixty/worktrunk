@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.28.2
+
+### Improved
+
+- **`wt step prune` output**: Dirty or locked worktrees are silently skipped instead of printing warnings, and "No worktree found for branch" info messages are suppressed — prune output now shows only what was actually removed. ([#1236](https://github.com/max-sixty/worktrunk/pull/1236))
+
+### Fixed
+
+- **CWD removal hint**: After a worktree is removed while a shell is in that directory, the hint now checks whether `wt switch ^` would actually work before suggesting it — falls back to suggesting `wt list` when the default branch worktree doesn't exist (e.g., bare repos). ([#1238](https://github.com/max-sixty/worktrunk/pull/1238), thanks @davidbeesley for reporting [#1168](https://github.com/max-sixty/worktrunk/issues/1168))
+
+- **Submodule detection in worktree removal**: Submodule detection now uses `git submodule status` output instead of parsing error messages, avoiding locale-dependent and version-dependent string matching. ([#1247](https://github.com/max-sixty/worktrunk/pull/1247))
+
+### Internal
+
+- **Hook dispatch**: Introduced `HookCommandSpec` struct and extracted helper functions to deduplicate hook dispatch code (~50 lines net reduction). ([#1248](https://github.com/max-sixty/worktrunk/pull/1248))
+
+- **CI skills**: Fixed jq escaping in ad-hoc CI polling queries and improved Step 5 dismissal ordering in pr-review skill. ([#1241](https://github.com/max-sixty/worktrunk/pull/1241), [#1246](https://github.com/max-sixty/worktrunk/pull/1246))
+
 ## 0.28.1
 
 ### Improved
