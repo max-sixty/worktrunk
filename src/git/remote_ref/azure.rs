@@ -117,7 +117,10 @@ fn fetch_pr_info(pr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
 
     // Auto-detect org from git remote URL for zero-config experience
     if let Some(org) = detect_azure_org(repo_root) {
-        args.extend(["--org".to_string(), format!("https://dev.azure.com/{}", org)]);
+        args.extend([
+            "--org".to_string(),
+            format!("https://dev.azure.com/{}", org),
+        ]);
     }
 
     let output = match Cmd::new("az").args(&args).current_dir(repo_root).run() {

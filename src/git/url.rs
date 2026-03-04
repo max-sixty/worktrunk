@@ -1128,22 +1128,18 @@ mod tests {
     #[test]
     fn test_is_azure_devops() {
         // HTTPS format
-        let url =
-            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
         assert!(url.is_azure_devops());
         assert!(!url.is_github());
         assert!(!url.is_gitlab());
 
         // SSH format
-        let url =
-            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
         assert!(url.is_azure_devops());
 
         // Legacy visualstudio.com format
-        let url = GitRemoteUrl::parse(
-            "https://myorg.visualstudio.com/myproject/_git/myrepo",
-        )
-        .unwrap();
+        let url =
+            GitRemoteUrl::parse("https://myorg.visualstudio.com/myproject/_git/myrepo").unwrap();
         assert!(url.is_azure_devops());
 
         // GitHub should not match
@@ -1158,16 +1154,14 @@ mod tests {
     #[test]
     fn test_azure_devops_url_parsing() {
         // HTTPS: dev.azure.com/{org}/{project}/_git/{repo}
-        let url =
-            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
         assert_eq!(url.host(), "dev.azure.com");
         assert_eq!(url.repo(), "myrepo");
         // owner includes the full path: myorg/myproject/_git
         assert_eq!(url.owner(), "myorg/myproject/_git");
 
         // SSH: git@ssh.dev.azure.com:v3/{org}/{project}/{repo}
-        let url =
-            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
         assert_eq!(url.host(), "ssh.dev.azure.com");
         assert_eq!(url.repo(), "myrepo");
         // owner includes the v3 prefix: v3/myorg/myproject
@@ -1177,22 +1171,18 @@ mod tests {
     #[test]
     fn test_azure_organization_and_project() {
         // HTTPS format
-        let url =
-            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
         assert_eq!(url.azure_organization(), Some("myorg"));
         assert_eq!(url.azure_project(), Some("myproject"));
 
         // SSH format
-        let url =
-            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
         assert_eq!(url.azure_organization(), Some("myorg"));
         assert_eq!(url.azure_project(), Some("myproject"));
 
         // Legacy visualstudio.com format
-        let url = GitRemoteUrl::parse(
-            "https://myorg.visualstudio.com/myproject/_git/myrepo",
-        )
-        .unwrap();
+        let url =
+            GitRemoteUrl::parse("https://myorg.visualstudio.com/myproject/_git/myrepo").unwrap();
         assert_eq!(url.azure_organization(), Some("myorg"));
         assert_eq!(url.azure_project(), Some("myproject"));
 

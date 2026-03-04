@@ -63,7 +63,7 @@ wt switch --create temp --no-verify      # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:{N}` | GitHub PR #N's branch |
+| `pr:{N}` | GitHub/Azure DevOps PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash

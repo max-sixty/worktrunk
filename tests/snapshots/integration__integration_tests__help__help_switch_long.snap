@@ -141,13 +141,13 @@ When creating a worktree, worktrunk:
 
 [1m[32mShortcuts[0m
 
-   Shortcut            Meaning            
-   ──────── ───────────────────────────── 
-   [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)  
-   [2m@[0m        Current branch/worktree       
-   [2m-[0m        Previous worktree (like [2mcd -[0m) 
-   [2mpr:{N}[0m   GitHub PR #N's branch         
-   [2mmr:{N}[0m   GitLab MR !N's branch         
+   Shortcut              Meaning               
+   ──────── ────────────────────────────────── 
+   [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)       
+   [2m@[0m        Current branch/worktree            
+   [2m-[0m        Previous worktree (like [2mcd -[0m)      
+   [2mpr:{N}[0m   GitHub/Azure DevOps PR #N's branch 
+   [2mmr:{N}[0m   GitLab MR !N's branch              
 
   [2mwt switch -                      # Back to previous[0m
   [2mwt switch ^                      # Default branch worktree[0m

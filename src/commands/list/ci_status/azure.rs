@@ -7,8 +7,7 @@ use serde::Deserialize;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd,
-    parse_json,
+    CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd, parse_json,
 };
 
 /// Get Azure DevOps org URL from any Azure remote.
@@ -242,10 +241,7 @@ impl AzPrListEntry {
         let org_name = org.strip_prefix("https://dev.azure.com/")?;
         Some(format!(
             "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
-            org_name,
-            self.repository.project.name,
-            self.repository.name,
-            self.pull_request_id,
+            org_name, self.repository.project.name, self.repository.name, self.pull_request_id,
         ))
     }
 }
