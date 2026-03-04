@@ -302,8 +302,8 @@ description: new text here
 
 ### 5. Monitor CI
 
-**Skip this step** if the verdict was "stay silent" (self-authored PR with no
-concerns). There is no approval to dismiss on failure, so monitoring adds no
+**Skip this step** for self-authored PRs with no concerns (the react-only
+path). There is no approval to dismiss on failure, so monitoring adds no
 value.
 
 After approving, wait for CI to finish using `gh run watch` (consistent with
