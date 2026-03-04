@@ -56,6 +56,29 @@ fn snapshot_switch_impl(
     });
 }
 // Basic switch tests
+
+/// `wt switch origin/feature-a` should strip the remote prefix and switch
+/// to the existing worktree for `feature-a`.
+#[rstest]
+fn test_switch_strips_remote_prefix(repo: TestRepo) {
+    snapshot_switch(
+        "switch_strips_remote_prefix",
+        &repo,
+        &["origin/feature-a"],
+    );
+}
+
+/// `wt switch --create origin/new-branch` should strip the remote prefix
+/// and create a branch named `new-branch`, not `origin/new-branch`.
+#[rstest]
+fn test_switch_create_strips_remote_prefix(repo: TestRepo) {
+    snapshot_switch(
+        "switch_create_strips_remote_prefix",
+        &repo,
+        &["--create", "origin/new-branch"],
+    );
+}
+
 #[rstest]
 fn test_switch_create_new_branch(repo: TestRepo) {
     snapshot_switch("switch_create_new", &repo, &["--create", "feature-x"]);
