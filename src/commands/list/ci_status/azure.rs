@@ -197,8 +197,8 @@ pub(super) fn detect_azure_pipeline(
     // Construct web URL from org/project/build ID
     // (the `url` field in the API response is a REST API URL, not a browser link)
     let web_url = Some(format!(
-        "{}/_build/results?buildId={}",
-        org_url, run.id
+        "{}/{}/_build/results?buildId={}",
+        org_url, project, run.id
     ));
 
     Some(PrStatus {

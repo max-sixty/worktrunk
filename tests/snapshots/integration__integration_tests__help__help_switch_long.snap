@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -11,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -38,7 +40,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [36m[BRANCH][0m
           Branch name or shortcut[0m
           
-          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
+          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub/Azure DevOps PR), 'mr:{N}' (GitLab MR)[0m
 
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
@@ -194,6 +196,14 @@ The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. Fo
 Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m syntax since the branch already exists.
 
 [1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+[1m[32mAzure DevOps pull requests[0m
+
+The [2mpr:<number>[0m syntax also works for Azure DevOps repositories. The platform is auto-detected from git remote URLs — no configuration needed.
+
+  [2mwt switch pr:550                 # Checkout Azure DevOps PR #550[0m
+
+Requires [2maz[0m CLI with the [2mazure-devops[0m extension to be installed and authenticated ([2maz login[0m).
 
 [1m[32mGitLab merge requests[0m
 

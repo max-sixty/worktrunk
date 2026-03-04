@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/ci_status.rs
+assertion_line: 407
 info:
   program: wt
   args:
@@ -19,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -49,8 +51,8 @@ exit_code: 0
 [2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
-[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
-[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
-[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
-[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
-[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
+[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github', 'gitlab', or 'azuredevops'.
+[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github', 'gitlab', or 'azuredevops'.
+[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github', 'gitlab', or 'azuredevops'.
+[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github', 'gitlab', or 'azuredevops'.
+[2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github', 'gitlab', or 'azuredevops'.

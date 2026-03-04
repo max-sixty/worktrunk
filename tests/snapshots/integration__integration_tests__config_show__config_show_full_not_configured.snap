@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/config_show.rs
+assertion_line: 1189
 info:
   program: wt
   args:
@@ -20,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -32,7 +34,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
-    WORKTRUNK_TEST_LATEST_VERSION: 0.24.1
+    WORKTRUNK_TEST_LATEST_VERSION: 0.28.2
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -63,7 +65,7 @@ exit_code: 0
 [2m○[22m [1mclaude[22m CLI not installed
 
 [36mDIAGNOSTICS[39m
-[2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
+[2m↳[22m [2mCI status requires GitHub, GitLab, or Azure DevOps remote[22m
 [32m✓[39m [32mUp to date ([1m[VERSION][22m)[39m
 [2m↳[22m [2mCommit generation not configured[22m
 

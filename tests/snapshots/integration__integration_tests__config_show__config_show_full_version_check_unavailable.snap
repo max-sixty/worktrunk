@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/config_show.rs
+assertion_line: 1290
 info:
   program: wt
   args:
@@ -20,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -63,7 +65,7 @@ exit_code: 0
 [2m○[22m [1mclaude[22m CLI not installed
 
 [36mDIAGNOSTICS[39m
-[2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
+[2m↳[22m [2mCI status requires GitHub, GitLab, or Azure DevOps remote[22m
 [2m↳[22m [2mVersion check unavailable[22m
 [2m↳[22m [2mCommit generation not configured[22m
 

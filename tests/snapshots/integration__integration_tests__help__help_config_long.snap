@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -11,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -309,7 +311,7 @@ See [2mwt hook[0m for hook types, execution order, template variables, and exa
   [2m[0m
   [2m# Override CI platform detection for self-hosted instances[0m
   [2m[ci][0m
-  [2mplatform = "github"  # or "gitlab"[0m
+  [2mplatform = "github"  # or "gitlab" or "azuredevops"[0m
 
 [32mSHELL INTEGRATION[0m
 

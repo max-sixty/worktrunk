@@ -59,17 +59,11 @@ fn resolve_remote_ref(
     provider: &dyn RemoteRefProvider,
     number: u32,
     create: bool,
-    base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
     let symbol = ref_type.symbol();
 
-    // --base is invalid with pr:/mr: syntax (check early, no network needed)
-    if base.is_some() {
-        return Err(GitError::RefBaseConflict { ref_type, number }.into());
-    }
-
-    // Fetch ref info (network call via gh/glab CLI)
+    // Fetch ref info (network call via gh/glab/az CLI)
     eprintln!(
         "{}",
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
@@ -277,17 +271,17 @@ fn detect_pr_provider(repo: &Repository) -> anyhow::Result<Box<dyn RemoteRefProv
     let urls = repo.all_remote_urls();
 
     // Check origin first
-    if let Some((_, url)) = urls.iter().find(|(name, _)| name == "origin") {
-        if let Some(parsed) = GitRemoteUrl::parse(url) {
-            if parsed.is_github() {
-                return Ok(Box::new(GitHubProvider));
-            }
-            if parsed.is_azure_devops() {
-                return Ok(Box::new(AzureDevOpsProvider));
-            }
-            if parsed.is_gitlab() {
-                return Ok(Box::new(GitLabProvider));
-            }
+    if let Some((_, url)) = urls.iter().find(|(name, _)| name == "origin")
+        && let Some(parsed) = GitRemoteUrl::parse(url)
+    {
+        if parsed.is_github() {
+            return Ok(Box::new(GitHubProvider));
+        }
+        if parsed.is_azure_devops() {
+            return Ok(Box::new(AzureDevOpsProvider));
+        }
+        if parsed.is_gitlab() {
+            return Ok(Box::new(GitLabProvider));
         }
     }
 
@@ -328,10 +322,11 @@ fn find_azure_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<
 
     // Try to find remote matching the Azure DevOps repo
     for (remote_name, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url) {
-            if parsed.is_azure_devops() && parsed.repo() == repo_name {
-                return Ok(remote_name);
-            }
+        if let Some(parsed) = GitRemoteUrl::parse(&url)
+            && parsed.is_azure_devops()
+            && parsed.repo() == repo_name
+        {
+            return Ok(remote_name);
         }
     }
 
@@ -423,15 +418,31 @@ fn resolve_switch_target(
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
+        // --base is invalid with pr:/mr: syntax (check before network calls)
+        if base.is_some() {
+            return Err(GitError::RefBaseConflict {
+                ref_type: RefType::Pr,
+                number,
+            }
+            .into());
+        }
         let provider = detect_pr_provider(repo)?;
-        return resolve_remote_ref(repo, provider.as_ref(), number, create, base);
+        return resolve_remote_ref(repo, provider.as_ref(), number, create);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
     if let Some(suffix) = branch.strip_prefix("mr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+        // --base is invalid with pr:/mr: syntax (check before network calls)
+        if base.is_some() {
+            return Err(GitError::RefBaseConflict {
+                ref_type: RefType::Mr,
+                number,
+            }
+            .into());
+        }
+        return resolve_remote_ref(repo, &GitLabProvider, number, create);
     }
 
     // Regular branch switch
