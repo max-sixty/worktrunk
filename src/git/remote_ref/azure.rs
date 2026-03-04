@@ -94,10 +94,10 @@ fn detect_azure_org(repo_root: &Path) -> Option<String> {
         let Some(url) = line.split_whitespace().nth(1) else {
             continue;
         };
-        if let Some(parsed) = GitRemoteUrl::parse(url) {
-            if let Some(org) = parsed.azure_organization() {
-                return Some(org.to_string());
-            }
+        if let Some(parsed) = GitRemoteUrl::parse(url)
+            && let Some(org) = parsed.azure_organization()
+        {
+            return Some(org.to_string());
         }
     }
     None
@@ -188,9 +188,16 @@ fn fetch_pr_info(pr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
     let project = response.repository.project.name.clone();
     let repo_name = response.repository.name.clone();
 
-    // Extract org from web_url or fall back to project name
-    let (organization, pr_url) = if let Some(web_url) = &response.repository.web_url {
+    // Extract org and host from web_url or fall back to defaults
+    let (organization, host, pr_url) = if let Some(web_url) = &response.repository.web_url {
         // web_url format: https://dev.azure.com/{org}/{project}/_git/{repo}
+        //            or:  https://{org}.visualstudio.com/{project}/_git/{repo}
+        let parsed_host = web_url
+            .strip_prefix("https://")
+            .or_else(|| web_url.strip_prefix("http://"))
+            .and_then(|s| s.split('/').next())
+            .unwrap_or("dev.azure.com")
+            .to_string();
         let org = web_url
             .strip_prefix("https://dev.azure.com/")
             .and_then(|s| s.split('/').next())
@@ -200,13 +207,13 @@ fn fetch_pr_info(pr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
             "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
             org, project, repo_name, pr_number
         );
-        (org, url)
+        (org, parsed_host, url)
     } else {
         let url = format!(
             "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
             project, project, repo_name, pr_number
         );
-        (project.clone(), url)
+        (project.clone(), "dev.azure.com".to_string(), url)
     };
 
     Ok(RemoteRefInfo {
@@ -221,7 +228,7 @@ fn fetch_pr_info(pr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
         url: pr_url,
         fork_push_url,
         platform_data: PlatformData::AzureDevOps {
-            host: "dev.azure.com".to_string(),
+            host,
             organization,
             project,
             repo_name,

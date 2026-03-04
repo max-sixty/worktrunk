@@ -54,7 +54,7 @@ pub(super) fn detect_azure_pr(
     let project = get_azure_project(repo)?;
 
     // Use `az repos pr list` to find PRs with matching source branch.
-    // The source-branch filter expects a bare branch name.
+    // The source-branch filter expects a full ref name.
     let source_ref = format!("refs/heads/{}", branch.name);
     let output = match non_interactive_cmd("az")
         .args([
@@ -194,11 +194,18 @@ pub(super) fn detect_azure_pipeline(
         .map(|sha| sha != local_head)
         .unwrap_or(true);
 
+    // Construct web URL from org/project/build ID
+    // (the `url` field in the API response is a REST API URL, not a browser link)
+    let web_url = Some(format!(
+        "{}/_build/results?buildId={}",
+        org_url, run.id
+    ));
+
     Some(PrStatus {
         ci_status,
         source: CiSource::Branch,
         is_stale,
-        url: run.url.clone(),
+        url: web_url,
     })
 }
 
@@ -266,14 +273,13 @@ struct AzPrProject {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AzPipelineRun {
+    id: u32,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     result: Option<String>,
     #[serde(default)]
     source_version: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
 }
 
 #[cfg(test)]

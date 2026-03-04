@@ -244,10 +244,10 @@ impl Repository {
     /// where `origin/foo` creates a local tracking branch named `foo`.
     fn strip_remote_prefix(&self, name: &str) -> Option<String> {
         for (remote_name, _) in self.all_remote_urls() {
-            if let Some(branch) = name.strip_prefix(&format!("{}/", remote_name)) {
-                if !branch.is_empty() {
-                    return Some(branch.to_string());
-                }
+            if let Some(branch) = name.strip_prefix(&format!("{}/", remote_name))
+                && !branch.is_empty()
+            {
+                return Some(branch.to_string());
             }
         }
         None
