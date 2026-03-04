@@ -365,12 +365,9 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
                 }
 
                 // Switch to existing worktree or create new one
-                let plan =
-                    plan_switch(&repo, &identifier, should_create, None, false, config)?;
-                let skip_hooks =
-                    !approve_switch_hooks(&repo, config, &plan, false, true)?;
-                let (result, branch_info) =
-                    execute_switch(&repo, plan, config, false, skip_hooks)?;
+                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
+                let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
+                let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
 
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
@@ -390,15 +387,9 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
                 // When recovered from a deleted worktree, fall back to repo_path().
                 let fallback_path = repo.repo_path()?.to_path_buf();
                 let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
-                let source_root =
-                    repo.current_worktree().root().unwrap_or(fallback_path);
-                let hooks_display_path = handle_switch_output(
-                    &result,
-                    &branch_info,
-                    true,
-                    Some(&source_root),
-                    &cwd,
-                )?;
+                let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
+                let hooks_display_path =
+                    handle_switch_output(&result, &branch_info, true, Some(&source_root), &cwd)?;
 
                 // Spawn background hooks after success message
                 if !skip_hooks {
