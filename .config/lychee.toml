@@ -22,14 +22,11 @@ exclude = [
     # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
     "/@/",
 
-    # Private or authenticated GitHub resources
-    "github\\.com/anthropics/claude-code/issues",
-
-    # GitHub immutable resources (occasionally return 502/504 on heavy load)
-    "github\\.com/[^/]+/[^/]+/commit",
-    "github\\.com/[^/]+/[^/]+/issues",
-    "github\\.com/[^/]+/[^/]+/pull",
-    "github\\.com/[^/]+/[^/]+/actions",
+    # GitHub: rate-limits CI runners, intermittent HTTP/2 protocol errors, and
+    # returns 429/502/504 under load. Previously we excluded individual path
+    # patterns (commits, issues, pulls, actions, blob, user profiles) but
+    # transient failures kept surfacing on new patterns. Exclude all of GitHub.
+    "github\\.com",
 
     # Social media (blocks GitHub Actions)
     "twitter\\.com",
