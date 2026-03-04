@@ -5,9 +5,11 @@
 root_dir = "docs/static"
 
 # Network resilience - handles transient failures
-max_retries = 5
+max_retries = 6
+retry_wait_time = 2
 timeout = 20
 max_redirects = 5
+max_concurrency = 8
 
 # Accepted HTTP status codes
 accept = [200, 206, 429]
@@ -22,11 +24,20 @@ exclude = [
     # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
     "/@/",
 
-    # GitHub: rate-limits CI runners, intermittent HTTP/2 protocol errors, and
-    # returns 429/502/504 under load. Previously we excluded individual path
-    # patterns (commits, issues, pulls, actions, blob, user profiles) but
-    # transient failures kept surfacing on new patterns. Exclude all of GitHub.
-    "github\\.com",
+    # Private or authenticated GitHub resources
+    "github\\.com/anthropics/claude-code/issues",
+
+    # GitHub resources that are either immutable or not our content to maintain
+    # (user profiles, stargazers, commit SHAs, external repo issues/PRs/actions)
+    "github\\.com/[^/]+/[^/]+/commit",
+    "github\\.com/[^/]+/[^/]+/issues",
+    "github\\.com/[^/]+/[^/]+/pull",
+    "github\\.com/[^/]+/[^/]+/actions",
+    "github\\.com/[^/]+/[^/]+/stargazers",
+    "github\\.com/[^/]+/[^/]+/releases/tag",
+
+    # GitHub user/org profiles (no content we control, frequently 429/502)
+    "github\\.com/[a-zA-Z0-9_-]+$",
 
     # Social media (blocks GitHub Actions)
     "twitter\\.com",
