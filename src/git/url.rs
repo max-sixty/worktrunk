@@ -158,6 +158,59 @@ impl GitRemoteUrl {
     pub fn is_gitlab(&self) -> bool {
         self.host.to_ascii_lowercase().contains("gitlab")
     }
+
+    /// Check if this URL points to an Azure DevOps host.
+    ///
+    /// Matches dev.azure.com, ssh.dev.azure.com, and legacy *.visualstudio.com hosts.
+    pub fn is_azure_devops(&self) -> bool {
+        let host = self.host.to_ascii_lowercase();
+        host.contains("dev.azure.com") || host.contains("visualstudio.com")
+    }
+
+    /// Extract the Azure DevOps organization from the URL owner path.
+    ///
+    /// For `dev.azure.com` URLs, owner is `{org}/{project}/_git`.
+    /// For `ssh.dev.azure.com` URLs, owner is `v3/{org}/{project}`.
+    /// For `*.visualstudio.com` URLs, the org is in the hostname.
+    pub fn azure_organization(&self) -> Option<&str> {
+        if !self.is_azure_devops() {
+            return None;
+        }
+        let parts: Vec<&str> = self.owner.split('/').collect();
+        let host = self.host.to_ascii_lowercase();
+        if host.contains("ssh.dev.azure.com") {
+            // v3/{org}/{project} → org
+            parts.get(1).copied()
+        } else if host.contains("dev.azure.com") {
+            // {org}/{project}/_git → org
+            parts.first().copied()
+        } else {
+            // {org}.visualstudio.com — org is in the hostname
+            self.host.split('.').next()
+        }
+    }
+
+    /// Extract the Azure DevOps project from the URL owner path.
+    ///
+    /// For `dev.azure.com` URLs, owner is `{org}/{project}/_git`.
+    /// For `ssh.dev.azure.com` URLs, owner is `v3/{org}/{project}`.
+    pub fn azure_project(&self) -> Option<&str> {
+        if !self.is_azure_devops() {
+            return None;
+        }
+        let parts: Vec<&str> = self.owner.split('/').collect();
+        let host = self.host.to_ascii_lowercase();
+        if host.contains("ssh.dev.azure.com") {
+            // v3/{org}/{project} → project
+            parts.get(2).copied()
+        } else if host.contains("dev.azure.com") {
+            // {org}/{project}/_git → project
+            parts.get(1).copied()
+        } else {
+            // {org}.visualstudio.com/{project}/_git → project
+            parts.first().copied()
+        }
+    }
 }
 
 /// Extract owner from a git remote URL.
@@ -1070,5 +1123,82 @@ mod tests {
             "All URLs must produce unique identifiers. Got duplicates in: {:?}",
             identifiers
         );
+    }
+
+    #[test]
+    fn test_is_azure_devops() {
+        // HTTPS format
+        let url =
+            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        assert!(url.is_azure_devops());
+        assert!(!url.is_github());
+        assert!(!url.is_gitlab());
+
+        // SSH format
+        let url =
+            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        assert!(url.is_azure_devops());
+
+        // Legacy visualstudio.com format
+        let url = GitRemoteUrl::parse(
+            "https://myorg.visualstudio.com/myproject/_git/myrepo",
+        )
+        .unwrap();
+        assert!(url.is_azure_devops());
+
+        // GitHub should not match
+        let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
+        assert!(!url.is_azure_devops());
+
+        // GitLab should not match
+        let url = GitRemoteUrl::parse("https://gitlab.com/owner/repo").unwrap();
+        assert!(!url.is_azure_devops());
+    }
+
+    #[test]
+    fn test_azure_devops_url_parsing() {
+        // HTTPS: dev.azure.com/{org}/{project}/_git/{repo}
+        let url =
+            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        assert_eq!(url.host(), "dev.azure.com");
+        assert_eq!(url.repo(), "myrepo");
+        // owner includes the full path: myorg/myproject/_git
+        assert_eq!(url.owner(), "myorg/myproject/_git");
+
+        // SSH: git@ssh.dev.azure.com:v3/{org}/{project}/{repo}
+        let url =
+            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        assert_eq!(url.host(), "ssh.dev.azure.com");
+        assert_eq!(url.repo(), "myrepo");
+        // owner includes the v3 prefix: v3/myorg/myproject
+        assert_eq!(url.owner(), "v3/myorg/myproject");
+    }
+
+    #[test]
+    fn test_azure_organization_and_project() {
+        // HTTPS format
+        let url =
+            GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // SSH format
+        let url =
+            GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // Legacy visualstudio.com format
+        let url = GitRemoteUrl::parse(
+            "https://myorg.visualstudio.com/myproject/_git/myrepo",
+        )
+        .unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // Non-Azure URL returns None
+        let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
+        assert_eq!(url.azure_organization(), None);
+        assert_eq!(url.azure_project(), None);
     }
 }

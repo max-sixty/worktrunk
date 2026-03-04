@@ -1,7 +1,7 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub PRs and GitLab MRs
-//! to local branches. Both platforms follow the same workflow:
+//! This module provides a trait-based architecture for resolving GitHub PRs, GitLab MRs,
+//! and Azure DevOps PRs to local branches. All platforms follow the same workflow:
 //!
 //! 1. Parse `pr:<number>` or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
@@ -29,11 +29,18 @@
 //!
 //! Uses `glab api projects/:id/merge_requests/<number>`. Fork MRs require additional
 //! API calls to fetch source/target project URLs.
+//!
+//! ## Azure DevOps
+//!
+//! Uses `az repos pr show --id <number> --output json`. Auto-detects organization from
+//! git remote URLs. Requires the `azure-devops` extension for the `az` CLI.
 
+pub mod azure;
 pub mod github;
 pub mod gitlab;
 mod info;
 
+pub use azure::AzureDevOpsProvider;
 pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};

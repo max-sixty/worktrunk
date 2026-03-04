@@ -296,11 +296,21 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
+        Some(CiPlatform::AzureDevOps) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "az",
+                "Azure DevOps",
+                ci_tools.az_installed,
+                ci_tools.az_authenticated,
+            )?;
+        }
         None => {
             writeln!(
                 out,
                 "{}",
-                hint_message("CI status requires GitHub or GitLab remote")
+                hint_message("CI status requires GitHub, GitLab, or Azure DevOps remote")
             )?;
         }
     }
