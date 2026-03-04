@@ -34,7 +34,7 @@ enum PickerAction {
     Switch,
     /// Create a new worktree from the search query (alt-c).
     Create,
-    /// Delete the selected worktree (alt-d).
+    /// Delete the selected worktree (alt-r for "remove").
     Delete,
 }
 
@@ -213,8 +213,8 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
             ),
             // Create new worktree with query as branch name (alt-c for "create")
             "alt-c:accept(create)".to_string(),
-            // Delete selected worktree (alt-d for "delete")
-            "alt-d:accept(delete)".to_string(),
+            // Delete selected worktree (alt-r for "remove")
+            "alt-r:accept(delete)".to_string(),
             // Preview toggle (alt-p shows/hides preview)
             // Note: skim doesn't support change-preview-window like fzf, only toggle
             "alt-p:toggle-preview".to_string(),
@@ -300,7 +300,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     if let Some(out) = output
         && !out.is_abort
     {
-        // Determine action: create (alt-c), delete (alt-d), or switch (enter)
+        // Determine action: create (alt-c), delete (alt-r), or switch (enter)
         let action = match &out.final_event {
             Event::EvActAccept(Some(label)) if label == "create" => PickerAction::Create,
             Event::EvActAccept(Some(label)) if label == "delete" => PickerAction::Delete,
