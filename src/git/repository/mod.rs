@@ -412,6 +412,7 @@ impl Repository {
     ///
     /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
     /// normal repos). This avoids fragile path-based detection of submodules.
+    ///
     /// # Errors
     ///
     /// Returns an error if `is_bare()` fails (e.g., git timeout). This surfaces
