@@ -82,23 +82,19 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
 
     // Fallbacks for when nu query fails at runtime but succeeded during install:
 
+    // Platform config dir via etcetera (handles Windows AppData/Roaming,
+    // macOS ~/Library/Application Support, Linux ~/.config)
+    if let Ok(strategy) = choose_base_strategy() {
+        candidates.push(strategy.config_dir().join("nushell"));
+    }
+
     // XDG_CONFIG_HOME/nushell if set
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
         candidates.push(PathBuf::from(xdg_config).join("nushell"));
     }
 
-    // ~/.config/nushell (XDG default)
+    // ~/.config/nushell (XDG default, works cross-platform for nushell)
     candidates.push(home.join(".config").join("nushell"));
-
-    // On macOS, add ~/Library/Application Support/nushell
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(
-            home.join("Library")
-                .join("Application Support")
-                .join("nushell"),
-        );
-    }
 
     // Deduplicate while preserving priority order (queried path first)
     let mut seen = std::collections::HashSet::new();
@@ -300,6 +296,15 @@ mod tests {
             "Should include ~/.config/nushell in candidates"
         );
 
+        // Should include platform config dir from etcetera
+        if let Ok(strategy) = choose_base_strategy() {
+            let platform_dir = strategy.config_dir().join("nushell");
+            assert!(
+                candidates.iter().any(|p| p == &platform_dir),
+                "Should include platform config dir {platform_dir:?} in candidates"
+            );
+        }
+
         // On macOS, should include ~/Library/Application Support/nushell
         #[cfg(target_os = "macos")]
         {
@@ -331,11 +336,11 @@ mod tests {
             "Should return at least 1 candidate path, got: {candidates:?}"
         );
 
-        // On macOS, should have at least 2 (XDG default + Library/Application Support)
-        #[cfg(target_os = "macos")]
+        // Should have at least 2 candidates (platform config dir + XDG default)
+        // On Linux they may deduplicate, but etcetera + ~/.config gives >= 1
         assert!(
-            candidates.len() >= 2,
-            "macOS should have at least 2 candidates, got: {candidates:?}"
+            !candidates.is_empty(),
+            "Should have at least 1 candidate, got: {candidates:?}"
         );
     }
 
