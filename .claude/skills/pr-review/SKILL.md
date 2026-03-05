@@ -206,18 +206,9 @@ Decide how confident you are in the change:
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 ```
 
-**Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, **do not run `gh pr
-review --approve`** — GitHub rejects self-approvals. Instead:
-
-- If there are concerns: submit as COMMENT.
-- If there are no concerns: react and skip to step 6 (resolve threads).
-
-```bash
-# Self-authored, no concerns — react and stop here (do NOT attempt --approve)
-gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
-```
-
-**For PRs by other authors**, decide confidence:
+**Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
+rejects self-approvals. Submit as COMMENT when there are concerns, or stay
+silent if there are none.
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
@@ -302,8 +293,8 @@ description: new text here
 
 ### 5. Monitor CI
 
-**Skip this step** for self-authored PRs with no concerns (the react-only
-path). There is no approval to dismiss on failure, so monitoring adds no
+**Skip this step** if the verdict was "stay silent" (self-authored PR with no
+concerns). There is no approval to dismiss on failure, so monitoring adds no
 value.
 
 After approving, wait for CI to finish using `gh run watch` (consistent with
