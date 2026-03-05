@@ -181,5 +181,20 @@
           '';
         };
       }
-    );
+    )
+    // {
+      homeModules = {
+        default =
+          {
+            lib,
+            config,
+            pkgs,
+            ...
+          }:
+          (import ./nix/home-manager-module.nix) {
+            inherit lib config pkgs;
+            worktrunk-pkgs = self.packages.${pkgs.system};
+          };
+      };
+    };
 }
