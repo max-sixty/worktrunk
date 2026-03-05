@@ -361,7 +361,7 @@ fn test_worktrunk_config_format_path() {
         "Expected path containing parent navigation, got: {path}"
     );
     // The path should start with the repo path (absolute)
-    let repo_path = test.repo.repo_path().to_string_lossy();
+    let repo_path = test.repo.repo_path().unwrap().to_string_lossy();
     assert!(
         path.starts_with(repo_path.as_ref()),
         "Expected path starting with repo path '{repo_path}', got: {path}"
@@ -404,7 +404,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         "Expected path containing 'worktrees' and 'feature-branch', got: {path}"
     );
     // The path should start with the repo path
-    let repo_path = test.repo.repo_path().to_string_lossy();
+    let repo_path = test.repo.repo_path().unwrap().to_string_lossy();
     assert!(
         path.starts_with(repo_path.as_ref()),
         "Expected path starting with repo path '{repo_path}', got: {path}"

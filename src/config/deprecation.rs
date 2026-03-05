@@ -723,7 +723,7 @@ pub fn check_and_migrate(
         deprecations,
         label: label.to_string(),
         main_worktree_path: if !warn_and_migrate {
-            repo.map(|r| r.repo_path().to_path_buf())
+            repo.and_then(|r| r.repo_path().ok()).map(|p| p.to_path_buf())
         } else {
             None
         },

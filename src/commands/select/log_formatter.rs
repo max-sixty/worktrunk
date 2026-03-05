@@ -42,9 +42,12 @@ pub(super) fn batch_fetch_stats(
     // --root: include stats for root commits (no parent to diff against)
     // Each hash needs a trailing newline for git to process it
     let stdin_data = hashes.iter().map(|h| format!("{h}\n")).collect::<String>();
+    let Ok(repo_path) = repo.repo_path() else {
+        return HashMap::new();
+    };
     let Ok(output) = Cmd::new("git")
         .args(["diff-tree", "--numstat", "-r", "--root", "--stdin"])
-        .current_dir(repo.repo_path())
+        .current_dir(repo_path)
         .stdin_bytes(stdin_data)
         .run()
     else {

@@ -75,7 +75,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let repo_root = repo.repo_path();
+    let repo_root = repo.repo_path()?;
     let info = provider.fetch_info(number, repo_root)?;
 
     // Display context with URL (as gutter under fetch progress)
@@ -107,7 +107,7 @@ fn resolve_fork_ref(
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
-    let repo_root = repo.repo_path();
+    let repo_root = repo.repo_path()?;
     let local_branch = remote_ref::local_branch_name(info);
 
     // Check if branch already exists and is tracking this ref

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
@@ -67,8 +68,8 @@ impl<'a> CommandContext<'a> {
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-) -> HashMap<String, String> {
-    let repo_root = ctx.repo.repo_path();
+) -> Result<HashMap<String, String>> {
+    let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -138,7 +139,7 @@ pub fn build_hook_context(
         map.insert((*k).into(), (*v).into());
     }
 
-    map
+    Ok(map)
 }
 
 /// Expand commands from a CommandConfig without approval
@@ -156,7 +157,7 @@ fn expand_commands(
         return Ok(Vec::new());
     }
 
-    let base_context = build_hook_context(ctx, extra_vars);
+    let base_context = build_hook_context(ctx, extra_vars)?;
 
     // Convert to &str references for expand_template
     let vars: HashMap<&str, &str> = base_context

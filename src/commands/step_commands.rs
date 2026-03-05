@@ -1706,7 +1706,7 @@ pub fn step_relocate(
             "Cannot determine default branch; set with: wt config state default-branch set main"
         );
     }
-    let repo_path = repo.repo_path().to_path_buf();
+    let repo_path = repo.repo_path()?.to_path_buf();
 
     // Phase 1: Gather candidates (worktrees not at expected paths)
     let GatherResult {
