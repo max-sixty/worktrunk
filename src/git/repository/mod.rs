@@ -414,8 +414,16 @@ impl Repository {
     /// normal repos). This avoids fragile path-based detection of submodules.
     pub fn repo_path(&self) -> &Path {
         self.cache.repo_path.get_or_init(|| {
-            // Bare repos have no worktree — the git directory IS the repo
+            // Bare repos have no worktree — the git directory IS the repo.
+            // However, worktree-based setups often use `.git` as a bare-style
+            // common dir (e.g. /project/.git with sibling worktrees).  In that
+            // case the meaningful project path is the parent directory.
             if self.is_bare().unwrap_or(false) {
+                if self.git_common_dir.file_name().and_then(|n| n.to_str()) == Some(".git")
+                    && let Some(parent) = self.git_common_dir.parent()
+                {
+                    return parent.to_path_buf();
+                }
                 return self.git_common_dir.clone();
             }
 
