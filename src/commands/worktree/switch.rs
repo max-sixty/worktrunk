@@ -353,9 +353,17 @@ fn resolve_switch_target(
     }
 
     // Regular branch switch
-    let resolved_branch = repo
+    let mut resolved_branch = repo
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
+
+    // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
+    // Strip the remote prefix so DWIM can create a local tracking branch.
+    if !create
+        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+    {
+        resolved_branch = local_name;
+    }
 
     // Resolve and validate base (only when --create is set)
     let resolved_base = if let Some(base_str) = base {
