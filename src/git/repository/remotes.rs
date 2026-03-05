@@ -231,19 +231,12 @@ impl Repository {
 
         // List all remotes and find the one that is a prefix of ref_name
         let output = self.run_command(&["remote"]).ok()?;
-        for remote in output.lines() {
-            let remote = remote.trim();
-            if remote.is_empty() {
-                continue;
-            }
-            let prefix = format!("{}/", remote);
-            if let Some(branch) = ref_name.strip_prefix(&prefix)
-                && !branch.is_empty()
-            {
-                return Some(branch.to_string());
-            }
-        }
-
-        None
+        output.lines().find_map(|remote| {
+            let prefix = format!("{}/", remote.trim());
+            ref_name
+                .strip_prefix(&prefix)
+                .filter(|branch| !branch.is_empty())
+                .map(|branch| branch.to_string())
+        })
     }
 }
