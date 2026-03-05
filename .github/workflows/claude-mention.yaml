@@ -171,12 +171,29 @@ jobs:
           # Always agent mode. The prompt tells Claude what happened; the
           # /running-in-ci skill instructs it to read full context via gh.
           #
-          # Three prompt paths:
-          # 1. Explicit @worktrunk-bot mention in a comment → always respond
-          # 2. Comment on bot-engaged issue/PR (no mention) → only if helpful
-          # 3. Issue opened/edited with @worktrunk-bot mention → always respond
+          # Four prompt paths:
+          # 1. Inline review comment (pull_request_review_comment) → reply in thread
+          # 2. Explicit @worktrunk-bot mention in a comment → always respond
+          # 3. Comment on bot-engaged issue/PR (no mention) → only if helpful
+          # 4. Issue opened/edited with @worktrunk-bot mention → always respond
           prompt: >-
-            ${{ github.event.comment.html_url
+            ${{ github.event_name == 'pull_request_review_comment'
+              && (contains(github.event.comment.body, '@worktrunk-bot')
+                && format(
+                  'You were mentioned in an inline review comment on PR #{0} ({1}, review comment ID {2}). Read the full PR context (description, diff, recent comments, CI status) and respond. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it. Reply in the review thread using `gh api repos/{3}/pulls/{0}/comments/{2}/replies -f body="..."` — do not create a new top-level comment.',
+                  github.event.pull_request.number,
+                  github.event.comment.html_url,
+                  github.event.comment.id,
+                  github.repository
+                )
+                || format(
+                  'A user left an inline review comment on a PR where you previously participated (PR #{0}, {1}, review comment ID {2}). Read the full context (description, diff, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding. Reply in the review thread using `gh api repos/{3}/pulls/{0}/comments/{2}/replies -f body="..."` — do not create a new top-level comment.',
+                  github.event.pull_request.number,
+                  github.event.comment.html_url,
+                  github.event.comment.id,
+                  github.repository
+                ))
+              || github.event.comment.html_url
               && (contains(github.event.comment.body, '@worktrunk-bot')
                 && format(
                   'You were mentioned in a comment ({0}). Read the full issue or PR (description, diff, recent comments, CI status) and respond. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it.',

@@ -51,6 +51,23 @@ After pushing changes to a PR branch, monitor CI until all checks pass:
 5. Do not return until CI is green — local tests alone are not sufficient (CI
    runs on Linux, Windows, macOS)
 
+## Replying to Comments
+
+Prefer replying in context rather than creating a new top-level comment:
+
+- **Inline review comments** (URLs containing `#discussion_r`): Reply in the
+  review thread using `gh api`, not as a top-level conversation comment. Use the
+  review comment ID from the prompt:
+  ```bash
+  gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+    -f body="Your response"
+  ```
+  This keeps the discussion co-located with the code it references.
+
+- **Conversation comments** (URLs containing `#issuecomment-`): Post a regular
+  comment — GitHub doesn't support threading for these, so a new comment is
+  correct.
+
 ## Comment Formatting
 
 Keep comments concise. Put detailed analysis (file-by-file breakdowns, code
