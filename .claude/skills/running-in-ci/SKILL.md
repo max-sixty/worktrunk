@@ -117,6 +117,21 @@ EOF
 gh api ... --jq "$jq_filter"
 ```
 
+## Keeping PR Titles and Descriptions Current
+
+When you revise a PR's code in response to review feedback, check whether the
+title and description still accurately describe the changes. If the approach
+changed (e.g., from "exclude all X" to "add targeted exclusions for X"), update
+the title and body to match. A reviewer reading the description before the diff
+should not be confused by stale framing.
+
+Use the GitHub API to update:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/{number} -X PATCH \
+  -f title="new title" -F body=@/tmp/updated-body.md
+```
+
 ## Atomic PRs
 
 When creating PRs, split unrelated changes into separate PRs — one concern per
