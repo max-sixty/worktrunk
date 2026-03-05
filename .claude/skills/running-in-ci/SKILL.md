@@ -126,7 +126,7 @@ unused branches after the run).
 
 Shell expansion corrupts `$` and `!` in command arguments. **This is a Claude
 Code bug** — bash history expansion mangles `!` in double-quoted strings (e.g.,
-`format!` becomes `format` followed by garbage), and it's the most common source
+`format!` becomes `format\!` and it's the most common source
 of broken bot comments.
 
 **Rule: always use a temp file for comment/reply bodies and other shell-sensitive
