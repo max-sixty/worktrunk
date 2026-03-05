@@ -421,7 +421,10 @@ mod tests {
 
         // Recovery should find beta's repo, not alpha's
         let recovered = recover_from_path(&wt_b).unwrap();
-        assert_eq!(dunce::canonicalize(recovered.repo_path().unwrap()).unwrap(), repo_b);
+        assert_eq!(
+            dunce::canonicalize(recovered.repo_path().unwrap()).unwrap(),
+            repo_b
+        );
     }
 
     #[test]

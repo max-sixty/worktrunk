@@ -219,7 +219,9 @@ impl UserConfig {
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
-        Ok(expand_template(&template, &vars, false, repo, "worktree-path")
-            .map(|p| shellexpand::tilde(&p).into_owned())?)
+        Ok(
+            expand_template(&template, &vars, false, repo, "worktree-path")
+                .map(|p| shellexpand::tilde(&p).into_owned())?,
+        )
     }
 }
