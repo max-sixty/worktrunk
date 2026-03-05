@@ -27,7 +27,8 @@ gh issue view $ARGUMENTS --json title,body,labels,author
 Classify into one of:
 
 - **Bug report** — describes unexpected behavior, includes steps to reproduce or
-  error output
+  error output. Descriptions of changed behavior ("no longer works", "used to
+  work") strongly signal a bug even with a terse body.
 - **Feature request** — asks for new functionality or behavior changes
 - **Question** — asks how to do something or how something works
 - **Other** — doesn't fit the above categories

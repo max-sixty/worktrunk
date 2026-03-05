@@ -542,13 +542,21 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
     Ok(())
 }
 
-/// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// entries that contain nested worktrees.
+/// VCS metadata directories that should never be copied between worktrees.
 ///
-/// Combines three steps:
+/// These directories contain internal state tied to a specific working directory.
+/// Git's own `.git` is implicitly excluded (git ls-files never reports it), but
+/// other VCS tools colocated with git need explicit exclusion.
+const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
+
+/// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
+/// VCS metadata directories and entries that contain nested worktrees.
+///
+/// Combines four steps:
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. Nested worktree filtering — exclude entries containing other worktrees
+/// 3. VCS metadata filtering — exclude directories like `.jj`, `.hg`
+/// 4. Nested worktree filtering — exclude entries containing other worktrees
 fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
@@ -577,9 +585,22 @@ fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    // Filter out entries that contain other worktrees
+    // Filter out VCS metadata directories and entries that contain other worktrees
     Ok(filtered
         .into_iter()
+        .filter(|(entry_path, is_dir)| {
+            // Skip VCS metadata directories (.jj, .hg, etc.) — these contain
+            // internal state tied to a specific working directory
+            if *is_dir
+                && entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| VCS_METADATA_DIRS.contains(&name))
+            {
+                return false;
+            }
+            true
+        })
         .filter(|(entry_path, _)| {
             !worktree_paths
                 .iter()

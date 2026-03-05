@@ -150,6 +150,40 @@ rg 'env\.HOME' .github/workflows/
 If the same issue exists elsewhere, add inline suggestions fixing each
 occurrence.
 
+**Duplication check (mandatory for new functions/types):**
+
+For every new public or module-level function added in the diff, search the
+codebase for existing functions that do the same thing. LLM-generated code
+frequently reinvents internal APIs — this is the highest-value check for
+externally contributed PRs.
+
+Two search strategies, both required:
+
+1. **Similar names and signatures.** Search for functions with similar names,
+   return types, or parameter types:
+
+   ```bash
+   # For a new `detect_pr_provider` function, search for existing detection
+   rg "fn detect.*provider|fn get.*platform|fn .*_provider" --type rust
+   ```
+
+2. **Overlapping subgoals.** Identify the intermediate steps the new code
+   performs (e.g., iterating remotes, parsing URLs, resolving an org name) and
+   search for existing code that does the same sub-tasks. Then read the
+   functions *that code* consumes — shared helpers often already exist one
+   layer down:
+
+   ```bash
+   # New code iterates remotes and parses URLs — who else does that?
+   rg "all_remote_urls|remote_url|GitRemoteUrl::parse" --type rust
+   # New code shells out to `git remote -v` — is there an existing wrapper?
+   rg "git remote|remote_urls" --type rust
+   ```
+
+If an existing function does substantially the same thing, flag it — reuse is
+almost always better than a parallel implementation. If shared helpers exist
+for the sub-steps, suggest using them instead of reimplementing.
+
 ### 4. Submit
 
 #### Staleness check
@@ -230,9 +264,13 @@ Increases confidence: small diffs, existing test coverage, mechanical changes,
 author has deep familiarity with the affected code.
 
 Decreases confidence: new algorithms, concurrency, error handling changes,
-untested paths, author hasn't
-contributed to the affected module before, LLM-generated code (may duplicate
-existing APIs or miss design intent).
+untested paths, author hasn't contributed to the affected module before,
+LLM-generated code (may duplicate existing APIs or miss design intent).
+
+**LLM-generated PRs** have a high rate of
+duplicating existing internal APIs because the author lacks codebase context.
+Always run the duplication check above, and read the existing modules that the
+new code touches (not just the diff) before approving.
 
 **When confidence is low**, go beyond checking the implementation — question the
 approach:

@@ -2151,6 +2151,9 @@ approved-commands = ["echo 'bash background'"]
     fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
         let wrapper_script = generate_wrapper(&repo, shell);
 
+        // Use a marker file for the exit code — PTY output capture can be empty on macOS
+        let marker_file = repo.root_path().join(".test-exit-code-marker");
+
         // Script that clears PATH and does NOT set WORKTRUNK_BIN
         // This simulates having the fish function installed but wt not available
         let script = format!(
@@ -2160,11 +2163,14 @@ approved-commands = ["echo 'bash background'"]
             # Explicitly unset WORKTRUNK_BIN to ensure it's not set
             set -e WORKTRUNK_BIN
             set -x CLICOLOR_FORCE 1
-            {}
+            {wrapper_script}
             wt --version
-            echo "exit_code: $status"
+            set -l wt_exit_status $status
+            # Write exit code to marker file (reliable even when PTY output is empty)
+            echo $wt_exit_status > {marker_file}
             "#,
-            wrapper_script
+            wrapper_script = wrapper_script,
+            marker_file = marker_file.display()
         );
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
@@ -2181,19 +2187,35 @@ approved-commands = ["echo 'bash background'"]
             exit_code,
         };
 
-        // The function should show a clear error message
+        // PRIMARY CHECK: Verify exit code 127 via marker file (reliable on all platforms)
         assert!(
-            output.combined.contains("wt: command not found"),
-            "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+            marker_file.exists(),
+            "Fish wrapper did not complete (marker file not created).\n\
+             Exit code: {}\nOutput:\n{}",
+            output.exit_code,
             output.combined
         );
 
-        // And return exit code 127 (standard "command not found" exit code)
-        assert!(
-            output.combined.contains("exit_code: 127"),
-            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
-            output.combined
+        let marker_content = fs::read_to_string(&marker_file).unwrap_or_default();
+        let marker_exit_code: i32 = marker_content.trim().parse().unwrap_or(-1);
+
+        assert_eq!(
+            marker_exit_code, 127,
+            "Fish wrapper should return exit code 127 when binary is missing.\n\
+             Marker file content: {:?}\nPTY exit code: {}\nOutput:\n{}",
+            marker_content, output.exit_code, output.combined
         );
+
+        // TODO(macos-pty): PTY output capture for fish returns empty on macOS, so we
+        // can only assert the error message on Linux. We'd like to re-enable this on
+        // macOS once the underlying PTY issue is resolved. See #1268.
+        if !output.combined.is_empty() {
+            assert!(
+                output.combined.contains("wt: command not found"),
+                "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+                output.combined
+            );
+        }
     }
 
     /// Test that fish WRAPPER (bootstrap) handles missing binary gracefully

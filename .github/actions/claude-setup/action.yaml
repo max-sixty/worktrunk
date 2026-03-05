@@ -1,0 +1,41 @@
+name: Claude CI Setup
+description: Install cargo tools, Rust cache, and test shells for Claude CI workflows
+
+inputs:
+  install-cargo-tools:
+    description: Install cargo-insta and cargo-nextest
+    default: "true"
+  install-shells:
+    description: Install zsh and fish for shell integration tests
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install cargo-insta
+      if: inputs.install-cargo-tools == 'true'
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-insta
+        version: "=1.46.3"
+
+    - name: Install cargo-nextest
+      if: inputs.install-cargo-tools == 'true'
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-nextest
+        # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
+        version: "=0.9.128"
+
+    - name: "\U0001F4B0 Cache"
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        save-if: false
+
+    - name: Install shells (zsh, fish)
+      if: inputs.install-shells == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh fish

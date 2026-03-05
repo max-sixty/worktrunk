@@ -164,7 +164,7 @@ fn run_command_streaming(
     working_dir: &std::path::Path,
     stdin_content: Option<&str>,
 ) -> Result<(), CommandError> {
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get().map_err(|e| CommandError::SpawnFailed(e.to_string()))?;
 
     log::debug!("$ {} (streaming)", command);
 

@@ -296,7 +296,7 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
         log::debug!("    {}", line);
     }
 
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get()?;
     // TODO(claude-code-nesting): Claude Code sets CLAUDECODE=1 and blocks nested
     // invocations, even non-interactive `claude -p`. Remove this env_remove if
     // Claude Code relaxes the check for non-interactive mode. If they don't fix

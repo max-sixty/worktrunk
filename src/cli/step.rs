@@ -260,7 +260,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries and other worktrees
+- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
 
 ## Performance
 

@@ -34,7 +34,7 @@ use crate::pager::{git_config_pager, parse_pager_value};
 /// On Windows without Git Bash, returns None if only `less` would be selected
 /// (since `less` isn't available without Git for Windows).
 fn detect_help_pager() -> Option<String> {
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get().ok()?;
 
     // Check environment variables in git's precedence order
     let pager = std::env::var("GIT_PAGER")
@@ -116,7 +116,14 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
 
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
     // Falls back to direct output if pager unavailable (e.g., less not installed)
-    let shell = ShellConfig::get();
+    let shell = match ShellConfig::get() {
+        Ok(shell) => shell,
+        Err(e) => {
+            log::debug!("Shell unavailable for pager: {}", e);
+            eprint!("{}", help_text);
+            return Ok(());
+        }
+    };
     log::debug!("$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(&final_cmd);
     // Prevent subprocesses from writing to the directive file

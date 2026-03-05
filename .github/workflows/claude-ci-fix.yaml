@@ -35,34 +35,8 @@ jobs:
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
-
-      - name: Install cargo-insta
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-insta
-          version: "=1.46.3"
-
-      - name: Install cargo-nextest
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-nextest
-          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
-          version: "=0.9.128"
-
-      - name: 💰 Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ${{ hashFiles('Cargo.lock') }}
-          save-if: false
-
-      - name: Install shells (zsh, fish)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zsh fish
+      - name: 🔧 Setup build tools
+        uses: ./.github/actions/claude-setup
 
       - name: 🤖 Run Claude Code to fix CI
         id: claude
@@ -71,6 +45,8 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           additional_permissions: |
             actions: read
 
