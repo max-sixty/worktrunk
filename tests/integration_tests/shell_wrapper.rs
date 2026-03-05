@@ -1839,21 +1839,32 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "bash");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".completions_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper and checks if completion is registered
         // (completions are inline in the wrapper via lazy loading)
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
         let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
             export WORKTRUNK_BIN={}
             export WORKTRUNK_CONFIG_PATH={}
             export WORKTRUNK_APPROVALS_PATH={}
             {}
-            # Check if wt completion is registered
-            complete -p wt 2>/dev/null && echo "__COMPLETION_REGISTERED__" || echo "__NO_COMPLETION__"
+            # Check if wt completion is registered and write result to marker file
+            if complete -p wt 2>/dev/null; then
+                echo "__COMPLETION_REGISTERED__" > {}
+            else
+                echo "__NO_COMPLETION__" > {}
+            fi
             "#,
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
+            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script, marker_quoted,
+            marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1865,14 +1876,18 @@ approved-commands = ["echo 'bash background'"]
             ("TERM", "xterm"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("bash", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__COMPLETION_REGISTERED__"),
-            "Bash completions should be registered after sourcing wrapper.\nOutput:\n{}",
-            combined
+            result.contains("__COMPLETION_REGISTERED__"),
+            "Bash completions should be registered after sourcing wrapper.\nMarker file content:\n{}",
+            result
         );
     }
 
