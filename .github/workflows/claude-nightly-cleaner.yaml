@@ -6,7 +6,7 @@ name: claude-nightly-cleaner
 # open issues that have been resolved by recent (or earlier unlinked) merges.
 on:
   schedule:
-    # Run at 6:17 AM UTC daily (off-peak minute, 30 min after review-reviewers)
+    # Run at 6:17 AM UTC daily (off-peak minute)
     - cron: '17 6 * * *'
   workflow_dispatch:
 
