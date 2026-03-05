@@ -55,10 +55,10 @@ fn hint_for_repo(repo: &Repository) -> String {
             .flatten()
             .is_some_and(|p| p.exists())
     {
-        return cformat!("Current directory was removed. Try: <bright-black>wt switch ^</>");
+        return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
     }
 
-    cformat!("Current directory was removed. Run <bright-black>wt list</> to see worktrees.")
+    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees.")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.

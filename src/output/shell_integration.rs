@@ -77,7 +77,7 @@ use crate::commands::configure_shell::{
 // This requires changing the hints infrastructure to track counts rather than booleans.
 // See `Repository::mark_hint_shown()` and `list_shown_hints()` in src/git/repository/mod.rs.
 pub(crate) fn shell_integration_hint() -> String {
-    cformat!("To enable automatic cd, run <bright-black>wt config shell install</>")
+    cformat!("To enable automatic cd, run <underline>wt config shell install</>")
 }
 
 /// Hint when shell integration is installed but shell needs restart.
@@ -97,16 +97,14 @@ fn shell_integration_unsupported_shell(shell_path: &str) -> String {
 
 /// Warning message when running as git subcommand (cd cannot work).
 pub(crate) fn git_subcommand_warning() -> String {
-    cformat!(
-        "For automatic cd, invoke directly (with the <bright-black>-</>): <bright-black>git-wt</>"
-    )
+    cformat!("For automatic cd, invoke directly (with the <underline>-</>): <underline>git-wt</>")
 }
 
 /// Hint when shell integration IS configured but user ran an explicit path.
 /// Suggests using the shell-wrapped command for automatic cd.
 pub(crate) fn explicit_path_hint(branch: &str) -> String {
     let wraps = crate::binary_name();
-    cformat!("To change directory, run <bright-black>{wraps} switch {branch}</>")
+    cformat!("To change directory, run <underline>{wraps} switch {branch}</>")
 }
 
 /// Check if we should show the explicit path hint.
@@ -193,7 +191,7 @@ pub fn print_skipped_shells(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "Skipped <bright-black>{shell}</>; <bright-black>{path}</> not found"
+                "Skipped <underline>{shell}</>; <underline>{path}</> not found"
             ))
         );
     }

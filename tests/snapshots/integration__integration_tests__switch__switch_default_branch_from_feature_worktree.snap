@@ -19,16 +19,20 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -39,4 +43,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot switch to [1mmain[22m — there's a worktree at the expected path [1m_REPO_[22m on branch [1mfeature-rpa[22m[39m
-[2m↳[22m [2mTo switch the worktree at [90m_REPO_[39m to [90mmain[39m, run [90mcd _REPO_ && git switch main[39m[22m
+[2m↳[22m [2mTo switch the worktree at [4m_REPO_[24m to [4mmain[24m, run [4mcd _REPO_ && git switch main[24m[22m

@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -50,4 +51,4 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mSome git operations failed:
 [107m [0m [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)[39m
-[2m↳[22m [2mTo create a diagnostic file, run with [90m-vv[39m[22m
+[2m↳[22m [2mTo create a diagnostic file, run with [4m-vv[24m[22m

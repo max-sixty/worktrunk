@@ -107,9 +107,7 @@ fn print_windows_picker_unavailable() {
     );
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "Specify a branch: <bright-black>wt switch BRANCH</>"
-        ))
+        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
     );
 }
 
@@ -488,7 +486,7 @@ fn main() {
                                         eprintln!(
                                             "{}",
                                             hint_message(cformat!(
-                                                "No <bright-black>{shell}</> {what} in {path}"
+                                                "No <underline>{shell}</> {what} in {path}"
                                             ))
                                         );
                                     }
@@ -515,7 +513,7 @@ fn main() {
                                         eprintln!(
                                             "{}",
                                             hint_message(cformat!(
-                                                "No <bright-black>{shell}</> completions in {path}"
+                                                "No <underline>{shell}</> completions in {path}"
                                             ))
                                         );
                                     }

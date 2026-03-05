@@ -232,7 +232,7 @@ impl std::fmt::Display for TemplateExpandError {
         if !self.available_vars.is_empty() {
             parts.push(
                 hint_message(cformat!(
-                    "Available variables: <bright-black>{}</>",
+                    "Available variables: <underline>{}</>",
                     self.available_vars.join(", ")
                 ))
                 .to_string(),

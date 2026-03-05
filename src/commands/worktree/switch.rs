@@ -404,7 +404,7 @@ fn resolve_switch_target(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To switch to the remote branch, delete this branch and run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
+                    "To switch to the remote branch, delete this branch and run without <underline>--create</>: <underline>{remove_cmd} && {switch_cmd}</>"
                 ))
             );
         }
@@ -424,7 +424,7 @@ fn resolve_switch_target(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To reset, run <bright-black>wt config state default-branch clear</>"
+                        "To reset, run <underline>wt config state default-branch clear</>"
                     ))
                 );
             }
@@ -820,9 +820,7 @@ pub fn execute_switch(
                     if let Some(url) = fork_push_url {
                         eprintln!(
                             "{}",
-                            info_message(cformat!(
-                                "Push configured to fork: <bright-black>{url}</>"
-                            ))
+                            info_message(cformat!("Push configured to fork: <underline>{url}</>"))
                         );
                     } else {
                         // Prefixed branch name due to conflict - push won't work

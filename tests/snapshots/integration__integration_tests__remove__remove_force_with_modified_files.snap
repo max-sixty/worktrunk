@@ -20,13 +20,16 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -41,4 +44,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎ Removing [1mfeature-modified[22m worktree (--force) in background[39m
-[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove -D feature-modified[39m[22m
+[2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-modified[24m[22m

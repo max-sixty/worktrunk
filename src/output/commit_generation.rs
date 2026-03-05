@@ -158,7 +158,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Config save failed; add manually to <bright-black>~/.config/worktrunk/config.toml</>"
+                        "Config save failed; add manually to <underline>~/.config/worktrunk/config.toml</>"
                     ))
                 );
                 return Ok(false);
@@ -169,7 +169,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
             eprintln!("{}", format_toml(&config_preview));
             eprintln!(
                 "{}",
-                hint_message(cformat!("View config: <bright-black>wt config show</>"))
+                hint_message(cformat!("View config: <underline>wt config show</>"))
             );
 
             // Blank line separates this setup phase from the main operation that follows

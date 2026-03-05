@@ -1288,9 +1288,7 @@ pub fn handle_show_theme() {
     // Hint
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "To rebase onto main, run <bright-black>wt merge</>"
-        ))
+        hint_message(cformat!("To rebase onto main, run <underline>wt merge</>"))
     );
 
     // Info

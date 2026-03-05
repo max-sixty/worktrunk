@@ -1158,7 +1158,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Run <bright-black>wt step promote {default}</> to restore canonical locations"
+                    "Run <underline>wt step promote {default}</> to restore canonical locations"
                 ))
             );
         }

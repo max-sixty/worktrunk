@@ -348,7 +348,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(&message),
                     hint_message(cformat!(
-                        "To switch to a branch, run <bright-black>git switch <<branch>></>"
+                        "To switch to a branch, run <underline>git switch <<branch>></>"
                     ))
                 )
             }
@@ -375,7 +375,7 @@ impl GitError {
                     let args: Vec<&str> = branch.as_deref().into_iter().collect();
                     let cmd = suggest_command("remove", &args, &["--force"]);
                     cformat!(
-                        "Commit or stash changes first, or to lose uncommitted changes, run <bright-black>{cmd}</>"
+                        "Commit or stash changes first, or to lose uncommitted changes, run <underline>{cmd}</>"
                     )
                 } else {
                     "Commit or stash changes first".to_string()
@@ -393,7 +393,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> already exists")),
                     hint_message(cformat!(
-                        "To switch to the existing branch, run without <bright-black>--create</>: <bright-black>{switch_cmd}</>"
+                        "To switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -409,10 +409,10 @@ impl GitError {
                         create_cmd = ctx.apply(create_cmd);
                     }
                     cformat!(
-                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>"
                     )
                 } else {
-                    cformat!("To list branches, run <bright-black>{list_cmd}</>")
+                    cformat!("To list branches, run <underline>{list_cmd}</>")
                 };
                 write!(
                     f,
@@ -453,7 +453,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("Worktree directory missing for <bold>{branch}</>")),
                     hint_message(cformat!(
-                        "To clean up, run <bright-black>git worktree prune</>"
+                        "To clean up, run <underline>git worktree prune</>"
                     ))
                 )
             }
@@ -462,7 +462,7 @@ impl GitError {
                 let cmd = suggest_command("switch", &[branch], &[]);
                 cwrite!(
                     f,
-                    "{ERROR_SYMBOL} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n{HINT_SYMBOL} <dim>To create a local worktree, run <bright-black>{cmd}</></>"
+                    "{ERROR_SYMBOL} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n{HINT_SYMBOL} <dim>To create a local worktree, run <underline>{cmd}</></>"
                 )
             }
 
@@ -487,7 +487,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("Cannot switch to <bold>{branch}</> — {reason}")),
                     hint_message(cformat!(
-                        "To switch the worktree at <bright-black>{path_display}</> to <bright-black>{branch}</>, run <bright-black>{command}</>"
+                        "To switch the worktree at <underline>{path_display}</> to <underline>{branch}</>, run <underline>{command}</>"
                     ))
                 )
             }
@@ -514,7 +514,7 @@ impl GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "To remove manually, run <bright-black>rm -rf {path_display}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
+                        "To remove manually, run <underline>rm -rf {path_display}</>; to overwrite (with backup), run <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -537,10 +537,7 @@ impl GitError {
                     write!(
                         f,
                         "\n{}\n{}",
-                        hint_message(cformat!(
-                            "Failed command, <bright-black>{}</>:",
-                            cmd.exit_info
-                        )),
+                        hint_message(cformat!("Failed command, <underline>{}</>:", cmd.exit_info)),
                         format_bash_with_gutter(&cmd.command)
                     )?;
                 }
@@ -570,9 +567,7 @@ impl GitError {
                     write!(
                         f,
                         "\n{}",
-                        hint_message(cformat!(
-                            "Remaining in directory: <bright-black>{listing}</>"
-                        ))
+                        hint_message(cformat!("Remaining in directory: <underline>{listing}</>"))
                     )?;
                 }
                 if error.contains("not empty") {
@@ -580,7 +575,7 @@ impl GitError {
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "A background process may be writing files; try <bright-black>wt remove</> (without --foreground)"
+                            "A background process may be writing files; try <underline>wt remove</> (without --foreground)"
                         ))
                     )?;
                 }
@@ -612,7 +607,7 @@ impl GitError {
                         "Cannot remove <bold>{branch}</>, worktree is locked{reason_text}"
                     )),
                     hint_message(cformat!(
-                        "To unlock, run <bright-black>git worktree unlock {path_display}</>"
+                        "To unlock, run <underline>git worktree unlock {path_display}</>"
                     ))
                 )
             }
@@ -665,7 +660,7 @@ impl GitError {
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "To incorporate these changes, run <bright-black>{merge_cmd}</> again"
+                            "To incorporate these changes, run <underline>{merge_cmd}</> again"
                         ))
                     )
                 } else {
@@ -674,7 +669,7 @@ impl GitError {
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "To rebase onto <bright-black>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
+                            "To rebase onto <underline>{target_branch}</>, run <underline>{rebase_cmd}</>"
                         ))
                     )
                 }
@@ -696,11 +691,9 @@ impl GitError {
                         f,
                         "\n{}\n{}",
                         hint_message(cformat!(
-                            "To continue after resolving conflicts, run <bright-black>git rebase --continue</>"
+                            "To continue after resolving conflicts, run <underline>git rebase --continue</>"
                         )),
-                        hint_message(cformat!(
-                            "To abort, run <bright-black>git rebase --abort</>"
-                        ))
+                        hint_message(cformat!("To abort, run <underline>git rebase --abort</>"))
                     )
                 }
             }
@@ -712,7 +705,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
                     hint_message(cformat!(
-                        "To rebase first, run <bright-black>{rebase_cmd}</>; or remove <bright-black>--no-rebase</>"
+                        "To rebase first, run <underline>{rebase_cmd}</>; or remove <underline>--no-rebase</>"
                     ))
                 )
             }
@@ -734,7 +727,7 @@ impl GitError {
                     "{}\n{}",
                     error_message("Cannot prompt for approval in non-interactive environment"),
                     hint_message(cformat!(
-                        "To skip prompts in CI/CD, add <bright-black>--yes</>; to pre-approve commands, run <bright-black>{approvals_cmd}</>"
+                        "To skip prompts in CI/CD, add <underline>--yes</>; to pre-approve commands, run <underline>{approvals_cmd}</>"
                     ))
                 )
             }
@@ -790,7 +783,7 @@ impl GitError {
                     "{}\n{}",
                     error_message("No project configuration found"),
                     hint_message(cformat!(
-                        "Create a config file at: <bright-black>{path_display}</>"
+                        "Create a config file at: <underline>{path_display}</>"
                     ))
                 )
             }
@@ -811,7 +804,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> has no worktree")),
                     hint_message(cformat!(
-                        "To create a worktree, run <bright-black>{switch_cmd}</>"
+                        "To create a worktree, run <underline>{switch_cmd}</>"
                     ))
                 )
             }
@@ -830,7 +823,7 @@ impl GitError {
                         "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
                     )),
                     hint_message(cformat!(
-                        "To switch to it: <bright-black>wt switch {syntax}{number}</>"
+                        "To switch to it: <underline>wt switch {syntax}{number}</>"
                     ))
                 )
             }
@@ -845,7 +838,7 @@ impl GitError {
                         "Cannot use <bold>--base</> with <bold>{syntax}{number}</>"
                     )),
                     hint_message(cformat!(
-                        "{name_plural} already have a base; remove <bright-black>--base</>"
+                        "{name_plural} already have a base; remove <underline>--base</>"
                     ))
                 )
             }
@@ -870,7 +863,7 @@ impl GitError {
                         "Branch <bold>{branch}</> exists but doesn't track {name} {symbol}{number}"
                     )),
                     hint_message(cformat!(
-                        "To free the name, run <bright-black>git branch -m -- {escaped} {escaped_old}</>"
+                        "To free the name, run <underline>git branch -m -- {escaped} {escaped_old}</>"
                     ))
                 )
             }
@@ -885,7 +878,7 @@ impl GitError {
                     "{}\n{}",
                     error_message(cformat!("No remote found for <bold>{owner}/{repo}</>")),
                     hint_message(cformat!(
-                        "Add the remote: <bright-black>git remote add upstream {suggested_url}</>"
+                        "Add the remote: <underline>git remote add upstream {suggested_url}</>"
                     ))
                 )
             }
@@ -1034,7 +1027,7 @@ impl std::fmt::Display for HookErrorWithHint {
             f,
             "\n{}",
             hint_message(cformat!(
-                "To skip {} hooks, re-run with <bright-black>--no-verify</>",
+                "To skip {} hooks, re-run with <underline>--no-verify</>",
                 self.hook_type
             ))
         )
@@ -1074,7 +1067,7 @@ mod tests {
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
         assert_snapshot!(downcast.to_string(), @"
         [31m✗[39m [31mBranch [1mmain[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch main[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch main[24m[22m
         ");
     }
 
@@ -1101,7 +1094,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
-        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to overwrite (with backup), run [90mwt switch --create --clobber feature[39m[22m
+        [2m↳[22m [2mTo remove manually, run [4mrm -rf /some/path[24m; to overwrite (with backup), run [4mwt switch --create --clobber feature[24m[22m
         ");
     }
 
@@ -1605,7 +1598,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mBranch [1memails[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude -- 'Check my emails'[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude -- 'Check my emails'[24m[22m
         ");
     }
 
@@ -1624,7 +1617,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mDirectory already exists: [1m/tmp/repo.emails[22m[39m
-        [2m↳[22m [2mTo remove manually, run [90mrm -rf /tmp/repo.emails[39m; to overwrite (with backup), run [90mwt switch --create --clobber emails --execute=claude -- 'Check my emails'[39m[22m
+        [2m↳[22m [2mTo remove manually, run [4mrm -rf /tmp/repo.emails[24m; to overwrite (with backup), run [4mwt switch --create --clobber emails --execute=claude -- 'Check my emails'[24m[22m
         ");
     }
 
@@ -1641,7 +1634,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mBranch [1memails[22m already exists[39m
-        [2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude[24m[22m
         ");
     }
 
@@ -1659,7 +1652,7 @@ mod tests {
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mNo branch named [1memails[22m[39m
-        [2m↳[22m [2mTo create a new branch, run [90mwt switch --create emails --execute=claude -- 'Check my emails'[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+        [2m↳[22m [2mTo create a new branch, run [4mwt switch --create emails --execute=claude -- 'Check my emails'[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
         ");
     }
 

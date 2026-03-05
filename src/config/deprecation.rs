@@ -768,7 +768,7 @@ pub fn check_and_migrate(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                    "Copied approved commands to <underline>{approvals_filename}</>"
                 ))
             );
         }
@@ -940,7 +940,7 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
                 out,
                 "{}",
                 hint_message(cformat!(
-                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                    "Copied approved commands to <underline>{approvals_filename}</>"
                 ))
             );
         }

@@ -403,7 +403,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
             out,
             "{}",
             hint_message(cformat!(
-                "Not found; to create one, run <bright-black>wt config create</>"
+                "Not found; to create one, run <underline>wt config create</>"
             ))
         )?;
         return Ok(());
@@ -719,7 +719,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             out,
                             "{}",
                             hint_message(cformat!(
-                                "Creates shell function <bold>{cmd}</>. Aliases should use <bright-black>{cmd}</>, not <bright-black>{cmd}.exe</>"
+                                "Creates shell function <bold>{cmd}</>. Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
                             ))
                         )?;
                     }
@@ -771,7 +771,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         _ => format!("type {cmd}"),
                     };
                     let hint = hint_message(cformat!(
-                        "To verify wrapper loaded: <bright-black>{verify_cmd}</>"
+                        "To verify wrapper loaded: <underline>{verify_cmd}</>"
                     ));
                     writeln!(out, "{hint}")?;
                 }
@@ -802,7 +802,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         out,
                         "{}",
                         hint_message(cformat!(
-                            "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
+                            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                         ))
                     )?;
                 } else if matches!(shell, Shell::Fish | Shell::Nushell)
@@ -814,7 +814,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         "<bold>{shell}</>: Outdated shell extension @ {path}"
                     ));
                     let hint = hint_message(cformat!(
-                        "To update, run <bright-black>{cmd} config shell install {shell}</>"
+                        "To update, run <underline>{cmd} config shell install {shell}</>"
                     ));
                     writeln!(out, "{warning}\n{hint}")?;
                 } else {
@@ -856,7 +856,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 out,
                 "{}",
                 hint_message(cformat!(
-                    "To migrate to <bright-black>{canonical_path}</>, run <bright-black>{cmd} config shell install fish</>"
+                    "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                 ))
             )?;
             continue;
@@ -875,7 +875,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(cformat!(
-                "To configure, run <bright-black>{cmd} config shell install</>"
+                "To configure, run <underline>{cmd} config shell install</>"
             ))
         )?;
     }
@@ -916,7 +916,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     "{}",
                     hint_message(cformat!(
                         "Note: <bold>{cmd}.exe</> creates shell function <bold>{cmd}</>. \
-                         Aliases should use <bright-black>{cmd}</>, not <bright-black>{cmd}.exe</>"
+                         Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
                     ))
                 )?;
             }
@@ -941,7 +941,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 out,
                 "{}",
                 hint_message(cformat!(
-                    "Change to <bright-black>alias {}=\"{cmd}\"</> @ {location}",
+                    "Change to <underline>alias {}=\"{cmd}\"</> @ {location}",
                     alias.alias_name
                 ))
             )?;
