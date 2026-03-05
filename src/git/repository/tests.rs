@@ -415,7 +415,13 @@ fn repo_path_error_when_is_bare_fails() {
     };
 
     let err = repo.repo_path().unwrap_err();
-    insta::assert_snapshot!("repo_path_error_when_is_bare_fails", format!("{err:#}"));
+    let msg = format!("{err:#}");
+    // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
+    // "The directory name is invalid." on Windows), so only assert the stable prefix.
+    assert!(
+        msg.starts_with("failed to check if repository is bare: "),
+        "unexpected error message: {msg}"
+    );
 }
 
 #[test]
