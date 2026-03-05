@@ -267,7 +267,7 @@ Decreases confidence: new algorithms, concurrency, error handling changes,
 untested paths, author hasn't contributed to the affected module before,
 LLM-generated code (may duplicate existing APIs or miss design intent).
 
-**LLM-generated PRs and first-time contributors** have a high rate of
+**LLM-generated PRs** have a high rate of
 duplicating existing internal APIs because the author lacks codebase context.
 Always run the duplication check above, and read the existing modules that the
 new code touches (not just the diff) before approving.
