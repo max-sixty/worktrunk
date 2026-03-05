@@ -359,9 +359,7 @@ fn resolve_switch_target(
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
     // Strip the remote prefix so DWIM can create a local tracking branch.
-    if !create
-        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
-    {
+    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
         resolved_branch = local_name;
     }
 
