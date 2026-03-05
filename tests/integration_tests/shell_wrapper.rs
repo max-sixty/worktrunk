@@ -2206,8 +2206,9 @@ approved-commands = ["echo 'bash background'"]
             marker_content, output.exit_code, output.combined
         );
 
-        // SECONDARY CHECK: When PTY output is available, verify the error message.
-        // On macOS, PTY output capture for fish can be empty, so this is best-effort.
+        // TODO(macos-pty): PTY output capture for fish returns empty on macOS, so we
+        // can only assert the error message on Linux. We'd like to re-enable this on
+        // macOS once the underlying PTY issue is resolved. See #1268.
         if !output.combined.is_empty() {
             assert!(
                 output.combined.contains("wt: command not found"),
