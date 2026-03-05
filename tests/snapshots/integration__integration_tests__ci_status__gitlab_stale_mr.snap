@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -49,3 +50,6 @@ exit_code: 0
 [2m○[22m [2mShowing 5 worktrees, 4 ahead
 
 ----- stderr -----
+[33m▲[39m [33mwt list timed out after 30s (69 results received)
+[107m [0m [1mfeature-c[22m: has-file-changes[39m
+[2m↳[22m [2mA git command likely hung; run with [4m-v[24m for details, [4m-vv[24m to create a diagnostic file[22m

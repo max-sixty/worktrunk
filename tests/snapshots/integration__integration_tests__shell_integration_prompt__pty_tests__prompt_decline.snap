@@ -3,8 +3,8 @@ source: tests/integration_tests/shell_integration_prompt.rs
 expression: "&output"
 ---
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 
 [36m❯[39m Install shell integration? [1m[y/N/?][22m n
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
