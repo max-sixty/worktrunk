@@ -42,14 +42,19 @@ user's explicit request — don't downgrade it to a compare link.
 
 ## CI Monitoring
 
-After pushing changes to a PR branch, monitor CI until all checks pass:
+After pushing changes to a PR branch, you **must** wait for CI before saying
+"done" or reporting completion. A push without green CI is not finished work.
 
-1. Monitor with `gh pr checks` or `gh run list --branch <branch>`
-2. Wait for completion with `gh run watch`
+1. Push your changes
+2. Wait for CI completion with `gh run watch` or poll `gh pr checks <number>`
 3. If CI fails, diagnose with `gh run view <run-id> --log-failed`
-4. Fix issues, commit, push, and repeat
-5. Do not return until CI is green — local tests alone are not sufficient (CI
-   runs on Linux, Windows, macOS)
+4. Fix issues, commit, push, and repeat from step 2
+5. Only after all checks pass, report completion
+
+**Never** post a "done" or "fixed" comment before CI passes. Local tests alone
+are not sufficient — CI runs on Linux, Windows, and macOS. If you report
+completion and CI later fails, the user has to come back and ask you to fix it
+again.
 
 ## Replying to Comments
 
@@ -116,23 +121,47 @@ unused branches after the run).
 
 ## Shell Quoting in `gh` Commands
 
-Shell expansion corrupts `$` and `!` in command arguments. When a `gh` argument
-contains either character, write it to a temp file or heredoc variable first:
+Shell expansion corrupts `$` and `!` in command arguments. **This is the most
+common source of broken bot comments** — bash history expansion mangles `!` in
+double-quoted strings (e.g., `format!` becomes `format` followed by garbage).
+
+**Rule: always use a temp file or heredoc variable for comment/reply bodies.**
+Never pass the body directly as a `-f body="..."` argument.
 
 ```bash
+# Posting a comment — ALWAYS use a file
+cat > /tmp/comment.md << 'EOF'
+Fixed — the `format!` macro needed its arguments on separate lines.
+CI is now green across all platforms.
+EOF
+gh pr comment 1286 -F /tmp/comment.md
+
+# Replying to a review comment — ALWAYS use a file
+cat > /tmp/reply.md << 'EOF'
+Good catch! Updated to use `assert_eq!` instead.
+EOF
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies \
+  -F body=@/tmp/reply.md
+
 # GraphQL with $ — write query to a file, pass with -F
 cat > /tmp/query.graphql << 'GRAPHQL'
 query($owner: String!, $repo: String!) { ... }
 GRAPHQL
 gh api graphql -F query=@/tmp/query.graphql -f owner="$OWNER"
 
-# jq/body text with ! — capture in a heredoc variable
+# jq with ! — capture in a heredoc variable
 jq_filter=$(cat <<'EOF'
 select(.status != "COMPLETED")
 EOF
 )
 gh api ... --jq "$jq_filter"
 ```
+
+**Key details:**
+- Use `<< 'EOF'` (single-quoted delimiter) to prevent all shell expansion
+- Use `-F body=@/tmp/reply.md` (capital `-F` with `@` prefix) to read from file
+- For `gh pr comment` and `gh issue comment`, use `-F /tmp/comment.md` (the
+  `-F` flag reads body from file)
 
 ## Keeping PR Titles and Descriptions Current
 
