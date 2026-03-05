@@ -50,7 +50,3 @@ exit_code: 0
 [2m○[22m [2mShowing 5 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mwt list timed out after 30s (68 results received)
-[107m [0m [1mmain[22m: would-merge-add
-[107m [0m [1mfeature[22m: merge-tree-conflicts[39m
-[2m↳[22m [2mA git command likely hung; run with [4m-v[24m for details, [4m-vv[24m to create a diagnostic file[22m
