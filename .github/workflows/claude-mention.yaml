@@ -108,11 +108,6 @@ jobs:
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
-
       - name: 👀 React to comment
         # Only react when explicitly mentioned. For bot-engaged conversations
         # without a mention, the bot may exit silently — adding 👀 would
@@ -187,6 +182,8 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Use bot token so pushed commits trigger CI workflows
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           allowed_non_write_users: '*'
 
           additional_permissions: |

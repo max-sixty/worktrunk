@@ -31,11 +31,6 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
-
       - name: 💰 Cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -48,6 +43,8 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           additional_permissions: |
             actions: read
 

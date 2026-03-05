@@ -36,11 +36,6 @@ jobs:
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
-
       - name: Install cargo-insta
         uses: baptiste0928/cargo-install@v3
         with:
@@ -71,6 +66,8 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           additional_permissions: |
             actions: read
 
