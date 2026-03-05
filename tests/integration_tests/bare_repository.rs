@@ -645,6 +645,10 @@ impl NestedBareRepoTest {
         &self.bare_repo_path
     }
 
+    fn config_path(&self) -> &Path {
+        &self.test_config_path
+    }
+
     fn temp_path(&self) -> &Path {
         self.temp_dir.path()
     }
@@ -938,5 +942,51 @@ fn test_clone_bare_repo_list_no_status_errors() {
     assert!(
         !stderr.contains("git operations failed"),
         "Should not have git operation failures.\nstderr: {stderr}"
+    );
+}
+
+/// Regression test: `{{ repo }}` in hook templates must resolve to the project
+/// directory name, not ".git", for nested bare repos (project/.git pattern).
+/// See GitHub issue #1279.
+#[test]
+fn test_nested_bare_repo_template_repo_variable() {
+    let test = NestedBareRepoTest::new();
+
+    // Override config to include a post-create hook that echoes {{ repo }}
+    fs::write(
+        test.config_path(),
+        concat!(
+            "worktree-path = \"../{{ branch }}\"\n",
+            "\n",
+            "[post-create]\n",
+            "check = \"echo REPO={{ repo }}\"\n",
+        ),
+    )
+    .unwrap();
+
+    // Create main worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wt switch failed:\nstderr: {stderr}"
+    );
+
+    // The repo variable should be "project" (parent dir name), NOT ".git"
+    assert!(
+        stderr.contains("REPO=project"),
+        "Expected repo='project' but got:\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("REPO=.git"),
+        "repo should not resolve to '.git':\nstderr: {stderr}"
     );
 }
