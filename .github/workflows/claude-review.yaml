@@ -54,15 +54,17 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
+      # Setup build tools BEFORE checking out PR branch — the composite action
+      # lives on main and won't exist on PR branches created before #1273.
+      - name: 🔧 Setup build tools
+        if: github.event_name == 'pull_request_review'
+        uses: ./.github/actions/claude-setup
+
       - name: 📌 Check out PR branch
         if: github.event_name == 'pull_request_review'
         run: gh pr checkout ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-
-      - name: 🔧 Setup build tools
-        if: github.event_name == 'pull_request_review'
-        uses: ./.github/actions/claude-setup
 
       - name: 🤖 Run Claude Code
         id: claude
