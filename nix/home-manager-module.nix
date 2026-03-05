@@ -56,7 +56,7 @@ in
         extraConfig = ''
           use ${
             pkgs.runCommand "worktrunk-nushell-config.nu" { } ''
-              ${lib.getExe cfg.package} config shell init nushell > $out
+              ${lib.getExe cfg.package} config shell init nu > $out
             ''
           }
         '';
