@@ -124,12 +124,13 @@ unused branches after the run).
 
 ## Shell Quoting in `gh` Commands
 
-Shell expansion corrupts `$` and `!` in command arguments. **This is the most
-common source of broken bot comments** — bash history expansion mangles `!` in
-double-quoted strings (e.g., `format!` becomes `format` followed by garbage).
+Shell expansion corrupts `$` and `!` in command arguments. **This is a Claude
+Code bug** — bash history expansion mangles `!` in double-quoted strings (e.g.,
+`format!` becomes `format` followed by garbage), and it's the most common source
+of broken bot comments.
 
-**Rule: always use a temp file or heredoc variable for comment/reply bodies.**
-Never pass the body directly as a `-f body="..."` argument.
+**Rule: always use a temp file for comment/reply bodies and other shell-sensitive
+arguments.** Never pass the body directly as a `-f body="..."` argument.
 
 ```bash
 # Posting a comment — ALWAYS use a file
@@ -152,12 +153,11 @@ query($owner: String!, $repo: String!) { ... }
 GRAPHQL
 gh api graphql -F query=@/tmp/query.graphql -f owner="$OWNER"
 
-# jq with ! — capture in a heredoc variable
-jq_filter=$(cat <<'EOF'
+# jq with ! — use a file
+cat > /tmp/jq_filter << 'EOF'
 select(.status != "COMPLETED")
 EOF
-)
-gh api ... --jq "$jq_filter"
+gh api ... --jq "$(cat /tmp/jq_filter)"
 ```
 
 **Key details:**
