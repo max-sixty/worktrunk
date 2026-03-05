@@ -130,7 +130,7 @@ jobs:
                - Use `gh issue create`
 
             2. **For actionable fixes** (skill edits, workflow tweaks, CLAUDE.md updates):
-               - Create a branch: `git checkout -b nightly/review-${{ github.run_id }}`
+               - Create a branch: `git checkout -b hourly/review-${{ github.run_id }}`
                - Make the changes
                - Commit and push
                - Create a PR referencing the issue
