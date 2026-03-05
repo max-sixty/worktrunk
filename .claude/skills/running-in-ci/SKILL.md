@@ -64,8 +64,11 @@ Prefer replying in context rather than creating a new top-level comment:
   review thread using `gh api`, not as a top-level conversation comment. Use the
   review comment ID from the prompt:
   ```bash
+  cat > /tmp/reply.md << 'EOF'
+  Your response here
+  EOF
   gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
-    -f body="Your response"
+    -F body=@/tmp/reply.md
   ```
   This keeps the discussion co-located with the code it references.
 
