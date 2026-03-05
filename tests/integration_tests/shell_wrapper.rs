@@ -1863,7 +1863,11 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__" > {}
             fi
             "#,
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script, marker_quoted,
+            wt_bin_quoted,
+            config_quoted,
+            approvals_quoted,
+            wrapper_script,
+            marker_quoted,
             marker_quoted,
         );
 
