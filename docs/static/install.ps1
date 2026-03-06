@@ -18,8 +18,6 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -and (wt --version 2>&1 | Sel
 } elseif (Get-Command git-wt -ErrorAction SilentlyContinue) {
     git-wt config shell install
 } else {
-    git-wt config shell install
-} else {
     Write-Host ""
     Write-Host "Warning: worktrunk installed but neither 'git-wt' nor 'wt' found in PATH." -ForegroundColor Yellow
     Write-Host "Please restart your shell and run 'git-wt config shell install' manually."
