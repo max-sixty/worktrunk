@@ -10,10 +10,6 @@ on:
   pull_request_review:
     types: [submitted]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR_FORCE: 1
@@ -29,6 +25,13 @@ jobs:
         github.event.pull_request.user.login == 'worktrunk-bot' &&
         github.event.review.user.login != 'worktrunk-bot' &&
         (github.event.review.state != 'approved' || github.event.review.body))
+    # Job-level concurrency (not workflow-level) so that runs skipped by the
+    # `if:` above don't enter the concurrency group. Workflow-level concurrency
+    # is evaluated before job-level `if:`, so a bot review that will be filtered
+    # out still cancels the in-progress run handling that review. See #1305.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
