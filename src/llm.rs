@@ -601,7 +601,7 @@ pub(crate) fn generate_squash_message(
     }
 
     // Fallback: deterministic commit message (only when not configured)
-    let mut commit_message = format!("Squash commits from {}\n\n", target_branch);
+    let mut commit_message = format!("Squash commits from {}\n\n", current_branch);
     commit_message.push_str("Combined commits:\n");
     for subject in subjects.iter().rev() {
         // Reverse so they're in chronological order
