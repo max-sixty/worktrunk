@@ -266,7 +266,7 @@ pub(crate) struct SwitchArgs {
     /// Branch name or shortcut
     ///
     /// Opens interactive picker if omitted.
-    /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+    /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub/Gitea PR), 'mr:{N}' (GitLab MR)
     #[arg(add = crate::completion::worktree_branch_completer())]
     pub(crate) branch: Option<String>,
 
@@ -568,7 +568,7 @@ $ wt switch --create temp --no-hooks       # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:{N}` | GitHub PR #N's branch |
+| `pr:{N}` | GitHub/Gitea PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```console
@@ -620,14 +620,14 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 ## Pull requests and merge requests
 
-The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
+The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub/Gitea PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```console
-$ wt switch pr:101                 # GitHub PR #101
+$ wt switch pr:101                 # GitHub/Gitea PR #101
 $ wt switch mr:101                 # GitLab MR !101
 ```
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+Requires `gh` (GitHub), `tea` (Gitea), or `glab` (GitLab) CLI to be installed and authenticated. `pr:` auto-detects GitHub vs Gitea from config/remote, and falls back to trying both providers when ambiguous. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 

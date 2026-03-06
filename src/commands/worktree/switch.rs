@@ -5,12 +5,12 @@
 use std::path::Path;
 
 use crate::display::format_relative_time_short;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::remote_ref::{
-    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo, RemoteRefProvider,
 };
 use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
@@ -52,6 +52,128 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
         ctx.number(),
         ctx.url()
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PrProviderChoice {
+    GitHub,
+    Gitea,
+    Ambiguous,
+}
+
+/// Choose which provider should handle `pr:<number>` resolution.
+///
+/// Priority:
+/// 1. `forge.platform` config override
+/// 2. Primary remote URL detection
+/// 3. Ambiguous fallback (try `gh`, then `tea`)
+fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
+    if let Some(platform_raw) = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
+        let platform = platform_raw.to_ascii_lowercase();
+        return match platform.as_str() {
+            "github" => Ok(PrProviderChoice::GitHub),
+            "gitea" => Ok(PrProviderChoice::Gitea),
+            "gitlab" => {
+                bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
+            }
+            _ => {
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Invalid forge.platform value <bold>{platform_raw}</>; expected github, gitea, or gitlab. Falling back to remote detection."
+                    ))
+                );
+                Ok(PrProviderChoice::Ambiguous)
+            }
+        };
+    }
+
+    let detected = repo
+        .primary_remote()
+        .ok()
+        .and_then(|remote| repo.effective_remote_url(&remote))
+        .and_then(|url| worktrunk::git::GitRemoteUrl::parse(&url));
+
+    let Some(parsed) = detected else {
+        return Ok(PrProviderChoice::Ambiguous);
+    };
+
+    if parsed.is_github() {
+        Ok(PrProviderChoice::GitHub)
+    } else if parsed.is_gitlab() {
+        bail!("Detected GitLab remote; use mr:<number> instead of pr:<number>")
+    } else if parsed.is_gitea() {
+        Ok(PrProviderChoice::Gitea)
+    } else {
+        Ok(PrProviderChoice::Ambiguous)
+    }
+}
+
+fn ambiguous_pr_error(
+    number: u32,
+    context: &str,
+    gh_err: anyhow::Error,
+    tea_err: anyhow::Error,
+) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Failed to resolve pr:{number} for {context} with both providers; GitHub (gh): {gh_err:#}; Gitea (tea): {tea_err:#}. Hint: set [forge] platform = \"github\" or \"gitea\" in .config/wt.toml to disambiguate.",
+    )
+}
+
+fn resolve_pr_target(
+    repo: &Repository,
+    number: u32,
+    create: bool,
+    base: Option<&str>,
+) -> anyhow::Result<ResolvedTarget> {
+    if base.is_some() {
+        return Err(GitError::RefBaseConflict {
+            ref_type: RefType::Pr,
+            number,
+        }
+        .into());
+    }
+
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref(repo, &GitHubProvider, number, create, base),
+        PrProviderChoice::Gitea => resolve_remote_ref(repo, &GiteaProvider, number, create, base),
+        PrProviderChoice::Ambiguous => {
+            match resolve_remote_ref(repo, &GitHubProvider, number, create, base) {
+                Ok(target) => Ok(target),
+                Err(gh_err) => match resolve_remote_ref(repo, &GiteaProvider, number, create, base)
+                {
+                    Ok(target) => Ok(target),
+                    Err(tea_err) => {
+                        if tea_err.downcast_ref::<GitError>().is_some() {
+                            return Err(tea_err);
+                        }
+                        Err(ambiguous_pr_error(number, "switch target", gh_err, tea_err))
+                    }
+                },
+            }
+        }
+    }
+}
+
+fn resolve_pr_base(repo: &Repository, number: u32) -> anyhow::Result<String> {
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref_as_base(repo, &GitHubProvider, number),
+        PrProviderChoice::Gitea => resolve_remote_ref_as_base(repo, &GiteaProvider, number),
+        PrProviderChoice::Ambiguous => {
+            match resolve_remote_ref_as_base(repo, &GitHubProvider, number) {
+                Ok(base) => Ok(base),
+                Err(gh_err) => match resolve_remote_ref_as_base(repo, &GiteaProvider, number) {
+                    Ok(base) => Ok(base),
+                    Err(tea_err) => Err(ambiguous_pr_error(number, "--base", gh_err, tea_err)),
+                },
+            }
+        }
+    }
 }
 
 /// Resolve a remote ref (PR or MR) using the unified provider interface.
@@ -142,7 +264,7 @@ fn resolve_fork_ref(
             });
         }
 
-        // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
+        // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
             if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
                 repo_root,
@@ -294,7 +416,7 @@ fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref_as_base(repo, &GitHubProvider, number);
+        return resolve_pr_base(repo, number);
     }
 
     if let Some(suffix) = base.strip_prefix("mr:")
@@ -358,7 +480,7 @@ fn resolve_switch_target(
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
+        return resolve_pr_target(repo, number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
