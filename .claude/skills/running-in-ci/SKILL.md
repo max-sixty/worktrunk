@@ -42,19 +42,22 @@ user's explicit request — don't downgrade it to a compare link.
 
 ## CI Monitoring
 
-After pushing changes to a PR branch, you **must** wait for CI before saying
-"done" or reporting completion. A push without green CI is not finished work.
+After pushing changes to a PR branch, check CI **once** with
+`gh pr checks <number>`. If checks are still running, report what you did and
+move on — do not poll, sleep-loop, or use `gh run watch`. CI results are visible
+on the PR itself; the user does not need the bot to babysit them.
 
 1. Push your changes
-2. Wait for CI completion with `gh run watch` or poll `gh pr checks <number>`
-3. If CI fails, diagnose with `gh run view <run-id> --log-failed`
-4. Fix issues, commit, push, and repeat from step 2
-5. Only after all checks pass, report completion
+2. Run `gh pr checks <number>` once
+3. If all checks passed, report completion
+4. If checks are still running, report what you pushed and note that CI is in
+   progress — do **not** wait
+5. If checks failed, diagnose with `gh run view <run-id> --log-failed`, fix,
+   commit, push, and check once more
 
-**Never** post a "done" or "fixed" comment before CI passes. Local tests alone
-are not sufficient — CI runs on Linux, Windows, and macOS. If you report
-completion and CI later fails, the user has to come back and ask you to fix it
-again.
+**Never** sleep-poll CI status (`sleep N && gh pr checks`, `gh run watch`,
+repeated `gh pr checks` calls). Each poll wastes compute minutes and the user
+gains nothing — they can see CI status on the PR page.
 
 ## Replying to Comments
 
