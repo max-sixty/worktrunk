@@ -22,6 +22,19 @@ pub enum PlatformData {
         /// Name of the base (target) repository.
         base_repo: String,
     },
+    /// Gitea-specific data.
+    Gitea {
+        /// Gitea host (e.g., "gitea.com", "git.example.com").
+        host: String,
+        /// Owner of the head (source) repository.
+        head_owner: String,
+        /// Name of the head (source) repository.
+        head_repo: String,
+        /// Owner of the base (target) repository.
+        base_owner: String,
+        /// Name of the base (target) repository.
+        base_repo: String,
+    },
     /// GitLab-specific data.
     GitLab {
         /// GitLab host (e.g., "gitlab.com", "gitlab.example.com").
@@ -103,6 +116,9 @@ impl RefContext for RemoteRefInfo {
                 PlatformData::GitHub { head_owner, .. } => {
                     format!("{}:{}", head_owner, self.source_branch)
                 }
+                PlatformData::Gitea { head_owner, .. } => {
+                    format!("{}:{}", head_owner, self.source_branch)
+                }
                 PlatformData::GitLab { .. } => {
                     // For GitLab, try to extract namespace from fork_push_url
                     if let Some(url) = &self.fork_push_url
@@ -123,10 +139,10 @@ impl RemoteRefInfo {
     /// Generate a prefixed local branch name for when the unprefixed name conflicts.
     ///
     /// Returns `<owner>/<branch>` (e.g., `contributor/main`).
-    /// Only meaningful for GitHub fork PRs; GitLab doesn't support this pattern.
+    /// Used for GitHub/Gitea fork PRs; GitLab doesn't support this pattern.
     pub fn prefixed_local_branch_name(&self) -> Option<String> {
         match &self.platform_data {
-            PlatformData::GitHub { head_owner, .. } => {
+            PlatformData::GitHub { head_owner, .. } | PlatformData::Gitea { head_owner, .. } => {
                 Some(format!("{}/{}", head_owner, self.source_branch))
             }
             PlatformData::GitLab { .. } => None,
@@ -198,6 +214,30 @@ mod tests {
     }
 
     #[test]
+    fn test_source_ref_fork_gitea() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 42,
+            title: "Add feature".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            source_branch: "feature-fix".to_string(),
+            is_cross_repo: true,
+            url: "https://git.example.com/owner/repo/pulls/42".to_string(),
+            fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
+            platform_data: PlatformData::Gitea {
+                host: "git.example.com".to_string(),
+                head_owner: "contributor".to_string(),
+                head_repo: "repo".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
+            },
+        };
+        assert_eq!(info.source_ref(), "contributor:feature-fix");
+    }
+
+    #[test]
     fn test_source_ref_fork_github() {
         let info = RemoteRefInfo {
             ref_type: RefType::Pr,
@@ -260,6 +300,33 @@ mod tests {
             fork_push_url: Some("git@github.com:contributor/repo.git".to_string()),
             platform_data: PlatformData::GitHub {
                 host: "github.com".to_string(),
+                head_owner: "contributor".to_string(),
+                head_repo: "repo".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
+            },
+        };
+        assert_eq!(
+            info.prefixed_local_branch_name(),
+            Some("contributor/main".to_string())
+        );
+    }
+
+    #[test]
+    fn test_prefixed_local_branch_name_gitea() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 101,
+            title: "Test".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            source_branch: "main".to_string(),
+            is_cross_repo: true,
+            url: "https://git.example.com/owner/repo/pulls/101".to_string(),
+            fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
+            platform_data: PlatformData::Gitea {
+                host: "git.example.com".to_string(),
                 head_owner: "contributor".to_string(),
                 head_repo: "repo".to_string(),
                 base_owner: "owner".to_string(),
