@@ -90,20 +90,10 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     // ~/.config/nushell (XDG default)
     candidates.push(home.join(".config").join("nushell"));
 
-    // On macOS, add ~/Library/Application Support/nushell
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(
-            home.join("Library")
-                .join("Application Support")
-                .join("nushell"),
-        );
-    }
-
-    // On Windows, add AppData/Roaming/nushell
-    #[cfg(windows)]
-    {
-        candidates.push(home.join("AppData").join("Roaming").join("nushell"));
+    // Platform config dir via etcetera (e.g. ~/Library/Application Support/nushell
+    // on macOS, AppData/Roaming/nushell on Windows)
+    if let Ok(strategy) = choose_base_strategy() {
+        candidates.push(strategy.config_dir().join("nushell"));
     }
 
     // Deduplicate while preserving priority order (queried path first)
@@ -306,27 +296,12 @@ mod tests {
             "Should include ~/.config/nushell in candidates"
         );
 
-        // On macOS, should include ~/Library/Application Support/nushell
-        #[cfg(target_os = "macos")]
-        {
+        // Should include the platform config dir from etcetera
+        if let Ok(strategy) = choose_base_strategy() {
+            let platform_dir = strategy.config_dir().join("nushell");
             assert!(
-                candidates.iter().any(|p| p
-                    == &home
-                        .join("Library")
-                        .join("Application Support")
-                        .join("nushell")),
-                "Should include ~/Library/Application Support/nushell in candidates on macOS"
-            );
-        }
-
-        // On Windows, should include AppData/Roaming/nushell
-        #[cfg(windows)]
-        {
-            assert!(
-                candidates
-                    .iter()
-                    .any(|p| p == &home.join("AppData").join("Roaming").join("nushell")),
-                "Should include AppData/Roaming/nushell in candidates on Windows"
+                candidates.iter().any(|p| p == &platform_dir),
+                "Should include platform config dir {platform_dir:?} in candidates"
             );
         }
 
