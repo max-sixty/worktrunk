@@ -82,19 +82,29 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
 
     // Fallbacks for when nu query fails at runtime but succeeded during install:
 
-    // Platform config dir via etcetera (handles Windows AppData/Roaming,
-    // macOS ~/Library/Application Support, Linux ~/.config)
-    if let Ok(strategy) = choose_base_strategy() {
-        candidates.push(strategy.config_dir().join("nushell"));
-    }
-
     // XDG_CONFIG_HOME/nushell if set
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
         candidates.push(PathBuf::from(xdg_config).join("nushell"));
     }
 
-    // ~/.config/nushell (XDG default, works cross-platform for nushell)
+    // ~/.config/nushell (XDG default)
     candidates.push(home.join(".config").join("nushell"));
+
+    // On macOS, add ~/Library/Application Support/nushell
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("nushell"),
+        );
+    }
+
+    // On Windows, add AppData/Roaming/nushell
+    #[cfg(windows)]
+    {
+        candidates.push(home.join("AppData").join("Roaming").join("nushell"));
+    }
 
     // Deduplicate while preserving priority order (queried path first)
     let mut seen = std::collections::HashSet::new();
@@ -296,15 +306,6 @@ mod tests {
             "Should include ~/.config/nushell in candidates"
         );
 
-        // Should include platform config dir from etcetera
-        if let Ok(strategy) = choose_base_strategy() {
-            let platform_dir = strategy.config_dir().join("nushell");
-            assert!(
-                candidates.iter().any(|p| p == &platform_dir),
-                "Should include platform config dir {platform_dir:?} in candidates"
-            );
-        }
-
         // On macOS, should include ~/Library/Application Support/nushell
         #[cfg(target_os = "macos")]
         {
@@ -315,6 +316,17 @@ mod tests {
                         .join("Application Support")
                         .join("nushell")),
                 "Should include ~/Library/Application Support/nushell in candidates on macOS"
+            );
+        }
+
+        // On Windows, should include AppData/Roaming/nushell
+        #[cfg(windows)]
+        {
+            assert!(
+                candidates
+                    .iter()
+                    .any(|p| p == &home.join("AppData").join("Roaming").join("nushell")),
+                "Should include AppData/Roaming/nushell in candidates on Windows"
             );
         }
 
@@ -334,6 +346,13 @@ mod tests {
         assert!(
             !candidates.is_empty(),
             "Should return at least 1 candidate path, got: {candidates:?}"
+        );
+
+        // On macOS/Windows, should have at least 2 (XDG default + platform path)
+        #[cfg(any(target_os = "macos", windows))]
+        assert!(
+            candidates.len() >= 2,
+            "Should have at least 2 candidates on this platform, got: {candidates:?}"
         );
     }
 
