@@ -11,7 +11,7 @@ if [ "${OS:-}" = "Windows_NT" ]; then
 fi
 
 echo "Installing worktrunk..."
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/max-sixty/worktrunk/releases/latest/download/worktrunk-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/max-sixty/worktrunk/releases/latest/download/worktrunk-installer.sh | sh || { echo "Installation failed."; exit 1; }
 
 # cargo-dist installs to ~/.cargo/bin by default on Unix.
 # We use < /dev/tty to ensure the interactive prompt can read from the terminal

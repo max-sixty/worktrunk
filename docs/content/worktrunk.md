@@ -102,13 +102,13 @@ A demo with some advanced features:
 **Script installation - Static Binary (macOS & Linux):**
 
 ```bash
-curl -fsSL https://worktrunk.dev/install.sh | bash
+curl -fsSL https://worktrunk.dev/install.sh | sh
 ```
 
 **Script installation - Static Binary (Windows):**
 
 ```bash
-powershell -c "irm http://worktrunk.dev/install.ps1 | iex"
+powershell -c "irm https://worktrunk.dev/install.ps1 | iex"
 ```
 
 **Homebrew (macOS & Linux):**

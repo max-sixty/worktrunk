@@ -13,7 +13,11 @@ irm https://github.com/max-sixty/worktrunk/releases/latest/download/worktrunk-in
 # cargo-dist installs to ~/.cargo/bin by default.
 # On Windows, winget or direct install might use git-wt to avoid conflict with Windows Terminal.
 $env:Path += ";$HOME\.cargo\bin"
-if (Get-Command git-wt -ErrorAction SilentlyContinue) {
+if ((Get-Command wt -ErrorAction SilentlyContinue) -and (wt --version 2>&1 | Select-String 'worktrunk')) {
+    wt config shell install
+} elseif (Get-Command git-wt -ErrorAction SilentlyContinue) {
+    git-wt config shell install
+} else {
     git-wt config shell install
 } else {
     Write-Host ""
