@@ -38,32 +38,18 @@ command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sa
 
 Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
-### opencode
+### Other tools
 
 ```toml
-[commit.generation]
-command = "opencode run"
-```
+# opencode — use a fast model variant
+command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 
-Uses whatever model is configured in your opencode settings. See [opencode docs](https://opencode.ai/).
-
-### llm
-
-```toml
-[commit.generation]
+# llm
 command = "llm -m claude-haiku-4.5"
-```
 
-Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
-
-### aichat
-
-```toml
-[commit.generation]
+# aichat
 command = "aichat -m claude:claude-haiku-4.5"
 ```
-
-See [aichat docs](https://github.com/sigoden/aichat).
 
 ## How it works
 
