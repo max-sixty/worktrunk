@@ -335,13 +335,6 @@ mod tests {
             !candidates.is_empty(),
             "Should return at least 1 candidate path, got: {candidates:?}"
         );
-
-        // Should have at least 2 candidates (platform config dir + XDG default)
-        // On Linux they may deduplicate, but etcetera + ~/.config gives >= 1
-        assert!(
-            !candidates.is_empty(),
-            "Should have at least 1 candidate, got: {candidates:?}"
-        );
     }
 
     #[test]
