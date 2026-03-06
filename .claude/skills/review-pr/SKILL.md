@@ -328,6 +328,10 @@ description: new text here
 - Prose-only comments are for changes too large or uncertain for a direct
   suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
+  **Minimize the range** — only include lines that actually need changing. A
+  range that's too wide can delete correct code adjacent to the bug. Before
+  posting, verify that every line in [`start_line`, `line`] is either removed
+  or rewritten in the suggestion body.
 
 ### 5. Monitor CI
 
