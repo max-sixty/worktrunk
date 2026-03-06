@@ -9,13 +9,12 @@ mod detection;
 mod paths;
 mod utils;
 
-use std::io::{BufRead, BufReader};
-
 use askama::Template;
 
 // Re-export public types and functions
 pub use detection::{
-    BypassAlias, DetectedLine, FileDetectionResult, is_shell_integration_line,
+    BypassAlias, DetectedLine, FileDetectionResult, file_tree_has_exact_line,
+    find_exact_line_in_file_tree, is_shell_integration_line,
     is_shell_integration_line_for_uninstall, scan_for_detection_details,
 };
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
@@ -137,13 +136,7 @@ impl Shell {
 
     /// Check if a file contains shell integration lines for the given command.
     fn file_has_integration(path: &std::path::Path, cmd: &str) -> Result<bool, std::io::Error> {
-        let file = std::fs::File::open(path)?;
-        for line in BufReader::new(file).lines() {
-            if is_shell_integration_line(&line?, cmd) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        detection::file_tree_has_integration(path, cmd)
     }
 }
 
@@ -492,6 +485,24 @@ mod tests {
         let empty_file = temp_dir.path().join(".zshrc");
         std::fs::write(&empty_file, "# just a comment\n").unwrap();
         assert!(!Shell::file_has_integration(&empty_file, "wt").unwrap());
+    }
+
+    #[test]
+    fn test_file_has_integration_in_sourced_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+        let sourced_dir = temp_dir.path().join(".zsh").join("config.d");
+        std::fs::create_dir_all(&sourced_dir).unwrap();
+        let sourced_file = sourced_dir.join("init.zsh");
+
+        std::fs::write(&zshrc, "source .zsh/config.d/init.zsh\n").unwrap();
+        std::fs::write(
+            &sourced_file,
+            r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi"#,
+        )
+        .unwrap();
+
+        assert!(Shell::file_has_integration(&zshrc, "wt").unwrap());
     }
 
     // Note: is_shell_configured() is not unit-tested because it requires
