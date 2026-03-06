@@ -54,21 +54,9 @@ jobs:
 
             ## Step 1: Find recent Claude CI runs
 
-            Use `gh run list` to find all runs from Claude workflows that started in the past 3 hours:
+            Run `.github/scripts/list-recent-runs.sh` to get a JSON array of recently completed Claude CI runs (filters out in-progress runs and keeps only those that finished in the past hour — see script comments for details).
 
-            ```
-            for wf in claude-review claude-ci-fix claude-issue-triage claude-mention claude-renovate claude-hourly-review-reviewers claude-nightly-cleaner; do
-              gh run list --workflow "${wf}.yaml" --created ">=$(date -d '3 hours ago' +%Y-%m-%dT%H:%M:%S)" --json databaseId,conclusion,createdAt,updatedAt --limit 50
-            done
-            ```
-
-            Then apply two filters:
-            1. **Drop in-progress runs** — skip any run with an empty `conclusion`.
-            2. **Keep only recently finished runs** — from the completed runs, only include those whose `updatedAt` timestamp is within the past hour.
-
-            Why: `gh run list --created` filters by *start* time, not *end* time. A run started 2 hours ago may have just finished, and we'd miss it with a 1-hour creation window. Conversely, a run started 50 minutes ago may still be running. The 3-hour fetch window + 1-hour completion filter catches both cases. See #1301 for the original problem.
-
-            If no completed runs finished in the past hour, report "no runs to review" and exit.
+            If the output is an empty array, report "no runs to review" and exit.
 
             ## Step 2: Download session logs
 
