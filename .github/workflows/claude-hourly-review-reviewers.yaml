@@ -114,7 +114,7 @@ jobs:
             gh pr list --state open --json number,title,headRefName,body
             ```
 
-            For each finding, search issue titles AND bodies for related keywords. If an existing issue or PR already covers the same behavioral problem — even partially or with different wording — do NOT create a duplicate. Instead, add a comment to the existing issue with any new evidence or context from this run.
+            For each finding, search issue titles AND bodies for related keywords. If an existing issue or PR already covers the same behavioral problem — even partially or with different wording — do NOT create a duplicate. Only comment on an existing issue if you have material new cases that would change the approach to fixing it or increase its prioritization (e.g., the same bug manifesting in a new workflow, or evidence that the impact is worse than originally reported). Do NOT comment with progress updates, fix-PR status, or re-statements of evidence already in the issue.
 
             Also check recently closed issues (past 7 days) to avoid re-filing problems that were already addressed:
             ```
