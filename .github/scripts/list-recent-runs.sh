@@ -11,15 +11,8 @@
 
 set -euo pipefail
 
-WORKFLOWS=(
-  claude-review
-  claude-ci-fix
-  claude-issue-triage
-  claude-mention
-  claude-renovate
-  claude-hourly-review-reviewers
-  claude-nightly-cleaner
-)
+# Dynamically discover all claude-* workflows instead of maintaining a hardcoded list.
+mapfile -t WORKFLOWS < <(gh workflow list --json name --jq '.[].name | select(startswith("claude-"))')
 
 CREATED_SINCE=$(date -d '3 hours ago' +%Y-%m-%dT%H:%M:%S)
 COMPLETED_AFTER=$(date -d '1 hour ago' +%s)
@@ -28,7 +21,7 @@ all_runs="[]"
 
 for wf in "${WORKFLOWS[@]}"; do
   runs=$(gh run list \
-    --workflow "${wf}.yaml" \
+    --workflow "${wf}" \
     --created ">=${CREATED_SINCE}" \
     --json databaseId,conclusion,createdAt,updatedAt \
     --limit 50 2>/dev/null || echo "[]")
