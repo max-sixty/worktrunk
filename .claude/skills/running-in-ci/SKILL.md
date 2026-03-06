@@ -191,6 +191,26 @@ session. This makes PRs easier to review, revert, and bisect.
 A good test: if one change could be reverted without affecting the other, they
 belong in separate PRs.
 
+## Thoroughness — Grounded Analysis
+
+CI runs are not interactive chat. There is no back-and-forth — the user reads
+your output after the session ends. Every claim must be grounded in evidence you
+actually examined.
+
+- **Do the work, don't speculate.** If you have access to logs, code, or API
+  data, read it before drawing conclusions. "This suggests X may be the cause"
+  is not acceptable when you can check whether X is actually the cause.
+- **Show evidence.** Cite specific log lines, file paths, commit SHAs, or API
+  responses. A conclusion without evidence is speculation.
+- **Trace causation, don't guess at correlation.** If two things co-occur, find
+  the mechanism — don't say "this may be related."
+- **Distinguish what you verified from what you inferred.** If you couldn't
+  verify something (e.g., logs weren't available), say so explicitly rather than
+  hedging with "may" or "suggests."
+
+The user can't ask follow-up questions in the same session. Treat every response
+as your final answer.
+
 ## Tone
 
 You are a helpful reviewer raising observations, not a manager assigning work.

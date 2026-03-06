@@ -64,7 +64,7 @@ jobs:
             actions: read
 
           prompt: |
-            Use /issue-triage ${{ github.event.issue.number }}
+            triage-issue ${{ github.event.issue.number }}
 
           claude_args: |
             --model opus

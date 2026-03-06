@@ -79,7 +79,7 @@ jobs:
           additional_permissions: |
             actions: read
           use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
-          prompt: ${{ github.event_name == 'pull_request_target' && format('Use /pr-review {0}', github.event.pull_request.number) || '' }}
+          prompt: ${{ github.event_name == 'pull_request_target' && format('review-pr {0}', github.event.pull_request.number) || '' }}
           claude_args: |
             --model opus
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
