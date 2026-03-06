@@ -324,11 +324,6 @@ pub fn find_exact_line_in_file_tree(
     file_tree_find_match(path, &mut seen, &|line| line.trim() == expected_line)
 }
 
-/// Check whether a file or any shell config sourced from it contains an exact line.
-pub fn file_tree_has_exact_line(path: &Path, expected_line: &str) -> Result<bool, std::io::Error> {
-    Ok(find_exact_line_in_file_tree(path, expected_line)?.is_some())
-}
-
 fn file_tree_find_match<F>(
     path: &Path,
     seen: &mut HashSet<PathBuf>,
@@ -1273,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_tree_has_exact_line_in_sourced_file() {
+    fn test_find_exact_line_in_file_tree_in_sourced_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let zshrc = temp_dir.path().join(".zshrc");
         let sourced_dir = temp_dir.path().join(".zsh").join("config.d");
@@ -1284,6 +1279,106 @@ mod tests {
         fs::write(&zshrc, "source .zsh/config.d/init.zsh\n").unwrap();
         fs::write(&sourced_file, format!("{config_line}\n")).unwrap();
 
-        assert!(file_tree_has_exact_line(&zshrc, &config_line).unwrap());
+        assert_eq!(
+            find_exact_line_in_file_tree(&zshrc, &config_line).unwrap(),
+            Some(sourced_file)
+        );
+    }
+
+    #[test]
+    fn test_split_shell_segments_handles_multi_statement_line() {
+        let line = r#"[[ -f x ]] && source "dir file/init.zsh"; echo ok || source other.zsh"#;
+        let segments: Vec<_> = split_shell_segments(line)
+            .into_iter()
+            .map(str::trim)
+            .collect();
+
+        assert_eq!(
+            segments,
+            vec![
+                "[[ -f x ]]",
+                r#"source "dir file/init.zsh""#,
+                "echo ok",
+                "source other.zsh"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_shell_word_handles_quotes_and_plain_paths() {
+        assert_eq!(
+            extract_shell_word(r#""dir file/init.zsh" trailing"#),
+            Some("dir file/init.zsh")
+        );
+        assert_eq!(
+            extract_shell_word("'dir file/init.zsh' trailing"),
+            Some("dir file/init.zsh")
+        );
+        assert_eq!(
+            extract_shell_word("plain/path/init.zsh trailing"),
+            Some("plain/path/init.zsh")
+        );
+    }
+
+    #[test]
+    fn test_expand_shell_path_expands_home_forms() {
+        let home = home_dir_required().unwrap();
+
+        assert_eq!(expand_shell_path("~/init.zsh"), Some(home.join("init.zsh")));
+        assert_eq!(
+            expand_shell_path("$HOME/init.zsh"),
+            Some(home.join("init.zsh"))
+        );
+        assert_eq!(
+            expand_shell_path("${HOME}/init.zsh"),
+            Some(home.join("init.zsh"))
+        );
+    }
+
+    #[test]
+    fn test_parse_source_segment_resolves_quoted_relative_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+
+        assert_eq!(
+            parse_source_segment(r#"source "dir file/init.zsh""#, &zshrc),
+            Some(temp_dir.path().join("dir file").join("init.zsh"))
+        );
+    }
+
+    #[test]
+    fn test_parse_source_segment_skips_dynamic_sources() {
+        let current_file = Path::new("/tmp/.zshrc");
+
+        for segment in [
+            "source <(wt config shell init zsh)",
+            "source =(wt config shell init zsh)",
+            "source $(printf init.zsh)",
+            "source `printf init.zsh`",
+            "source *.zsh",
+            "source init?.zsh",
+        ] {
+            assert_eq!(
+                parse_source_segment(segment, current_file),
+                None,
+                "Expected dynamic source to be skipped: {segment}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_sourced_paths_finds_source_in_multi_statement_line() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+
+        let paths = collect_sourced_paths(
+            r#"[[ -f x ]] && source "dir file/init.zsh" && echo ok"#,
+            &zshrc,
+        );
+
+        assert_eq!(
+            paths,
+            vec![temp_dir.path().join("dir file").join("init.zsh")]
+        );
     }
 }
