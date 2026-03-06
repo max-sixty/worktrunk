@@ -300,7 +300,7 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool) -> anyhow::Result<()
     if let Some(out) = output
         && !out.is_abort
     {
-        // Determine action: create (alt-c), delete (alt-r), or switch (enter)
+        // Determine action: create (alt-c), remove (alt-r), or switch (enter)
         let action = match &out.final_event {
             Event::EvActAccept(Some(label)) if label == "create" => PickerAction::Create,
             Event::EvActAccept(Some(label)) if label == "remove" => PickerAction::Remove,
