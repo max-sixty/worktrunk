@@ -2482,6 +2482,264 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
 }
 
 // ============================================================================
+// GPR Syntax Tests (gpr:<number>) - Gitea
+// ============================================================================
+
+/// Helper to set up mock tea for Gitea PR tests with custom response.
+fn setup_mock_tea_for_gpr(repo: &TestRepo, tea_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    if let Some(response) = tea_response {
+        fs::write(mock_bin.join("gpr_response.json"), response).unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command("api", MockResponse::file("gpr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+/// Configure command environment for mock tea.
+fn configure_mock_tea_env(cmd: &mut std::process::Command, mock_bin: &Path) {
+    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current_path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, mock_bin.to_path_buf());
+    let new_path = std::env::join_paths(&paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    cmd.env(path_var_name, new_path);
+}
+
+#[rstest]
+fn test_switch_gpr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "refs/pull/101/head",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://git.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea_for_gpr(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "gpr:101"], None);
+        configure_mock_tea_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_gpr_create_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_gpr_base_conflict(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "gpr:101"], None);
+        assert_cmd_snapshot!("switch_gpr_base_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_gpr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.example.com/owner/test-repo.git",
+    ]);
+
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://git.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "refs/pull/101/head",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://git.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea_for_gpr(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["gpr:101"], None);
+        configure_mock_tea_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_gpr_same_repo", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_gpr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "gpr-source"]);
+    fs::write(repo.root_path().join("gpr-file.txt"), "GPR content").unwrap();
+    repo.run_git(&["add", "gpr-file.txt"]);
+    repo.run_git(&["commit", "-m", "GPR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://git.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "refs/pull/42/head",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://git.example.com/owner/test-repo/pulls/42"
+    }"#;
+
+    let mock_bin = setup_mock_tea_for_gpr(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["gpr:42"], None);
+        configure_mock_tea_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_gpr_fork", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_gpr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["gpr:9999"], None);
+        configure_mock_tea_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_gpr_not_found", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_gpr_tea_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["gpr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_gpr_tea_not_installed", cmd);
+    });
+}
+
+// ============================================================================
 // MR Syntax Tests (mr:<number>) - GitLab
 // ============================================================================
 

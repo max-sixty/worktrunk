@@ -9,7 +9,7 @@ use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::remote_ref::{
-    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo, RemoteRefProvider,
 };
 use worktrunk::git::{GitError, RefContext, RefType, Repository};
 use worktrunk::styling::{
@@ -57,6 +57,7 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
 fn resolve_remote_ref(
     repo: &Repository,
     provider: &dyn RemoteRefProvider,
+    syntax: &'static str,
     number: u32,
     create: bool,
     base: Option<&str>,
@@ -66,7 +67,12 @@ fn resolve_remote_ref(
 
     // --base is invalid with pr:/mr: syntax (check early, no network needed)
     if base.is_some() {
-        return Err(GitError::RefBaseConflict { ref_type, number }.into());
+        return Err(GitError::RefBaseConflict {
+            ref_type,
+            syntax,
+            number,
+        }
+        .into());
     }
 
     // Fetch ref info (network call via gh/glab CLI)
@@ -85,6 +91,7 @@ fn resolve_remote_ref(
     if create {
         return Err(GitError::RefCreateConflict {
             ref_type,
+            syntax,
             number,
             branch: info.source_branch.clone(),
         }
@@ -131,7 +138,7 @@ fn resolve_fork_ref(
             });
         }
 
-        // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
+        // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
             if let Some(prefixed_tracks) =
                 remote_ref::branch_tracks_ref(repo_root, &prefixed, provider, number)
@@ -162,8 +169,8 @@ fn resolve_fork_ref(
             }
 
             // Use prefixed branch name; push won't work (None for fork_push_url)
-            // This is GitHub-only (GitLab doesn't support prefixed names)
-            let remote = find_github_remote(repo, info)?;
+            // GitLab doesn't support prefixed names
+            let remote = find_pr_remote(repo, info)?;
             return Ok(ResolvedTarget {
                 branch: prefixed,
                 method: CreationMethod::ForkRef {
@@ -190,8 +197,8 @@ fn resolve_fork_ref(
     // Resolve remote and URLs based on platform.
     let (fork_push_url, remote) = match ref_type {
         RefType::Pr => {
-            // GitHub: URLs already in info, just find remote
-            let remote = find_github_remote(repo, info)?;
+            // GitHub/Gitea: URLs already in info, just find remote
+            let remote = find_pr_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }
         RefType::Mr => {
@@ -240,24 +247,38 @@ fn resolve_fork_ref(
     })
 }
 
-/// Find the remote for a GitHub PR (where PR refs live).
-fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+/// Find the remote for a PR (GitHub/Gitea) where PR refs live.
+fn find_pr_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
     use worktrunk::git::remote_ref::PlatformData;
 
-    let PlatformData::GitHub {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    else {
-        anyhow::bail!("find_github_remote called on non-GitHub ref");
+    let (host, base_owner, base_repo, suggested_url) = match &info.platform_data {
+        PlatformData::GitHub {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => (
+            host,
+            base_owner,
+            base_repo,
+            worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo),
+        ),
+        PlatformData::Gitea {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => (
+            host,
+            base_owner,
+            base_repo,
+            worktrunk::git::remote_ref::gitea::fork_remote_url(host, base_owner, base_repo),
+        ),
+        _ => anyhow::bail!("find_pr_remote called on non-PR ref"),
     };
 
     repo.find_remote_for_repo(Some(host), base_owner, base_repo)
         .ok_or_else(|| {
-            let suggested_url =
-                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
             GitError::NoRemoteForRepo {
                 owner: base_owner.clone(),
                 repo: base_repo.clone(),
@@ -286,6 +307,21 @@ fn resolve_same_repo_ref(
         } => {
             let suggested_url =
                 worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
+            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+                .ok_or_else(|| GitError::NoRemoteForRepo {
+                    owner: base_owner.clone(),
+                    repo: base_repo.clone(),
+                    suggested_url,
+                })?
+        }
+        PlatformData::Gitea {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => {
+            let suggested_url =
+                worktrunk::git::remote_ref::gitea::fork_remote_url(host, base_owner, base_repo);
             repo.find_remote_for_repo(Some(host), base_owner, base_repo)
                 .ok_or_else(|| GitError::NoRemoteForRepo {
                     owner: base_owner.clone(),
@@ -342,14 +378,21 @@ fn resolve_switch_target(
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
+        return resolve_remote_ref(repo, &GitHubProvider, "pr:", number, create, base);
+    }
+
+    // Handle gpr:<number> syntax (Gitea PRs)
+    if let Some(suffix) = branch.strip_prefix("gpr:")
+        && let Ok(number) = suffix.parse::<u32>()
+    {
+        return resolve_remote_ref(repo, &GiteaProvider, "gpr:", number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
     if let Some(suffix) = branch.strip_prefix("mr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+        return resolve_remote_ref(repo, &GitLabProvider, "mr:", number, create, base);
     }
 
     // Regular branch switch
