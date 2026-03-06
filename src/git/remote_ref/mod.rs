@@ -1,9 +1,9 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub PRs and GitLab MRs
+//! This module provides a trait-based architecture for resolving GitHub/Gitea PRs and GitLab MRs
 //! to local branches. Both platforms follow the same workflow:
 //!
-//! 1. Parse `pr:<number>` or `mr:<number>` syntax
+//! 1. Parse `pr:<number>`, `gpr:<number>`, or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
 //! 3. Check if a local branch already tracks this ref
 //! 4. Create/configure the branch if needed
@@ -30,10 +30,16 @@
 //! Uses `glab api projects/:id/merge_requests/<number>`. Fork MRs require additional
 //! API calls to fetch source/target project URLs.
 
+//! ## Gitea
+//!
+//! Uses `tea api repos/{owner}/{repo}/pulls/<number>`.
+
+pub mod gitea;
 pub mod github;
 pub mod gitlab;
 mod info;
 
+pub use gitea::GiteaProvider;
 pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};
@@ -102,6 +108,10 @@ mod tests {
         let gh = GitHubProvider;
         assert_eq!(gh.ref_path(123), "pull/123/head");
         assert_eq!(gh.tracking_ref(123), "refs/pull/123/head");
+
+        let ge = GiteaProvider;
+        assert_eq!(ge.ref_path(7), "pull/7/head");
+        assert_eq!(ge.tracking_ref(7), "refs/pull/7/head");
 
         let gl = GitLabProvider;
         assert_eq!(gl.ref_path(42), "merge-requests/42/head");

@@ -28,6 +28,7 @@ wt switch -                      # Previous worktree (like cd -)
 wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
 wt switch pr:123                 # Switch to PR #123's branch
+wt switch gpr:123                # Switch to Gitea PR #123's branch
 ```
 
 ## Creating a branch
@@ -64,6 +65,7 @@ wt switch --create temp --no-verify      # Skip hooks
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
 | `pr:{N}` | GitHub PR #N's branch |
+| `gpr:{N}` | Gitea PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
@@ -71,6 +73,7 @@ wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 wt switch pr:123                 # PR #123's branch
+wt switch gpr:123                # Gitea PR #123's branch
 wt switch mr:101                 # MR !101's branch
 ```
 
@@ -128,6 +131,18 @@ Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot 
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
+## Gitea pull requests
+
+The `gpr:<number>` syntax resolves the branch for a Gitea pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
+
+```bash
+wt switch gpr:101                # Checkout Gitea PR #101
+```
+
+Requires `tea` CLI to be installed and authenticated. The `--create` flag cannot be used with `gpr:` syntax since the branch already exists.
+
+**Fork PRs:** The local branch uses the PR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
 ## GitLab merge requests
 
 The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
@@ -166,8 +181,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Branch name or shortcut
 
           Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch),
-          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab
-          MR)
+          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;gpr:{N}&#39; (Gitea
+          PR), &#39;mr:{N}&#39; (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
