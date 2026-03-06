@@ -19,10 +19,10 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' 
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+Uses the fast mini model with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
 
 ### Other tools
 
