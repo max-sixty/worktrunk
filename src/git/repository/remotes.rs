@@ -223,6 +223,11 @@ impl Repository {
     ///
     /// This handles remote names that don't contain `/` (the common case). It lists
     /// all configured remotes and finds the one that matches the prefix.
+    ///
+    /// TODO: A cleaner approach would be to strip the prefix upstream — either have
+    /// `list_remote_branches()` return `(remote, local_branch, sha)` tuples, or track
+    /// `is_remote` on `ListItem` so the picker outputs just the local branch name.
+    /// Either would eliminate this runtime `git remote` call. See #1260.
     pub fn strip_remote_prefix(&self, ref_name: &str) -> Option<String> {
         // Quick check: is this actually a remote-tracking ref?
         if !self.is_remote_tracking_branch(ref_name) {
