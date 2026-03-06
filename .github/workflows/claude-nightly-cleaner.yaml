@@ -68,11 +68,11 @@ jobs:
             2. Merge the default branch: `git merge origin/main`
             3. If there are conflicts, resolve them by reading the conflicting files, understanding both sides, and making the correct resolution. Use `git diff` and read the files to understand the conflict context. After resolving, `git add` the resolved files and `git commit --no-edit`.
             4. Push the result: `git push`
-            5. Comment on the PR: `gh pr comment <number> -F /tmp/comment.md` with a brief summary of what was resolved.
+            5. Comment on the PR with a brief summary of what was resolved (e.g., `gh pr comment <number> --body "..."`).
             6. If the conflicts are too complex to resolve confidently, abort with `git merge --abort` and comment on the PR explaining that manual resolution is needed.
             7. After pushing, wait for CI with `gh pr checks <number> --watch`. If CI fails, investigate and fix.
 
-            Run subagents in parallel for independent PRs. After all subagents complete, switch back to main before proceeding:
+            Run subagents in parallel for independent PRs. Each subagent must work in an isolated directory to avoid checkout conflicts (e.g., `git worktree add /tmp/pr-<number> <branch>` or `git clone . /tmp/pr-<number>`). After all subagents complete, clean up temp directories and switch back to main before proceeding:
 
             ```
             git checkout main
