@@ -11,11 +11,11 @@
 
 set -euo pipefail
 
-# Strip ANSI color codes that gh may emit even in non-TTY contexts.
-strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+# Prevent gh from emitting ANSI color codes (even in non-TTY contexts).
+export NO_COLOR=1
 
 # Dynamically discover all claude-* workflows instead of maintaining a hardcoded list.
-mapfile -t WORKFLOWS < <(gh workflow list --json name --jq '.[].name | select(startswith("claude-"))' | strip_ansi)
+mapfile -t WORKFLOWS < <(gh workflow list --json name --jq '.[].name | select(startswith("claude-"))')
 
 CREATED_SINCE=$(date -d '3 hours ago' +%Y-%m-%dT%H:%M:%S)
 COMPLETED_AFTER=$(date -d '1 hour ago' +%s)
@@ -27,7 +27,7 @@ for wf in "${WORKFLOWS[@]}"; do
     --workflow "${wf}" \
     --created ">=${CREATED_SINCE}" \
     --json databaseId,conclusion,createdAt,updatedAt \
-    --limit 50 2>/dev/null | strip_ansi || echo "[]")
+    --limit 50 2>/dev/null || echo "[]")
   all_runs=$(echo "$all_runs" "$runs" | jq -s 'add')
 done
 
