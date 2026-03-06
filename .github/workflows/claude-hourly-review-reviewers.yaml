@@ -62,7 +62,7 @@ jobs:
             done
             ```
 
-            If no Claude CI runs occurred in the past hour, report "no runs to review" and exit.
+            Filter out runs that are still in progress (empty `conclusion`) — only include completed runs. If no completed Claude CI runs occurred in the past hour, report "no runs to review" and exit.
 
             ## Step 2: Download session logs
 
@@ -73,6 +73,8 @@ jobs:
             ```
 
             Some runs may not have artifacts (e.g., skipped runs). That's fine — skip them.
+
+            **IMPORTANT: If a run is still in progress (empty conclusion), skip it entirely. Do NOT poll, sleep-wait, or retry — only analyze runs that have already completed. Waiting for in-progress runs wastes significant compute time.**
 
             ## Step 3: Analyze session logs
 
