@@ -996,7 +996,7 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
 }
 
 /// Helper to create a temporary directive file for PTY tests.
-/// Returns (path, env_key, env_value) to add to env_vars, plus a guard to keep the file alive.
+/// Returns (path, guard) — the guard keeps the temp file alive until dropped.
 fn directive_file_for_pty() -> (PathBuf, tempfile::TempPath) {
     let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
     let path = file.path().to_path_buf();
