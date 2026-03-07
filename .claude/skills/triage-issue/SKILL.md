@@ -108,6 +108,14 @@ note what you tried and skip to step 7.
    ```bash
    cargo run -- hook pre-merge --yes
    ```
+   **If pre-merge fails** (e.g., `pre-commit: not found`), fall back to
+   individual checks before committing:
+   ```bash
+   cargo fmt --check    # verify formatting
+   cargo clippy         # verify lints
+   ```
+   Fix any issues before proceeding. Do not commit code that fails lint
+   checks.
 4. Create branch, commit, push, and create PR:
    ```bash
    git checkout -b fix/issue-$ARGUMENTS
@@ -130,11 +138,11 @@ note what you tried and skip to step 7.
    ---
    Closes #<issue-number> — automated triage"
    ```
-5. Monitor CI until green:
+5. Monitor CI using the poll approach from `/running-in-ci`:
    ```bash
-   gh run list --branch fix/issue-$ARGUMENTS
-   gh run watch
+   gh pr checks <pr-number>
    ```
+   Poll with `gh pr checks` every 60 seconds until all checks complete.
    If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix, and
    repeat.
 
