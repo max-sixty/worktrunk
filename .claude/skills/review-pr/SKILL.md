@@ -287,6 +287,15 @@ Submit **one formal review per run** via `gh pr review`. Note that `--comment`
 requires a non-empty body (`-b ""` fails) — if there's nothing to say, use the
 approve-with-empty-body pattern instead.
 
+**Never retry review submission without checking first.** If a review API call
+appears to hang or fail, verify whether it actually posted before retrying:
+```bash
+gh api "repos/$REPO/pulls/<number>/reviews" \
+  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\")] | last | .submitted_at // empty"
+```
+If a review from the bot already exists for this run, do not post another one.
+Retrying without this check causes duplicate reviews on the PR.
+
 - Always give a verdict: **approve** or **comment**. Don't use "request changes"
   (that implies authority to block).
 - **Don't use `gh pr comment`** — use review comments (`gh pr review` or
