@@ -52,16 +52,9 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamp in seconds since epoch.
-    pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
-        let stdout = self.run_command(&["log", "-1", "--format=%ct", commit])?;
-        stdout.trim().parse().context("Failed to parse timestamp")
-    }
-
     /// Get commit timestamps for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to timestamp. More efficient than calling
-    /// `commit_timestamp` multiple times when you have many commits.
+    /// Returns a map from commit SHA to timestamp.
     pub fn commit_timestamps(&self, commits: &[&str]) -> anyhow::Result<HashMap<String, i64>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
@@ -86,15 +79,7 @@ impl Repository {
         Ok(result)
     }
 
-    /// Get commit message (subject line) for a commit.
-    pub fn commit_message(&self, commit: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["log", "-1", "--format=%s", commit])?;
-        Ok(stdout.trim().to_owned())
-    }
-
     /// Get commit timestamp and message in a single git command.
-    ///
-    /// More efficient than calling `commit_timestamp` and `commit_message` separately.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
