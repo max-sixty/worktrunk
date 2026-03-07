@@ -193,7 +193,7 @@
           }:
           (import ./nix/home-manager-module.nix) {
             inherit lib config pkgs;
-            worktrunk-pkgs = self.packages.${pkgs.system};
+            worktrunk-pkgs = self.packages.${pkgs.stdenv.hostPlatform.system};
           };
       };
     };
