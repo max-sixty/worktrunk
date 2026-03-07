@@ -128,6 +128,8 @@ Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot 
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
+Also supports Azure DevOps repositories [experimental]; requires `az` CLI with the `azure-devops` extension.
+
 ## GitLab merge requests
 
 The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
@@ -166,8 +168,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Branch name or shortcut
 
           Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch),
-          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab
-          MR)
+          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub/Azure DevOps PR),
+          &#39;mr:{N}&#39; (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)

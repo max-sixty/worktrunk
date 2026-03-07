@@ -1,23 +1,24 @@
 //! CI platform detection.
 //!
-//! Determines whether a repository uses GitHub or GitLab based on
+//! Determines whether a repository uses GitHub, GitLab, or Azure DevOps based on
 //! project config override or remote URL detection.
 
 use std::sync::OnceLock;
 
 use worktrunk::git::{GitRemoteUrl, Repository};
 
-use super::{CiBranchName, PrStatus, github, gitlab, tool_available};
+use super::{CiBranchName, PrStatus, azure, github, gitlab, tool_available};
 
 /// Cached CI tool availability.
 static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
 
-/// Cached availability of CI CLI tools (`gh`, `glab`).
+/// Cached availability of CI CLI tools (`gh`, `glab`, `az`).
 ///
 /// Probed once on first access via `--version` check.
 struct CiToolsAvailable {
     gh: bool,
     glab: bool,
+    az: bool,
 }
 
 impl CiToolsAvailable {
@@ -25,6 +26,7 @@ impl CiToolsAvailable {
         CI_TOOLS.get_or_init(|| Self {
             gh: tool_available("gh", &["--version"]),
             glab: tool_available("glab", &["--version"]),
+            az: tool_available("az", &["--version"]),
         })
     }
 }
@@ -32,13 +34,15 @@ impl CiToolsAvailable {
 /// CI platform detected from project config override or remote URL.
 ///
 /// Platform is determined by:
-/// 1. Project config `ci.platform = "github"` or `"gitlab"` (takes precedence)
-/// 2. Remote URL detection (searches for "github" or "gitlab" in hostname)
+/// 1. Project config `ci.platform = "github"`, `"gitlab"`, or `"azuredevops"` (takes precedence)
+/// 2. Remote URL detection (searches for platform-specific hostname patterns)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum CiPlatform {
     GitHub,
     GitLab,
+    #[strum(serialize = "azuredevops")]
+    AzureDevOps,
 }
 
 impl CiPlatform {
@@ -47,6 +51,7 @@ impl CiPlatform {
         match self {
             Self::GitHub => CiToolsAvailable::get().gh,
             Self::GitLab => CiToolsAvailable::get().glab,
+            Self::AzureDevOps => CiToolsAvailable::get().az,
         }
     }
 
@@ -60,6 +65,7 @@ impl CiPlatform {
         match self {
             Self::GitHub => github::detect_github(repo, branch, local_head),
             Self::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+            Self::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
         }
     }
 
@@ -74,6 +80,7 @@ impl CiPlatform {
             Self::GitHub => github::detect_github_commit_checks(repo, local_head),
             // GitLab pipeline uses the bare branch name (not "origin/feature")
             Self::GitLab => gitlab::detect_gitlab_pipeline(&branch.name, local_head),
+            Self::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
         }
     }
 
@@ -102,11 +109,13 @@ impl CiPlatform {
 
 /// Detect the CI platform from a remote URL.
 ///
-/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github" or "gitlab".
+/// Uses [`GitRemoteUrl`] to parse the URL and check the host for platform-specific patterns.
 pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
     let parsed = GitRemoteUrl::parse(url)?;
     if parsed.is_github() {
         Some(CiPlatform::GitHub)
+    } else if parsed.is_azure_devops() {
+        Some(CiPlatform::AzureDevOps)
     } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
     } else {
@@ -135,7 +144,7 @@ pub fn get_platform_for_repo(
             return Some(platform);
         }
         log::warn!(
-            "Invalid CI platform in config: '{}'. Expected 'github' or 'gitlab'.",
+            "Invalid CI platform in config: '{}'. Expected 'github', 'gitlab', or 'azuredevops'.",
             platform_str
         );
     }
@@ -258,10 +267,39 @@ mod tests {
     }
 
     #[test]
+    fn test_platform_override_azuredevops() {
+        assert_eq!(
+            "azuredevops".parse::<CiPlatform>().ok(),
+            Some(CiPlatform::AzureDevOps)
+        );
+    }
+
+    #[test]
     fn test_platform_override_invalid() {
         // Invalid platform strings should not parse
         assert!("invalid".parse::<CiPlatform>().is_err());
         assert!("GITHUB".parse::<CiPlatform>().is_err()); // Case-sensitive
         assert!("GitHub".parse::<CiPlatform>().is_err()); // Case-sensitive
+    }
+
+    #[test]
+    fn test_detect_platform_azure_devops() {
+        // Azure DevOps HTTPS
+        assert_eq!(
+            detect_platform_from_url("https://dev.azure.com/org/project/_git/repo"),
+            Some(CiPlatform::AzureDevOps)
+        );
+
+        // Azure DevOps SSH
+        assert_eq!(
+            detect_platform_from_url("git@ssh.dev.azure.com:v3/org/project/repo"),
+            Some(CiPlatform::AzureDevOps)
+        );
+
+        // Legacy visualstudio.com
+        assert_eq!(
+            detect_platform_from_url("https://myorg.visualstudio.com/project/_git/repo"),
+            Some(CiPlatform::AzureDevOps)
+        );
     }
 }

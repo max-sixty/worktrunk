@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 146
 info:
   program: wt
   args:
@@ -11,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -123,7 +125,7 @@ compactness). [2mmain…±[0m uses a merge-base (three-dot) diff.
 
 [32mCI status[0m
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub/GitLab/Azure DevOps pipeline status:
 
    Indicator              Meaning              
    ───────── ───────────────────────────────── 

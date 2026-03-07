@@ -226,8 +226,31 @@ impl Repository {
                 }
                 .into()
             }),
-            _ => Ok(name.to_string()),
+            _ => {
+                // Strip remote prefix if present (e.g., "origin/feature" → "feature")
+                if let Some(stripped) = self.strip_remote_prefix(name) {
+                    Ok(stripped)
+                } else {
+                    Ok(name.to_string())
+                }
+            }
         }
+    }
+
+    /// Strip a remote name prefix from a branch reference.
+    ///
+    /// If `name` starts with `{remote}/` where `{remote}` is a configured remote,
+    /// returns the branch name without the prefix. This matches `git switch` behavior
+    /// where `origin/foo` creates a local tracking branch named `foo`.
+    fn strip_remote_prefix(&self, name: &str) -> Option<String> {
+        for (remote_name, _) in self.all_remote_urls() {
+            if let Some(branch) = name.strip_prefix(&format!("{}/", remote_name))
+                && !branch.is_empty()
+            {
+                return Some(branch.to_string());
+            }
+        }
+        None
     }
 
     /// Resolve a worktree by name, returning its path and branch (if known).

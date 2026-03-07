@@ -354,6 +354,8 @@ Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot 
 
 **Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
+Also supports Azure DevOps repositories [experimental]; requires `az` CLI with the `azure-devops` extension.
+
 ## GitLab merge requests
 
 The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
@@ -385,7 +387,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Branch name or shortcut
         ///
         /// Opens interactive picker if omitted.
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub/Azure DevOps PR), 'mr:{N}' (GitLab MR)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: Option<String>,
 
@@ -520,7 +522,7 @@ Note: `main↕` and `main…±` refer to the default branch (header label stays 
 
 ### CI status
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub/GitLab/Azure DevOps pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|
@@ -1772,7 +1774,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 # Override CI platform detection for self-hosted instances
 [ci]
-platform = "github"  # or "gitlab"
+platform = "github"  # or "gitlab" or "azuredevops"
 ```
 
 # Shell Integration

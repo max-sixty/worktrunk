@@ -9,9 +9,9 @@ use color_print::cformat;
 use dunce::canonicalize;
 use worktrunk::config::UserConfig;
 use worktrunk::git::remote_ref::{
-    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
 };
-use worktrunk::git::{GitError, RefContext, RefType, Repository};
+use worktrunk::git::{GitError, GitRemoteUrl, RefContext, RefType, Repository};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
@@ -59,17 +59,11 @@ fn resolve_remote_ref(
     provider: &dyn RemoteRefProvider,
     number: u32,
     create: bool,
-    base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
     let symbol = ref_type.symbol();
 
-    // --base is invalid with pr:/mr: syntax (check early, no network needed)
-    if base.is_some() {
-        return Err(GitError::RefBaseConflict { ref_type, number }.into());
-    }
-
-    // Fetch ref info (network call via gh/glab CLI)
+    // Fetch ref info (network call via gh/glab/az CLI)
     eprintln!(
         "{}",
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
@@ -188,13 +182,16 @@ fn resolve_fork_ref(
 
     // Branch doesn't exist - need to create it with push support.
     // Resolve remote and URLs based on platform.
-    let (fork_push_url, remote) = match ref_type {
-        RefType::Pr => {
-            // GitHub: URLs already in info, just find remote
+    let (fork_push_url, remote) = match &info.platform_data {
+        worktrunk::git::remote_ref::PlatformData::GitHub { .. } => {
             let remote = find_github_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }
-        RefType::Mr => {
+        worktrunk::git::remote_ref::PlatformData::AzureDevOps { .. } => {
+            let remote = find_azure_remote(repo, info)?;
+            (info.fork_push_url.clone(), remote)
+        }
+        worktrunk::git::remote_ref::PlatformData::GitLab { .. } => {
             // GitLab: fetch project URLs now (deferred from fetch_mr_info for perf)
             let urls =
                 worktrunk::git::remote_ref::gitlab::fetch_gitlab_project_urls(info, repo_root)?;
@@ -267,6 +264,86 @@ fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result
         })
 }
 
+/// Detect which PR provider to use based on the repo's remote URLs.
+///
+/// Checks the primary remote first (respects `checkout.defaultRemote`),
+/// then falls back to any remote.
+fn detect_pr_provider(repo: &Repository) -> anyhow::Result<Box<dyn RemoteRefProvider>> {
+    let urls = repo.all_remote_urls();
+
+    // Check primary remote first (checkout.defaultRemote, or first remote with a URL)
+    if let Ok(primary) = repo.primary_remote()
+        && let Some((_, url)) = urls.iter().find(|(name, _)| name == &primary)
+        && let Some(parsed) = GitRemoteUrl::parse(url)
+    {
+        if parsed.is_github() {
+            return Ok(Box::new(GitHubProvider));
+        }
+        if parsed.is_azure_devops() {
+            return Ok(Box::new(AzureDevOpsProvider));
+        }
+        if parsed.is_gitlab() {
+            return Ok(Box::new(GitLabProvider));
+        }
+    }
+
+    // Fall back to any remote
+    for (_, url) in &urls {
+        if let Some(parsed) = GitRemoteUrl::parse(url) {
+            if parsed.is_github() {
+                return Ok(Box::new(GitHubProvider));
+            }
+            if parsed.is_azure_devops() {
+                return Ok(Box::new(AzureDevOpsProvider));
+            }
+            if parsed.is_gitlab() {
+                return Ok(Box::new(GitLabProvider));
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "No supported forge detected from git remotes. \
+         Supported: GitHub, Azure DevOps, GitLab"
+    );
+}
+
+/// Find the remote for an Azure DevOps PR.
+fn find_azure_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+    use worktrunk::git::remote_ref::PlatformData;
+
+    let PlatformData::AzureDevOps {
+        organization,
+        project,
+        repo_name,
+        ..
+    } = &info.platform_data
+    else {
+        anyhow::bail!("find_azure_remote called on non-Azure ref");
+    };
+
+    // Try to find remote matching the Azure DevOps repo
+    for (remote_name, url) in repo.all_remote_urls() {
+        if let Some(parsed) = GitRemoteUrl::parse(&url)
+            && parsed.is_azure_devops()
+            && parsed.repo() == repo_name
+        {
+            return Ok(remote_name);
+        }
+    }
+
+    // Fall back to primary remote
+    repo.primary_remote().map_err(|_| {
+        anyhow::anyhow!(
+            "No remote found for Azure DevOps repo {}/{}/{}; \
+             add a remote pointing to the repository",
+            organization,
+            project,
+            repo_name
+        )
+    })
+}
+
 /// Resolve a same-repo (non-fork) PR/MR.
 fn resolve_same_repo_ref(
     repo: &Repository,
@@ -305,6 +382,7 @@ fn resolve_same_repo_ref(
                 repo: base_repo.clone(),
                 suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
             })?,
+        PlatformData::AzureDevOps { .. } => find_azure_remote(repo, info)?,
     };
 
     let branch = &info.source_branch;
@@ -338,18 +416,35 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Handle pr:<number> syntax
+    // Handle pr:<number> syntax — auto-detect provider from remote URL
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
+        // --base is invalid with pr:/mr: syntax (check before network calls)
+        if base.is_some() {
+            return Err(GitError::RefBaseConflict {
+                ref_type: RefType::Pr,
+                number,
+            }
+            .into());
+        }
+        let provider = detect_pr_provider(repo)?;
+        return resolve_remote_ref(repo, provider.as_ref(), number, create);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
     if let Some(suffix) = branch.strip_prefix("mr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitLabProvider, number, create, base);
+        // --base is invalid with pr:/mr: syntax (check before network calls)
+        if base.is_some() {
+            return Err(GitError::RefBaseConflict {
+                ref_type: RefType::Mr,
+                number,
+            }
+            .into());
+        }
+        return resolve_remote_ref(repo, &GitLabProvider, number, create);
     }
 
     // Regular branch switch

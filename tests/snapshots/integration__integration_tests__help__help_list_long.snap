@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -11,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -115,7 +117,7 @@ Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch (header 
 
 [32mCI status[0m
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub/GitLab/Azure DevOps pipeline status:
 
    Indicator              Meaning              
    ───────── ───────────────────────────────── 

@@ -99,7 +99,7 @@ Note: `main↕` and `main…±` refer to the default branch (header label stays 
 
 ### CI status
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub/GitLab/Azure DevOps pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|

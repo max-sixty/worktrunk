@@ -1,8 +1,10 @@
-//! CI status detection for GitHub and GitLab.
+//! CI status detection for GitHub, GitLab, and Azure DevOps.
 //!
-//! This module provides CI status detection by querying GitHub PRs/workflows
-//! and GitLab MRs/pipelines using their respective CLI tools (`gh` and `glab`).
+//! This module provides CI status detection by querying GitHub PRs/workflows,
+//! GitLab MRs/pipelines, and Azure DevOps PRs/pipelines using their respective
+//! CLI tools (`gh`, `glab`, and `az`).
 
+mod azure;
 mod cache;
 mod github;
 mod gitlab;
@@ -177,6 +179,10 @@ pub struct CiToolsStatus {
     pub glab_installed: bool,
     /// glab is installed and authenticated
     pub glab_authenticated: bool,
+    /// az is installed (can run --version)
+    pub az_installed: bool,
+    /// az is installed and authenticated (logged in)
+    pub az_authenticated: bool,
 }
 
 impl CiToolsStatus {
@@ -195,11 +201,16 @@ impl CiToolsStatus {
             } else {
                 tool_available("glab", &["auth", "status"])
             };
+        let az_installed = tool_available("az", &["--version"]);
+        let az_authenticated =
+            az_installed && tool_available("az", &["account", "show", "--output", "none"]);
         Self {
             gh_installed,
             gh_authenticated,
             glab_installed,
             glab_authenticated,
+            az_installed,
+            az_authenticated,
         }
     }
 }

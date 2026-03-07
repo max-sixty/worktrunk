@@ -56,6 +56,25 @@ fn snapshot_switch_impl(
     });
 }
 // Basic switch tests
+
+/// `wt switch origin/feature-a` should strip the remote prefix and switch
+/// to the existing worktree for `feature-a`.
+#[rstest]
+fn test_switch_strips_remote_prefix(repo: TestRepo) {
+    snapshot_switch("switch_strips_remote_prefix", &repo, &["origin/feature-a"]);
+}
+
+/// `wt switch --create origin/new-branch` should strip the remote prefix
+/// and create a branch named `new-branch`, not `origin/new-branch`.
+#[rstest]
+fn test_switch_create_strips_remote_prefix(repo: TestRepo) {
+    snapshot_switch(
+        "switch_create_strips_remote_prefix",
+        &repo,
+        &["--create", "origin/new-branch"],
+    );
+}
+
 #[rstest]
 fn test_switch_create_new_branch(repo: TestRepo) {
     snapshot_switch("switch_create_new", &repo, &["--create", "feature-x"]);
@@ -1884,6 +1903,14 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
 /// Test error when PR is not found
 #[rstest]
 fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -1913,6 +1940,14 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test error when fork was deleted (head.repo is null)
 #[rstest]
 fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     // gh api repos/{owner}/{repo}/pulls/{number} format with null head.repo
     // This happens when the fork that the PR was opened from has been deleted
     let gh_response = r#"{
@@ -1954,6 +1989,14 @@ fn test_switch_pr_base_conflict(repo: TestRepo) {
 /// Test fork PR where branch already exists and tracks same PR (should reuse)
 #[rstest]
 fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     // First, manually create the branch with correct tracking config
     // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
@@ -2311,6 +2354,14 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
 /// Test pr: when gh is not authenticated
 #[rstest]
 fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2339,6 +2390,14 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when hitting GitHub rate limit
 #[rstest]
 fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2369,6 +2428,14 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when gh returns invalid JSON
 #[rstest]
 fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2392,6 +2459,14 @@ fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when network error occurs
 #[rstest]
 fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2418,6 +2493,14 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when gh returns unknown error
 #[rstest]
 fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2445,6 +2528,14 @@ fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when PR has empty branch name
 #[rstest]
 fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2538,6 +2629,14 @@ fn configure_mock_glab_env(cmd: &mut std::process::Command, mock_bin: &Path) {
 /// Test that --create flag conflicts with mr: syntax
 #[rstest]
 fn test_switch_mr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     // Mock glab to return MR info (we fetch before checking --create to show branch name)
     let glab_response = r#"{
         "title": "Fix authentication bug in login flow",
@@ -2730,6 +2829,14 @@ fn test_switch_mr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
 /// Test same-repo MR with malformed web_url (missing /-/ separator)
 #[rstest]
 fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let glab_response = r#"{
         "title": "Fix bug",
         "author": {"username": "alice"},
@@ -2754,6 +2861,14 @@ fn test_switch_mr_malformed_web_url_no_separator(#[from(repo_with_remote)] repo:
 /// Test same-repo MR with unparsable project URL (has /-/ but no owner/repo)
 #[rstest]
 fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let glab_response = r#"{
         "title": "Fix bug",
         "author": {"username": "alice"},
@@ -2778,6 +2893,14 @@ fn test_switch_mr_malformed_web_url_no_project(#[from(repo_with_remote)] repo: T
 /// Test error when MR is not found
 #[rstest]
 fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2805,6 +2928,14 @@ fn test_switch_mr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test mr: when glab is not authenticated
 #[rstest]
 fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2831,6 +2962,14 @@ fn test_switch_mr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test mr: when glab returns invalid JSON
 #[rstest]
 fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2854,6 +2993,14 @@ fn test_switch_mr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test mr: when MR has empty branch name
 #[rstest]
 fn test_switch_mr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -3177,6 +3324,14 @@ fn test_switch_mr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
 /// Test mr: with unknown glab error (falls through to general error handler)
 #[rstest]
 fn test_switch_mr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -3237,6 +3392,14 @@ fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin:
 /// Test pr: when gh CLI is not installed
 #[rstest]
 fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitHub-style so detect_pr_provider() identifies GitHub
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
         // Symlinks not available (Windows without Developer Mode)
         eprintln!("Skipping test: symlinks not available on this system");
@@ -3254,6 +3417,14 @@ fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test mr: when glab CLI is not installed
 #[rstest]
 fn test_switch_mr_glab_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set origin URL to GitLab-style so detect_pr_provider() identifies GitLab
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
         // Symlinks not available (Windows without Developer Mode)
         eprintln!("Skipping test: symlinks not available on this system");

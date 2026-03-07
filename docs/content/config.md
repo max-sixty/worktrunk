@@ -298,7 +298,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 
 # Override CI platform detection for self-hosted instances
 [ci]
-platform = "github"  # or "gitlab"
+platform = "github"  # or "gitlab" or "azuredevops"
 ```
 
 # Shell Integration

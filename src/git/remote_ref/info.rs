@@ -35,6 +35,17 @@ pub enum PlatformData {
         /// Target project ID (used for deferred URL fetching).
         target_project_id: u64,
     },
+    /// Azure DevOps-specific data.
+    AzureDevOps {
+        /// Azure DevOps host (e.g., "dev.azure.com").
+        host: String,
+        /// Azure DevOps organization name.
+        organization: String,
+        /// Azure DevOps project name.
+        project: String,
+        /// Repository name.
+        repo_name: String,
+    },
 }
 
 /// Unified information about a PR or MR.
@@ -112,6 +123,10 @@ impl RefContext for RemoteRefInfo {
                     }
                     self.source_branch.clone()
                 }
+                PlatformData::AzureDevOps { .. } => {
+                    // Azure DevOps fork PRs are uncommon; just show branch name
+                    self.source_branch.clone()
+                }
             }
         } else {
             self.source_branch.clone()
@@ -130,6 +145,7 @@ impl RemoteRefInfo {
                 Some(format!("{}/{}", head_owner, self.source_branch))
             }
             PlatformData::GitLab { .. } => None,
+            PlatformData::AzureDevOps { .. } => None,
         }
     }
 }
@@ -294,6 +310,52 @@ mod tests {
             },
         };
         // GitLab doesn't support prefixed branch names
+        assert_eq!(info.prefixed_local_branch_name(), None);
+    }
+
+    #[test]
+    fn test_source_ref_azure_same_repo() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 550,
+            title: "Add ACH mandate support".to_string(),
+            author: "crogers".to_string(),
+            state: "active".to_string(),
+            draft: false,
+            source_branch: "crogers/ACHMandate".to_string(),
+            is_cross_repo: false,
+            url: "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/550".to_string(),
+            fork_push_url: None,
+            platform_data: PlatformData::AzureDevOps {
+                host: "dev.azure.com".to_string(),
+                organization: "myorg".to_string(),
+                project: "myproject".to_string(),
+                repo_name: "myrepo".to_string(),
+            },
+        };
+        assert_eq!(info.source_ref(), "crogers/ACHMandate");
+    }
+
+    #[test]
+    fn test_prefixed_local_branch_name_azure() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 550,
+            title: "Test".to_string(),
+            author: "crogers".to_string(),
+            state: "active".to_string(),
+            draft: false,
+            source_branch: "main".to_string(),
+            is_cross_repo: true,
+            url: "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/550".to_string(),
+            fork_push_url: None,
+            platform_data: PlatformData::AzureDevOps {
+                host: "dev.azure.com".to_string(),
+                organization: "myorg".to_string(),
+                project: "myproject".to_string(),
+                repo_name: "myrepo".to_string(),
+            },
+        };
         assert_eq!(info.prefixed_local_branch_name(), None);
     }
 
