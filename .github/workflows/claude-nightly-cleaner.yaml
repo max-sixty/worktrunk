@@ -70,7 +70,7 @@ jobs:
             4. Push the result: `git push`
             5. Comment on the PR with a brief summary of what was resolved (e.g., `gh pr comment <number> --body "..."`).
             6. If the conflicts are too complex to resolve confidently, abort with `git merge --abort` and comment on the PR explaining that manual resolution is needed.
-            7. After pushing, wait for CI with `gh pr checks <number> --watch`. If CI fails, investigate and fix.
+            7. After pushing, poll CI with `gh pr checks <number>` every 60 seconds until all checks complete. If CI fails, investigate and fix.
 
             Run subagents in parallel for independent PRs. Each subagent must work in an isolated directory to avoid checkout conflicts (e.g., `git worktree add /tmp/pr-<number> <branch>` or `git clone . /tmp/pr-<number>`). After all subagents complete, clean up temp directories and switch back to main before proceeding:
 
@@ -157,7 +157,7 @@ jobs:
                - Run tests to verify: use the test commands from CLAUDE.md
                - Commit and push
                - Create a PR referencing the issue(s)
-               - Monitor CI with `gh run watch`
+               - Poll CI with `gh pr checks <number>` every 60 seconds until all checks complete
 
             ## Step 7: Summary
 

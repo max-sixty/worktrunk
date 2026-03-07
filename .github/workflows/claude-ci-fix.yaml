@@ -118,7 +118,7 @@ jobs:
 
             8. **Iterate until CI passes**:
                - After pushing, monitor CI with `gh run list --branch fix/ci-${{ github.event.workflow_run.id }}`
-               - Wait for CI to complete with `gh run watch`
+               - Poll CI with `gh pr checks <number>` every 60 seconds until all checks complete
                - If CI fails, diagnose with `gh run view <run-id> --log-failed`
                - Fix issues, commit, push, repeat
                - Don't return until CI passes or you've exhausted reasonable fixes
