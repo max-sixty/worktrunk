@@ -205,6 +205,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `ci` | object | CI status (see below, absent when no CI) |
 | `url` | string | Dev server URL from project config (absent when not configured) |
 | `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
+| `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 
