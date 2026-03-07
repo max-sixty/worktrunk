@@ -1080,11 +1080,11 @@ Runs before every `wt switch` — before branch validation or worktree creation.
 
 ```toml
 [pre-switch]
-# Fetch if last fetch was more than 6 hours ago
-fetch = """
+# Pull if last fetch was more than 6 hours ago
+pull = """
 FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
 if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
-    git fetch
+    git pull
 fi
 """
 ```
