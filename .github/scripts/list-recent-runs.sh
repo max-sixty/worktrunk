@@ -12,6 +12,9 @@
 set -euo pipefail
 
 # Prevent gh from emitting ANSI color codes (even in non-TTY contexts).
+# CLICOLOR_FORCE overrides NO_COLOR per the clicolors spec, and Claude Code
+# sets CLICOLOR_FORCE=1 — so we must unset it for NO_COLOR to take effect.
+unset CLICOLOR_FORCE
 export NO_COLOR=1
 
 # Dynamically discover all claude-* workflows instead of maintaining a hardcoded list.
