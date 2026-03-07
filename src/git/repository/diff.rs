@@ -90,7 +90,6 @@ impl Repository {
             .split_once(' ')
             .context("Failed to parse commit details")?;
         let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        // Trim the message to match commit_message() behavior
         Ok((timestamp, message.trim().to_owned()))
     }
 
