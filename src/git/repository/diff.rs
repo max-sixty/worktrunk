@@ -54,7 +54,7 @@ impl Repository {
 
     /// Get commit timestamp in seconds since epoch.
     pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
-        let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
+        let stdout = self.run_command(&["log", "-1", "--format=%ct", commit])?;
         stdout.trim().parse().context("Failed to parse timestamp")
     }
 
@@ -67,8 +67,9 @@ impl Repository {
             return Ok(HashMap::new());
         }
 
-        // Build command: git show -s --format='%H %ct' sha1 sha2 sha3 ...
-        let mut args = vec!["show", "-s", "--format=%H %ct"];
+        // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
+        // --no-walk shows exactly the named commits without DAG walking
+        let mut args = vec!["log", "--no-walk", "--format=%H %ct"];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
@@ -87,7 +88,7 @@ impl Repository {
 
     /// Get commit message (subject line) for a commit.
     pub fn commit_message(&self, commit: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["show", "-s", "--format=%s", commit])?;
+        let stdout = self.run_command(&["log", "-1", "--format=%s", commit])?;
         Ok(stdout.trim().to_owned())
     }
 
@@ -97,7 +98,7 @@ impl Repository {
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
-        let stdout = self.run_command(&["show", "-s", "--format=%ct %s", commit])?;
+        let stdout = self.run_command(&["log", "-1", "--format=%ct %s", commit])?;
         // Only strip trailing newline, not spaces (empty subject = "timestamp ")
         let line = stdout.trim_end_matches('\n');
         let (timestamp_str, message) = line
