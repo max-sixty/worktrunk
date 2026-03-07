@@ -12,7 +12,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CLICOLOR_FORCE: 1
   RUSTFLAGS: "-C debuginfo=0"
   RUSTDOCFLAGS: "-Dwarnings"
 
