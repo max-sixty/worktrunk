@@ -38,7 +38,11 @@ enum PickerAction {
     Remove,
 }
 
-pub fn handle_select(cli_branches: bool, cli_remotes: bool, change_dir: bool) -> anyhow::Result<()> {
+pub fn handle_select(
+    cli_branches: bool,
+    cli_remotes: bool,
+    change_dir: bool,
+) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
@@ -387,8 +391,13 @@ pub fn handle_select(cli_branches: bool, cli_remotes: bool, change_dir: bool) ->
                 let fallback_path = repo.repo_path()?.to_path_buf();
                 let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
                 let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-                let hooks_display_path =
-                    handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
+                let hooks_display_path = handle_switch_output(
+                    &result,
+                    &branch_info,
+                    change_dir,
+                    Some(&source_root),
+                    &cwd,
+                )?;
 
                 // Spawn background hooks after success message
                 if !skip_hooks {
