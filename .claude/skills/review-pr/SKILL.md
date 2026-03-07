@@ -332,6 +332,11 @@ description: new text here
   range that's too wide can delete correct code adjacent to the bug. Before
   posting, verify that every line in [`start_line`, `line`] is either removed
   or rewritten in the suggestion body.
+- **Code fence collision**: When the target range includes a line that is
+  itself ` ``` ` (a code fence marker), the suggestion's own ` ``` `
+  delimiters collide with it. Either exclude the fence marker line from the
+  range, or reproduce it verbatim in the suggestion body so it is preserved
+  when the suggestion is applied.
 
 ### 5. Monitor CI
 
