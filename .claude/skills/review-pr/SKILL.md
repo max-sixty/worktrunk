@@ -287,7 +287,7 @@ Post exactly one review per run. API calls can succeed server-side while
 appearing to hang, so always verify before calling `gh pr review`:
 ```bash
 gh api "repos/$REPO/pulls/<number>/reviews" \
-  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\")] | last | .submitted_at // empty"
+  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\" and .commit_id == \"$HEAD_SHA\")] | last | .submitted_at // empty"
 ```
 If this returns a timestamp, the review is already posted — you're done.
 Otherwise, submit via `gh pr review`. Note that `--comment` requires a non-empty
