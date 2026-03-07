@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set 🤖 || true"
+            "command": "git-wt config state marker set 🤖 || true"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set 💬 || true"
+            "command": "git-wt config state marker set 💬 || true"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker clear || true"
+            "command": "git-wt config state marker clear || true"
           }
         ]
       }
