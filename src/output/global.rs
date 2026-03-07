@@ -298,7 +298,7 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
 #[cfg(unix)]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
     let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get()?;
 
     // Use exec() to replace wt process with the command.
     // This gives the command full TTY access (stdin, stdout, stderr all inherited),

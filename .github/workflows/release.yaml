@@ -13,6 +13,11 @@
 #
 # Note that the GitHub Release will be created with a generated
 # title/body based on your changelogs.
+#
+# SECURITY: This workflow must not load any data cached from other workflow
+# runs (e.g. via actions/cache). Cross-job data sharing within this workflow
+# (via upload-artifact/download-artifact) is fine since it's scoped to the
+# current run.
 
 permissions:
   "contents": "write"

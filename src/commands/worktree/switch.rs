@@ -75,7 +75,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let repo_root = repo.repo_path();
+    let repo_root = repo.repo_path()?;
     let info = provider.fetch_info(number, repo_root)?;
 
     // Display context with URL (as gutter under fetch progress)
@@ -107,7 +107,7 @@ fn resolve_fork_ref(
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
     let ref_type = provider.ref_type();
-    let repo_root = repo.repo_path();
+    let repo_root = repo.repo_path()?;
     let local_branch = remote_ref::local_branch_name(info);
 
     // Check if branch already exists and is tracking this ref
@@ -353,9 +353,15 @@ fn resolve_switch_target(
     }
 
     // Regular branch switch
-    let resolved_branch = repo
+    let mut resolved_branch = repo
         .resolve_worktree_name(branch)
         .context("Failed to resolve branch name")?;
+
+    // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
+    // Strip the remote prefix so DWIM can create a local tracking branch.
+    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
+        resolved_branch = local_name;
+    }
 
     // Resolve and validate base (only when --create is set)
     let resolved_base = if let Some(base_str) = base {
@@ -404,7 +410,7 @@ fn resolve_switch_target(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To switch to the remote branch, delete this branch and run without <bright-black>--create</>: <bright-black>{remove_cmd} && {switch_cmd}</>"
+                    "To switch to the remote branch, delete this branch and run without <underline>--create</>: <underline>{remove_cmd} && {switch_cmd}</>"
                 ))
             );
         }
@@ -424,7 +430,7 @@ fn resolve_switch_target(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To reset, run <bright-black>wt config state default-branch clear</>"
+                        "To reset, run <underline>wt config state default-branch clear</>"
                     ))
                 );
             }
@@ -820,9 +826,7 @@ pub fn execute_switch(
                     if let Some(url) = fork_push_url {
                         eprintln!(
                             "{}",
-                            info_message(cformat!(
-                                "Push configured to fork: <bright-black>{url}</>"
-                            ))
+                            info_message(cformat!("Push configured to fork: <underline>{url}</>"))
                         );
                     } else {
                         // Prefixed branch name due to conflict - push won't work

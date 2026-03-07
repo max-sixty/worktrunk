@@ -90,14 +90,10 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     // ~/.config/nushell (XDG default)
     candidates.push(home.join(".config").join("nushell"));
 
-    // On macOS, add ~/Library/Application Support/nushell
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(
-            home.join("Library")
-                .join("Application Support")
-                .join("nushell"),
-        );
+    // Platform config dir via etcetera (e.g. ~/Library/Application Support/nushell
+    // on macOS, AppData/Roaming/nushell on Windows)
+    if let Ok(strategy) = choose_base_strategy() {
+        candidates.push(strategy.config_dir().join("nushell"));
     }
 
     // Deduplicate while preserving priority order (queried path first)
@@ -300,16 +296,12 @@ mod tests {
             "Should include ~/.config/nushell in candidates"
         );
 
-        // On macOS, should include ~/Library/Application Support/nushell
-        #[cfg(target_os = "macos")]
-        {
+        // Should include the platform config dir from etcetera
+        if let Ok(strategy) = choose_base_strategy() {
+            let platform_dir = strategy.config_dir().join("nushell");
             assert!(
-                candidates.iter().any(|p| p
-                    == &home
-                        .join("Library")
-                        .join("Application Support")
-                        .join("nushell")),
-                "Should include ~/Library/Application Support/nushell in candidates on macOS"
+                candidates.iter().any(|p| p == &platform_dir),
+                "Should include platform config dir {platform_dir:?} in candidates"
             );
         }
 
@@ -331,11 +323,11 @@ mod tests {
             "Should return at least 1 candidate path, got: {candidates:?}"
         );
 
-        // On macOS, should have at least 2 (XDG default + Library/Application Support)
-        #[cfg(target_os = "macos")]
+        // On macOS/Windows, should have at least 2 (XDG default + platform path)
+        #[cfg(any(target_os = "macos", windows))]
         assert!(
             candidates.len() >= 2,
-            "macOS should have at least 2 candidates, got: {candidates:?}"
+            "Should have at least 2 candidates on this platform, got: {candidates:?}"
         );
     }
 

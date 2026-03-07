@@ -20,7 +20,7 @@
 //! // - Hints: <dim>...</>
 //! // - Progress: <cyan>...</>
 //! // - Success: <green>...</>
-//! // - Secondary: <bright-black>...</>
+//! // - Inline references (in hints): <underline>...</>
 //! ```
 //!
 //! # anstyle constants

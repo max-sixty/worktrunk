@@ -42,14 +42,46 @@ user's explicit request — don't downgrade it to a compare link.
 
 ## CI Monitoring
 
-After pushing changes to a PR branch, monitor CI until all checks pass:
+After pushing changes to a PR branch, you **must** wait for CI before saying
+"done" or reporting completion. A push without green CI is not finished work.
 
-1. Monitor with `gh pr checks` or `gh run list --branch <branch>`
-2. Wait for completion with `gh run watch`
-3. If CI fails, diagnose with `gh run view <run-id> --log-failed`
-4. Fix issues, commit, push, and repeat
-5. Do not return until CI is green — local tests alone are not sufficient (CI
-   runs on Linux, Windows, macOS)
+1. Push your changes
+2. Run `gh pr checks <number>` once
+3. If all checks passed, report completion
+4. If checks are still running, poll with `gh pr checks <number>` every 60
+   seconds until all checks complete (this may take up to 10 minutes — that's an
+   acceptable tradeoff to ensure the bot reports accurate CI status)
+5. If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix issues,
+   commit, push, and repeat from step 2
+6. Only after all checks pass, report completion
+
+**Never** post a "done" or "fixed" comment before CI passes. Local tests alone
+are not sufficient — CI runs on Linux, Windows, and macOS. If you report
+completion and CI later fails, the user has to come back and ask you to fix it
+again.
+
+Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
+instead, which has a natural bound on CI completion time.
+
+## Replying to Comments
+
+Prefer replying in context rather than creating a new top-level comment:
+
+- **Inline review comments** (URLs containing `#discussion_r`): Reply in the
+  review thread using `gh api`, not as a top-level conversation comment. Use the
+  review comment ID from the prompt:
+  ```bash
+  cat > /tmp/reply.md << 'EOF'
+  Your response here
+  EOF
+  gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
+    -F body=@/tmp/reply.md
+  ```
+  This keeps the discussion co-located with the code it references.
+
+- **Conversation comments** (URLs containing `#issuecomment-`): Post a regular
+  comment — GitHub doesn't support threading for these, so a new comment is
+  correct.
 
 ## Comment Formatting
 
@@ -99,22 +131,61 @@ unused branches after the run).
 
 ## Shell Quoting in `gh` Commands
 
-Shell expansion corrupts `$` and `!` in command arguments. When a `gh` argument
-contains either character, write it to a temp file or heredoc variable first:
+Shell expansion corrupts `$` and `!` in command arguments. **This is a Claude
+Code bug** — bash history expansion mangles `!` in double-quoted strings (e.g.,
+`format!` becomes `format\!`) and it's the most common source
+of broken bot comments.
+
+**Rule: always use a temp file for comment/reply bodies and other shell-sensitive
+arguments.** Never pass the body directly as a `-f body="..."` argument.
 
 ```bash
+# Posting a comment — ALWAYS use a file
+cat > /tmp/comment.md << 'EOF'
+Fixed — the `format!` macro needed its arguments on separate lines.
+CI is now green across all platforms.
+EOF
+gh pr comment 1286 -F /tmp/comment.md
+
+# Replying to a review comment — ALWAYS use a file
+cat > /tmp/reply.md << 'EOF'
+Good catch! Updated to use `assert_eq!` instead.
+EOF
+gh api repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies \
+  -F body=@/tmp/reply.md
+
 # GraphQL with $ — write query to a file, pass with -F
 cat > /tmp/query.graphql << 'GRAPHQL'
 query($owner: String!, $repo: String!) { ... }
 GRAPHQL
 gh api graphql -F query=@/tmp/query.graphql -f owner="$OWNER"
 
-# jq/body text with ! — capture in a heredoc variable
-jq_filter=$(cat <<'EOF'
+# jq with ! — use a file
+cat > /tmp/jq_filter << 'EOF'
 select(.status != "COMPLETED")
 EOF
-)
-gh api ... --jq "$jq_filter"
+gh api ... --jq "$(cat /tmp/jq_filter)"
+```
+
+**Key details:**
+- Use `<< 'EOF'` (single-quoted delimiter) to prevent all shell expansion
+- Use `-F body=@/tmp/reply.md` (capital `-F` with `@` prefix) to read from file
+- For `gh pr comment` and `gh issue comment`, use `-F /tmp/comment.md` (the
+  `-F` flag reads body from file)
+
+## Keeping PR Titles and Descriptions Current
+
+When you revise a PR's code in response to review feedback, check whether the
+title and description still accurately describe the changes. If the approach
+changed (e.g., from "exclude all X" to "add targeted exclusions for X"), update
+the title and body to match. A reviewer reading the description before the diff
+should not be confused by stale framing.
+
+Use the GitHub API to update:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/{number} -X PATCH \
+  -f title="new title" -F body=@/tmp/updated-body.md
 ```
 
 ## Atomic PRs
@@ -126,6 +197,26 @@ session. This makes PRs easier to review, revert, and bisect.
 
 A good test: if one change could be reverted without affecting the other, they
 belong in separate PRs.
+
+## Thoroughness — Grounded Analysis
+
+CI runs are not interactive chat. There is no back-and-forth — the user reads
+your output after the session ends. Every claim must be grounded in evidence you
+actually examined.
+
+- **Do the work, don't speculate.** If you have access to logs, code, or API
+  data, read it before drawing conclusions. "This suggests X may be the cause"
+  is not acceptable when you can check whether X is actually the cause.
+- **Show evidence.** Cite specific log lines, file paths, commit SHAs, or API
+  responses. A conclusion without evidence is speculation.
+- **Trace causation, don't guess at correlation.** If two things co-occur, find
+  the mechanism — don't say "this may be related."
+- **Distinguish what you verified from what you inferred.** If you couldn't
+  verify something (e.g., logs weren't available), say so explicitly rather than
+  hedging with "may" or "suggests."
+
+The user can't ask follow-up questions in the same session. Treat every response
+as your final answer.
 
 ## Tone
 

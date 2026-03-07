@@ -9,6 +9,6 @@ expression: "&output"
 [36m❯[39m [36mAllow and remember? [1m[y/N][22m[39m n
 [2m○[22m Commands declined, continuing worktree creation
 [32m✓[39m [32mCreated branch [1mtest-decline[22m from [1mmain[22m and worktree @ [1m_REPO_.test-decline[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m
-[2m↳[22m [2mTo change directory, run [90mwt switch test-decline[39m[22m
+[2m↳[22m [2mTo change directory, run [4mwt switch test-decline[24m[22m

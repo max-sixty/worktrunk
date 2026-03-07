@@ -635,7 +635,7 @@ fn test_repo_path_in_submodule() {
 
     // The key assertion: repo_path() should return the submodule's working directory,
     // NOT something like parent/.git/modules/sub
-    let repo_path = repository.repo_path();
+    let repo_path = repository.repo_path().unwrap();
 
     // Canonicalize both paths for comparison (handles symlinks like /var -> /private/var on macOS)
     let expected = dunce::canonicalize(&submodule_path).unwrap();

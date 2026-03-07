@@ -592,7 +592,7 @@ fn render_hook_commands(
         // Show template or expanded command
         let command_text = if let Some(command_ctx) = ctx {
             // Expand template with current context
-            expand_command_template(&cmd.template, command_ctx, hook_type)
+            expand_command_template(&cmd.template, command_ctx, hook_type)?
         } else {
             cmd.template.clone()
         };
@@ -604,7 +604,11 @@ fn render_hook_commands(
 }
 
 /// Expand a command template with context variables
-fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
+fn expand_command_template(
+    template: &str,
+    ctx: &CommandContext,
+    hook_type: HookType,
+) -> anyhow::Result<String> {
     // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
@@ -622,7 +626,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         }
         _ => Vec::new(),
     };
-    let template_ctx = build_hook_context(ctx, &extra_vars);
+    let template_ctx = build_hook_context(ctx, &extra_vars)?;
     let vars: HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -630,6 +634,8 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
 
     // Use the standard template expansion (shell-escaped)
     // On any error, show both the template and error message
-    worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
-        .unwrap_or_else(|err| format!("# {}\n{}", err.message, template))
+    Ok(
+        worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
+            .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)),
+    )
 }

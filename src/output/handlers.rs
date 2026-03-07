@@ -205,7 +205,7 @@ fn handle_branch_deletion_result(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To delete the unmerged branch, run <bright-black>{cmd}</>"
+                        "To delete the unmerged branch, run <underline>{cmd}</>"
                     ))
                 );
             }
@@ -567,7 +567,7 @@ pub fn handle_switch_output(
                     .unwrap_or(false);
                 if !has_custom_config && !repo.has_shown_hint("worktree-path") {
                     let hint = hint_message(cformat!(
-                        "To customize worktree locations, run <bright-black>wt config create</>"
+                        "To customize worktree locations, run <underline>wt config create</>"
                     ));
                     eprintln!("{}", hint);
                     let _ = repo.mark_hint_shown("worktree-path");
@@ -720,7 +720,7 @@ fn handle_branch_only_output(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "To delete the unmerged branch, run <bright-black>{cmd}</>"
+                    "To delete the unmerged branch, run <underline>{cmd}</>"
                 ))
             );
         }
@@ -983,7 +983,7 @@ impl RemovalDisplayInfo {
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Branch integrated ({desc} <bright-black>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+                        "Branch integrated ({desc} <underline>{target}</>, <dim>{symbol}</>); retained with <underline>--no-delete-branch</>"
                     ))
                 );
             }
@@ -996,7 +996,7 @@ impl RemovalDisplayInfo {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Branch unmerged; to delete, run <bright-black>{cmd}</>"
+                    "Branch unmerged; to delete, run <underline>{cmd}</>"
                 ))
             );
         }

@@ -70,7 +70,7 @@ impl<'a> CommitGenerator<'a> {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Using fallback commit message. For LLM setup guide, run <bright-black>wt config --help</>"
+                    "Using fallback commit message. For LLM setup guide, run <underline>wt config --help</>"
                 ))
             );
         }

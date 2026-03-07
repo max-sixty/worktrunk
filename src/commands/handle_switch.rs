@@ -240,7 +240,7 @@ pub fn handle_switch(
     //
     // When recovered from a deleted worktree, current_dir() and current_worktree().root()
     // both fail — fall back to repo_path() (the main worktree root).
-    let fallback_path = repo.repo_path().to_path_buf();
+    let fallback_path = repo.repo_path()?.to_path_buf();
     let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
     let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
     let hooks_display_path =
@@ -281,7 +281,7 @@ pub fn handle_switch(
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
         let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
-        let template_vars = build_hook_context(&ctx, &extra_vars);
+        let template_vars = build_hook_context(&ctx, &extra_vars)?;
         let vars: HashMap<&str, &str> = template_vars
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))

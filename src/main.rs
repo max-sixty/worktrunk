@@ -107,9 +107,7 @@ fn print_windows_picker_unavailable() {
     );
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "Specify a branch: <bright-black>wt switch BRANCH</>"
-        ))
+        hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
     );
 }
 
@@ -464,7 +462,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                             eprintln!(
                                 "{}",
                                 hint_message(cformat!(
-                                    "No <bright-black>{shell}</> {what} in {path}"
+                                    "No <underline>{shell}</> {what} in {path}"
                                 ))
                             );
                         }
@@ -489,7 +487,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                             eprintln!(
                                 "{}",
                                 hint_message(cformat!(
-                                    "No <bright-black>{shell}</> completions in {path}"
+                                    "No <underline>{shell}</> completions in {path}"
                                 ))
                             );
                         }

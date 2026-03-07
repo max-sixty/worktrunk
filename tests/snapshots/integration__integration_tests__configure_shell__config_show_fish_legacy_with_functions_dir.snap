@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -42,7 +43,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[2m↳[22m [2mNot found; to create one, run [90mwt config create[39m[22m
+[2m↳[22m [2mNot found; to create one, run [4mwt config create[24m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
@@ -53,7 +54,7 @@ exit_code: 0
 [107m [0m $SHELL: [1m/bin/fish[22m
 
 [2m○[22m Fish integration found in deprecated location @ [1m~/.config/fish/conf.d/wt.fish[22m
-[2m↳[22m [2mTo migrate to [90m~/.config/fish/functions/wt.fish[39m, run [90mwt config shell install fish[39m[22m
+[2m↳[22m [2mTo migrate to [4m~/.config/fish/functions/wt.fish[24m, run [4mwt config shell install fish[24m[22m
 [2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m

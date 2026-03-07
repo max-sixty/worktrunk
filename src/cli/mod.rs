@@ -319,6 +319,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
+| `Alt-r` | Remove selected worktree |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
@@ -1079,11 +1080,11 @@ Runs before every `wt switch` — before branch validation or worktree creation.
 
 ```toml
 [pre-switch]
-# Fetch if last fetch was more than 6 hours ago
-fetch = """
+# Pull if last fetch was more than 6 hours ago
+pull = """
 FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
 if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
-    git fetch
+    git pull
 fi
 """
 ```

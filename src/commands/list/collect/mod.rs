@@ -409,7 +409,7 @@ pub fn collect(
         let msg =
             cformat!("Configured default branch <bold>{configured}</> does not exist locally");
         eprintln!("{}", warning_message(msg));
-        let hint = cformat!("To reset, run <bright-black>wt config state default-branch clear</>");
+        let hint = cformat!("To reset, run <underline>wt config state default-branch clear</>");
         eprintln!("{}", hint_message(hint));
     }
 
@@ -896,7 +896,7 @@ pub fn collect(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "A git command likely hung; run with <bright-black>-v</> for details, <bright-black>-vv</> to create a diagnostic file"
+                "A git command likely hung; run with <underline>-v</> for details, <underline>-vv</> to create a diagnostic file"
             ))
         );
     }

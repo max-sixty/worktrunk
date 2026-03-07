@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::config::HooksConfig;
-use crate::config::expansion::{TemplateExpandError, expand_template};
+use crate::config::expansion::expand_template;
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
@@ -207,19 +207,21 @@ impl UserConfig {
         branch: &str,
         repo: &crate::git::Repository,
         project: Option<&str>,
-    ) -> Result<String, TemplateExpandError> {
+    ) -> anyhow::Result<String> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),
         };
         // Use native path format (not POSIX) since this is used for filesystem operations
-        let repo_path = repo.repo_path().to_string_lossy().to_string();
+        let repo_path = repo.repo_path()?.to_string_lossy().to_string();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
-        expand_template(&template, &vars, false, repo, "worktree-path")
-            .map(|p| shellexpand::tilde(&p).into_owned())
+        Ok(
+            expand_template(&template, &vars, false, repo, "worktree-path")
+                .map(|p| shellexpand::tilde(&p).into_owned())?,
+        )
     }
 }

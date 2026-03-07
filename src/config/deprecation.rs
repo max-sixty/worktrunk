@@ -723,7 +723,8 @@ pub fn check_and_migrate(
         deprecations,
         label: label.to_string(),
         main_worktree_path: if !warn_and_migrate {
-            repo.map(|r| r.repo_path().to_path_buf())
+            repo.and_then(|r| r.repo_path().ok())
+                .map(|p| p.to_path_buf())
         } else {
             None
         },
@@ -768,7 +769,7 @@ pub fn check_and_migrate(
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                    "Copied approved commands to <underline>{approvals_filename}</>"
                 ))
             );
         }
@@ -940,7 +941,7 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
                 out,
                 "{}",
                 hint_message(cformat!(
-                    "Copied approved commands to <bright-black>{approvals_filename}</>"
+                    "Copied approved commands to <underline>{approvals_filename}</>"
                 ))
             );
         }

@@ -46,7 +46,7 @@ impl Repository {
         if let Some(first) = worktrees.first_mut()
             && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
         {
-            first.path = self.repo_path().to_path_buf();
+            first.path = self.repo_path()?.to_path_buf();
         }
 
         Ok(worktrees)
@@ -94,7 +94,7 @@ impl Repository {
             };
             self.worktree_for_branch(&branch)
         } else {
-            Ok(Some(self.repo_path().to_path_buf()))
+            Ok(Some(self.repo_path()?.to_path_buf()))
         }
     }
 
@@ -212,7 +212,7 @@ impl Repository {
                 self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
-                            "No previous branch found in history. Run <bright-black>wt list</> to see available worktrees."
+                            "No previous branch found in history. Run <underline>wt list</> to see available worktrees."
                         ),
                     }
                     .into()
@@ -221,7 +221,7 @@ impl Repository {
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
                     message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <bright-black>wt config state default-branch set <bold>BRANCH</></>"
+                        "Cannot determine default branch. Specify target explicitly or run <underline>wt config state default-branch set <bold>BRANCH</></>"
                     ),
                 }
                 .into()
@@ -287,8 +287,7 @@ impl Repository {
     /// - Normal repos: the main worktree (repo root)
     /// - Bare repos: the default branch's worktree, or the bare repo directory
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .primary_worktree()?
-            .unwrap_or_else(|| self.repo_path().to_path_buf()))
+        self.primary_worktree()?
+            .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
     }
 }

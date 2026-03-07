@@ -19,16 +19,20 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -42,4 +46,4 @@ exit_code: 1
 [107m [0m [1mAdd feature fix for edge case[22m (!42)
 [107m [0m by @contributor · opened · feature-fix · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/42[39m
 [31m✗[39m [31mBranch [1mfeature-fix[22m exists but doesn't track MR !42[39m
-[2m↳[22m [2mTo free the name, run [90mgit branch -m -- feature-fix feature-fix-old[39m[22m
+[2m↳[22m [2mTo free the name, run [4mgit branch -m -- feature-fix feature-fix-old[24m[22m

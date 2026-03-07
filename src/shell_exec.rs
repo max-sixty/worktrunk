@@ -59,7 +59,7 @@ fn get_semaphore() -> &'static Semaphore {
 }
 
 /// Cached shell configuration for the current platform
-static SHELL_CONFIG: OnceLock<ShellConfig> = OnceLock::new();
+static SHELL_CONFIG: OnceLock<Result<ShellConfig, String>> = OnceLock::new();
 
 /// Shell configuration for command execution
 #[derive(Debug, Clone)]
@@ -77,9 +77,12 @@ pub struct ShellConfig {
 impl ShellConfig {
     /// Get the shell configuration for the current platform
     ///
-    /// On Unix, returns sh. On Windows, returns Git Bash (panics if not installed).
-    pub fn get() -> &'static ShellConfig {
-        SHELL_CONFIG.get_or_init(detect_shell)
+    /// On Unix, returns sh. On Windows, returns Git Bash or an error if not installed.
+    pub fn get() -> anyhow::Result<&'static ShellConfig> {
+        SHELL_CONFIG
+            .get_or_init(detect_shell)
+            .as_ref()
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// Create a Command configured for shell execution
@@ -106,15 +109,15 @@ impl ShellConfig {
 }
 
 /// Detect the best available shell for the current platform
-fn detect_shell() -> ShellConfig {
+fn detect_shell() -> Result<ShellConfig, String> {
     #[cfg(unix)]
     {
-        ShellConfig {
+        Ok(ShellConfig {
             executable: PathBuf::from("sh"),
             args: vec!["-c".to_string()],
             is_posix: true,
             name: "sh".to_string(),
-        }
+        })
     }
 
     #[cfg(windows)]
@@ -125,22 +128,22 @@ fn detect_shell() -> ShellConfig {
 
 /// Detect Git Bash on Windows
 ///
-/// Panics if Git for Windows is not installed, since hooks require bash syntax.
+/// Returns an error if Git for Windows is not installed, since hooks require
+/// bash syntax.
 #[cfg(windows)]
-fn detect_windows_shell() -> ShellConfig {
+fn detect_windows_shell() -> Result<ShellConfig, String> {
     if let Some(bash_path) = find_git_bash() {
-        return ShellConfig {
+        return Ok(ShellConfig {
             executable: bash_path,
             args: vec!["-c".to_string()],
             is_posix: true,
             name: "Git Bash".to_string(),
-        };
+        });
     }
 
-    panic!(
-        "Git for Windows is required but not found.\n\
+    Err("Git for Windows is required but not found.\n\
          Install from https://git-scm.com/download/win"
-    );
+        .to_string())
 }
 
 /// Find Git Bash executable on Windows
@@ -166,11 +169,23 @@ fn find_git_bash() -> Option<PathBuf> {
         }
     }
 
-    // Fallback: standard Git for Windows path (needed on some CI environments
+    // Fallback: standard Git for Windows paths (needed on some CI environments
     // where `which` doesn't find git even though it's installed)
     let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
     if bash_path.exists() {
         return Some(bash_path);
+    }
+
+    // Per-user Git for Windows installation (default path when installed without admin rights)
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let bash_path = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Git")
+            .join("bin")
+            .join("bash.exe");
+        if bash_path.exists() {
+            return Some(bash_path);
+        }
     }
 
     None
@@ -716,7 +731,7 @@ impl Cmd {
 
         // Build the command - either shell-wrapped or direct
         let (mut cmd, exec_mode) = if self.shell_wrap {
-            let shell = ShellConfig::get();
+            let shell = ShellConfig::get()?;
             let mode = format!("shell: {}", shell.name);
             (shell.command(&self.program), mode)
         } else {
@@ -965,7 +980,7 @@ mod tests {
 
     #[test]
     fn test_shell_config_is_available() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         assert!(!config.name.is_empty());
         assert!(!config.args.is_empty());
     }
@@ -973,14 +988,14 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_unix_shell_is_posix() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         assert!(config.is_posix);
         assert_eq!(config.name, "sh");
     }
 
     #[test]
     fn test_command_creation() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         let cmd = config.command("echo hello");
         // Just verify it doesn't panic
         let _ = format!("{:?}", cmd);
@@ -988,7 +1003,7 @@ mod tests {
 
     #[test]
     fn test_shell_command_execution() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         let output = config
             .command("echo hello")
             .output()
@@ -1014,7 +1029,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn test_windows_uses_git_bash() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         assert_eq!(config.name, "Git Bash");
         assert!(config.is_posix, "Git Bash should support POSIX syntax");
         assert!(
@@ -1026,7 +1041,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn test_windows_echo_command() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         let output = config
             .command("echo test_output")
             .output()
@@ -1044,7 +1059,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn test_windows_posix_redirection() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         // Test POSIX-style redirection: stdout redirected to stderr
         let output = config
             .command("echo redirected 1>&2")
@@ -1062,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_shell_config_debug() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         let debug = format!("{:?}", config);
         assert!(debug.contains("ShellConfig"));
         assert!(debug.contains(&config.name));
@@ -1070,7 +1085,7 @@ mod tests {
 
     #[test]
     fn test_shell_config_clone() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         let cloned = config.clone();
         assert_eq!(config.name, cloned.name);
         assert_eq!(config.is_posix, cloned.is_posix);
@@ -1079,7 +1094,7 @@ mod tests {
 
     #[test]
     fn test_shell_is_posix_method() {
-        let config = ShellConfig::get();
+        let config = ShellConfig::get().unwrap();
         // is_posix method should match the field
         assert_eq!(config.is_posix(), config.is_posix);
     }

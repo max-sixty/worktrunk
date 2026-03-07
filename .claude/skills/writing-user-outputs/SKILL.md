@@ -228,7 +228,7 @@ multiple things:
 
 ```rust
 "Removing feature worktree in background; retaining branch (--no-delete-branch)"
-"Branch unmerged; to delete, run <bright-black>wt remove -D</>"  // hint uses bright-black
+"Branch unmerged; to delete, run <underline>wt remove -D</>"  // hint uses underline
 "{tool} not authenticated; run <bold>{tool} auth login</>"       // warning uses bold
 ```
 
@@ -427,16 +427,16 @@ clearer:
 
 **Description + command in single message:** For warnings/errors that include a
 recovery command, join with semicolon. Use `<bold>` for commands in
-warnings/errors (only hints use `<bright-black>`):
+warnings/errors (only hints use `<underline>`):
 
 ```rust
 // Warning with inline recovery command (bold for commands)
 warning_message("Failed to restore stash; run <bold>git stash pop {ref}</> to restore manually")
 warning_message("{tool} not authenticated; run <bold>{tool} auth login</>")
 
-// For longer suggestions, use separate hint message (bright-black for commands)
+// For longer suggestions, use separate hint message (underline for commands)
 warning_message("Failed to restore stash")
-hint_message("To restore manually, run <bright-black>git stash pop {ref}</>")
+hint_message("To restore manually, run <underline>git stash pop {ref}</>")
 ```
 
 **Multiple suggestions in one hint:** When combining suggestions with semicolons,
@@ -575,11 +575,11 @@ Use `eprintln!` with formatting functions. Use `cformat!` for inner styling:
 
 ```rust
 eprintln!("{}", success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")));
-eprintln!("{}", hint_message(cformat!("Run <bright-black>wt merge</> to continue")));
+eprintln!("{}", hint_message(cformat!("Run <underline>wt merge</> to continue")));
 ```
 
-**color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`, `<green>`,
-`<yellow>`, `<cyan>`, `<magenta>`
+**color-print tags:** `<bold>`, `<dim>`, `<underline>`, `<bright-black>`, `<red>`,
+`<green>`, `<yellow>`, `<cyan>`, `<magenta>`
 
 **Branch names and status values** should be bolded in messages.
 
@@ -595,15 +595,16 @@ cformat!("{ERROR_SYMBOL} <red>Branch <bold>{branch}</> not found</>")
 Never quote commands or branch names. Use styling to make them stand out:
 
 - **In normal font context**: Use `<bold>` for commands and branches
-- **In hints**: Use `<bright-black>` for commands and data values (paths,
-  branches). Avoid `<bold>` inside hints — the closing `[22m` resets both bold
-  AND dim, so text after `</bold>` loses dim styling.
+- **In hints**: Use `<underline>` for commands and data values (paths,
+  branches). Underline is safe inside `<dim>` — closing `[24m` only resets
+  underline, preserving dim. Avoid `<bold>` inside hints — the closing `[22m`
+  resets both bold AND dim, so text after `</bold>` loses dim styling.
 
 ```rust
 // GOOD - bold in normal context
 eprintln!("{}", info_message(cformat!("Use <bold>wt merge</> to continue")));
-// GOOD - bright-black for commands in hints
-eprintln!("{}", hint_message(cformat!("Run <bright-black>wt list</> to see worktrees")));
+// GOOD - underline for commands in hints
+eprintln!("{}", hint_message(cformat!("Run <underline>wt list</> to see worktrees")));
 // BAD - quoted commands
 eprintln!("{}", hint_message("Run 'wt list' to see worktrees"));
 ```
@@ -691,7 +692,7 @@ hook commands being displayed):
 **Gutter vs Table:** Tables for structured app data; gutter for quoting external
 content.
 
-**Gutter vs Hints:** Command suggestions in hints use inline `<bright-black>`,
+**Gutter vs Hints:** Command suggestions in hints use inline `<underline>`,
 not gutter. Gutter is for displaying content (what will execute, config to
 copy); hints suggest what the user should run.
 

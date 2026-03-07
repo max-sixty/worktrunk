@@ -55,10 +55,10 @@ fn hint_for_repo(repo: &Repository) -> String {
             .flatten()
             .is_some_and(|p| p.exists())
     {
-        return cformat!("Current directory was removed. Try: <bright-black>wt switch ^</>");
+        return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
     }
 
-    cformat!("Current directory was removed. Run <bright-black>wt list</> to see worktrees.")
+    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees.")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -327,7 +327,7 @@ mod tests {
         // Tests run inside a git repo in CI, so Repository::current() succeeds.
         let (repo, recovered) = current_or_recover().unwrap();
         assert!(!recovered);
-        assert!(repo.repo_path().exists());
+        assert!(repo.repo_path().unwrap().exists());
     }
 
     #[test]
@@ -421,7 +421,10 @@ mod tests {
 
         // Recovery should find beta's repo, not alpha's
         let recovered = recover_from_path(&wt_b).unwrap();
-        assert_eq!(dunce::canonicalize(recovered.repo_path()).unwrap(), repo_b);
+        assert_eq!(
+            dunce::canonicalize(recovered.repo_path().unwrap()).unwrap(),
+            repo_b
+        );
     }
 
     #[test]

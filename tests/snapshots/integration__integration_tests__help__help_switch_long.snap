@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -165,6 +166,7 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
    (type)        Filter worktrees               
    [2mEnter[0m         Switch to selected worktree    
    [2mAlt-c[0m         Create new worktree from query 
+   [2mAlt-r[0m         Remove selected worktree       
    [2mEsc[0m           Cancel                         
    [2m1[0m–[2m5[0m           Switch preview tab             
    [2mAlt-p[0m         Toggle preview panel           

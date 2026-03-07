@@ -401,6 +401,30 @@ fn test_default_branch_name_display() {
 }
 
 #[test]
+fn repo_path_error_when_is_bare_fails() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    // Create a Repository with a non-existent git_common_dir.
+    // This makes --show-toplevel fail (reaching the is_bare branch),
+    // and then is_bare() also fails because git can't run in a missing dir.
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/nonexistent/repo"),
+        git_common_dir: PathBuf::from("/nonexistent/.git"),
+        cache: Arc::new(RepoCache::default()),
+    };
+
+    let err = repo.repo_path().unwrap_err();
+    let msg = format!("{err:#}");
+    // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
+    // "The directory name is invalid." on Windows), so only assert the stable prefix.
+    assert!(
+        msg.starts_with("failed to check if repository is bare: "),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[test]
 fn extract_failed_command_from_stream_error() {
     use super::StreamCommandError;
 
