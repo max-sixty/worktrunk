@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anstyle::Style;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{self, Shell};
+use worktrunk::shell::{self, Shell, find_exact_line_in_file_tree};
 use worktrunk::styling::{
     INFO_SYMBOL, SUCCESS_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_toml,
     format_with_gutter, hint_message, prompt_message, warning_message,
@@ -466,31 +466,21 @@ fn configure_shell_file(
 
     // For other shells, check if file exists
     if path.exists() {
-        // Read the file and check if our integration already exists
-        let file = fs::File::open(path)
-            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
-
-        let reader = BufReader::new(file);
-
-        // Check for the exact conditional wrapper we would write
-        for line in reader.lines() {
-            let line = line.map_err(|e| {
+        if let Some(configured_path) =
+            find_exact_line_in_file_tree(path, &config_line).map_err(|e| {
                 format!(
-                    "Failed to read line from {}: {}",
+                    "Failed to scan {} for existing shell integration: {}",
                     format_path_for_display(path),
                     e
                 )
-            })?;
-
-            // Canonical detection: check if the line matches exactly what we write
-            if line.trim() == config_line {
-                return Ok(Some(ConfigureResult {
-                    shell,
-                    path: path.to_path_buf(),
-                    action: ConfigAction::AlreadyExists,
-                    config_line: config_line.clone(),
-                }));
-            }
+            })?
+        {
+            return Ok(Some(ConfigureResult {
+                shell,
+                path: configured_path,
+                action: ConfigAction::AlreadyExists,
+                config_line: config_line.clone(),
+            }));
         }
 
         // Line doesn't exist, add it
