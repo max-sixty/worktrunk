@@ -258,9 +258,7 @@ wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
 
 ## Subdomain routing with Caddy
 
-Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. Useful for cookies, CORS, and matching production URL structure.
-
-`.localhost` is [reserved by RFC 6761](https://datatracker.ietf.org/doc/html/rfc6761) — browsers and operating systems resolve `*.localhost` to loopback without any external DNS. Works fully offline.
+Clean URLs like `http://feature-auth.myproject.localhost` without port numbers — works offline, no external DNS. Useful for cookies, CORS, and matching production URL structure.
 
 **Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
 

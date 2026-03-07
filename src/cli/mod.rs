@@ -1386,7 +1386,7 @@ The port is stable across machines and restarts — `feature-api` always gets th
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-For subdomain-based routing (useful for cookies/CORS), use `.localhost` subdomains which resolve to 127.0.0.1 via the OS ([RFC 6761](https://datatracker.ietf.org/doc/html/rfc6761)):
+For subdomain-based routing (useful for cookies/CORS), use `.localhost` subdomains which resolve to 127.0.0.1:
 
 ```toml
 [post-start]
