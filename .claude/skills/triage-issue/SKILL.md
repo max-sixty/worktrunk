@@ -130,11 +130,11 @@ note what you tried and skip to step 7.
    ---
    Closes #<issue-number> — automated triage"
    ```
-5. Monitor CI until green:
+5. Monitor CI using the poll approach from `/running-in-ci`:
    ```bash
-   gh run list --branch fix/issue-$ARGUMENTS
-   gh run watch
+   gh pr checks <pr-number>
    ```
+   Poll with `gh pr checks` every 60 seconds until all checks complete.
    If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix, and
    repeat.
 

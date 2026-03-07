@@ -346,18 +346,16 @@ description: new text here
 concerns). There is no approval to dismiss on failure, so monitoring adds no
 value.
 
-After approving, wait for CI to finish using `gh run watch` (consistent with
-the `running-in-ci` skill). Exclude the current workflow's own check to avoid
-a circular wait:
+After approving, monitor CI using the poll approach from `/running-in-ci`.
+Exclude the current workflow's own check to avoid a circular wait:
 
 ```bash
-# Find the CI run triggered by this PR's HEAD commit.
-RUN_ID=$(gh run list --branch <branch> --commit "$HEAD_SHA" \
-  --workflow ci.yaml --json databaseId --jq '.[0].databaseId')
-gh run watch "$RUN_ID" --exit-status 2>&1 || true
+gh pr checks <number>
 ```
 
-After `gh run watch` completes, verify final status:
+Poll with `gh pr checks` every 60 seconds until all checks complete.
+
+Then verify final status:
 
 ```bash
 gh pr view <number> --json statusCheckRollup \
