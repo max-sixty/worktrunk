@@ -407,6 +407,44 @@ fn test_prune_dry_run_mixed_worktrees_and_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
+/// Prune works when the current worktree is mid-rebase.
+///
+/// During an interactive rebase, the worktree is in detached HEAD state.
+/// `git branch --format=%(refname:lstrip=2)` includes a synthetic entry like
+/// `(no branch, rebasing feature)` which isn't a valid ref. The orphan branch
+/// scan must not pass this to `integration_reason`.
+#[rstest]
+fn test_prune_during_rebase(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a merged worktree (same commit as main)
+    repo.add_worktree("merged-wt");
+
+    // Create a feature worktree with commits to rebase
+    let feature_path = repo.add_worktree_with_commit("rebasing", "r.txt", "v1", "commit 1");
+    repo.commit_in_worktree(&feature_path, "r.txt", "v2", "commit 2");
+
+    // Start an interactive rebase that pauses (exec false fails)
+    let git_status = repo
+        .git_command()
+        .args(["rebase", "-i", "--exec", "false", "main"])
+        .current_dir(&feature_path)
+        .env("GIT_SEQUENCE_EDITOR", "true")
+        .output()
+        .unwrap();
+    // The rebase should pause (exec false fails), leaving us in rebase state
+    assert!(!git_status.status.success(), "rebase should be paused");
+
+    // Run prune from the rebasing worktree — should succeed, not error on
+    // "(no branch, rebasing ...)" being used as a git revision
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        Some(&feature_path)
+    ));
+}
+
 /// Stale candidate + young worktrees: shows both the candidate and skipped count.
 ///
 /// A stale worktree (directory deleted) bypasses the age check because it goes
