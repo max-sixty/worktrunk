@@ -33,6 +33,9 @@ runs:
         prefix-key: ${{ hashFiles('Cargo.lock') }}
         save-if: false
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7.3.1
+
     - name: Install pre-commit
       shell: bash
       run: uv tool install pre-commit
