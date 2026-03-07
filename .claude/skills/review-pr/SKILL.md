@@ -147,8 +147,13 @@ the same broken path across all workflow files.
 rg 'env\.HOME' .github/workflows/
 ```
 
-If the same issue exists elsewhere, add inline suggestions fixing each
-occurrence.
+If the same issue exists in files already in the diff, add inline suggestions
+fixing each occurrence. If the occurrence is in a file **not in the diff**,
+GitHub's API won't accept inline suggestions on it — instead, offer to push a
+fix commit (for community/bot PRs) or describe the needed change with the exact
+file, line, and replacement text so the author can apply it manually. Never put
+replacement code as a fenced code block in the review body without explaining
+that an inline suggestion isn't possible because the file is outside the diff.
 
 **Duplication check (mandatory for new functions/types):**
 
@@ -307,6 +312,14 @@ change expressible as replacement lines), post it as an inline suggestion on the
 exact line — never as a code block in the review body. Inline suggestions let
 the author apply with one click; code blocks in the body force them to find the
 line and copy-paste manually.
+
+**Exception: lines outside the diff.** GitHub only allows inline comments on
+lines that appear in the diff. If a fix targets a file or line not in the diff,
+you cannot use an inline suggestion. In this case, state the file, line number,
+and exact replacement clearly in the review body, and explicitly note that an
+inline suggestion isn't possible because the line is outside the diff. Better
+yet, offer to push a commit with the fix (appropriate for bot PRs or when the
+author requests it).
 
 **Anti-pattern — code block in review body:**
 
