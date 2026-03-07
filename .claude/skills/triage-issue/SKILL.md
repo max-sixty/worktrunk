@@ -108,14 +108,6 @@ note what you tried and skip to step 7.
    ```bash
    cargo run -- hook pre-merge --yes
    ```
-   **If pre-merge fails** (e.g., `pre-commit: not found`), fall back to
-   individual checks before committing:
-   ```bash
-   cargo fmt --check    # verify formatting
-   cargo clippy         # verify lints
-   ```
-   Fix any issues before proceeding. Do not commit code that fails lint
-   checks.
 4. Create branch, commit, push, and create PR:
    ```bash
    git checkout -b fix/issue-$ARGUMENTS

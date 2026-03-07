@@ -33,6 +33,10 @@ runs:
         prefix-key: ${{ hashFiles('Cargo.lock') }}
         save-if: false
 
+    - name: Install pre-commit
+      shell: bash
+      run: uv tool install pre-commit
+
     - name: Install shells (zsh, fish)
       if: inputs.install-shells == 'true'
       shell: bash
