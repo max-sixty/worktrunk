@@ -248,15 +248,23 @@ silent if there are none.
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
 
-When approving with no issues, approve with an empty body and react. **Both
-commands are required** — the reaction signals the author that review is done:
+When approving with no issues, approve with an empty body:
 
 ```bash
-# Step 1: approve
 gh pr review <number> --approve -b ""
-# Step 2: react (do NOT skip this)
+```
+
+- **Looks good but not confident enough to approve** (unfamiliar module, subtle
+  logic, want human eyes): Don't approve. Instead, add a `+1` reaction to
+  signal "I reviewed this and it looks reasonable, but a human should decide":
+
+```bash
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
+
+  If there are specific observations (not blocking, just noting), combine the
+  reaction with a COMMENT review. If there's nothing to say beyond "looks fine
+  to me", the reaction alone is sufficient — no review needed.
 
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
