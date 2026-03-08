@@ -10,10 +10,27 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::styling::{eprintln, format_with_gutter, info_message, progress_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, progress_message, warning_message,
+};
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::for_each::{CommandError, run_command_streaming};
+
+/// Built-in `wt step` subcommand names. Aliases with these names are
+/// shadowed by the built-in and will never run.
+const BUILTIN_STEP_COMMANDS: &[&str] = &[
+    "commit",
+    "copy-ignored",
+    "diff",
+    "for-each",
+    "promote",
+    "prune",
+    "push",
+    "rebase",
+    "relocate",
+    "squash",
+];
 
 /// Options parsed from the external subcommand args.
 #[derive(Debug)]
@@ -87,6 +104,22 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .and_then(|pc| pc.aliases.clone())
         .unwrap_or_default();
     aliases.extend(user_config.aliases(project_id.as_deref()));
+
+    // Warn about aliases that shadow built-in step commands
+    let shadowed: Vec<_> = aliases
+        .keys()
+        .filter(|k| BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+    if !shadowed.is_empty() {
+        eprintln!(
+            "{}",
+            warning_message(format!(
+                "Alias {} shadows a built-in step command and will never run",
+                shadowed.join(", "),
+            ))
+        );
+    }
 
     let Some(template) = aliases.get(&opts.name) else {
         if aliases.is_empty() {

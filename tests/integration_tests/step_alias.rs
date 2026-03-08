@@ -158,6 +158,31 @@ greet = "echo Greetings from {{ branch }}"
     ));
 }
 
+/// Alias shadowing a built-in step command shows a warning
+#[rstest]
+fn test_step_alias_shadows_builtin(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+commit = "echo custom-commit"
+hello = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Running a non-shadowed alias should show the warning about "commit"
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["hello", "--dry-run"],
+        Some(&feature_path),
+    ));
+}
+
 /// User config aliases merge with project config aliases
 #[rstest]
 fn test_step_alias_merge_user_and_project(mut repo: TestRepo) {
