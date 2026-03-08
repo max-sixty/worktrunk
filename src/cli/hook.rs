@@ -33,6 +33,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -53,6 +57,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -72,6 +80,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Run in foreground (block until complete)
         #[arg(long)]
@@ -101,6 +113,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
         /// Run in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
@@ -127,6 +143,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -144,6 +164,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -163,6 +187,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -180,6 +208,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -200,6 +232,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Run in foreground (block until complete)
         #[arg(long)]
