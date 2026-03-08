@@ -42,4 +42,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mUnknown alias 'nonexistent' (available: deploy, hello)[39m
+[31m✗[39m [31mUnknown alias [1mnonexistent[22m (available: deploy, hello)[39m

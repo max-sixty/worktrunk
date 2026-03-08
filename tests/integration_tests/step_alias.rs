@@ -77,6 +77,30 @@ deploy = "make deploy"
     ));
 }
 
+/// Typo in alias name suggests the closest match
+#[rstest]
+fn test_step_alias_did_you_mean(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+hello = "echo Hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deplyo"],
+        Some(&feature_path),
+    ));
+}
+
 /// Unknown step command with no aliases configured
 #[rstest]
 fn test_step_alias_unknown_no_aliases(mut repo: TestRepo) {

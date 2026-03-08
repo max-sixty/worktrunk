@@ -126,6 +126,20 @@ fn alias_needs_approval(
     Some(project_template.clone())
 }
 
+/// Find the closest match for `input` among `candidates` using Jaro similarity.
+///
+/// Returns `Some(match)` if a candidate is sufficiently similar (threshold 0.7),
+/// `None` otherwise. Uses `jaro` (not `jaro_winkler`) with the same threshold
+/// as clap — see clap GH #4660 for why.
+fn find_closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .map(|c| (*c, strsim::jaro(input, c)))
+        .filter(|(_, score)| *score > 0.7)
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(name, _)| name)
+}
+
 /// Run a configured alias by name.
 ///
 /// Looks up the alias in merged config (project config + user config),
@@ -145,25 +159,42 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     aliases.extend(user_config.aliases(project_id.as_deref()));
 
     let Some(template) = aliases.get(&opts.name) else {
-        // Filter out aliases that shadow built-in step commands — they're
-        // unreachable since clap dispatches to the built-in first.
-        let available: Vec<_> = aliases
+        // Check for typos against both built-in commands and aliases
+        let mut all_candidates: Vec<&str> = BUILTIN_STEP_COMMANDS.to_vec();
+        // Only include non-shadowed aliases as candidates
+        let available_aliases: Vec<_> = aliases
             .keys()
             .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
             .map(|k| k.as_str())
             .collect();
-        if available.is_empty() {
+        all_candidates.extend(&available_aliases);
+
+        if let Some(closest) = find_closest_match(&opts.name, &all_candidates) {
             bail!(
-                "Unknown step command '{}' (no aliases configured)",
-                opts.name,
-            );
-        } else {
-            bail!(
-                "Unknown alias '{}' (available: {})",
-                opts.name,
-                available.join(", "),
+                "{}",
+                cformat!(
+                    "Unknown step command <bold>{}</> — perhaps <bold>{closest}</>?",
+                    opts.name,
+                ),
             );
         }
+        if available_aliases.is_empty() {
+            bail!(
+                "{}",
+                cformat!(
+                    "Unknown step command <bold>{}</> (no aliases configured)",
+                    opts.name,
+                ),
+            );
+        }
+        bail!(
+            "{}",
+            cformat!(
+                "Unknown alias <bold>{}</> (available: {})",
+                opts.name,
+                available_aliases.join(", "),
+            ),
+        );
     };
 
     // Check if this alias needs project-config approval (skip for --dry-run)
@@ -338,6 +369,32 @@ mod tests {
     fn test_parse_var_empty_value_accepted() {
         let opts = parse(&["deploy", "--var", "key="]).unwrap();
         assert_eq!(opts.vars, vec![("key".into(), String::new())]);
+    }
+
+    #[test]
+    fn test_find_closest_match_typo() {
+        assert_eq!(
+            find_closest_match("deplyo", &["deploy", "hello"]),
+            Some("deploy"),
+        );
+    }
+
+    #[test]
+    fn test_find_closest_match_missing_letter() {
+        assert_eq!(
+            find_closest_match("comit", &["commit", "squash", "push", "rebase"]),
+            Some("commit"),
+        );
+    }
+
+    #[test]
+    fn test_find_closest_match_no_match() {
+        assert_eq!(find_closest_match("zzz", &["deploy", "hello"]), None);
+    }
+
+    #[test]
+    fn test_find_closest_match_empty_candidates() {
+        assert_eq!(find_closest_match("deploy", &[]), None);
     }
 
     /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.
