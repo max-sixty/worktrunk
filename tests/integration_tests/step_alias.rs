@@ -160,7 +160,7 @@ greet = "echo Greetings from {{ branch }}"
     ));
 }
 
-/// Alias shadowing a built-in step command shows a warning (--yes bypasses approval)
+/// Shadowed aliases are filtered from the "available" list in error messages
 #[rstest]
 fn test_step_alias_shadows_builtin(mut repo: TestRepo) {
     repo.write_project_config(
@@ -176,11 +176,11 @@ hello = "echo hello"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // Running a non-shadowed alias should show the warning about "commit"
+    // "commit" is shadowed by the built-in and should not appear in available list
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["hello", "--dry-run", "--yes"],
+        &["nonexistent"],
         Some(&feature_path),
     ));
 }

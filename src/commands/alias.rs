@@ -15,7 +15,7 @@ use color_print::cformat;
 use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, progress_message, warning_message,
+    eprintln, format_with_gutter, info_message, progress_message,
 };
 
 use crate::commands::command_approval::approve_alias;
@@ -143,30 +143,20 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .unwrap_or_default();
     aliases.extend(user_config.aliases(project_id.as_deref()));
 
-    // Warn about aliases that shadow built-in step commands
-    let shadowed: Vec<_> = aliases
-        .keys()
-        .filter(|k| BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
-        .map(|k| k.as_str())
-        .collect();
-    if !shadowed.is_empty() {
-        eprintln!(
-            "{}",
-            warning_message(format!(
-                "Alias {} shadows a built-in step command and will never run",
-                shadowed.join(", "),
-            ))
-        );
-    }
-
     let Some(template) = aliases.get(&opts.name) else {
-        if aliases.is_empty() {
+        // Filter out aliases that shadow built-in step commands — they're
+        // unreachable since clap dispatches to the built-in first.
+        let available: Vec<_> = aliases
+            .keys()
+            .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
+            .map(|k| k.as_str())
+            .collect();
+        if available.is_empty() {
             bail!(
                 "Unknown step command '{}' (no aliases configured)",
                 opts.name,
             );
         } else {
-            let available: Vec<_> = aliases.keys().map(|k| k.as_str()).collect();
             bail!(
                 "Unknown alias '{}' (available: {})",
                 opts.name,
