@@ -198,6 +198,29 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
     );
 }
 
+/// Prune removes multiple integrated detached HEAD worktrees (exercises plural "worktrees")
+#[rstest]
+fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Two worktrees at same commit as main, then detach both
+    repo.add_worktree("detached-a");
+    repo.detach_head_in_worktree("detached-a");
+    repo.add_worktree("detached-b");
+    repo.detach_head_in_worktree("detached-b");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    let parent = repo.root_path().parent().unwrap();
+    assert!(!parent.join("repo.detached-a").exists());
+    assert!(!parent.join("repo.detached-b").exists());
+}
+
 /// Prune skips locked worktrees
 #[rstest]
 fn test_prune_skips_locked(mut repo: TestRepo) {
