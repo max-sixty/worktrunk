@@ -389,12 +389,12 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: Option<String>,
 
-        /// Include branches without worktrees (interactive picker)
-        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        /// Include branches without worktrees
+        #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
         branches: bool,
 
-        /// Include remote branches (interactive picker)
-        #[arg(long, conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+        /// Include remote branches
+        #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
         remotes: bool,
 
         /// Create a new branch

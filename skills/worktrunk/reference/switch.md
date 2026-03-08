@@ -146,12 +146,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           is expanded for templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
-      <b><span class=c>--branches</span></b>
-          Include branches without worktrees (interactive picker)
-
-      <b><span class=c>--remotes</span></b>
-          Include remote branches (interactive picker)
-
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
           Create a new branch
 
@@ -201,6 +195,13 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Picker Options:</span></b>
+      <b><span class=c>--branches</span></b>
+          Include branches without worktrees
+
+      <b><span class=c>--remotes</span></b>
+          Include remote branches
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

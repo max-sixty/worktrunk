@@ -47,12 +47,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Arguments after [1m--[0m are appended to the execute command. Each argument is expanded for templates, then POSIX shell-escaped.[0m
 
 [1m[32mOptions:[0m
-      [1m[36m--branches[0m
-          Include branches without worktrees (interactive picker)
-
-      [1m[36m--remotes[0m
-          Include remote branches (interactive picker)
-
   [1m[36m-c[0m, [1m[36m--create[0m
           Create a new branch
 
@@ -93,6 +87,13 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
+
+[1m[32mPicker Options:[0m
+      [1m[36m--branches[0m
+          Include branches without worktrees
+
+      [1m[36m--remotes[0m
+          Include remote branches
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
