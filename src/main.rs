@@ -129,22 +129,24 @@ fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
 fn run_non_toggle_hook(
     hook_type: HookType,
     yes: bool,
+    dry_run: bool,
     name: Option<&str>,
     vars: &[(String, String)],
 ) -> anyhow::Result<()> {
-    run_hook(hook_type, yes, None, name, vars)
+    run_hook(hook_type, yes, None, dry_run, name, vars)
 }
 
 fn run_toggleable_hook(
     hook_type: HookType,
     yes: bool,
+    dry_run: bool,
     foreground: bool,
     no_background: bool,
     name: Option<&str>,
     vars: &[(String, String)],
 ) -> anyhow::Result<()> {
     let foreground = is_foreground_mode(foreground, no_background);
-    run_hook(hook_type, yes, Some(foreground), name, vars)
+    run_hook(hook_type, yes, Some(foreground), dry_run, name, vars)
 }
 
 fn warn_select_deprecated() {
@@ -160,21 +162,29 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             hook_type,
             expanded,
         } => handle_hook_show(hook_type.as_deref(), expanded),
-        HookCommand::PreSwitch { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PreSwitch, yes, name.as_deref(), &vars)
-        }
-        HookCommand::PostCreate { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PostCreate, yes, name.as_deref(), &vars)
-        }
+        HookCommand::PreSwitch {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PostCreate {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PostCreate, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostStart {
             name,
             yes,
+            dry_run,
             foreground,
             no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostStart,
             yes,
+            dry_run,
             foreground,
             no_background,
             name.as_deref(),
@@ -183,38 +193,54 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
         HookCommand::PostSwitch {
             name,
             yes,
+            dry_run,
             foreground,
             no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostSwitch,
             yes,
+            dry_run,
             foreground,
             no_background,
             name.as_deref(),
             &vars,
         ),
-        HookCommand::PreCommit { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PreCommit, yes, name.as_deref(), &vars)
-        }
-        HookCommand::PreMerge { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PreMerge, yes, name.as_deref(), &vars)
-        }
-        HookCommand::PostMerge { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PostMerge, yes, name.as_deref(), &vars)
-        }
-        HookCommand::PreRemove { name, yes, vars } => {
-            run_non_toggle_hook(HookType::PreRemove, yes, name.as_deref(), &vars)
-        }
+        HookCommand::PreCommit {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PreCommit, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PreMerge {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PostMerge {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PostMerge, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PreRemove {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PreRemove, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostRemove {
             name,
             yes,
+            dry_run,
             foreground,
             vars,
         } => run_hook(
             HookType::PostRemove,
             yes,
             Some(foreground),
+            dry_run,
             name.as_deref(),
             &vars,
         ),

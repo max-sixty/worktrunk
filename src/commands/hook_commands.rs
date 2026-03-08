@@ -120,6 +120,7 @@ pub fn run_hook(
     hook_type: HookType,
     yes: bool,
     foreground: Option<bool>,
+    dry_run: bool,
     name_filter: Option<&str>,
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
@@ -131,13 +132,15 @@ pub fn run_hook(
     // Load project config (optional - user hooks can run without project config)
     let project_config = repo.load_project_config()?;
 
-    // "Approve at the Gate": approve project hooks upfront
-    // Pass name_filter to only approve the targeted hook, not all hooks of this type
-    let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
-    // If declined, return early - the whole point of `wt hook` is to run hooks
-    if !approved {
-        eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
-        return Ok(());
+    if !dry_run {
+        // "Approve at the Gate": approve project hooks upfront
+        // Pass name_filter to only approve the targeted hook, not all hooks of this type
+        let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
+        // If declined, return early - the whole point of `wt hook` is to run hooks
+        if !approved {
+            eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
+            return Ok(());
+        }
     }
 
     // Build extra vars from command-line --var flags
@@ -163,90 +166,88 @@ pub fn run_hook(
 
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let hook_configs = |hook: HookType| {
-        (
-            user_hooks.get(hook),
-            project_config.as_ref().and_then(|c| c.hooks.get(hook)),
-        )
+    let (user_config, proj_config) = (
+        user_hooks.get(hook_type),
+        project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
+    );
+    require_hooks(user_config, proj_config, hook_type)?;
+
+    // Build extra vars per hook type (shared by dry-run and execution paths)
+    let default_branch = repo.default_branch();
+    let extra_vars: Vec<(&str, &str)> = match hook_type {
+        HookType::PreCommit => build_target_vars(default_branch.as_deref(), &custom_vars_refs),
+        HookType::PreMerge | HookType::PostMerge => {
+            build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs)
+        }
+        _ => custom_vars_refs.to_vec(),
     };
+
+    if dry_run {
+        let commands = prepare_hook_commands(
+            &ctx,
+            HookCommandSpec {
+                user_config,
+                project_config: proj_config,
+                hook_type,
+                extra_vars: &extra_vars,
+                name_filter,
+                display_path: None,
+            },
+        )?;
+        check_name_filter_matched(name_filter, commands.len(), user_config, proj_config)?;
+
+        for cmd in &commands {
+            let label = match &cmd.prepared.name {
+                Some(n) => {
+                    let display_name = format!("{}:{}", cmd.source, n);
+                    cformat!("{hook_type} <bold>{display_name}</> would run:")
+                }
+                None => cformat!("{hook_type} {} hook would run:", cmd.source),
+            };
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "{label}\n{}",
+                    format_bash_with_gutter(&cmd.prepared.expanded)
+                ))
+            );
+        }
+        return Ok(());
+    }
 
     // Execute the hook based on type
     match hook_type {
-        HookType::PreSwitch | HookType::PostCreate | HookType::PreRemove => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            // Manual wt hook: user stays at cwd (no cd happens)
-            run_filtered_hook(
-                &ctx,
-                user_config,
-                project_config,
-                hook_type,
-                &custom_vars_refs,
-                name_filter,
-                HookFailureStrategy::FailFast,
-            )
-        }
-        HookType::PostStart | HookType::PostSwitch | HookType::PostRemove => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            run_post_hook(
-                &ctx,
-                foreground,
-                user_config,
-                project_config,
-                hook_type,
-                &custom_vars_refs,
-                name_filter,
-            )
-        }
-        HookType::PreCommit => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            // Pre-commit hook can optionally use target branch context
-            // Custom vars take precedence (added last)
-            let target_branch = repo.default_branch();
-            let extra_vars = build_target_vars(target_branch.as_deref(), &custom_vars_refs);
-            // Manual wt hook: user stays at cwd (no cd happens)
-            run_filtered_hook(
-                &ctx,
-                user_config,
-                project_config,
-                hook_type,
-                &extra_vars,
-                name_filter,
-                HookFailureStrategy::FailFast,
-            )
-        }
-        HookType::PreMerge => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            // Use current branch as target (matches approval prompt for wt hook)
-            let vars = build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs);
-            run_filtered_hook(
-                &ctx,
-                user_config,
-                project_config,
-                hook_type,
-                &vars,
-                name_filter,
-                HookFailureStrategy::FailFast,
-            )
-        }
-        HookType::PostMerge => {
-            let (user_config, project_config) = hook_configs(hook_type);
-            require_hooks(user_config, project_config, hook_type)?;
-            // Manual wt hook: user stays at cwd (no cd happens)
-            let vars = build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs);
-            run_filtered_hook(
-                &ctx,
-                user_config,
-                project_config,
-                hook_type,
-                &vars,
-                name_filter,
-                HookFailureStrategy::Warn,
-            )
-        }
+        HookType::PreSwitch
+        | HookType::PostCreate
+        | HookType::PreRemove
+        | HookType::PreCommit
+        | HookType::PreMerge => run_filtered_hook(
+            &ctx,
+            user_config,
+            proj_config,
+            hook_type,
+            &extra_vars,
+            name_filter,
+            HookFailureStrategy::FailFast,
+        ),
+        HookType::PostStart | HookType::PostSwitch | HookType::PostRemove => run_post_hook(
+            &ctx,
+            foreground,
+            user_config,
+            proj_config,
+            hook_type,
+            &extra_vars,
+            name_filter,
+        ),
+        HookType::PostMerge => run_filtered_hook(
+            &ctx,
+            user_config,
+            proj_config,
+            hook_type,
+            &extra_vars,
+            name_filter,
+            HookFailureStrategy::Warn,
+        ),
     }
 }
 
