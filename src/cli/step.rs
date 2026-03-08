@@ -2,6 +2,7 @@ use clap::Subcommand;
 
 /// Run individual operations
 #[derive(Subcommand)]
+#[command(allow_external_subcommands = true)]
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
@@ -551,4 +552,8 @@ Note: This command is experimental and may change in future versions.
         #[arg(long)]
         clobber: bool,
     },
+
+    /// Catch-all for alias lookup
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }

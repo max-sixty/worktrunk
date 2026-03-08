@@ -248,12 +248,23 @@ silent if there are none.
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
 
-When approving with no issues, approve with an empty body and react:
+When approving with no issues, approve with an empty body:
 
 ```bash
 gh pr review <number> --approve -b ""
+```
+
+- **Looks good but not confident enough to approve** (unfamiliar module, subtle
+  logic, want human eyes): Don't approve. Instead, add a `+1` reaction to
+  signal "I reviewed this and it looks reasonable, but a human should decide":
+
+```bash
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
+
+  If there are specific observations (not blocking, just noting), combine the
+  reaction with a COMMENT review. If there's nothing to say beyond "looks fine
+  to me", the reaction alone is sufficient — no review needed.
 
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
@@ -346,9 +357,7 @@ description: new text here
 
 ### 5. Monitor CI
 
-**Skip this step** if the verdict was "stay silent" (self-authored PR with no
-concerns). There is no approval to dismiss on failure, so monitoring adds no
-value.
+If you stayed silent (self-authored PR, no concerns) → **done, stop here.**
 
 After approving, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:

@@ -1032,6 +1032,29 @@ wt step push
 - `promote` — [experimental] Put a branch into the main worktree
 - `prune` — Remove worktrees and branches merged into the default branch
 - `relocate` — [experimental] Move worktrees to expected paths
+- `<alias>` — [experimental] Run a configured command alias
+
+## Aliases
+
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+
+```toml
+# .config/wt.toml
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+port = "echo http://localhost:{{ branch | hash_port }}"
+```
+
+```console
+wt step deploy                            # run the alias
+wt step deploy --dry-run                  # show expanded command
+wt step deploy --var env=staging          # pass extra template variables
+wt step deploy --yes                      # skip approval prompt
+```
+
+When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#command-approval) on first run (same as project hooks). User-config aliases are trusted.
+
+Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
 
 ## See also
 
@@ -1639,6 +1662,18 @@ Configuration for `wt switch` interactive picker.
 # timeout-ms = 200
 ```
 
+### Aliases
+
+Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+
+```toml
+[aliases]
+greet = "echo Hello from {{ branch }}"
+url = "echo http://localhost:{{ branch | hash_port }}"
+```
+
+Aliases defined here apply to all projects. For project-specific aliases, use the [project config](@/config.md#project-configuration) `[aliases]` section instead.
+
 ### User project-specific settings
 
 For context:
@@ -1651,7 +1686,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides (Experimental)
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -1659,6 +1694,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 post-create.env = "cp .env.example .env"
+aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
 ### Custom prompt templates
@@ -1774,6 +1810,11 @@ url = "http://localhost:{{ branch | hash_port }}"
 # Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
+
+# Command aliases (run with wt step <name>)
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+test = "cargo test"
 ```
 
 # Shell Integration

@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -87,6 +88,25 @@ Manual merge workflow with review between steps:
 - [2mpromote[0m — [experimental] Put a branch into the main worktree
 - [2mprune[0m — Remove worktrees and branches merged into the default branch
 - [2mrelocate[0m — [experimental] Move worktrees to expected paths
+- [2m<alias>[0m — [experimental] Run a configured command alias
+
+[1m[32mAliases[0m
+
+Custom command templates configured in user config ([2m~/.config/worktrunk/config.toml[0m) or project config ([2m.config/wt.toml[0m). Aliases support the same template variables as hooks.
+
+  [2m# .config/wt.toml[0m
+  [2m[aliases][0m
+  [2mdeploy = "make deploy BRANCH={{ branch }}"[0m
+  [2mport = "echo http://localhost:{{ branch | hash_port }}"[0m
+
+  [2mwt step deploy                            # run the alias[0m
+  [2mwt step deploy --dry-run                  # show expanded command[0m
+  [2mwt step deploy --var env=staging          # pass extra template variables[0m
+  [2mwt step deploy --yes                      # skip approval prompt[0m
+
+When defined in both user and project config, user aliases take precedence. Project-config aliases require command approval on first run (same as project hooks). User-config aliases are trusted.
+
+Alias names that match a built-in step command ([2mcommit[0m, [2msquash[0m, etc.) are shadowed by the built-in and will never run.
 
 [1m[32mSee also[0m
 

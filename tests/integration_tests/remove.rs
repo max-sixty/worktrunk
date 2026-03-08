@@ -1159,6 +1159,131 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
     ));
 }
 
+/// Simulate a GitHub squash merge: push feature to origin, squash-merge on
+/// the remote side (via a temporary clone), fetch locally, then `wt remove`.
+///
+/// This is the exact workflow that users hit:
+///   1. Create worktree, commit, push, open PR
+///   2. Squash-merge on GitHub
+///   3. `git fetch` locally
+///   4. `wt remove <branch>` — should detect integration via origin/main
+///
+/// The integration detection must use `effective_integration_target()` to check
+/// against `origin/main` (which is ahead of local `main` after fetch).
+#[rstest]
+fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap();
+
+    // Create a feature branch with multiple commits (realistic PR)
+    repo.run_git(&["checkout", "-b", "feature-remote-squash"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "initial").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature file"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "revised").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Revise feature"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "final version").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Finalize feature"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-squash"]);
+
+    // Go back to main locally (don't pull — local main stays behind)
+    repo.run_git(&["checkout", "main"]);
+
+    // Simulate GitHub squash merge: clone the bare remote into a temp dir,
+    // squash-merge there, push back to the bare remote
+    let github_sim = repo.home_path().join("github-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim"],
+    );
+    // Squash merge feature into main (like GitHub's "Squash and merge" button)
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-remote-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    // Push the squash merge back to the bare remote
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally — origin/main now has the squash merge, local main does not
+    repo.run_git(&["fetch", "origin"]);
+
+    // Verify setup: local main is behind origin/main
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should be behind origin/main"
+    );
+
+    // Remove the feature branch — should detect as integrated via origin/main
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-remote-squash"],
+        None
+    ));
+}
+
+/// Like `test_remove_squash_merged_on_remote`, but main advances on the
+/// remote after the squash merge.
+/// Tests that `MergeAddsNothing` detection works through origin/main.
+#[rstest]
+fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap();
+
+    // Create a feature branch with multiple commits (realistic PR)
+    repo.run_git(&["checkout", "-b", "feature-remote-squash2"]);
+    std::fs::write(repo.root_path().join("feature2.txt"), "draft").unwrap();
+    repo.run_git(&["add", "feature2.txt"]);
+    repo.run_git(&["commit", "-m", "WIP: start feature 2"]);
+    std::fs::write(repo.root_path().join("feature2.txt"), "done").unwrap();
+    repo.run_git(&["add", "feature2.txt"]);
+    repo.run_git(&["commit", "-m", "Complete feature 2"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-squash2"]);
+
+    // Go back to main locally
+    repo.run_git(&["checkout", "main"]);
+
+    // Simulate GitHub: squash merge, then main advances with another commit
+    let github_sim = repo.home_path().join("github-sim2");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim2"],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-remote-squash2"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature 2 (#2)"]);
+    // Main advances with another commit after the squash merge
+    std::fs::write(github_sim.join("other.txt"), "other content").unwrap();
+    repo.run_git_in(&github_sim, &["add", "other.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Unrelated commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally
+    repo.run_git(&["fetch", "origin"]);
+
+    // Verify setup: local main is behind origin/main
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should be behind origin/main"
+    );
+
+    // Remove the feature branch — should detect as integrated via origin/main
+    // even though origin/main has advanced past the squash merge
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-remote-squash2"],
+        None
+    ));
+}
+
 // ============================================================================
 // Pre-Remove Hook Tests
 // ============================================================================

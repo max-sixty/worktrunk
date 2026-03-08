@@ -1,0 +1,378 @@
+//! Alias command implementation
+//!
+//! Runs user-defined command aliases configured in `[aliases]` sections
+//! of user config or project config. Aliases are command templates that
+//! support the same template variables as hooks.
+//!
+//! Project-config aliases require command approval (same as project hooks).
+//! User-config aliases are trusted and skip approval. When an alias exists
+//! in both configs, the user version wins and is trusted.
+
+use std::collections::{BTreeMap, HashMap};
+
+use anyhow::{Context, bail};
+use color_print::cformat;
+use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
+use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::styling::{eprintln, format_with_gutter, info_message, progress_message};
+
+use crate::commands::command_approval::approve_alias;
+use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::for_each::{CommandError, run_command_streaming};
+
+/// Built-in `wt step` subcommand names. Aliases with these names are
+/// shadowed by the built-in and will never run.
+const BUILTIN_STEP_COMMANDS: &[&str] = &[
+    "commit",
+    "copy-ignored",
+    "diff",
+    "for-each",
+    "promote",
+    "prune",
+    "push",
+    "rebase",
+    "relocate",
+    "squash",
+];
+
+/// Options parsed from the external subcommand args.
+#[derive(Debug)]
+pub struct AliasOptions {
+    pub name: String,
+    pub dry_run: bool,
+    pub yes: bool,
+    pub vars: Vec<(String, String)>,
+}
+
+impl AliasOptions {
+    /// Parse alias options from the external subcommand args.
+    ///
+    /// First element is the alias name, remaining are flags:
+    /// `--dry-run`, `--yes`/`-y`, and `--var KEY=VALUE`.
+    pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
+        let Some(name) = args.first().cloned() else {
+            bail!("Missing alias name");
+        };
+
+        let mut dry_run = false;
+        let mut yes = false;
+        let mut vars = Vec::new();
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--dry-run" => dry_run = true,
+                "--yes" | "-y" => yes = true,
+                "--var" => {
+                    i += 1;
+                    if i >= args.len() {
+                        bail!("--var requires a KEY=VALUE argument");
+                    }
+                    let pair = parse_var(&args[i])?;
+                    vars.push(pair);
+                }
+                arg if arg.starts_with("--var=") => {
+                    let pair = parse_var(arg.strip_prefix("--var=").unwrap())?;
+                    vars.push(pair);
+                }
+                other => {
+                    bail!("Unexpected argument '{other}' for alias '{name}'");
+                }
+            }
+            i += 1;
+        }
+
+        Ok(Self {
+            name,
+            dry_run,
+            yes,
+            vars,
+        })
+    }
+}
+
+fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
+    let (key, value) = s.split_once('=').context("--var value must be KEY=VALUE")?;
+    if key.is_empty() {
+        bail!("--var key must not be empty (got '={value}')");
+    }
+    Ok((key.to_string(), value.to_string()))
+}
+
+/// Determine whether an alias requires project-config approval.
+///
+/// An alias needs approval when:
+/// - It exists in project config AND
+/// - It does NOT exist in user config (user overrides are trusted)
+fn alias_needs_approval(
+    alias_name: &str,
+    project_config: &Option<ProjectConfig>,
+    user_config: &UserConfig,
+    project_id: Option<&str>,
+) -> Option<String> {
+    // Check if alias exists in project config
+    let project_template = project_config
+        .as_ref()
+        .and_then(|pc| pc.aliases.as_ref())
+        .and_then(|a| a.get(alias_name));
+
+    let project_template = project_template?;
+
+    // Check if user config overrides this alias (user overrides are trusted)
+    let user_aliases = user_config.aliases(project_id);
+    if user_aliases.contains_key(alias_name) {
+        return None;
+    }
+
+    Some(project_template.clone())
+}
+
+/// Run a configured alias by name.
+///
+/// Looks up the alias in merged config (project config + user config),
+/// expands the template, and executes it. Project-config aliases require
+/// command approval before execution.
+pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let user_config = UserConfig::load()?;
+    let project_id = repo.project_identifier().ok();
+    let project_config = ProjectConfig::load(&repo, true)?;
+
+    // Merge aliases: project config first, then user config overrides
+    let mut aliases: BTreeMap<String, String> = project_config
+        .as_ref()
+        .and_then(|pc| pc.aliases.clone())
+        .unwrap_or_default();
+    aliases.extend(user_config.aliases(project_id.as_deref()));
+
+    let Some(template) = aliases.get(&opts.name) else {
+        // Filter out aliases that shadow built-in step commands — they're
+        // unreachable since clap dispatches to the built-in first.
+        let available: Vec<_> = aliases
+            .keys()
+            .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
+            .map(|k| k.as_str())
+            .collect();
+        if available.is_empty() {
+            bail!(
+                "Unknown step command '{}' (no aliases configured)",
+                opts.name,
+            );
+        } else {
+            bail!(
+                "Unknown alias '{}' (available: {})",
+                opts.name,
+                available.join(", "),
+            );
+        }
+    };
+
+    // Check if this alias needs project-config approval (skip for --dry-run)
+    if !opts.dry_run
+        && let Some(project_template) = alias_needs_approval(
+            &opts.name,
+            &project_config,
+            &user_config,
+            project_id.as_deref(),
+        )
+    {
+        let project_id = project_id
+            .as_deref()
+            .context("Cannot determine project identifier for alias approval")?;
+        let approved = approve_alias(&project_template, &opts.name, project_id, opts.yes)?;
+        if !approved {
+            return Ok(());
+        }
+    }
+
+    // Build hook context for template expansion
+    let wt = repo.current_worktree();
+    let wt_path = wt.root().context("Failed to get worktree root")?;
+    let branch = wt.branch().ok().flatten();
+    let ctx = CommandContext::new(&repo, &user_config, branch.as_deref(), &wt_path, false);
+
+    let extra_refs: Vec<(&str, &str)> = opts
+        .vars
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let context_map = build_hook_context(&ctx, &extra_refs)?;
+
+    // Convert to &str references for expand_template
+    let vars: HashMap<&str, &str> = context_map
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let command = expand_template(template, &vars, true, &repo, &opts.name)?;
+
+    if opts.dry_run {
+        eprintln!(
+            "{}",
+            info_message(cformat!(
+                "Alias <bold>{}</> would run:\n{}",
+                opts.name,
+                format_with_gutter(&command, None)
+            ))
+        );
+        return Ok(());
+    }
+
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Running alias <bold>{}</>", opts.name))
+    );
+
+    // Build JSON context for stdin
+    let context_json = serde_json::to_string(&context_map)
+        .expect("HashMap<String, String> serialization should never fail");
+
+    match run_command_streaming(&command, &wt_path, Some(&context_json)) {
+        Ok(()) => Ok(()),
+        Err(CommandError::SpawnFailed(err)) => {
+            bail!("Failed to run alias '{}': {}", opts.name, err);
+        }
+        Err(CommandError::ExitCode(exit_code)) => Err(WorktrunkError::AlreadyDisplayed {
+            exit_code: exit_code.unwrap_or(1),
+        }
+        .into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> anyhow::Result<AliasOptions> {
+        AliasOptions::parse(args.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn test_parse_name_only() {
+        let opts = parse(&["deploy"]).unwrap();
+        assert_eq!(opts.name, "deploy");
+        assert!(!opts.dry_run);
+        assert!(!opts.yes);
+        assert!(opts.vars.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dry_run() {
+        let opts = parse(&["deploy", "--dry-run"]).unwrap();
+        assert!(opts.dry_run);
+    }
+
+    #[test]
+    fn test_parse_yes_long() {
+        let opts = parse(&["deploy", "--yes"]).unwrap();
+        assert!(opts.yes);
+    }
+
+    #[test]
+    fn test_parse_yes_short() {
+        let opts = parse(&["deploy", "-y"]).unwrap();
+        assert!(opts.yes);
+    }
+
+    #[test]
+    fn test_parse_var_separate() {
+        let opts = parse(&["deploy", "--var", "key=value"]).unwrap();
+        assert_eq!(opts.vars, vec![("key".into(), "value".into())]);
+    }
+
+    #[test]
+    fn test_parse_var_equals() {
+        let opts = parse(&["deploy", "--var=key=value"]).unwrap();
+        assert_eq!(opts.vars, vec![("key".into(), "value".into())]);
+    }
+
+    #[test]
+    fn test_parse_var_value_with_equals() {
+        let opts = parse(&["deploy", "--var", "url=http://host?a=1"]).unwrap();
+        assert_eq!(opts.vars[0], ("url".into(), "http://host?a=1".into()));
+    }
+
+    #[test]
+    fn test_parse_multiple_vars() {
+        let opts = parse(&["deploy", "--var", "a=1", "--var", "b=2", "--dry-run"]).unwrap();
+        assert_eq!(opts.vars.len(), 2);
+        assert!(opts.dry_run);
+    }
+
+    #[test]
+    fn test_parse_missing_name() {
+        let err = parse(&[]).unwrap_err();
+        assert!(err.to_string().contains("Missing alias name"));
+    }
+
+    #[test]
+    fn test_parse_var_missing_value() {
+        let err = parse(&["deploy", "--var"]).unwrap_err();
+        assert!(err.to_string().contains("--var requires a KEY=VALUE"));
+    }
+
+    #[test]
+    fn test_parse_var_no_equals() {
+        let err = parse(&["deploy", "--var", "noequals"]).unwrap_err();
+        assert!(err.to_string().contains("KEY=VALUE"));
+    }
+
+    #[test]
+    fn test_parse_unknown_flag() {
+        let err = parse(&["deploy", "--verbose"]).unwrap_err();
+        assert!(err.to_string().contains("Unexpected argument '--verbose'"));
+    }
+
+    #[test]
+    fn test_parse_positional_arg_rejected() {
+        let err = parse(&["deploy", "arg1"]).unwrap_err();
+        assert!(err.to_string().contains("Unexpected argument 'arg1'"));
+    }
+
+    #[test]
+    fn test_parse_var_empty_key_rejected() {
+        let err = parse(&["deploy", "--var", "=value"]).unwrap_err();
+        assert!(err.to_string().contains("--var key must not be empty"));
+    }
+
+    #[test]
+    fn test_parse_var_empty_value_accepted() {
+        let opts = parse(&["deploy", "--var", "key="]).unwrap();
+        assert_eq!(opts.vars, vec![("key".into(), String::new())]);
+    }
+
+    /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.
+    ///
+    /// If a new step subcommand is added without updating BUILTIN_STEP_COMMANDS,
+    /// this test fails — preventing aliases from silently conflicting with built-ins.
+    #[test]
+    fn test_builtin_step_commands_matches_clap() {
+        use crate::cli::Cli;
+        use clap::CommandFactory;
+
+        let app = Cli::command();
+        let step_cmd = app
+            .get_subcommands()
+            .find(|c| c.get_name() == "step")
+            .expect("step subcommand exists");
+
+        let clap_names: Vec<&str> = step_cmd.get_subcommands().map(|s| s.get_name()).collect();
+
+        // Every clap subcommand should be in BUILTIN_STEP_COMMANDS
+        for name in &clap_names {
+            assert!(
+                BUILTIN_STEP_COMMANDS.contains(name),
+                "Step subcommand '{name}' is missing from BUILTIN_STEP_COMMANDS. \
+                 Add it to prevent aliases from silently conflicting with the built-in."
+            );
+        }
+
+        // Every BUILTIN_STEP_COMMANDS entry should still be a real subcommand
+        for name in BUILTIN_STEP_COMMANDS {
+            assert!(
+                clap_names.contains(name),
+                "BUILTIN_STEP_COMMANDS contains '{name}' but no such step subcommand exists. \
+                 Remove it from the list."
+            );
+        }
+    }
+}
