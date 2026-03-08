@@ -592,7 +592,7 @@ fn render_hook_commands(
         // Show template or expanded command
         let command_text = if let Some(command_ctx) = ctx {
             // Expand template with current context
-            expand_command_template(&cmd.template, command_ctx, hook_type)?
+            expand_command_template(&cmd.template, command_ctx, hook_type, cmd.name.as_deref())?
         } else {
             cmd.template.clone()
         };
@@ -608,6 +608,7 @@ fn expand_command_template(
     template: &str,
     ctx: &CommandContext,
     hook_type: HookType,
+    hook_name: Option<&str>,
 ) -> anyhow::Result<String> {
     // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
@@ -626,7 +627,11 @@ fn expand_command_template(
         }
         _ => Vec::new(),
     };
-    let template_ctx = build_hook_context(ctx, &extra_vars)?;
+    let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
+    template_ctx.insert("hook_type".into(), hook_type.to_string());
+    if let Some(name) = hook_name {
+        template_ctx.insert("hook_name".into(), name.into());
+    }
     let vars: HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
