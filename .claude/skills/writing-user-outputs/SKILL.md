@@ -817,13 +817,17 @@ Shows template expansions and other details users might need for debugging confi
 Format for template expansion:
 ```
 ○ Expanding name
- ┃ template → result
+ ┃ template (bash-highlighted)
+ ┃ → (dim)
+ ┃ result (bash-highlighted)
 ```
 
 - **Info message** for header (`○` symbol, "Expanding" + bold name)
-- **Gutter** for quoted content (template → result)
-- Arrow `→` is dim
-- For multiline: template lines, dim `→` on its own line, result lines
+- **Bash gutter** for template and result (dim + syntax highlighting via
+  `format_bash_with_gutter`)
+- **Plain gutter** for dim `→` separator (bypasses syntax highlighter)
+- Template and result are always on separate gutter blocks from the arrow,
+  because the `→` can't go through the bash syntax highlighter
 
 **`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
 Uses `log::debug!()` with structured format for deep debugging. Not intended for
