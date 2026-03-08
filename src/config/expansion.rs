@@ -41,8 +41,10 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "target",             // Added by merge/rebase hooks via extra_vars
-    "base",               // Added by creation hooks via extra_vars
+    "hook_type",          // Added by expand_commands / expand_command_template
+    "hook_name", // Added by expand_commands / expand_command_template (named commands only)
+    "target",    // Added by merge/rebase hooks via extra_vars
+    "base",      // Added by creation hooks via extra_vars
     "base_worktree_path", // Added by creation hooks via extra_vars
 ];
 

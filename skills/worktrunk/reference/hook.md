@@ -205,11 +205,13 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
 | `{{ upstream }}` | Upstream tracking branch (if set) |
+| `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
+| `{{ hook_name }}` | Hook command name (if named) |
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
 
 ```toml
 [post-create]
@@ -271,7 +273,7 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
     subprocess.run(['make', 'seed-db'])
 ```
 
-The JSON includes all template variables plus `hook_type` and `hook_name`.
+The JSON includes all template variables.
 
 # Running Hooks Manually
 
