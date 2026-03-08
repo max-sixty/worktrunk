@@ -46,11 +46,11 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     )]
     Commit {
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -110,11 +110,11 @@ wt step squash --show-prompt | less
         target: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -462,7 +462,7 @@ wt step prune
         dry_run: bool,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip worktrees younger than this

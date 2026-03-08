@@ -12,15 +12,18 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -59,7 +62,7 @@ If a config file doesn't exist, shows defaults that would be used.
 
 Use [2m--full[0m to run diagnostic checks:
 
-  [2mwt config show --full[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config show [0m[2m[36m--full[0m[2m[0m
 
 This tests:
 - [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated

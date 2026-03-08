@@ -65,11 +65,17 @@ jobs:
                - Look at the current versions in .github/workflows/*.yaml
                - Check if newer versions are available
 
-            3. **Rust nightly version** (in check-unused-dependencies job):
+            3. **Rust stable toolchain** (in `rust-toolchain.toml`):
+               - Check the latest stable Rust release (use `curl -s https://static.rust-lang.org/dist/channel-rust-stable.toml | head -20` or similar)
+               - Compare against the channel in `rust-toolchain.toml`
+               - Always bump to the latest stable version
+               - After bumping, re-evaluate pinned cargo tool versions — newer tools may now be compatible
+
+            4. **Rust nightly version** (in check-unused-dependencies job):
                - We pin a specific nightly for cargo-udeps (check the actual version in ci.yaml)
                - Periodically update to a recent nightly that works with cargo-udeps
 
-            4. **Pinned cargo tool versions**:
+            5. **Pinned cargo tool versions**:
                - All cargo tools are pinned with `version: "=X.Y.Z"` in workflow files to prevent surprise breakage from MSRV bumps
                - Check if newer versions are available for: cargo-nextest, cargo-insta, lychee, worktrunk, cargo-msrv, cargo-udeps, cargo-llvm-cov
                - To check: look up the tool's MSRV on crates.io or its repo and compare against the channel in `rust-toolchain.toml`
