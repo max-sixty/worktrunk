@@ -257,8 +257,9 @@ wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
 ```
 
 ## Subdomain routing with Caddy
+<!-- Hand-tested 2026-03-07 -->
 
-Clean URLs like `http://feature-auth.myproject.localhost` without port numbers — works offline, no external DNS. Useful for cookies, CORS, and matching production URL structure.
+Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. Useful for cookies, CORS, and matching production URL structure.
 
 **Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
 
@@ -287,7 +288,7 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 
 1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
 2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
-3. `*.localhost` resolves to `127.0.0.1` via the OS — no external DNS needed, works offline
+3. `*.localhost` resolves to `127.0.0.1` via the OS
 4. Visiting `http://feature-auth.myproject.localhost:8080`: Caddy matches the subdomain and proxies to the dev server
 
 ## Monitor hook logs
