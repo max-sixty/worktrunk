@@ -66,11 +66,11 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
-      --no-verify
-          Skip hooks
-
   -y, --yes
           Skip approval prompts
+
+      --no-verify
+          Skip hooks
 
 Global Options:
   -C <path>

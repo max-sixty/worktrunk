@@ -140,12 +140,6 @@ wt step commit - Stage and commit with LLM-generated message
 Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
-      <b><span class=c>--no-verify</span></b>
-          Skip hooks
-
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -162,6 +156,13 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -225,12 +226,6 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Defaults to default branch.
 
 <b><span class=g>Options:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
-      <b><span class=c>--no-verify</span></b>
-          Skip hooks
-
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -247,6 +242,13 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -491,9 +493,6 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--dry-run</span></b>
           Show what would be removed
 
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
       <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
           Skip worktrees younger than this
 
@@ -504,6 +503,10 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

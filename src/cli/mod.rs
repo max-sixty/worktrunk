@@ -839,13 +839,13 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(long = "no-background", hide = true)]
         no_background: bool,
 
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Skip hooks
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        verify: bool,
 
         /// Force worktree removal
         ///
@@ -968,6 +968,10 @@ lint = "cargo clippy"
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
 
+        /// Skip approval prompts
+        #[arg(short, long, help_heading = "Automation")]
+        yes: bool,
+
         /// Force running hooks
         #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
@@ -979,10 +983,6 @@ lint = "cargo clippy"
             help_heading = "Automation"
         )]
         no_verify: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// What to stage before committing [default: all]
         #[arg(long)]

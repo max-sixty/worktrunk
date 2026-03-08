@@ -30,7 +30,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -50,7 +50,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -70,7 +70,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Run in foreground (block until complete)
@@ -98,7 +98,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Run in foreground (block until complete)
@@ -124,7 +124,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -142,7 +142,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -160,7 +160,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -178,7 +178,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Override built-in template variable (KEY=VALUE)
@@ -198,7 +198,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Run in foreground (block until complete)
