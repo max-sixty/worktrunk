@@ -24,6 +24,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+#[cfg(unix)]
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
