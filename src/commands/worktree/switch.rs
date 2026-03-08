@@ -317,7 +317,7 @@ fn resolve_same_repo_ref(
     let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
     // Use -- to prevent branch names starting with - from being interpreted as flags
     repo.run_command(&["fetch", "--", &remote, &refspec])
-        .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
+        .with_context(|| cformat!("Failed to fetch branch <bold>{}</> from {}", branch, remote))?;
 
     Ok(ResolvedTarget {
         branch: info.source_branch.clone(),
@@ -532,7 +532,13 @@ fn setup_fork_branch(
     // Create local branch from FETCH_HEAD
     // Use -- to prevent branch names starting with - from being interpreted as flags
     repo.run_command(&["branch", "--", branch, "FETCH_HEAD"])
-        .with_context(|| format!("Failed to create local branch '{}' from {}", branch, label))?;
+        .with_context(|| {
+            cformat!(
+                "Failed to create local branch <bold>{}</> from {}",
+                branch,
+                label
+            )
+        })?;
 
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
