@@ -357,9 +357,7 @@ description: new text here
 
 ### 5. Monitor CI
 
-If you stayed silent (self-authored PR, no concerns) → **done, stop here.** Do
-not monitor CI. There is no approval to dismiss on failure, so monitoring adds
-no value and wastes compute.
+If you stayed silent (self-authored PR, no concerns) → **done, stop here.**
 
 After approving, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:
