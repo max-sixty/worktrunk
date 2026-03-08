@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -55,8 +56,8 @@ exit_code: 0
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo_path }}/node_modules"[m
 [2m○[22m Current config:
-[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
-[107m [0m post-create = [32m"ln -sf {{ repo_root }}/node_modules"
+[107m [0m [2mworktree-path = [0m[2m[32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m [2mpost-create = [0m[2m[32m"ln -sf {{ repo_root }}/node_modules"
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml

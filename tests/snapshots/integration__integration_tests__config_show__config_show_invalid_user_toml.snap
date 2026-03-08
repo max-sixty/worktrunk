@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -48,7 +49,7 @@ exit_code: 0
 [107m [0m 1 | this is not valid toml {{{
 [107m [0m   |      ^
 [107m [0m key with no value, expected `=`
-[107m [0m this is not valid toml {{{
+[107m [0m [2mthis is not valid toml {{{
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml

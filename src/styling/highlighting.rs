@@ -94,6 +94,7 @@ pub fn format_toml(content: &str) -> String {
     // synoptic has built-in TOML support, so this always succeeds
     let mut highlighter = from_extension("toml", 4).expect("synoptic supports TOML");
     let gutter = super::GUTTER;
+    let dim = Style::new().dimmed();
     let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
     // Process all lines through the highlighter
@@ -116,7 +117,8 @@ pub fn format_toml(content: &str) -> String {
                 if let Some(s) = style {
                     line_output.push_str(&format!("{s}{text}{s:#}"));
                 } else {
-                    line_output.push_str(&text);
+                    // Unstyled tokens (keys, operators, whitespace) rendered dim
+                    line_output.push_str(&format!("{dim}{text}{dim:#}"));
                 }
             }
 
@@ -136,24 +138,35 @@ pub fn format_toml(content: &str) -> String {
 /// - "table": table headers [...]
 /// - "digit": numeric values
 fn toml_token_style(kind: &str) -> Option<Style> {
+    // All styles include .dimmed() so highlighted tokens match the dim base text,
+    // consistent with bash_token_style(). We do NOT use .bold() because bold (SGR 1)
+    // and dim (SGR 2) are mutually exclusive in some terminals like Alacritty.
     match kind {
-        // Strings (quoted values)
-        "string" => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)))),
+        // Strings (quoted values) - dim green
+        "string" => Some(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+                .dimmed(),
+        ),
 
-        // Comments (hash-prefixed)
+        // Comments (hash-prefixed) - dim (no color, just subdued)
         "comment" => Some(Style::new().dimmed()),
 
-        // Table headers [table] and [[array]]
+        // Table headers [table] and [[array]] - dim cyan
         "table" => Some(
             Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
-                .bold(),
+                .dimmed(),
         ),
 
-        // Booleans and numbers
-        "boolean" | "digit" => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)))),
+        // Booleans and numbers - dim yellow
+        "boolean" | "digit" => Some(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Yellow)))
+                .dimmed(),
+        ),
 
-        // Everything else (operators, punctuation, keys)
+        // Everything else (operators, punctuation, keys) - no styling (will use base dim)
         _ => None,
     }
 }
