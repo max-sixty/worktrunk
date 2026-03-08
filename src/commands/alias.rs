@@ -14,9 +14,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, progress_message,
-};
+use worktrunk::styling::{eprintln, format_with_gutter, info_message, progress_message};
 
 use crate::commands::command_approval::approve_alias;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
