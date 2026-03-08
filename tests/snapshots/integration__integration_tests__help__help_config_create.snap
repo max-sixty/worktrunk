@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -142,6 +143,16 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# # Lower values show the TUI faster; 0 disables timeouts[0m
   [2m# # timeout-ms = 200[0m
   [2m#[0m
+  [2m# ### Aliases[0m
+  [2m#[0m
+  [2m# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.[0m
+  [2m#[0m
+  [2m# [aliases][0m
+  [2m# greet = "echo Hello from {{ branch }}"[0m
+  [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
+  [2m#[0m
+  [2m# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.[0m
+  [2m#[0m
   [2m# ### User project-specific settings[0m
   [2m#[0m
   [2m# For context:[0m
@@ -154,13 +165,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#[0m
   [2m# #### Setting overrides (Experimental)[0m
   [2m#[0m
-  [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.[0m
+  [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.[0m
   [2m#[0m
   [2m# [projects."github.com/user/repo"][0m
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
   [2m# list.full = true[0m
   [2m# merge.squash = false[0m
   [2m# post-create.env = "cp .env.example .env"[0m
+  [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
   [2m#[0m
   [2m# ### Custom prompt templates[0m
   [2m#[0m

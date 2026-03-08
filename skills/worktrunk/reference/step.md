@@ -31,6 +31,26 @@ wt step push
 - `promote` — [experimental] Put a branch into the main worktree
 - `prune` — Remove worktrees and branches merged into the default branch
 - `relocate` — [experimental] Move worktrees to expected paths
+- `<alias>` — [experimental] Run a configured command alias
+
+## Aliases
+
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](https://worktrunk.dev/hook/#template-variables) as hooks.
+
+```toml
+# .config/wt.toml
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+port = "echo http://localhost:{{ branch | hash_port }}"
+```
+
+```bash
+wt step deploy                            # run the alias
+wt step deploy --dry-run                  # show expanded command
+wt step deploy --var env=staging          # pass extra template variables
+```
+
+When defined in both user and project config, user aliases take precedence.
 
 ## Command reference
 

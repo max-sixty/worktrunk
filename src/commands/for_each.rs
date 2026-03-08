@@ -138,7 +138,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 }
 
 /// Error from running a command in a worktree
-enum CommandError {
+pub(crate) enum CommandError {
     /// Command failed to spawn (e.g., command not found, permission denied)
     SpawnFailed(String),
     /// Command exited with non-zero status
@@ -159,7 +159,7 @@ enum CommandError {
 /// - Tee stderr (stream + capture) for gutter display on failure
 /// - Add `--gutter` flag to capture and format output
 /// - Accept current behavior as consistent with hooks
-fn run_command_streaming(
+pub(crate) fn run_command_streaming(
     command: &str,
     working_dir: &std::path::Path,
     stdin_content: Option<&str>,

@@ -711,6 +711,9 @@ fn main() {
                 commit,
                 clobber,
             } => step_relocate(branches, dry_run, commit, clobber),
+            StepCommand::External(args) => {
+                commands::AliasOptions::parse(args).and_then(commands::step_alias)
+            }
         },
         Commands::Hook { action } => handle_hook_command(action),
         #[cfg(unix)]
