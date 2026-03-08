@@ -9,14 +9,14 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
 | `pre-switch` | Before every switch | Yes | Yes |
-| `post-start` | After worktree created | No (background) | No |
+| `post-start` | After worktree created | No | No |
 | `post-create` | After worktree created | Yes | No |
-| `post-switch` | After every switch | No (background) | No |
+| `post-switch` | After every switch | No | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
 | `pre-remove` | Before worktree removed | Yes | Yes |
-| `post-remove` | After worktree removed | No (background) | No |
+| `post-remove` | After worktree removed | No | No |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
