@@ -203,7 +203,7 @@ impl Repository {
         match name {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
-                    action: Some("resolve '@' to current branch".into()),
+                    action: Some("resolve @ to current branch".into()),
                 }
                 .into()
             }),
@@ -256,7 +256,7 @@ impl Repository {
                     .current_worktree()
                     .root()
                     .map_err(|_| GitError::NotInWorktree {
-                        action: Some("resolve '@'".into()),
+                        action: Some("resolve @".into()),
                     })?;
                 // root() returns canonicalized path, so canonicalize worktree paths
                 // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
