@@ -132,6 +132,15 @@ impl FormattedMessage {
         self.0
     }
 
+    /// Append raw content after the formatted message.
+    ///
+    /// Used when content must appear outside the message's color span,
+    /// e.g., integration symbols that need their native dim styling.
+    pub fn append(mut self, suffix: &str) -> Self {
+        self.0.push_str(suffix);
+        self
+    }
+
     /// Borrow the inner string for inspection (e.g., in tests).
     ///
     /// Note: This does NOT implement `AsRef<str>` to prevent accidentally

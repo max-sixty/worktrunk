@@ -1451,7 +1451,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, !foreground, run_hooks, true)?;
+        handle_remove_output(&plan, foreground, run_hooks, true)?;
         Ok(true)
     }
 

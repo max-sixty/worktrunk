@@ -44,7 +44,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mmerged-a[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[36m◎ Removing [1mmerged-b[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[36m◎ Removing [1mmerged-c[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mRemoving [1mmerged-a[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mRemoving [1mmerged-b[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mRemoving [1mmerged-c[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [32m✓[39m [32mPruned 3 worktrees & branches[39m

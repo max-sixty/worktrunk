@@ -836,7 +836,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(long)]
         foreground: bool,
 
-
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
         yes: bool,
