@@ -12,12 +12,14 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -57,13 +59,13 @@ Project hooks require approval on first run to prevent untrusted projects from r
 [1m[32mExamples[0m
 
 Pre-approve all commands for current project:
-  [2mwt hook approvals add[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals add[0m
 
 Clear approvals for current project:
-  [2mwt hook approvals clear[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear[0m
 
 Clear global approvals:
-  [2mwt hook approvals clear --global[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
 
 [1m[32mHow approvals work[0m
 

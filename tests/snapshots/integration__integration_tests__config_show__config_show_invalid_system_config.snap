@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -48,7 +49,7 @@ exit_code: 0
 [107m [0m 1 | invalid = [toml
 [107m [0m   |                 ^
 [107m [0m unclosed array, expected `]`
-[107m [0m invalid = [toml
+[107m [0m [2minvalid = [toml
 
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [2m↳[22m [2mEmpty file (using defaults)[22m

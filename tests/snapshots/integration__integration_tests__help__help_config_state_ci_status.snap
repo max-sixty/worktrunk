@@ -13,6 +13,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -64,14 +65,14 @@ Results cache for 30-60 seconds. Indicators dim when local changes haven't been 
 
 [1m[32mStatus values[0m
 
-    Status                   Meaning                 
-   ───────── ─────────────────────────────────────── 
-   [2mpassed[0m    All checks passed                       
-   [2mrunning[0m   Checks in progress                      
-   [2mfailed[0m    Checks failed                           
-   [2mconflicts[0m PR has merge conflicts                  
-   [2mno-ci[0m     No checks configured                    
-   [2merror[0m     Fetch error (rate limit, network, auth) 
+  Status                   Meaning                 
+ ───────── ─────────────────────────────────────── 
+ [2mpassed[0m    All checks passed                       
+ [2mrunning[0m   Checks in progress                      
+ [2mfailed[0m    Checks failed                           
+ [2mconflicts[0m PR has merge conflicts                  
+ [2mno-ci[0m     No checks configured                    
+ [2merror[0m     Fetch error (rate limit, network, auth) 
 
 See [2mwt list[0m CI status for display symbols and colors.
 

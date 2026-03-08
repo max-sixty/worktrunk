@@ -5,7 +5,9 @@ use crossterm::style::Attribute;
 use termimad::{CompoundStyle, MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
-use worktrunk::styling::{DEFAULT_HELP_WIDTH, wrap_styled_text};
+use worktrunk::styling::{
+    DEFAULT_HELP_WIDTH, format_bash_with_gutter, format_toml, format_with_gutter, wrap_styled_text,
+};
 
 /// Table border style matching our help text format:
 /// - Horizontal lines under headers with spaces between column segments
@@ -41,10 +43,11 @@ fn help_table_skin() -> MadSkin {
 /// and headers are never wrapped (tables need full-width rows for alignment).
 pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
-    let dimmed = Style::new().dimmed();
 
     let mut result = String::new();
     let mut in_code_block = false;
+    let mut code_block_lang = String::new();
+    let mut code_block_lines: Vec<&str> = Vec::new();
     let mut table_lines: Vec<&str> = Vec::new();
 
     let lines: Vec<&str> = help.lines().collect();
@@ -61,15 +64,41 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
         }
 
         // Handle code fences
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
+        if let Some(after_fence) = trimmed.strip_prefix("```") {
+            if !in_code_block {
+                // Opening fence — extract language identifier
+                code_block_lang = after_fence.trim().to_string();
+                code_block_lines.clear();
+                in_code_block = true;
+            } else {
+                // Closing fence — render collected code block with gutter
+                let content = code_block_lines.join("\n");
+                let formatted = match code_block_lang.as_str() {
+                    "toml" => format_toml(&content),
+                    "console" | "bash" | "sh" => format_bash_with_gutter(&content),
+                    _ => {
+                        // Dim the content before adding gutter (format_with_gutter
+                        // doesn't style text; bash/toml formatters handle their own)
+                        let dim = Style::new().dimmed();
+                        let dimmed = code_block_lines
+                            .iter()
+                            .map(|l| format!("{dim}{l}{dim:#}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format_with_gutter(&dimmed, None)
+                    }
+                };
+                result.push_str(&formatted);
+                result.push('\n');
+                in_code_block = false;
+            }
             i += 1;
             continue;
         }
 
-        // Inside code blocks, render dimmed with indent
+        // Inside code blocks, collect lines for deferred rendering
         if in_code_block {
-            result.push_str(&format!("  {dimmed}{line}{dimmed:#}\n"));
+            code_block_lines.push(line);
             i += 1;
             continue;
         }
@@ -150,9 +179,9 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
     colorize_status_symbols(&result)
 }
 
-/// Render a markdown table using termimad (for help text, adds 2-space indent)
+/// Render a markdown table using termimad (for help text, no indent)
 fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
-    render_table_with_termimad(lines, "  ", max_width)
+    render_table_with_termimad(lines, "", max_width)
 }
 
 /// Render a markdown table from markdown source string (no indent)
@@ -561,6 +590,17 @@ mod tests {
         // Code is dimmed with indent
         assert!(result.contains("code here"));
         assert!(result.contains("after"));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_toml_code_block() {
+        let md = "```toml\n[section]\nkey = \"value\"\n```\nafter";
+        let result = render_markdown_in_help(md);
+        // TOML blocks get syntax highlighting with gutter
+        assert!(result.contains("section"));
+        assert!(result.contains("after"));
+        // Should have gutter (BrightWhite background = SGR 107)
+        assert!(result.contains("\u{1b}[107m"));
     }
 
     #[test]
