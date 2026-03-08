@@ -5,6 +5,9 @@ use worktrunk::git::HookType;
 pub struct HookCommand {
     pub hook_type: HookType,
     pub command: Command,
+    /// Override the phase label in approval prompts (e.g., "alias" instead of "post-create").
+    /// When None, uses `hook_type.to_string()`.
+    pub phase_override: Option<String>,
 }
 
 /// Collect commands for the given hook types, preserving order of the provided hooks.
@@ -23,6 +26,7 @@ pub fn collect_commands_for_hooks(
                     .map(|command| HookCommand {
                         hook_type: *hook,
                         command,
+                        phase_override: None,
                     }),
             );
         }

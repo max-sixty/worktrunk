@@ -3,6 +3,10 @@
 //! Runs user-defined command aliases configured in `[aliases]` sections
 //! of user config or project config. Aliases are command templates that
 //! support the same template variables as hooks.
+//!
+//! Project-config aliases require command approval (same as project hooks).
+//! User-config aliases are trusted and skip approval. When an alias exists
+//! in both configs, the user version wins and is trusted.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -14,6 +18,7 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, warning_message,
 };
 
+use crate::commands::command_approval::approve_alias;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::for_each::{CommandError, run_command_streaming};
 
@@ -37,6 +42,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
 pub struct AliasOptions {
     pub name: String,
     pub dry_run: bool,
+    pub yes: bool,
     pub vars: Vec<(String, String)>,
 }
 
@@ -44,18 +50,20 @@ impl AliasOptions {
     /// Parse alias options from the external subcommand args.
     ///
     /// First element is the alias name, remaining are flags:
-    /// `--dry-run` and `--var KEY=VALUE`.
+    /// `--dry-run`, `--yes`/`-y`, and `--var KEY=VALUE`.
     pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
         };
 
         let mut dry_run = false;
+        let mut yes = false;
         let mut vars = Vec::new();
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
                 "--dry-run" => dry_run = true,
+                "--yes" | "-y" => yes = true,
                 "--var" => {
                     i += 1;
                     if i >= args.len() {
@@ -78,6 +86,7 @@ impl AliasOptions {
         Ok(Self {
             name,
             dry_run,
+            yes,
             vars,
         })
     }
@@ -88,10 +97,39 @@ fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
     Ok((key.to_string(), value.to_string()))
 }
 
+/// Determine whether an alias requires project-config approval.
+///
+/// An alias needs approval when:
+/// - It exists in project config AND
+/// - It does NOT exist in user config (user overrides are trusted)
+fn alias_needs_approval(
+    alias_name: &str,
+    project_config: &Option<ProjectConfig>,
+    user_config: &UserConfig,
+    project_id: Option<&str>,
+) -> Option<String> {
+    // Check if alias exists in project config
+    let project_template = project_config
+        .as_ref()
+        .and_then(|pc| pc.aliases.as_ref())
+        .and_then(|a| a.get(alias_name));
+
+    let project_template = project_template?;
+
+    // Check if user config overrides this alias (user overrides are trusted)
+    let user_aliases = user_config.aliases(project_id);
+    if user_aliases.contains_key(alias_name) {
+        return None;
+    }
+
+    Some(project_template.clone())
+}
+
 /// Run a configured alias by name.
 ///
 /// Looks up the alias in merged config (project config + user config),
-/// expands the template, and executes it.
+/// expands the template, and executes it. Project-config aliases require
+/// command approval before execution.
 pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
@@ -136,6 +174,22 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             );
         }
     };
+
+    // Check if this alias needs project-config approval
+    if let Some(project_template) = alias_needs_approval(
+        &opts.name,
+        &project_config,
+        &user_config,
+        project_id.as_deref(),
+    ) {
+        let project_id = project_id
+            .as_deref()
+            .context("Cannot determine project identifier for alias approval")?;
+        let approved = approve_alias(&project_template, &opts.name, project_id, opts.yes)?;
+        if !approved {
+            return Ok(());
+        }
+    }
 
     // Build hook context for template expansion
     let wt = repo.current_worktree();
@@ -204,6 +258,7 @@ mod tests {
         let opts = parse(&["deploy"]).unwrap();
         assert_eq!(opts.name, "deploy");
         assert!(!opts.dry_run);
+        assert!(!opts.yes);
         assert!(opts.vars.is_empty());
     }
 
@@ -211,6 +266,18 @@ mod tests {
     fn test_parse_dry_run() {
         let opts = parse(&["deploy", "--dry-run"]).unwrap();
         assert!(opts.dry_run);
+    }
+
+    #[test]
+    fn test_parse_yes_long() {
+        let opts = parse(&["deploy", "--yes"]).unwrap();
+        assert!(opts.yes);
+    }
+
+    #[test]
+    fn test_parse_yes_short() {
+        let opts = parse(&["deploy", "-y"]).unwrap();
+        assert!(opts.yes);
     }
 
     #[test]

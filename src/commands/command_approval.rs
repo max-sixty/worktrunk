@@ -110,9 +110,14 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
-        // Phase comes from the hook type (e.g., "pre-commit", "pre-merge")
+        // Phase comes from the hook type (e.g., "pre-commit", "pre-merge") or
+        // a phase override (e.g., "alias" for project-config aliases).
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
-        let phase = cmd.hook_type.to_string();
+        let phase = cmd
+            .phase_override
+            .as_deref()
+            .unwrap_or(&cmd.hook_type.to_string())
+            .to_string();
         let label = match &cmd.command.name {
             Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
             None => format!("{INFO_SYMBOL} {phase}:"),
@@ -142,6 +147,34 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     io::stdin().read_line(&mut response)?;
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Approve a project-config alias before execution.
+///
+/// Checks if the alias template is already approved. If not, prompts the user.
+/// Returns `Ok(true)` if approved, `Ok(false)` if declined.
+pub fn approve_alias(
+    template: &str,
+    alias_name: &str,
+    project_id: &str,
+    yes: bool,
+) -> anyhow::Result<bool> {
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+
+    if approvals.is_command_approved(project_id, template) {
+        return Ok(true);
+    }
+
+    let cmd = HookCommand {
+        hook_type: HookType::PostCreate, // unused for display — overridden by phase_override
+        command: worktrunk::config::Command::new(
+            Some(alias_name.to_string()),
+            template.to_string(),
+        ),
+        phase_override: Some("alias".to_string()),
+    };
+
+    approve_command_batch(&[cmd], project_id, &approvals, yes, true)
 }
 
 /// Collect project commands for hooks and request batch approval.

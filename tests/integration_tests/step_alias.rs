@@ -3,8 +3,10 @@
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::io::Write;
+use std::process::Stdio;
 
-/// Alias from project config runs with template expansion
+/// Alias from project config runs with template expansion (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_from_project_config(mut repo: TestRepo) {
     repo.write_project_config(
@@ -22,12 +24,12 @@ hello = "echo Hello from {{ branch }}"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["hello"],
+        &["hello", "--yes"],
         Some(&feature_path),
     ));
 }
 
-/// --dry-run shows the expanded command without running it
+/// --dry-run shows the expanded command without running it (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_dry_run(mut repo: TestRepo) {
     repo.write_project_config(
@@ -45,7 +47,7 @@ hello = "echo Hello from {{ branch }}"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["hello", "--dry-run"],
+        &["hello", "--dry-run", "--yes"],
         Some(&feature_path),
     ));
 }
@@ -90,7 +92,7 @@ fn test_step_alias_unknown_no_aliases(mut repo: TestRepo) {
     ));
 }
 
-/// --var flag adds extra template variables
+/// --var flag adds extra template variables (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_with_var(mut repo: TestRepo) {
     repo.write_project_config(
@@ -108,12 +110,12 @@ greet = "echo Hello {{ name }} from {{ branch }}"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["greet", "--dry-run", "--var", "name=World"],
+        &["greet", "--dry-run", "--var", "name=World", "--yes"],
         Some(&feature_path),
     ));
 }
 
-/// Alias command failure propagates exit code
+/// Alias command failure propagates exit code (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_exit_code(mut repo: TestRepo) {
     repo.write_project_config(
@@ -131,7 +133,7 @@ fail = "exit 42"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["fail"],
+        &["fail", "--yes"],
         Some(&feature_path),
     ));
 }
@@ -158,7 +160,7 @@ greet = "echo Greetings from {{ branch }}"
     ));
 }
 
-/// Alias shadowing a built-in step command shows a warning
+/// Alias shadowing a built-in step command shows a warning (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_shadows_builtin(mut repo: TestRepo) {
     repo.write_project_config(
@@ -178,7 +180,7 @@ hello = "echo hello"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["hello", "--dry-run"],
+        &["hello", "--dry-run", "--yes"],
         Some(&feature_path),
     ));
 }
@@ -217,20 +219,223 @@ shared = "echo user-version"
         )
     );
 
-    // Project alias available
+    // Project alias available (--yes bypasses approval for project-config aliases)
     assert_cmd_snapshot!(
         "project_alias",
         make_snapshot_cmd(
             &repo,
             "step",
-            &["project-cmd", "--dry-run"],
+            &["project-cmd", "--dry-run", "--yes"],
             Some(&feature_path),
         )
     );
 
-    // User overrides project on collision
+    // User overrides project on collision (user config = trusted, no approval needed)
     assert_cmd_snapshot!(
         "user_overrides_project",
         make_snapshot_cmd(&repo, "step", &["shared", "--dry-run"], Some(&feature_path),)
+    );
+}
+
+// ============================================================================
+// Approval tests
+// ============================================================================
+
+/// Helper for alias approval snapshot tests
+fn snapshot_alias_approval(
+    test_name: &str,
+    repo: &TestRepo,
+    alias_args: &[&str],
+    approve: bool,
+    cwd: Option<&std::path::Path>,
+) {
+    let mut cmd = make_snapshot_cmd(repo, "step", alias_args, cwd);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().unwrap();
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        let response = if approve { b"y\n" } else { b"n\n" };
+        stdin.write_all(response).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+        output.status.code().unwrap_or(-1),
+        stdout,
+        stderr
+    );
+
+    insta::assert_snapshot!(test_name, combined);
+}
+
+/// Project-config alias prompts for approval in non-TTY (fails with hint)
+#[rstest]
+fn test_alias_approval_project_config_prompts(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Without --yes, project alias triggers approval prompt (fails in non-TTY)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// Already-approved project-config alias runs without re-prompting
+#[rstest]
+fn test_alias_approval_already_approved(mut repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    // Pre-approve the alias command
+    repo.write_test_approvals(&format!(
+        r#"[projects.'{}']
+approved-commands = ["echo deploying {{{{ branch }}}}"]
+"#,
+        repo.project_id()
+    ));
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Should run without prompting
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// User-config alias skips approval entirely
+#[rstest]
+fn test_alias_approval_user_config_skips(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo deploying from user config"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // User alias runs without approval
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// User override of project alias skips approval (user is trusted)
+#[rstest]
+fn test_alias_approval_user_override_skips(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo UNTRUSTED project deploy"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo trusted user deploy"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // User override runs without approval — the user version is trusted
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// --yes bypasses approval for project-config alias without saving
+#[rstest]
+fn test_alias_approval_yes_bypasses(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // First run with --yes succeeds
+    assert_cmd_snapshot!(
+        "alias_approval_yes_first_run",
+        make_snapshot_cmd(&repo, "step", &["deploy", "--yes"], Some(&feature_path),)
+    );
+
+    // Second run without --yes should still prompt (--yes doesn't save approval)
+    assert_cmd_snapshot!(
+        "alias_approval_yes_second_run_prompts",
+        make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path),)
+    );
+}
+
+/// Declining approval prevents alias execution
+#[rstest]
+fn test_alias_approval_decline(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    snapshot_alias_approval(
+        "alias_approval_decline",
+        &repo,
+        &["deploy"],
+        false,
+        Some(&feature_path),
     );
 }
