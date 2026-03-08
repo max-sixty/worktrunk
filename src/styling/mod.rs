@@ -177,6 +177,8 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
@@ -194,43 +196,17 @@ project = "github.com/user/repo"
 command = "npm install"
 "#;
 
-        let output = format_toml(toml_content);
-
-        // Check that output contains ANSI escape codes
-        assert!(
-            output.contains("\x1b["),
-            "Output should contain ANSI escape codes"
-        );
-
-        // Check that strings are highlighted (green = 32)
-        assert!(
-            output.contains("\x1b[32m"),
-            "Should contain green color for strings"
-        );
-
-        // Check that comments are dimmed (dim = 2)
-        assert!(
-            output.contains("\x1b[2m"),
-            "Should contain dim style for comments"
-        );
-
-        // Check that table headers are highlighted (cyan = 36, bold = 1)
-        assert!(
-            output.contains("\x1b[36m") || output.contains("\x1b[1m"),
-            "Should contain cyan or bold for tables"
-        );
-
-        // Check that gutter is present (BrightWhite background = 107)
-        assert!(
-            output.contains("\x1b[107m"),
-            "Should contain gutter (BrightWhite background)"
-        );
-
-        // Check that lines have content (not just gutter)
-        assert!(
-            output.lines().any(|line| line.len() > 20),
-            "Should have lines with actual content beyond gutter and indent"
-        );
+        assert_snapshot!(format_toml(toml_content), @r#"
+        [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"[0m
+        [107m [0m 
+        [107m [0m [2m[36m[llm][0m
+        [107m [0m [2margs = [][0m
+        [107m [0m 
+        [107m [0m [2m# This is a comment[0m
+        [107m [0m [2m[36m[[approved-commands]][0m
+        [107m [0m [2mproject = [0m[2m[32m"github.com/user/repo"[0m
+        [107m [0m [2mcommand = [0m[2m[32m"npm install"[0m
+        "#);
     }
 
     // StyledString tests
@@ -372,16 +348,11 @@ command = "npm install"
 
     #[test]
     fn test_format_with_gutter_preserves_newlines() {
-        let multi_line = "Line 1\nLine 2\nLine 3";
-        let result = format_with_gutter(multi_line, None);
-
-        // Should have at least 3 lines (one for each input line)
-        assert!(result.lines().count() >= 3);
-
-        // Each original line should be present
-        assert!(result.contains("Line 1"));
-        assert!(result.contains("Line 2"));
-        assert!(result.contains("Line 3"));
+        assert_snapshot!(format_with_gutter("Line 1\nLine 2\nLine 3", Some(80)), @"
+        [107m [0m Line 1
+        [107m [0m Line 2
+        [107m [0m Line 3
+        ");
     }
 
     #[test]
@@ -392,7 +363,7 @@ command = "npm install"
         // Use fixed width for consistent testing (80 columns)
         let result = format_with_gutter(commit_msg, Some(80));
 
-        insta::assert_snapshot!(result, @"
+        assert_snapshot!(result, @"
         [107m [0m This commit refactors the authentication system to use a more secure
         [107m [0m token-based approach instead of the previous session-based system which had
         [107m [0m several security vulnerabilities that were identified during the security
@@ -617,7 +588,7 @@ command = "npm install"
         let result = format_bash_with_gutter_at_width(command, 80);
 
         // Snapshot the raw output to verify ANSI codes are consistent
-        insta::assert_snapshot!(result);
+        assert_snapshot!(result);
     }
 
     #[test]
@@ -647,92 +618,18 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         let result = format_bash_with_gutter_at_width(multiline_command, 80);
 
         // Snapshot the output - each line should have consistent dim styling
-        insta::assert_snapshot!(result);
+        assert_snapshot!(result);
     }
 
     #[test]
     fn test_unhighlighted_text_has_consistent_dim_across_lines() {
-        // Verify that unhighlighted text (like template variables) has consistent
-        // styling whether it appears at the end of one line or start of another.
-        //
-        // The template text `{{ worktree` and `}}` should have identical ANSI codes.
-
-        let multiline = "echo {{ worktree\n}}/path";
-        let result = format_bash_with_gutter(multiline);
-
-        let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 2);
-
-        // Extract the styling for unhighlighted text on each line
-        // Line 1 ends with `{{ worktree` - find what style it's under
-        // Line 2 starts with `}}` - find what style it's under
-
-        let dim_code = "\x1b[2m";
-
-        // Both lines should contain dim code for the unhighlighted text
-        // Line 1: after "echo" (highlighted), the `{{ worktree` should be dimmed
-        // Line 2: the `}}` at the start should be dimmed
-
-        // Check that line 2 starts with dim after the gutter
-        // Gutter pattern: [107m [0m  (then content)
-        // The search string "\x1b[0m  " is 6 characters, so content starts at index + 6
-        let line2 = lines[1];
-        let content_start = line2.find("\x1b[0m  ").map(|i| i + 6);
-        if let Some(start) = content_start {
-            let content = &line2[start..];
-            assert!(
-                content.starts_with(dim_code),
-                "Line 2 content should start with dim for `}}`, got: {:?}",
-                &content[..content.len().min(20)]
-            );
-        }
-
-        // Snapshot for visual verification
-        insta::assert_snapshot!(result);
+        assert_snapshot!(format_bash_with_gutter("echo {{ worktree\n}}/path"));
     }
 
     #[test]
     fn test_syntax_highlighting_produces_multiple_colors() {
-        // Verify that bash syntax highlighting produces different colors for different
-        // token types, not just a single dim color for everything.
-        //
-        // This catches regressions where all text becomes the same color.
-
         let command = "echo 'hello' | grep hello > output.txt && cat output.txt";
-        let result = format_bash_with_gutter(command);
-
-        // Check for presence of different ANSI color codes:
-        // - Blue (34m) for commands like echo, grep, cat
-        // - Green (32m) for strings like 'hello'
-        // - Cyan (36m) for operators like |, >
-        let has_blue = result.contains("\x1b[34m");
-        let has_green = result.contains("\x1b[32m");
-        let has_cyan = result.contains("\x1b[36m");
-
-        assert!(
-            has_blue,
-            "Output should contain blue (34m) for commands, got: {:?}",
-            result
-        );
-        assert!(
-            has_green,
-            "Output should contain green (32m) for strings, got: {:?}",
-            result
-        );
-        assert!(
-            has_cyan,
-            "Output should contain cyan (36m) for operators, got: {:?}",
-            result
-        );
-
-        // Also verify dim is present (base styling)
-        assert!(
-            result.contains("\x1b[2m"),
-            "Output should contain dim (2m) for base styling"
-        );
-
-        // Snapshot for visual verification
-        insta::assert_snapshot!(result);
+        assert_snapshot!(format_bash_with_gutter(command));
     }
 
     #[test]

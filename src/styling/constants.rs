@@ -235,151 +235,49 @@ pub fn format_heading(title: &str, suffix: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
-
-    // ============================================================================
-    // Style Constants Tests
-    // ============================================================================
-
-    #[test]
-    fn test_addition_style() {
-        // ADDITION should be green foreground
-        let rendered = ADDITION.render().to_string();
-        // Green is ANSI 32
-        assert!(rendered.contains("32"));
-    }
-
-    #[test]
-    fn test_deletion_style() {
-        // DELETION should be red foreground
-        let rendered = DELETION.render().to_string();
-        // Red is ANSI 31
-        assert!(rendered.contains("31"));
-    }
-
-    #[test]
-    fn test_gutter_style() {
-        // GUTTER should have bright white background
-        let rendered = GUTTER.render().to_string();
-        // BrightWhite background is ANSI 107
-        assert!(rendered.contains("107"));
-    }
-
-    // ============================================================================
-    // Symbol Constants Tests
-    // ============================================================================
 
     #[test]
     fn test_symbol_constants() {
-        // Symbols are pre-colored with ANSI codes, but contain the Unicode character
-        assert!(PROGRESS_SYMBOL.contains("◎"));
-        assert!(SUCCESS_SYMBOL.contains("✓"));
-        assert!(ERROR_SYMBOL.contains("✗"));
-        assert!(WARNING_SYMBOL.contains("▲"));
-        assert!(HINT_SYMBOL.contains("↳"));
-        assert!(INFO_SYMBOL.contains("○"));
-        assert!(PROMPT_SYMBOL.contains("❯"));
+        assert_snapshot!(PROGRESS_SYMBOL, @"[36m◎[39m");
+        assert_snapshot!(SUCCESS_SYMBOL, @"[32m✓[39m");
+        assert_snapshot!(ERROR_SYMBOL, @"[31m✗[39m");
+        assert_snapshot!(WARNING_SYMBOL, @"[33m▲[39m");
+        assert_snapshot!(HINT_SYMBOL, @"[2m↳[22m");
+        assert_snapshot!(INFO_SYMBOL, @"[2m○[22m");
+        assert_snapshot!(PROMPT_SYMBOL, @"[36m❯[39m");
     }
 
-    // ============================================================================
-    // Message Formatting Functions Tests
-    // ============================================================================
-
     #[test]
-    fn test_error_message() {
-        let msg = error_message("Something went wrong");
-        assert!(msg.as_str().contains(ERROR_SYMBOL));
-        assert!(msg.as_str().contains("Something went wrong"));
+    fn test_message_formatting() {
+        assert_snapshot!(error_message("Something went wrong").as_str(), @"[31m✗[39m [31mSomething went wrong[39m");
+        assert_snapshot!(hint_message("Try running --help").as_str(), @"[2m↳[22m [2mTry running --help[22m");
+        assert_snapshot!(warning_message("Deprecated option").as_str(), @"[33m▲[39m [33mDeprecated option[39m");
+        assert_snapshot!(success_message("Operation completed").as_str(), @"[32m✓[39m [32mOperation completed[39m");
+        assert_snapshot!(progress_message("Loading data...").as_str(), @"[36m◎[39m [36mLoading data...[39m");
+        assert_snapshot!(info_message("5 items found").as_str(), @"[2m○[22m 5 items found");
+        assert_snapshot!(prompt_message("Continue?").as_str(), @"[36m❯[39m [36mContinue?[39m");
     }
 
     #[test]
     fn test_error_message_with_inner_styling() {
         let name = "feature";
         let msg = error_message(cformat!("Branch <bold>{name}</> not found"));
-        assert!(msg.as_str().contains(ERROR_SYMBOL));
-        assert!(msg.as_str().contains("Branch"));
-        assert!(msg.as_str().contains("feature"));
+        assert_snapshot!(msg.as_str(), @"[31m✗[39m [31mBranch [1mfeature[22m not found[39m");
     }
 
     #[test]
-    fn test_hint_message() {
-        let msg = hint_message("Try running --help");
-        assert!(msg.as_str().contains(HINT_SYMBOL));
-        assert!(msg.as_str().contains("Try running --help"));
+    fn test_format_heading() {
+        assert_snapshot!(format_heading("BINARIES", None), @"[36mBINARIES[39m");
+        assert_snapshot!(format_heading("USER CONFIG", Some("~/.config/wt.toml")), @"[36mUSER CONFIG[39m  ~/.config/wt.toml");
+        assert_snapshot!(format_heading("", None), @"[36m[39m");
     }
-
-    #[test]
-    fn test_warning_message() {
-        let msg = warning_message("Deprecated option");
-        assert!(msg.as_str().contains(WARNING_SYMBOL));
-        assert!(msg.as_str().contains("Deprecated option"));
-    }
-
-    #[test]
-    fn test_success_message() {
-        let msg = success_message("Operation completed");
-        assert!(msg.as_str().contains(SUCCESS_SYMBOL));
-        assert!(msg.as_str().contains("Operation completed"));
-    }
-
-    #[test]
-    fn test_progress_message() {
-        let msg = progress_message("Loading data...");
-        assert!(msg.as_str().contains(PROGRESS_SYMBOL));
-        assert!(msg.as_str().contains("Loading data..."));
-    }
-
-    #[test]
-    fn test_info_message() {
-        let msg = info_message("5 items found");
-        assert!(msg.as_str().contains(INFO_SYMBOL));
-        assert!(msg.as_str().contains("5 items found"));
-    }
-
-    #[test]
-    fn test_prompt_message() {
-        let msg = prompt_message("Continue?");
-        assert!(msg.as_str().contains(PROMPT_SYMBOL));
-        assert!(msg.as_str().contains("Continue?"));
-    }
-
-    // ============================================================================
-    // format_heading Tests
-    // ============================================================================
-
-    #[test]
-    fn test_format_heading_without_suffix() {
-        let heading = format_heading("BINARIES", None);
-        assert!(heading.contains("BINARIES"));
-        // Should NOT contain extra spacing for suffix
-        assert!(!heading.ends_with("  "));
-    }
-
-    #[test]
-    fn test_format_heading_with_suffix() {
-        let heading = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
-        assert!(heading.contains("USER CONFIG"));
-        assert!(heading.contains("~/.config/wt.toml"));
-        // Should have double-space separator
-        assert!(heading.contains("  "));
-    }
-
-    #[test]
-    fn test_format_heading_empty_title() {
-        let heading = format_heading("", None);
-        // Empty string, still formatted
-        assert!(heading.is_empty() || heading.contains('\u{1b}'));
-    }
-
-    // ============================================================================
-    // FormattedMessage Tests
-    // ============================================================================
 
     #[test]
     fn test_formatted_message_into_inner() {
         let msg = success_message("Done");
-        let inner: String = msg.into_inner();
-        assert!(inner.contains(SUCCESS_SYMBOL));
-        assert!(inner.contains("Done"));
+        assert_snapshot!(msg.into_inner(), @"[32m✓[39m [32mDone[39m");
     }
 }
