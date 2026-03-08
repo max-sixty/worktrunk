@@ -1174,11 +1174,17 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
 fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo) {
     let remote_path = repo.remote_path().unwrap();
 
-    // Create and push a feature branch
+    // Create a feature branch with multiple commits (realistic PR)
     repo.run_git(&["checkout", "-b", "feature-remote-squash"]);
-    std::fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
+    std::fs::write(repo.root_path().join("feature.txt"), "initial").unwrap();
     repo.run_git(&["add", "feature.txt"]);
-    repo.run_git(&["commit", "-m", "Add feature"]);
+    repo.run_git(&["commit", "-m", "Add feature file"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "revised").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Revise feature"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "final version").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Finalize feature"]);
     repo.run_git(&["push", "-u", "origin", "feature-remote-squash"]);
 
     // Go back to main locally (don't pull — local main stays behind)
@@ -1227,11 +1233,14 @@ fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo)
 fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] repo: TestRepo) {
     let remote_path = repo.remote_path().unwrap();
 
-    // Create and push a feature branch
+    // Create a feature branch with multiple commits (realistic PR)
     repo.run_git(&["checkout", "-b", "feature-remote-squash2"]);
-    std::fs::write(repo.root_path().join("feature2.txt"), "feature content").unwrap();
+    std::fs::write(repo.root_path().join("feature2.txt"), "draft").unwrap();
     repo.run_git(&["add", "feature2.txt"]);
-    repo.run_git(&["commit", "-m", "Add feature 2"]);
+    repo.run_git(&["commit", "-m", "WIP: start feature 2"]);
+    std::fs::write(repo.root_path().join("feature2.txt"), "done").unwrap();
+    repo.run_git(&["add", "feature2.txt"]);
+    repo.run_git(&["commit", "-m", "Complete feature 2"]);
     repo.run_git(&["push", "-u", "origin", "feature-remote-squash2"]);
 
     // Go back to main locally
