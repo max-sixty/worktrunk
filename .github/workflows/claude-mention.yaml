@@ -64,7 +64,11 @@ jobs:
             ISSUE_NUMBER="${{ github.event.issue.number }}"
 
             if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
-              # Plain issue — check if bot has commented
+              # Plain issue — check if bot authored or commented
+              ISSUE_AUTHOR="${{ github.event.issue.user.login }}"
+              if [ "$ISSUE_AUTHOR" = "worktrunk-bot" ]; then
+                exit 0
+              fi
               BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
                 --jq '[.[] | select(.user.login == "worktrunk-bot")] | length')
               if [ "$BOT_COMMENTS" -gt "0" ]; then
