@@ -39,6 +39,18 @@ use crate::styling::{
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Pre-compiled regexes for deprecated variable word-boundary matching.
+/// Compiled once on first use, shared across all calls to normalize/replace.
+static DEPRECATED_VAR_REGEXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    DEPRECATED_VARS
+        .iter()
+        .map(|&(old, new)| {
+            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
+            (re, new)
+        })
+        .collect()
+});
+
 /// Tracks which config paths have already shown unknown field warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
@@ -76,9 +88,8 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
     }
 
     let mut result = template.to_string();
-    for &(old, new) in DEPRECATED_VARS {
-        let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-        result = re.replace_all(&result, new).into_owned();
+    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+        result = re.replace_all(&result, *new).into_owned();
     }
     Cow::Owned(result)
 }
@@ -147,9 +158,8 @@ pub fn replace_deprecated_vars(content: &str) -> String {
 
     for original in strings {
         let mut modified = original.clone();
-        for &(old, new) in DEPRECATED_VARS {
-            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-            modified = re.replace_all(&modified, new).into_owned();
+        for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+            modified = re.replace_all(&modified, *new).into_owned();
         }
         if modified != original {
             result = result.replace(&original, &modified);

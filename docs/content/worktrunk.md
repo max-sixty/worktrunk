@@ -1,7 +1,10 @@
 +++
 title = "Worktrunk"
-description = "Git worktree management for parallel AI agents. Core commands, install guide, and quick start."
+description = "CLI for Git worktree management, designed for parallel AI agent workflows."
 weight = 1
+
+[extra]
+canonical = "/"
 +++
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents
