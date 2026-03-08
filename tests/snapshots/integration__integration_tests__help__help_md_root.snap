@@ -7,9 +7,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -32,9 +32,9 @@ wt - Git worktree management for parallel AI agent workflows
 Usage: wt [OPTIONS] [COMMAND]
 
 Commands:
-  switch  Switch to a worktree; create if needed
-  list    List worktrees and their status
-  remove  Remove worktree; delete branch if merged
+  switch  Switch to a worktree; create if needed [aliases: s]
+  list    List worktrees and their status [aliases: ls]
+  remove  Remove worktree; delete branch if merged [aliases: rm]
   merge   Merge current branch into target
   step    Run individual operations
   hook    Run configured hooks

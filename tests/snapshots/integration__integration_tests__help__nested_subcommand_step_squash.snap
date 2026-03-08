@@ -7,9 +7,9 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -30,6 +30,8 @@ exit_code: 2
 
 ----- stderr -----
 [1m[31merror:[0m unrecognized subcommand '[1m[33msquash[0m'
+
+  [1m[32mtip:[0m a similar subcommand exists: '[1m[32ms[0m'
 
 [1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
