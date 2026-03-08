@@ -197,7 +197,9 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         );
     };
 
-    // Check if this alias needs project-config approval (skip for --dry-run)
+    // Check if this alias needs project-config approval (skip for --dry-run).
+    // project_id is required for approval — re-derive with error propagation
+    // rather than using the .ok() from above.
     if !opts.dry_run
         && let Some(project_template) = alias_needs_approval(
             &opts.name,
@@ -206,10 +208,10 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             project_id.as_deref(),
         )
     {
-        let project_id = project_id
-            .as_deref()
+        let project_id = repo
+            .project_identifier()
             .context("Cannot determine project identifier for alias approval")?;
-        let approved = approve_alias(&project_template, &opts.name, project_id, opts.yes)?;
+        let approved = approve_alias(&project_template, &opts.name, &project_id, opts.yes)?;
         if !approved {
             return Ok(());
         }

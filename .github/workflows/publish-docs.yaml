@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Zola
-        uses: taiki-e/install-action@v2.68.19
+        uses: taiki-e/install-action@v2.68.22
         with:
           tool: zola@0.22.1
 

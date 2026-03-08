@@ -223,12 +223,12 @@ pub fn prompt_message(content: impl AsRef<str>) -> FormattedMessage {
 /// // => "BINARIES"
 ///
 /// // Heading with suffix
-/// let h = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
-/// // => "USER CONFIG  ~/.config/wt.toml"
+/// let h = format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"));
+/// // => "USER CONFIG @ ~/.config/wt.toml"
 /// ```
 pub fn format_heading(title: &str, suffix: Option<&str>) -> String {
     match suffix {
-        Some(s) => cformat!("<cyan>{}</>  {}", title, s),
+        Some(s) => cformat!("<cyan>{}</> {}", title, s),
         None => cformat!("<cyan>{}</>", title),
     }
 }
@@ -357,11 +357,11 @@ mod tests {
 
     #[test]
     fn test_format_heading_with_suffix() {
-        let heading = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
+        let heading = format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"));
         assert!(heading.contains("USER CONFIG"));
-        assert!(heading.contains("~/.config/wt.toml"));
-        // Should have double-space separator
-        assert!(heading.contains("  "));
+        assert!(heading.contains("@ ~/.config/wt.toml"));
+        // Title and suffix separated by single space (plus ANSI reset between them)
+        assert!(!heading.contains("  "));
     }
 
     #[test]
