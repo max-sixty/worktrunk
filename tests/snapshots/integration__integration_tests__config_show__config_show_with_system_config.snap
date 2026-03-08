@@ -42,7 +42,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mSYSTEM CONFIG[39m  [PROJECT_ID]
+[36mSYSTEM CONFIG[39m @ [PROJECT_ID]
 [107m [0m [2m[36m[merge]
 [107m [0m [2msquash = [0m[2m[33mtrue
 [107m [0m [2mverify = [0m[2m[33mtrue
@@ -50,10 +50,10 @@ exit_code: 0
 [107m [0m [2m[36m[commit.generation]
 [107m [0m [2mcommand = [0m[2m[32m"company-llm-tool"
 
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
+[36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
 
-[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
+[36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m

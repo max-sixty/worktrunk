@@ -448,7 +448,7 @@ fn render_user_hooks(
             Some(
                 &config_path
                     .as_ref()
-                    .map(|p| format_path_for_display(p))
+                    .map(|p| format!("@ {}", format_path_for_display(p)))
                     .unwrap_or_else(|| "(not found)".to_string())
             )
         )
@@ -509,7 +509,7 @@ fn render_project_hooks(
         "{}",
         format_heading(
             "PROJECT HOOKS",
-            Some(&format_path_for_display(&config_path))
+            Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
 
