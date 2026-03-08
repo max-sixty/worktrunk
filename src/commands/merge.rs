@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
+use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
     BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
@@ -45,7 +45,7 @@ fn collect_merge_commands(
     verify: bool,
     will_remove: bool,
     squash_enabled: bool,
-) -> anyhow::Result<(Vec<HookCommand>, String)> {
+) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
     let mut all_commands = Vec::new();
     let project_config = match repo.load_project_config()? {
         Some(cfg) => cfg,
