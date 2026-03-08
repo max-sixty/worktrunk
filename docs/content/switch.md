@@ -208,9 +208,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
           session named after the branch.
 
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
 
@@ -219,9 +216,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
           tmux workflows) or for CI/automation.
-
-      <b><span class=c>--no-verify</span></b>
-          Skip hooks
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -232,6 +226,13 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
       <b><span class=c>--remotes</span></b>
           Include remote branches
+
+<b><span class=g>Automation:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
