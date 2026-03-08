@@ -248,10 +248,13 @@ silent if there are none.
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
 
-When approving with no issues, approve with an empty body and react:
+When approving with no issues, approve with an empty body and react. **Both
+commands are required** — the reaction signals the author that review is done:
 
 ```bash
+# Step 1: approve
 gh pr review <number> --approve -b ""
+# Step 2: react (do NOT skip this)
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
 
@@ -346,9 +349,9 @@ description: new text here
 
 ### 5. Monitor CI
 
-**Skip this step** if the verdict was "stay silent" (self-authored PR with no
-concerns). There is no approval to dismiss on failure, so monitoring adds no
-value.
+If you stayed silent (self-authored PR, no concerns) → **done, stop here.** Do
+not monitor CI. There is no approval to dismiss on failure, so monitoring adds
+no value and wastes compute.
 
 After approving, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:
