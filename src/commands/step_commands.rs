@@ -1334,36 +1334,49 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
-    /// Build a human-readable count like "2 worktrees, 3 branches".
+    /// Build a human-readable count like "3 worktrees & branches".
     ///
-    /// Counts worktrees and branches independently: a worktree-with-branch
-    /// contributes to both counts.
+    /// Worktree + branch is the default pair (matching progress messages'
+    /// "worktree & branch" pattern). Unpaired items listed separately.
     fn prune_summary(candidates: &[Candidate]) -> String {
-        let mut worktrees = 0usize;
-        let mut branches = 0usize;
+        let mut worktree_with_branch = 0usize;
+        let mut detached_worktree = 0usize;
+        let mut branch_only = 0usize;
         for c in candidates {
-            match &c.kind {
-                CandidateKind::BranchOnly => branches += 1,
-                CandidateKind::Current | CandidateKind::Other => {
-                    worktrees += 1;
-                    if c.branch.is_some() {
-                        branches += 1;
-                    }
+            match (&c.kind, &c.branch) {
+                (CandidateKind::BranchOnly, _) => branch_only += 1,
+                (CandidateKind::Current | CandidateKind::Other, Some(_)) => {
+                    worktree_with_branch += 1;
+                }
+                (CandidateKind::Current | CandidateKind::Other, None) => {
+                    detached_worktree += 1;
                 }
             }
         }
         let mut parts = Vec::new();
-        if worktrees > 0 {
-            let noun = if worktrees == 1 {
+        if worktree_with_branch > 0 {
+            let noun = if worktree_with_branch == 1 {
+                "worktree & branch"
+            } else {
+                "worktrees & branches"
+            };
+            parts.push(format!("{worktree_with_branch} {noun}"));
+        }
+        if detached_worktree > 0 {
+            let noun = if detached_worktree == 1 {
                 "worktree"
             } else {
                 "worktrees"
             };
-            parts.push(format!("{worktrees} {noun}"));
+            parts.push(format!("{detached_worktree} {noun}"));
         }
-        if branches > 0 {
-            let noun = if branches == 1 { "branch" } else { "branches" };
-            parts.push(format!("{branches} {noun}"));
+        if branch_only > 0 {
+            let noun = if branch_only == 1 {
+                "branch"
+            } else {
+                "branches"
+            };
+            parts.push(format!("{branch_only} {noun}"));
         }
         parts.join(", ")
     }
