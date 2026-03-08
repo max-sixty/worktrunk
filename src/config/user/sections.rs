@@ -552,3 +552,37 @@ impl UserProjectOverrides {
         self.commit_generation.is_none() && self.overrides.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_alias_maps_both_none() {
+        assert_eq!(merge_alias_maps(&None, &None), None);
+    }
+
+    #[test]
+    fn test_merge_alias_maps_base_only() {
+        let base = BTreeMap::from([("a".into(), "1".into())]);
+        let result = merge_alias_maps(&Some(base.clone()), &None);
+        assert_eq!(result, Some(base));
+    }
+
+    #[test]
+    fn test_merge_alias_maps_other_only() {
+        let other = BTreeMap::from([("b".into(), "2".into())]);
+        let result = merge_alias_maps(&None, &Some(other.clone()));
+        assert_eq!(result, Some(other));
+    }
+
+    #[test]
+    fn test_merge_alias_maps_other_overrides_base() {
+        let base = BTreeMap::from([("a".into(), "1".into()), ("shared".into(), "base".into())]);
+        let other = BTreeMap::from([("b".into(), "2".into()), ("shared".into(), "other".into())]);
+        let result = merge_alias_maps(&Some(base), &Some(other)).unwrap();
+        assert_eq!(result["a"], "1");
+        assert_eq!(result["b"], "2");
+        assert_eq!(result["shared"], "other");
+    }
+}
