@@ -321,7 +321,7 @@ When a command evaluates state, discovers something unexpected, and proceeds
 anyway, the warning should come first:
 
 ```
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ◎ Removing feature worktree & branch in background (same commit as main, _)
 ```
 
@@ -329,7 +329,7 @@ Not:
 
 ```
 ◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ```
 
 Warnings that result from the action itself (something failed during execution)
