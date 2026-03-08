@@ -1159,6 +1159,67 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
     ));
 }
 
+/// Simulate a GitHub squash merge: push feature to origin, squash-merge on
+/// the remote side (via a temporary clone), fetch locally, then `wt remove`.
+///
+/// This is the exact workflow that users hit:
+///   1. Create worktree, commit, push, open PR
+///   2. Squash-merge on GitHub
+///   3. `git fetch` locally
+///   4. `wt remove <branch>` — should detect integration via origin/main
+///
+/// The integration detection must use `effective_integration_target()` to check
+/// against `origin/main` (which is ahead of local `main` after fetch).
+#[rstest]
+fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap();
+
+    // Create and push a feature branch
+    repo.run_git(&["checkout", "-b", "feature-remote-squash"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-squash"]);
+
+    // Go back to main locally (don't pull — local main stays behind)
+    repo.run_git(&["checkout", "main"]);
+
+    // Simulate GitHub squash merge: clone the bare remote into a temp dir,
+    // squash-merge there, push back to the bare remote
+    let github_sim = repo.home_path().join("github-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim"],
+    );
+    // Squash merge feature into main (like GitHub's "Squash and merge" button)
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-remote-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    // Push the squash merge back to the bare remote
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally — origin/main now has the squash merge, local main does not
+    repo.run_git(&["fetch", "origin"]);
+
+    // Verify setup: local main is behind origin/main
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should be behind origin/main"
+    );
+
+    // Remove the feature branch — should detect as integrated via origin/main
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-remote-squash"],
+        None
+    ));
+}
+
 // ============================================================================
 // Pre-Remove Hook Tests
 // ============================================================================
