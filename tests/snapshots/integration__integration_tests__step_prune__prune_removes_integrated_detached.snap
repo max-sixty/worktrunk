@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -45,4 +46,4 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mRemoving worktree @ [1m_REPO_.detached-integrated[22m in background (detached HEAD, no branch to delete)[39m
 [32m✓ Removed branch [1mdetached-integrated[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
-[32m✓[39m [32mPruned 1 branch, 1 detached worktree[39m
+[32m✓[39m [32mPruned 1 worktree, 1 branch[39m

@@ -1334,11 +1334,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
-    /// Build a human-readable count like "2 worktrees (with branches), 1 branch".
+    /// Build a human-readable count like "3 worktrees & branches".
+    ///
+    /// Worktree + branch is the default pair (matching progress messages'
+    /// "worktree & branch" pattern). Unpaired items listed separately.
     fn prune_summary(candidates: &[Candidate]) -> String {
-        let mut worktree_with_branch = 0;
-        let mut branch_only = 0;
-        let mut detached_worktree = 0;
+        let mut worktree_with_branch = 0usize;
+        let mut detached_worktree = 0usize;
+        let mut branch_only = 0usize;
         for c in candidates {
             match (&c.kind, &c.branch) {
                 (CandidateKind::BranchOnly, _) => branch_only += 1,
@@ -1353,11 +1356,19 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         let mut parts = Vec::new();
         if worktree_with_branch > 0 {
             let noun = if worktree_with_branch == 1 {
-                "worktree (with branch)"
+                "worktree & branch"
             } else {
-                "worktrees (with branches)"
+                "worktrees & branches"
             };
             parts.push(format!("{worktree_with_branch} {noun}"));
+        }
+        if detached_worktree > 0 {
+            let noun = if detached_worktree == 1 {
+                "worktree"
+            } else {
+                "worktrees"
+            };
+            parts.push(format!("{detached_worktree} {noun}"));
         }
         if branch_only > 0 {
             let noun = if branch_only == 1 {
@@ -1366,14 +1377,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 "branches"
             };
             parts.push(format!("{branch_only} {noun}"));
-        }
-        if detached_worktree > 0 {
-            let noun = if detached_worktree == 1 {
-                "detached worktree"
-            } else {
-                "detached worktrees"
-            };
-            parts.push(format!("{detached_worktree} {noun}"));
         }
         parts.join(", ")
     }

@@ -240,7 +240,7 @@ The `sanitize` filter makes branch names safe for filesystem paths. The `sanitiz
 
 ```toml
 [post-start]
-dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
+dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 ```
 
 Hash any string, including concatenations:
@@ -346,11 +346,11 @@ The port is stable across machines and restarts — `feature-api` always gets th
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-For subdomain-based routing (useful for cookies/CORS), use `lvh.me` which resolves to 127.0.0.1:
+For subdomain-based routing (useful for cookies/CORS), use `.localhost` subdomains which resolve to 127.0.0.1:
 
 ```toml
 [post-start]
-server = "npm run dev -- --host {{ branch | sanitize }}.lvh.me --port {{ branch | hash_port }}"
+server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ branch | hash_port }}"
 ```
 
 ### Databases

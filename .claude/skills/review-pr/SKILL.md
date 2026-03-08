@@ -147,8 +147,9 @@ the same broken path across all workflow files.
 rg 'env\.HOME' .github/workflows/
 ```
 
-If the same issue exists elsewhere, add inline suggestions fixing each
-occurrence.
+If the same issue exists in files already in the diff, add inline suggestions
+fixing each occurrence. If the occurrence is in a file **not in the diff**,
+offer to push a fix commit with the correction.
 
 **Duplication check (mandatory for new functions/types):**
 
@@ -307,6 +308,9 @@ change expressible as replacement lines), post it as an inline suggestion on the
 exact line — never as a code block in the review body. Inline suggestions let
 the author apply with one click; code blocks in the body force them to find the
 line and copy-paste manually.
+
+**Exception: lines outside the diff.** If a fix targets a file or line not in
+the diff, offer to push a fix commit instead.
 
 **Anti-pattern — code block in review body:**
 

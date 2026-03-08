@@ -14,7 +14,7 @@
 //!
 //! Pre-skeleton runs a **fixed number of git commands** regardless of worktree count.
 //! This is achieved through:
-//! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
+//! - **Batching** — timestamp fetch passes all SHAs to one `git log --no-walk` command
 //! - **Parallelization** — independent commands run concurrently via `join!` macro
 //!
 //! **Steady-state (6-8 commands):**
@@ -28,7 +28,7 @@
 //! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
+//! | `git log --no-walk --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -430,7 +430,7 @@ pub fn collect(
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
     // Filter out null OIDs from unborn branches — a single null OID would cause
-    // `git show` to fail for ALL shas in the batch.
+    // `git log --no-walk` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())

@@ -207,6 +207,11 @@ actually examined.
 - **Do the work, don't speculate.** If you have access to logs, code, or API
   data, read it before drawing conclusions. "This suggests X may be the cause"
   is not acceptable when you can check whether X is actually the cause.
+- **Never claim a CI failure is "pre-existing" or "unrelated" without
+  evidence.** Before characterizing any failure this way, check main branch CI
+  history (e.g., `gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=5"`)
+  to verify the same test fails there. If you cannot verify, say "I haven't
+  confirmed whether this is pre-existing" rather than asserting it is.
 - **Show evidence.** Cite specific log lines, file paths, commit SHAs, or API
   responses. A conclusion without evidence is speculation.
 - **Trace causation, don't guess at correlation.** If two things co-occur, find

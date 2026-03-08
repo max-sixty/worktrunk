@@ -721,7 +721,7 @@ fn main() {
             // Deprecated: show warning and delegate to handle_select
             warn_select_deprecated();
 
-            handle_select(branches, remotes)
+            handle_select(branches, remotes, true)
         }
         #[cfg(not(unix))]
         Commands::Select { .. } => {
@@ -782,7 +782,7 @@ fn main() {
                 let Some(branch) = branch else {
                     #[cfg(unix)]
                     {
-                        return handle_select(branches, remotes);
+                        return handle_select(branches, remotes, !no_cd);
                     }
 
                     #[cfg(not(unix))]

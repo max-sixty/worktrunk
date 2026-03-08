@@ -739,6 +739,9 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("LANG", "C"),
     ("LC_ALL", "C"),
     ("WORKTRUNK_TEST_EPOCH", "1735776000"),
+    // Suppress delayed-stream progress output so git worktree add doesn't
+    // produce extra lines when the system is under load (>400ms threshold).
+    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
 ];
 
 /// Build standard test env vars with config and approvals paths

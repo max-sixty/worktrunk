@@ -782,7 +782,15 @@ fn spawn_hooks_after_remove(
         return Ok(());
     };
     let repo = Repository::at(main_path)?;
-    let display_path = super::post_hook_display_path(main_path);
+    // When removing the current worktree, user cd's to main_path → use post_hook logic
+    // (suppresses path if shell integration will cd there).
+    // When removing a different worktree, user stays at cwd → use pre_hook logic
+    // (shows path if main_path differs from cwd).
+    let display_path = if changed_directory {
+        super::post_hook_display_path(main_path)
+    } else {
+        super::pre_hook_display_path(main_path)
+    };
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
