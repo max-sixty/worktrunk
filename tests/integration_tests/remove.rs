@@ -1220,6 +1220,61 @@ fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo)
     ));
 }
 
+/// Like `test_remove_squash_merged_on_remote`, but main advances on the
+/// remote after the squash merge.
+/// Tests that `MergeAddsNothing` detection works through origin/main.
+#[rstest]
+fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap();
+
+    // Create and push a feature branch
+    repo.run_git(&["checkout", "-b", "feature-remote-squash2"]);
+    std::fs::write(repo.root_path().join("feature2.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "feature2.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature 2"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-squash2"]);
+
+    // Go back to main locally
+    repo.run_git(&["checkout", "main"]);
+
+    // Simulate GitHub: squash merge, then main advances with another commit
+    let github_sim = repo.home_path().join("github-sim2");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim2"],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-remote-squash2"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature 2 (#2)"]);
+    // Main advances with another commit after the squash merge
+    std::fs::write(github_sim.join("other.txt"), "other content").unwrap();
+    repo.run_git_in(&github_sim, &["add", "other.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Unrelated commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally
+    repo.run_git(&["fetch", "origin"]);
+
+    // Verify setup: local main is behind origin/main
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should be behind origin/main"
+    );
+
+    // Remove the feature branch — should detect as integrated via origin/main
+    // even though origin/main has advanced past the squash merge
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-remote-squash2"],
+        None
+    ));
+}
+
 // ============================================================================
 // Pre-Remove Hook Tests
 // ============================================================================
