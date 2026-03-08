@@ -29,7 +29,7 @@ hello = "echo Hello from {{ branch }}"
     ));
 }
 
-/// --dry-run shows the expanded command without running it (--yes bypasses approval)
+/// --dry-run shows the expanded command without running it (no approval needed)
 #[rstest]
 fn test_step_alias_dry_run(mut repo: TestRepo) {
     repo.write_project_config(
@@ -44,10 +44,11 @@ hello = "echo Hello from {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
+    // No --yes needed: --dry-run skips approval
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["hello", "--dry-run", "--yes"],
+        &["hello", "--dry-run"],
         Some(&feature_path),
     ));
 }

@@ -148,8 +148,7 @@ fn prompt_for_batch_approval(
 
 /// Approve a project-config alias before execution.
 ///
-/// Checks if the alias template is already approved. If not, prompts the user.
-/// Returns `Ok(true)` if approved, `Ok(false)` if declined.
+/// Returns `Ok(true)` if approved (or already approved), `Ok(false)` if declined.
 pub fn approve_alias(
     template: &str,
     alias_name: &str,
@@ -157,10 +156,6 @@ pub fn approve_alias(
     yes: bool,
 ) -> anyhow::Result<bool> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
-
-    if approvals.is_command_approved(project_id, template) {
-        return Ok(true);
-    }
 
     let cmd = ApprovableCommand {
         phase: Phase::Alias,
@@ -170,7 +165,7 @@ pub fn approve_alias(
         ),
     };
 
-    approve_command_batch(&[cmd], project_id, &approvals, yes, true)
+    approve_command_batch(&[cmd], project_id, &approvals, yes, false)
 }
 
 /// Collect project commands for hooks and request batch approval.

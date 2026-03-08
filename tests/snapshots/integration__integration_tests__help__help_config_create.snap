@@ -354,6 +354,16 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# pre-remove = "docker compose down"[0m
   [2m[0m
   [2m# ============================================================================[0m
+  [2m# Aliases (experimental) — run with `wt step <name>`[0m
+  [2m# ============================================================================[0m
+  [2m# Command templates that support the same variables as hooks.[0m
+  [2m# Project-config aliases require command approval on first run.[0m
+  [2m#[0m
+  [2m# [aliases][0m
+  [2m# deploy = "make deploy BRANCH={{ branch }}"[0m
+  [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
+  [2m[0m
+  [2m# ============================================================================[0m
   [2m# Dev Server URL (shown in `wt list`)[0m
   [2m# ============================================================================[0m
   [2m# [list][0m

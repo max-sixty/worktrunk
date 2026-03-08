@@ -75,7 +75,7 @@ impl AliasOptions {
                     vars.push(pair);
                 }
                 other => {
-                    bail!("Unknown flag '{other}' for alias '{name}'");
+                    bail!("Unexpected argument '{other}' for alias '{name}'");
                 }
             }
             i += 1;
@@ -92,6 +92,9 @@ impl AliasOptions {
 
 fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
     let (key, value) = s.split_once('=').context("--var value must be KEY=VALUE")?;
+    if key.is_empty() {
+        bail!("--var key must not be empty (got '={value}')");
+    }
     Ok((key.to_string(), value.to_string()))
 }
 
@@ -163,13 +166,15 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         }
     };
 
-    // Check if this alias needs project-config approval
-    if let Some(project_template) = alias_needs_approval(
-        &opts.name,
-        &project_config,
-        &user_config,
-        project_id.as_deref(),
-    ) {
+    // Check if this alias needs project-config approval (skip for --dry-run)
+    if !opts.dry_run
+        && let Some(project_template) = alias_needs_approval(
+            &opts.name,
+            &project_config,
+            &user_config,
+            project_id.as_deref(),
+        )
+    {
         let project_id = project_id
             .as_deref()
             .context("Cannot determine project identifier for alias approval")?;
@@ -314,6 +319,60 @@ mod tests {
     #[test]
     fn test_parse_unknown_flag() {
         let err = parse(&["deploy", "--verbose"]).unwrap_err();
-        assert!(err.to_string().contains("Unknown flag '--verbose'"));
+        assert!(err.to_string().contains("Unexpected argument '--verbose'"));
+    }
+
+    #[test]
+    fn test_parse_positional_arg_rejected() {
+        let err = parse(&["deploy", "arg1"]).unwrap_err();
+        assert!(err.to_string().contains("Unexpected argument 'arg1'"));
+    }
+
+    #[test]
+    fn test_parse_var_empty_key_rejected() {
+        let err = parse(&["deploy", "--var", "=value"]).unwrap_err();
+        assert!(err.to_string().contains("--var key must not be empty"));
+    }
+
+    #[test]
+    fn test_parse_var_empty_value_accepted() {
+        let opts = parse(&["deploy", "--var", "key="]).unwrap();
+        assert_eq!(opts.vars, vec![("key".into(), String::new())]);
+    }
+
+    /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.
+    ///
+    /// If a new step subcommand is added without updating BUILTIN_STEP_COMMANDS,
+    /// this test fails — preventing aliases from silently conflicting with built-ins.
+    #[test]
+    fn test_builtin_step_commands_matches_clap() {
+        use crate::cli::Cli;
+        use clap::CommandFactory;
+
+        let app = Cli::command();
+        let step_cmd = app
+            .get_subcommands()
+            .find(|c| c.get_name() == "step")
+            .expect("step subcommand exists");
+
+        let clap_names: Vec<&str> = step_cmd.get_subcommands().map(|s| s.get_name()).collect();
+
+        // Every clap subcommand should be in BUILTIN_STEP_COMMANDS
+        for name in &clap_names {
+            assert!(
+                BUILTIN_STEP_COMMANDS.contains(name),
+                "Step subcommand '{name}' is missing from BUILTIN_STEP_COMMANDS. \
+                 Add it to prevent aliases from silently conflicting with the built-in."
+            );
+        }
+
+        // Every BUILTIN_STEP_COMMANDS entry should still be a real subcommand
+        for name in BUILTIN_STEP_COMMANDS {
+            assert!(
+                clap_names.contains(name),
+                "BUILTIN_STEP_COMMANDS contains '{name}' but no such step subcommand exists. \
+                 Remove it from the list."
+            );
+        }
     }
 }
