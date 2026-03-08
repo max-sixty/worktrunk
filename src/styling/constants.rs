@@ -223,12 +223,12 @@ pub fn prompt_message(content: impl AsRef<str>) -> FormattedMessage {
 /// // => "BINARIES"
 ///
 /// // Heading with suffix
-/// let h = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
-/// // => "USER CONFIG  ~/.config/wt.toml"
+/// let h = format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"));
+/// // => "USER CONFIG @ ~/.config/wt.toml"
 /// ```
 pub fn format_heading(title: &str, suffix: Option<&str>) -> String {
     match suffix {
-        Some(s) => cformat!("<cyan>{}</>  {}", title, s),
+        Some(s) => cformat!("<cyan>{}</> {}", title, s),
         None => cformat!("<cyan>{}</>", title),
     }
 }
@@ -271,9 +271,10 @@ mod tests {
     #[test]
     fn test_format_heading() {
         assert_snapshot!(format_heading("BINARIES", None), @"[36mBINARIES[39m");
-        assert_snapshot!(format_heading("USER CONFIG", Some("~/.config/wt.toml")), @"[36mUSER CONFIG[39m  ~/.config/wt.toml");
+        assert_snapshot!(format_heading("USER CONFIG", Some("~/.config/wt.toml")), @"[36mUSER CONFIG[39m ~/.config/wt.toml");
         assert_snapshot!(format_heading("", None), @"[36m[39m");
     }
+
 
     #[test]
     fn test_formatted_message_into_inner() {

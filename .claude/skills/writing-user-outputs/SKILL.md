@@ -84,8 +84,8 @@ use worktrunk::styling::format_heading;
 format_heading("BINARIES", None)  // => "BINARIES" (cyan)
 
 // Heading with suffix
-format_heading("USER CONFIG", Some("~/.config/wt.toml"))
-// => "USER CONFIG  ~/.config/wt.toml" (title cyan, suffix plain)
+format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
+// => "USER CONFIG @ ~/.config/wt.toml" (title cyan, suffix plain)
 ```
 
 ## stdout vs stderr
@@ -321,7 +321,7 @@ When a command evaluates state, discovers something unexpected, and proceeds
 anyway, the warning should come first:
 
 ```
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ◎ Removing feature worktree & branch in background (same commit as main, _)
 ```
 
@@ -329,7 +329,7 @@ Not:
 
 ```
 ◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -839,21 +839,25 @@ regular users.
 `worktrunk::path`. This function replaces home directory prefixes with `~` for
 readability (e.g., `/Users/alex/projects/repo` → `~/projects/repo`).
 
-**Use `@` (not "at") before paths in status messages.** This is the codebase
-convention for associating an entity with a location:
+**Use `@` (not "at") before paths in all user-facing output.** This is the
+codebase convention for associating an entity with a location — in status
+messages, section headings, hints, and everywhere else:
 
 ```rust
 // GOOD - @ before path
 "Created worktree for feature @ ~/code/repo.feature"
 "Squashed @ a1b2c3d"
 "Worktree for feature @ ~/repo.feature, but cannot change directory..."
+format_heading("USER HOOKS", Some(&format!("@ {}", format_path_for_display(p))))
 
 // BAD - "at" before path
 "Created worktree for feature at ~/code/repo.feature"
+// BAD - heading without @
+format_heading("USER HOOKS", Some(&format_path_for_display(p)))
 ```
 
-**Exception:** Prose contexts (error descriptions, doc comments, help text) use
-"at" — `@` is for terse status messages only.
+**Exception:** Prose contexts (doc comments, help text) use "at" — `@` is for
+terse output only.
 
 ```rust
 use worktrunk::path::format_path_for_display;
@@ -876,6 +880,7 @@ eprintln!("{}", success_message(format!(
 
 **Applies to:**
 - Success/info/warning/error messages
+- Section headings (`format_heading` with path suffix)
 - Hints suggesting paths
 - Progress messages
 - Dry-run previews

@@ -11,14 +11,18 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -39,10 +43,12 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
       [1m[36m--no-commit[0m      Skip commit and squash
       [1m[36m--no-rebase[0m      Skip rebase (fail if not already rebased)
       [1m[36m--no-remove[0m      Keep worktree after merge
-      [1m[36m--no-verify[0m      Skip hooks
-  [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
       [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m  What to stage before committing [default: all] [possible values: all, tracked, none]
   [1m[36m-h[0m, [1m[36m--help[0m           Print help (see more with '--help')
+
+[1m[32mAutomation:[0m
+  [1m[36m-y[0m, [1m[36m--yes[0m        Skip approval prompts
+      [1m[36m--no-verify[0m  Skip hooks
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command

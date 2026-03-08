@@ -1226,10 +1226,10 @@ mod tests {
     fn test_git_error_not_in_worktree() {
         // With action
         let err = GitError::NotInWorktree {
-            action: Some("resolve '@'".into()),
+            action: Some("resolve @".into()),
         };
         let display = err.to_string();
-        assert!(display.contains("Cannot resolve '@'"));
+        assert!(display.contains("Cannot resolve @"));
         assert!(display.contains("not in a worktree"));
         assert!(display.contains("specify a branch name"));
 

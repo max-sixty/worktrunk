@@ -30,7 +30,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -54,7 +54,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -78,7 +78,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -110,7 +110,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -140,7 +140,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -162,7 +162,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -184,7 +184,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -206,7 +206,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing
@@ -230,7 +230,7 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Show what would run without executing

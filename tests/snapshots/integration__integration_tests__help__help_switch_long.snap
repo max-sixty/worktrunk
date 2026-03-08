@@ -71,9 +71,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           
           Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
-
       [1m[36m--clobber[0m
           Remove stale paths at target
 
@@ -81,9 +78,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Skip directory change after switching[0m
           
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation.[0m
-
-      [1m[36m--no-verify[0m
-          Skip hooks
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -94,6 +88,13 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
       [1m[36m--remotes[0m
           Include remote branches
+
+[1m[32mAutomation:[0m
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+      [1m[36m--no-verify[0m
+          Skip hooks
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
