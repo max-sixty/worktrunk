@@ -313,7 +313,8 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Show fast info immediately, update with slow info
 
           Displays local data (branches, paths, status) first, then updates with
-          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          remote data (CI, upstream) as it arrives. Use --no-progressive to
+          force buffered rendering. Auto-enabled for TTY.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
