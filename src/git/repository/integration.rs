@@ -3,6 +3,8 @@
 //! Methods for determining if a branch has been integrated into the target
 //! (same commit, ancestor, trees match, etc.).
 
+use anyhow::Context;
+
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
 
@@ -42,8 +44,11 @@ impl Repository {
         // Parse both refs in a single git command
         let output = self.run_command(&["rev-parse", &ref1, &ref2])?;
         let mut lines = output.lines();
-        let sha1 = lines.next().unwrap_or_default().trim();
-        let sha2 = lines.next().unwrap_or_default().trim();
+        let sha1 = lines.next().context("rev-parse returned no output")?.trim();
+        let sha2 = lines
+            .next()
+            .context("rev-parse returned only one line")?
+            .trim();
         Ok(sha1 == sha2)
     }
 
@@ -84,8 +89,11 @@ impl Repository {
             &format!("{ref2}^{{tree}}"),
         ])?;
         let mut lines = output.lines();
-        let tree1 = lines.next().unwrap_or_default().trim();
-        let tree2 = lines.next().unwrap_or_default().trim();
+        let tree1 = lines.next().context("rev-parse returned no output")?.trim();
+        let tree2 = lines
+            .next()
+            .context("rev-parse returned only one line")?
+            .trim();
         Ok(tree1 == tree2)
     }
 
