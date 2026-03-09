@@ -42,6 +42,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature-already[22m @ [1m_REPO_.feature-already[22m [31m⚑[39m[39m
+[33m▲[39m [33mBranch-worktree mismatch: [1mfeature-already[22m @ [1m_PARENT_/wrong-path-already[22m, expected @ [1m_REPO_.feature-already[22m [31m⚑[39m[39m
 [2m○[22m Already on worktree for [1mfeature-already[22m @ [1m_PARENT_/wrong-path-already[22m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
