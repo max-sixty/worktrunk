@@ -363,23 +363,20 @@ After approving, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:
 
 ```bash
-gh pr checks <number>
+gh pr checks <number> --required
 ```
 
-Poll with `gh pr checks` every 60 seconds until all checks complete.
+Poll with `gh pr checks <number> --required` every 60 seconds until all
+required checks complete. Non-required checks (e.g., benchmarks) are ignored —
+do not wait for them.
 
 Then verify final status:
 
 ```bash
-gh pr view <number> --json statusCheckRollup \
-  --jq '[.statusCheckRollup[]
-    | select(env.GITHUB_WORKFLOW == null
-             or (.workflowName == env.GITHUB_WORKFLOW | not))]
-    | .[]
-    | {name, status, conclusion}'
+gh pr checks <number> --required
 ```
 
-- **All checks passed** → done, no further action.
+- **All required checks passed** → done, no further action.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
   failure, no action needed. If the failure is related to the PR changes:
   1. Investigate the failure and post a follow-up review (COMMENT) with
