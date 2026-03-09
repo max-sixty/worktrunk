@@ -34,6 +34,7 @@ use anyhow::{Context, bail};
 use dunce::canonicalize;
 
 use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
+use crate::path::format_path_for_display;
 
 // Import types from parent module
 use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
@@ -475,11 +476,22 @@ impl Repository {
 
                 // Non-bare repos: use repo_path directory name (parent of .git)
                 // Bare repos without remote: use git_common_dir name (fallback)
-                let name = self
-                    .repo_path()?
+                let repo_path = self.repo_path()?;
+                let name = repo_path
                     .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Repository path has no filename: {}",
+                            format_path_for_display(repo_path)
+                        )
+                    })?
+                    .to_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Repository path contains invalid UTF-8: {}",
+                            format_path_for_display(repo_path)
+                        )
+                    })?;
                 Ok(name.to_string())
             })
             .map(|s| s.as_str())
