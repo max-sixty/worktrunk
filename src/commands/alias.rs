@@ -164,15 +164,21 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let shadowed: Vec<_> = aliases
         .keys()
         .filter(|k| BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
-        .map(|k| k.as_str())
         .collect();
     if !shadowed.is_empty() {
+        let names = shadowed
+            .iter()
+            .map(|k| cformat!("<bold>{k}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let (noun, verb) = if shadowed.len() == 1 {
+            ("Alias", "shadows a built-in step command")
+        } else {
+            ("Aliases", "shadow built-in step commands")
+        };
         eprintln!(
             "{}",
-            warning_message(format!(
-                "Alias {} shadows a built-in step command and will never run",
-                shadowed.join(", "),
-            ))
+            warning_message(format!("{noun} {names} {verb} and will never run"))
         );
     }
 

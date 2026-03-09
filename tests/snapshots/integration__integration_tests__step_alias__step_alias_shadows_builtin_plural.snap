@@ -42,5 +42,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mAlias [1mcommit[22m shadows a built-in step command and will never run[39m
+[33m▲[39m [33mAliases [1mcommit[22m, [1mrebase[22m shadow built-in step commands and will never run[39m
 [31m✗[39m [31mUnknown alias [1mnonexistent[22m (available: hello)[39m
