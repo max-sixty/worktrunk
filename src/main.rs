@@ -461,9 +461,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                         } else {
                             eprintln!(
                                 "{}",
-                                hint_message(cformat!(
-                                    "No <underline>{shell}</> {what} in {path}"
-                                ))
+                                hint_message(cformat!("No <underline>{shell}</> {what} in {path}"))
                             );
                         }
                     }
