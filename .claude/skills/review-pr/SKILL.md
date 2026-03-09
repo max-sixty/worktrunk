@@ -147,8 +147,9 @@ the same broken path across all workflow files.
 rg 'env\.HOME' .github/workflows/
 ```
 
-If the same issue exists elsewhere, add inline suggestions fixing each
-occurrence.
+If the same issue exists in files already in the diff, add inline suggestions
+fixing each occurrence. If the occurrence is in a file **not in the diff**,
+offer to push a fix commit with the correction.
 
 **Duplication check (mandatory for new functions/types):**
 
@@ -247,12 +248,23 @@ silent if there are none.
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
 
-When approving with no issues, approve with an empty body and react:
+When approving with no issues, approve with an empty body:
 
 ```bash
 gh pr review <number> --approve -b ""
+```
+
+- **Looks good but not confident enough to approve** (unfamiliar module, subtle
+  logic, want human eyes): Don't approve. Instead, add a `+1` reaction to
+  signal "I reviewed this and it looks reasonable, but a human should decide":
+
+```bash
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
+
+  If there are specific observations (not blocking, just noting), combine the
+  reaction with a COMMENT review. If there's nothing to say beyond "looks fine
+  to me", the reaction alone is sufficient — no review needed.
 
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
@@ -308,6 +320,9 @@ exact line — never as a code block in the review body. Inline suggestions let
 the author apply with one click; code blocks in the body force them to find the
 line and copy-paste manually.
 
+**Exception: lines outside the diff.** If a fix targets a file or line not in
+the diff, offer to push a fix commit instead.
+
 **Anti-pattern — code block in review body:**
 
 > The description on line 3 should be updated:
@@ -342,9 +357,7 @@ description: new text here
 
 ### 5. Monitor CI
 
-**Skip this step** if the verdict was "stay silent" (self-authored PR with no
-concerns). There is no approval to dismiss on failure, so monitoring adds no
-value.
+If you stayed silent (self-authored PR, no concerns) → **done, stop here.**
 
 After approving, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:
@@ -374,8 +387,11 @@ gh pr view <number> --json statusCheckRollup \
      step 4 — no repeated points from previous reviews. **Post the analysis
      first** — if the session times out before dismissing, a stale approval
      (contradicted by red CI) is better than a bare dismissal with no context.
-  2. Dismiss the bot's approval if one exists (empty dismiss message). Skip
-     if already dismissed — redundant dismissals create timeline noise.
+  2. Dismiss the bot's approval if one exists. Use a short dismiss message
+     summarizing the CI failure (e.g., "CI failed — snapshot tests need
+     updating"). The GitHub API rejects empty dismiss messages, so always
+     provide one. Skip if already dismissed — redundant dismissals create
+     timeline noise.
 
 ### 6. Resolve handled suggestions
 

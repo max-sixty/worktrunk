@@ -2,6 +2,8 @@
 //!
 //! Configuration that is checked into the repository and shared across all developers.
 
+use std::collections::BTreeMap;
+
 use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -108,6 +110,19 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
+
+    /// \[experimental\] Command aliases for `wt step <name>`.
+    ///
+    /// Each alias maps a name to a command template. All hook template variables
+    /// are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    ///
+    /// ```toml
+    /// [aliases]
+    /// deploy = "cd {{ worktree_path }} && make deploy"
+    /// lint = "npm run lint"
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<BTreeMap<String, String>>,
 }
 
 impl ProjectConfig {

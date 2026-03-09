@@ -598,12 +598,8 @@ fn configure_wrapper_file(
     // - Nushell: vendor/autoload/{cmd}.nu is autoloaded automatically at startup
 
     // Check if it already exists and has our integration
-    // Use .ok() for read errors - treat as "not configured" rather than failing
-    if let Some(existing_content) = path
-        .exists()
-        .then(|| fs::read_to_string(path).ok())
-        .flatten()
-    {
+    // Read errors (including not-found) fall through to "not configured"
+    if let Ok(existing_content) = fs::read_to_string(path) {
         // Compare only non-comment lines so that comment changes (e.g. updated
         // URLs) don't cause existing installations to appear unconfigured.
         if fish_code_lines(&existing_content) == fish_code_lines(content) {
@@ -864,11 +860,8 @@ pub fn process_shell_completions(
             .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         // Check if completions already exist with correct content
-        // Use .ok() for read errors - treat as "not configured" rather than failing
-        if let Some(existing) = completion_path
-            .exists()
-            .then(|| fs::read_to_string(&completion_path).ok())
-            .flatten()
+        // Read errors (including not-found) fall through to "not configured"
+        if let Ok(existing) = fs::read_to_string(&completion_path)
             && existing == fish_completion
         {
             results.push(CompletionResult {

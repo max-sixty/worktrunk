@@ -16,12 +16,12 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = worktrunk-pkgs.worktrunk;
-      defaultText = lib.literalExpression "inputs.worktrunk.packages.\${system}.worktrunk";
-      example = lib.literalExpression "inputs.worktrunk.packages.\${system}.worktrunk-with-git-wt";
+      defaultText = lib.literalExpression "inputs.worktrunk.packages.\${stdenv.hostPlatform.system}.worktrunk";
+      example = lib.literalExpression "inputs.worktrunk.packages.\${stdenv.hostPlatform.system}.worktrunk-with-git-wt";
       description = ''
         The worktrunk package to use.
 
-        Use `inputs.worktrunk.packages.''${pkgs.system}.worktrunk-with-git-wt` to install as git-wt
+        Use `inputs.worktrunk.packages.''${pkgs.stdenv.hostPlatform.system}.worktrunk-with-git-wt` to install as git-wt
         so `git wt <command>` works as a git subcommand. Primarily useful on Windows
         where `wt` conflicts with Windows Terminal.
       '';

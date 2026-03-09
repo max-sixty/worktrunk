@@ -30,7 +30,7 @@ use worktrunk::styling::{
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
+use super::project_config::{ApprovableCommand, Phase, collect_commands_for_hooks};
 
 /// Batch approval helper used when multiple commands are queued for execution.
 /// Returns `Ok(true)` when execution may continue, `Ok(false)` when the user
@@ -42,13 +42,13 @@ use super::project_config::{HookCommand, collect_commands_for_hooks};
 /// # Parameters
 /// - `commands_already_filtered`: If true, commands list is pre-filtered; skip filtering by approval status
 pub fn approve_command_batch(
-    commands: &[HookCommand],
+    commands: &[ApprovableCommand],
     project_id: &str,
     approvals: &Approvals,
     yes: bool,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
-    let needs_approval: Vec<&HookCommand> = commands
+    let needs_approval: Vec<&ApprovableCommand> = commands
         .iter()
         .filter(|cmd| {
             commands_already_filtered
@@ -92,7 +92,10 @@ pub fn approve_command_batch(
     Ok(true)
 }
 
-fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> anyhow::Result<bool> {
+fn prompt_for_batch_approval(
+    commands: &[&ApprovableCommand],
+    project_id: &str,
+) -> anyhow::Result<bool> {
     // Extract just the directory name for display
     let project_name = Path::new(project_id)
         .file_name()
@@ -110,9 +113,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
-        // Phase comes from the hook type (e.g., "pre-commit", "pre-merge")
         // Uses INFO_SYMBOL (○) since this is a preview, not active execution
-        let phase = cmd.hook_type.to_string();
+        let phase = cmd.phase.to_string();
         let label = match &cmd.command.name {
             Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
             None => format!("{INFO_SYMBOL} {phase}:"),
@@ -142,6 +144,28 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     io::stdin().read_line(&mut response)?;
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Approve a project-config alias before execution.
+///
+/// Returns `Ok(true)` if approved (or already approved), `Ok(false)` if declined.
+pub fn approve_alias(
+    template: &str,
+    alias_name: &str,
+    project_id: &str,
+    yes: bool,
+) -> anyhow::Result<bool> {
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+
+    let cmd = ApprovableCommand {
+        phase: Phase::Alias,
+        command: worktrunk::config::Command::new(
+            Some(alias_name.to_string()),
+            template.to_string(),
+        ),
+    };
+
+    approve_command_batch(&[cmd], project_id, &approvals, yes, false)
 }
 
 /// Collect project commands for hooks and request batch approval.

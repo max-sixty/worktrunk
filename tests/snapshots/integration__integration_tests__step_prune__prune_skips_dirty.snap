@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -44,4 +45,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎ Removing [1mclean-merged[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[32m✓[39m [32mPruned 1 worktree (with branch)[39m
+[32m✓[39m [32mPruned 1 worktree & branch[39m

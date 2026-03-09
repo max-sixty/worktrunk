@@ -124,16 +124,16 @@ impl<'a> WorkingTree<'a> {
             return Ok(cached.clone());
         }
 
-        // Not cached - run git command and propagate errors
-        let stdout = self
-            .run_command(&["branch", "--show-current"])
-            .context("Failed to determine current branch")?;
-
-        let branch = stdout.trim();
-        let result = if branch.is_empty() {
-            None // Detached HEAD
-        } else {
-            Some(branch.to_string())
+        // Not cached - use plumbing command to get current branch.
+        // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
+        // or "HEAD" when detached. Fails on unborn branches (no commits yet),
+        // so fall back to symbolic-ref which works in all cases except detached HEAD.
+        let result = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"]) {
+            Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
+            Err(_) => self
+                .run_command(&["symbolic-ref", "--short", "HEAD"])
+                .ok()
+                .map(|s| s.trim().to_owned()),
         };
 
         // Cache the successful result
@@ -320,9 +320,11 @@ impl<'a> WorkingTree<'a> {
         }
 
         // Get current branch name to use in the ref name
-        let branch = self
-            .run_command(&["rev-parse", "--abbrev-ref", "HEAD"])?
+        let stdout = self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
+        let branch = stdout
             .trim()
+            .strip_prefix("refs/heads/")
+            .unwrap_or("HEAD")
             .to_string();
 
         // Sanitize branch name for use in ref path (replace / with -)

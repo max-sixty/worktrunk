@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -45,4 +46,4 @@ exit_code: 0
 [2m○[22m [1mmerged-a[22m — same commit as main
 [2m○[22m [1mmerged-b[22m — same commit as main
 [2m○[22m [1morphan-integrated[22m (branch only) — same commit as main
-[2m↳[22m [2m2 worktrees (with branches), 1 branch would be removed (dry run)[22m
+[2m↳[22m [2m2 worktrees & branches, 1 branch would be removed (dry run)[22m

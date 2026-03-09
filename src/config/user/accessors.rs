@@ -3,7 +3,7 @@
 //! These methods on `UserConfig` return the effective configuration for a given
 //! project by merging global settings with project-specific overrides.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::config::HooksConfig;
 use crate::config::expansion::expand_template;
@@ -182,6 +182,20 @@ impl UserConfig {
             Some(ph) => global.merge_with(ph),
             None => global.clone(),
         }
+    }
+
+    /// Returns effective aliases for a specific project.
+    ///
+    /// Merges global user aliases with per-project user aliases (per-project overrides on collision).
+    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, String> {
+        let mut result = self.configs.aliases.clone().unwrap_or_default();
+        if let Some(proj_aliases) = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|proj| proj.overrides.aliases.as_ref())
+        {
+            result.extend(proj_aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        result
     }
 
     // ---- Resolved config (concrete types with defaults applied) ----

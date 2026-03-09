@@ -1348,6 +1348,69 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 }
 
 // ============================================================================
+// Dry-Run Tests
+// ============================================================================
+
+/// --dry-run shows expanded commands without executing them
+#[rstest]
+fn test_hook_dry_run_shows_expanded_command(repo: TestRepo) {
+    repo.write_project_config(r#"pre-merge = "echo branch={{ branch }}""#);
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // No --yes needed: --dry-run skips approval
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "hook",
+        &["pre-merge", "--dry-run"],
+        Some(repo.root_path()),
+    ));
+}
+
+/// --dry-run does not execute the hook command
+#[rstest]
+fn test_hook_dry_run_does_not_execute(repo: TestRepo) {
+    repo.write_project_config(r#"post-create = "echo 'SHOULD_NOT_RUN' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-create", "--dry-run"]);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "dry-run should succeed");
+
+    // Hook should NOT have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(
+        !marker.exists(),
+        "dry-run should not execute the hook command"
+    );
+}
+
+/// --dry-run shows named hooks with source:name labels
+#[rstest]
+fn test_hook_dry_run_named_hooks(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+lint = "pre-commit run --all-files"
+test = "cargo test"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "hook",
+        &["pre-merge", "--dry-run"],
+        Some(repo.root_path()),
+    ));
+}
+
+// ============================================================================
 // Background Hook Execution Tests (post-start, post-switch)
 // ============================================================================
 

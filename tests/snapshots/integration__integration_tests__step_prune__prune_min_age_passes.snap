@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -43,4 +44,4 @@ exit_code: 0
 
 ----- stderr -----
 [2m○[22m [1mold-merged[22m — same commit as main
-[2m↳[22m [2m1 worktree (with branch) would be removed (dry run)[22m
+[2m↳[22m [2m1 worktree & branch would be removed (dry run)[22m

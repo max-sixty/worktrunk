@@ -168,10 +168,16 @@ fn format_switch_message(
 /// Format a branch-worktree mismatch warning message.
 ///
 /// Shows when a worktree is at a path that doesn't match the config template.
-fn format_path_mismatch_warning(branch: &str, expected_path: &Path) -> FormattedMessage {
+/// Displays both the actual location and the expected location.
+fn format_path_mismatch_warning(
+    branch: &str,
+    actual_path: &Path,
+    expected_path: &Path,
+) -> FormattedMessage {
+    let actual_display = format_path_for_display(actual_path);
     let expected_display = format_path_for_display(expected_path);
     warning_message(cformat!(
-        "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
+        "Branch-worktree mismatch: <bold>{branch}</> @ <bold>{actual_display}</>, expected @ <bold>{expected_display}</> <red>⚑</>"
     ))
 }
 
@@ -479,7 +485,7 @@ pub fn handle_switch_output(
     let branch_worktree_mismatch_warning = branch_info
         .expected_path
         .as_ref()
-        .map(|expected| format_path_mismatch_warning(&branch_info.branch, expected));
+        .map(|expected| format_path_mismatch_warning(&branch_info.branch, &path, expected));
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {
@@ -782,7 +788,15 @@ fn spawn_hooks_after_remove(
         return Ok(());
     };
     let repo = Repository::at(main_path)?;
-    let display_path = super::post_hook_display_path(main_path);
+    // When removing the current worktree, user cd's to main_path → use post_hook logic
+    // (suppresses path if shell integration will cd there).
+    // When removing a different worktree, user stays at cwd → use pre_hook logic
+    // (shows path if main_path differs from cwd).
+    let display_path = if changed_directory {
+        super::post_hook_display_path(main_path)
+    } else {
+        super::pre_hook_display_path(main_path)
+    };
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
@@ -1154,7 +1168,10 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
     if background {
         // Background mode: show warning before decision announcement
         if let Some(expected) = expected_path {
-            eprintln!("{}", format_path_mismatch_warning(branch_name, expected));
+            eprintln!(
+                "{}",
+                format_path_mismatch_warning(branch_name, worktree_path, expected)
+            );
         }
 
         // Background mode: spawn detached process
@@ -1213,7 +1230,10 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
 
         // Foreground mode: show warning after progress (contextual info during operation)
         if let Some(expected) = expected_path {
-            eprintln!("{}", format_path_mismatch_warning(branch_name, expected));
+            eprintln!(
+                "{}",
+                format_path_mismatch_warning(branch_name, worktree_path, expected)
+            );
         }
 
         // Stop fsmonitor daemon first (best effort - ignore errors)

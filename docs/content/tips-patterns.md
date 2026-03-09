@@ -268,9 +268,9 @@ wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
 ```
 
 ## Subdomain routing with Caddy
-<!-- Hand-tested 2025-01-15 -->
+<!-- Hand-tested 2026-03-07 -->
 
-Clean URLs like `http://feature-auth.myproject.lvh.me` without port numbers. Useful for cookies, CORS, and matching production URL structure.
+Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. Useful for cookies, CORS, and matching production URL structure.
 
 **Prerequisites:** [Caddy](https://caddyserver.com/docs/install) (`brew install caddy`)
 
@@ -285,22 +285,22 @@ proxy = """
       -d '{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[]}'
   curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true
   curl -sfX PUT http://localhost:2019/config/apps/http/servers/wt/routes/0 -H 'Content-Type: application/json' \
-    -d '{"@id":"wt:{{ repo }}:{{ branch | sanitize }}","match":[{"host":["{{ branch | sanitize }}.{{ repo }}.lvh.me"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:{{ branch | hash_port }}"}]}]}'
+    -d '{"@id":"wt:{{ repo }}:{{ branch | sanitize }}","match":[{"host":["{{ branch | sanitize }}.{{ repo }}.localhost"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"127.0.0.1:{{ branch | hash_port }}"}]}]}'
 """
 
 [pre-remove]
 proxy = "curl -sf -X DELETE http://localhost:2019/id/wt:{{ repo }}:{{ branch | sanitize }} || true"
 
 [list]
-url = "http://{{ branch | sanitize }}.{{ repo }}.lvh.me:8080"
+url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 ```
 
 **How it works:**
 
 1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
 2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
-3. `lvh.me` is a public domain with wildcard DNS — `*.lvh.me` resolves to `127.0.0.1`
-4. Visiting `http://feature-auth.myproject.lvh.me:8080`: Caddy matches the subdomain and proxies to the dev server
+3. `*.localhost` resolves to `127.0.0.1` via the OS
+4. Visiting `http://feature-auth.myproject.localhost:8080`: Caddy matches the subdomain and proxies to the dev server
 
 ## Monitor hook logs
 

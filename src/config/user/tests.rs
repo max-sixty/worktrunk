@@ -2020,7 +2020,7 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" => {
+            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

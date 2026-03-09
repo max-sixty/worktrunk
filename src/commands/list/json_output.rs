@@ -91,6 +91,10 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
+    /// LLM-generated branch summary (requires `[list] summary = true`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+
     /// Pre-formatted statusline for statusline tools (tmux, starship)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusline: Option<String>,
@@ -325,6 +329,9 @@ impl JsonItem {
             .map(format_raw_symbols)
             .filter(|s| !s.is_empty());
 
+        // Summary: flatten Option<Option<String>> → Option<String>
+        let summary = item.summary.as_ref().and_then(|s| s.clone());
+
         JsonItem {
             branch: item.branch.clone(),
             path,
@@ -343,6 +350,7 @@ impl JsonItem {
             ci,
             url: item.url.clone(),
             url_active: item.url_active,
+            summary,
             statusline,
             symbols,
         }
@@ -879,6 +887,24 @@ mod tests {
         let json = serde_json::to_string(&wt).unwrap();
         assert!(json.contains("\"state\":\"locked\""));
         assert!(json.contains("\"reason\":\"manual\""));
+    }
+
+    #[test]
+    fn test_json_item_summary_present() {
+        let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
+        item.summary = Some(Some("Add login page".to_string()));
+        let json_item = JsonItem::from_list_item(&item);
+        assert_eq!(json_item.summary, Some("Add login page".to_string()));
+    }
+
+    #[test]
+    fn test_json_item_summary_absent() {
+        let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
+        // None = not loaded, Some(None) = loaded but no summary — both should be absent in JSON
+        assert!(JsonItem::from_list_item(&item).summary.is_none());
+
+        item.summary = Some(None);
+        assert!(JsonItem::from_list_item(&item).summary.is_none());
     }
 
     #[test]
