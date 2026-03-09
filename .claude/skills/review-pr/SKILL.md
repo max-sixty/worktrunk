@@ -333,16 +333,31 @@ the diff, offer to push a fix commit instead.
 **Correct — inline suggestion on the line:**
 
 `````bash
+cat > /tmp/review-payload.json << 'ENDJSON'
+{
+  "event": "COMMENT",
+  "comments": [
+    {
+      "path": ".claude/skills/example/SKILL.md",
+      "line": 3,
+      "body": "```suggestion\ndescription: new text here\n```"
+    }
+  ]
+}
+ENDJSON
+
+# Read body from file to avoid shell expansion issues
+BODY=$(cat /tmp/review-body.md)
+jq --arg body "$BODY" '.body = $body' /tmp/review-payload.json > /tmp/review-final.json
+
 gh api "repos/$REPO/pulls/<number>/reviews" \
   --method POST \
-  -f event=COMMENT \
-  -f body="Summary of suggestions" \
-  -f 'comments[0][path]=.claude/skills/example/SKILL.md' \
-  -f 'comments[0][line]=3' \
-  -f 'comments[0][body]=```suggestion
-description: new text here
-```'
+  --input /tmp/review-final.json
 `````
+
+**Do not** use `-f 'comments[0][path]=...'` flag syntax — `gh api` converts
+array indices to object keys (`{"0": {...}}` instead of `[{...}]`), which
+GitHub rejects.
 
 - Use suggestions for any small fix — no limit on count.
 - If a review has both suggestions and prose observations, put the suggestions
@@ -384,11 +399,14 @@ gh pr checks <number> --required
      step 4 — no repeated points from previous reviews. **Post the analysis
      first** — if the session times out before dismissing, a stale approval
      (contradicted by red CI) is better than a bare dismissal with no context.
-  2. Dismiss the bot's approval if one exists. Use a short dismiss message
-     summarizing the CI failure (e.g., "CI failed — snapshot tests need
-     updating"). The GitHub API rejects empty dismiss messages, so always
-     provide one. Skip if already dismissed — redundant dismissals create
-     timeline noise.
+  2. Dismiss the bot's approval if one exists. **Use PUT, not POST** — the
+     dismiss endpoint requires it:
+     ```bash
+     gh api "repos/$REPO/pulls/<number>/reviews/$REVIEW_ID/dismissals" \
+       -X PUT -f message="CI failed — <reason>"
+     ```
+     The GitHub API rejects empty dismiss messages, so always provide one.
+     Skip if already dismissed — redundant dismissals create timeline noise.
 
 ### 6. Resolve handled suggestions
 
