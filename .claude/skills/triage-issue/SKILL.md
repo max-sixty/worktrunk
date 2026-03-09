@@ -132,9 +132,10 @@ note what you tried and skip to step 7.
    ```
 5. Monitor CI using the poll approach from `/running-in-ci`:
    ```bash
-   gh pr checks <pr-number>
+   gh pr checks <pr-number> --required
    ```
-   Poll with `gh pr checks` every 60 seconds until all checks complete.
+   Poll with `gh pr checks <pr-number> --required` every 60 seconds until all
+   required checks complete. Non-required checks (e.g., benchmarks) are ignored.
    If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix, and
    repeat.
 
