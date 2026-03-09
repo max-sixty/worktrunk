@@ -1,10 +1,10 @@
 name: claude-ci-fix
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Trigger when CI workflow fails on main
+# Trigger when CI or docs workflow fails on main
 on:
   workflow_run:
-    workflows: [ci]
+    workflows: [ci, publish-docs]
     types: [completed]
     branches: [main]
 

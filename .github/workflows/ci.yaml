@@ -151,6 +151,7 @@ jobs:
       pull-requests: read
     outputs:
       cargo: ${{ steps.filter.outputs.cargo }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
@@ -163,6 +164,9 @@ jobs:
             - 'Cargo.lock'
             - 'rust-toolchain.toml'
             - '.github/workflows/ci.yaml'
+          docs:
+            - 'docs/**'
+            - 'src/cli/mod.rs'
 
   msrv:
     runs-on: ubuntu-24.04
@@ -206,6 +210,23 @@ jobs:
       with:
         command: udeps
         args: --all-targets
+
+  check-docs:
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: Setup Zola
+      uses: taiki-e/install-action@v2.68.22
+      with:
+        tool: zola@0.22.1
+
+    - name: 🕷️ Build docs
+      run: zola build
+      working-directory: docs
 
   benchmarks:
     runs-on: ubuntu-24.04
