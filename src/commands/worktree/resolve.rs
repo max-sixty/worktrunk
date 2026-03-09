@@ -90,7 +90,7 @@ pub fn compute_worktree_path(
         return Ok(repo_root.to_path_buf());
     }
 
-    let repo_name = repo.repo_name();
+    let repo_name = repo.repo_name()?;
 
     let project = repo.project_identifier().ok();
     let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;

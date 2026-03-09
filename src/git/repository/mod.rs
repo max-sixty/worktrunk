@@ -458,26 +458,31 @@ impl Repository {
     /// 3. **Bare + no remote** → directory name of `git_common_dir` (fallback)
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    pub fn repo_name(&self) -> &str {
-        self.cache.repo_name.get_or_init(|| {
-            let is_bare = self.is_bare().unwrap_or(false);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `repo_path()` fails (propagated from `is_bare()` or git).
+    pub fn repo_name(&self) -> anyhow::Result<&str> {
+        self.cache
+            .repo_name
+            .get_or_try_init(|| {
+                if self.is_bare()?
+                    && let Some(url) = self.primary_remote_url()
+                    && let Some(parsed) = GitRemoteUrl::parse(&url)
+                {
+                    return Ok(parsed.repo().to_string());
+                }
 
-            if is_bare
-                && let Some(url) = self.primary_remote_url()
-                && let Some(parsed) = GitRemoteUrl::parse(&url)
-            {
-                return parsed.repo().to_string();
-            }
-
-            // Non-bare repos: use repo_path directory name (parent of .git)
-            // Bare repos without remote: use git_common_dir name (fallback)
-            self.repo_path()
-                .ok()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string()
-        })
+                // Non-bare repos: use repo_path directory name (parent of .git)
+                // Bare repos without remote: use git_common_dir name (fallback)
+                let name = self
+                    .repo_path()?
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                Ok(name.to_string())
+            })
+            .map(|s| s.as_str())
     }
 
     /// Check if this is a bare repository (no working tree).

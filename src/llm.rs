@@ -547,7 +547,7 @@ pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Re
     // Get current branch and repo root
     let wt = repo.current_worktree();
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
-    let repo_name = repo.repo_name();
+    let repo_name = repo.repo_name()?;
 
     let recent_commits = repo.recent_commit_subjects(None, 5);
 

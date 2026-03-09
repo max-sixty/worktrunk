@@ -70,7 +70,7 @@ pub fn build_hook_context(
     extra_vars: &[(&str, &str)],
 ) -> Result<HashMap<String, String>> {
     let repo_root = ctx.repo.repo_path()?;
-    let repo_name = ctx.repo.repo_name();
+    let repo_name = ctx.repo.repo_name()?;
 
     // Convert paths to POSIX format for Git Bash compatibility on Windows.
     // This avoids shell escaping of `:` and `\` characters in Windows paths.
