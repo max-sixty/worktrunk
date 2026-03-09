@@ -23,6 +23,9 @@ use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+
+#[cfg(unix)]
+use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(not(unix))]
@@ -312,12 +315,12 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
         .exec();
 
     // exec() only returns on error
-    Err(anyhow::anyhow!(
-        "Failed to exec '{}' with {}: {}",
+    Err(anyhow::anyhow!(cformat!(
+        "Failed to exec <bold>{}</> with {}: {}",
         command,
         shell.name,
         err
-    ))
+    )))
 }
 
 /// Execute a command in the given directory (non-Unix: spawn and wait)

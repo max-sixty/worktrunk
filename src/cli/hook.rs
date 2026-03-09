@@ -89,10 +89,6 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Deprecated: use --foreground instead
-        #[arg(long = "no-background", hide = true)]
-        no_background: bool,
-
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -120,10 +116,6 @@ pub enum HookCommand {
         /// Run in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
-
-        /// Deprecated: use --foreground instead
-        #[arg(long = "no-background", hide = true)]
-        no_background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]

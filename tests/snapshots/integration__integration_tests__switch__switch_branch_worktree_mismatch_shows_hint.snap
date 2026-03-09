@@ -19,17 +19,21 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -39,5 +43,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature[22m @ [1m_REPO_.feature[22m [31m⚑[39m[39m
+[33m▲[39m [33mBranch-worktree mismatch: [1mfeature[22m @ [1m_PARENT_/wrong-path[22m, expected @ [1m_REPO_.feature[22m [31m⚑[39m[39m
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m_PARENT_/wrong-path[22m

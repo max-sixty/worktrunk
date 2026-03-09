@@ -42,5 +42,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature-a[22m worktree in background[39m
+[36m◎[39m [36mRemoving [1mfeature-a[22m worktree in background[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-a[24m[22m

@@ -333,7 +333,7 @@ pub fn handle_select(
                 .context("Failed to remove worktree")?;
 
                 // Execute removal in foreground, no hooks, not quiet
-                handle_remove_output(&result, false, false, false)?;
+                handle_remove_output(&result, true, false, false)?;
             }
             PickerAction::Create | PickerAction::Switch => {
                 let should_create = matches!(action, PickerAction::Create);

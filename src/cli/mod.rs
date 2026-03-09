@@ -733,7 +733,8 @@ Missing a field that would be generally useful? Open an issue at https://github.
         /// Show fast info immediately, update with slow info
         ///
         /// Displays local data (branches, paths, status) first, then updates
-        /// with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+        /// with remote data (CI, upstream) as it arrives. Use --no-progressive
+        /// to force buffered rendering. Auto-enabled for TTY.
         #[arg(long, overrides_with = "no_progressive")]
         progressive: bool,
 
@@ -834,10 +835,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
         /// Run removal in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
-
-        /// Deprecated: use --foreground instead
-        #[arg(long = "no-background", hide = true)]
-        no_background: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]

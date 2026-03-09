@@ -66,9 +66,6 @@ use cli::{
 };
 use worktrunk::HookType;
 
-const NO_BACKGROUND_DEPRECATED_MSG: &str =
-    "--no-background is deprecated; use --foreground instead";
-
 /// Enhance clap errors with command-specific hints, then exit.
 ///
 /// For unrecognized subcommands that match nested commands, suggests the full path.
@@ -95,10 +92,6 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     err.exit()
 }
 
-fn warn_no_background_deprecated() {
-    eprintln!("{}", warning_message(NO_BACKGROUND_DEPRECATED_MSG));
-}
-
 #[cfg(not(unix))]
 fn print_windows_picker_unavailable() {
     eprintln!(
@@ -109,13 +102,6 @@ fn print_windows_picker_unavailable() {
         "{}",
         hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
     );
-}
-
-fn is_foreground_mode(foreground: bool, no_background: bool) -> bool {
-    if no_background {
-        warn_no_background_deprecated();
-    }
-    foreground || no_background
 }
 
 fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -141,11 +127,9 @@ fn run_toggleable_hook(
     yes: bool,
     dry_run: bool,
     foreground: bool,
-    no_background: bool,
     name: Option<&str>,
     vars: &[(String, String)],
 ) -> anyhow::Result<()> {
-    let foreground = is_foreground_mode(foreground, no_background);
     run_hook(hook_type, yes, Some(foreground), dry_run, name, vars)
 }
 
@@ -179,14 +163,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             yes,
             dry_run,
             foreground,
-            no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostStart,
             yes,
             dry_run,
             foreground,
-            no_background,
             name.as_deref(),
             &vars,
         ),
@@ -195,14 +177,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             yes,
             dry_run,
             foreground,
-            no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostSwitch,
             yes,
             dry_run,
             foreground,
-            no_background,
             name.as_deref(),
             &vars,
         ),
@@ -780,11 +760,7 @@ fn main() {
             None => (|| {
                 let (repo, _recovered) = current_or_recover()?;
 
-                let progressive_opt = match (progressive, no_progressive) {
-                    (true, _) => Some(true),
-                    (_, true) => Some(false),
-                    _ => None,
-                };
+                let progressive_opt = flag_pair(progressive, no_progressive);
                 let render_mode = RenderMode::detect(progressive_opt);
                 handle_list(repo, format, branches, remotes, full, render_mode)
             })(),
@@ -842,15 +818,12 @@ fn main() {
             delete_branch,
             force_delete,
             foreground,
-            no_background,
             verify,
             yes,
             force,
         } => UserConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
-                let background = !is_foreground_mode(foreground, no_background);
-
                 // Validate conflicting flags
                 if !delete_branch && force_delete {
                     return Err(worktrunk::git::GitError::Other {
@@ -894,7 +867,7 @@ fn main() {
                     // "Approve at the Gate": approval happens AFTER validation passes
                     let run_hooks = verify && approve_remove(yes)?;
 
-                    handle_remove_output(&result, background, run_hooks, false)
+                    handle_remove_output(&result, foreground, run_hooks, false)
                 } else {
                     // Multi-worktree removal: validate ALL first, then approve, then execute
                     // This supports partial success - some may fail validation while others succeed.
@@ -1013,17 +986,17 @@ fn main() {
                     // Phase 3: Execute all validated plans
                     // Remove other worktrees first
                     for result in plans_others {
-                        handle_remove_output(&result, background, run_hooks, false)?;
+                        handle_remove_output(&result, foreground, run_hooks, false)?;
                     }
 
                     // Handle branch-only cases
                     for result in plans_branch_only {
-                        handle_remove_output(&result, background, run_hooks, false)?;
+                        handle_remove_output(&result, foreground, run_hooks, false)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(result) = plan_current {
-                        handle_remove_output(&result, background, run_hooks, false)?;
+                        handle_remove_output(&result, foreground, run_hooks, false)?;
                     }
 
                     // Exit with failure if any validation errors occurred

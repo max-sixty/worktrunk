@@ -58,7 +58,8 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
           Show fast info immediately, update with slow info[0m
           
           Displays local data (branches, paths, status) first, then updates with
-           remote data (CI, upstream) as it arrives. Auto-enabled for TTY.[0m
+           remote data (CI, upstream) as it arrives. Use --no-progressive to 
+          force buffered rendering. Auto-enabled for TTY.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

@@ -44,11 +44,11 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature-b[22m worktree in background[39m
+[36m◎[39m [36mRemoving [1mfeature-b[22m worktree in background[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-b[24m[22m
-[36m◎ Removing [1mfeature-c[22m worktree in background[39m
+[36m◎[39m [36mRemoving [1mfeature-c[22m worktree in background[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-c[24m[22m
-[36m◎ Removing [1mfeature-a[22m worktree in background[39m
+[36m◎[39m [36mRemoving [1mfeature-a[22m worktree in background[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-a[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

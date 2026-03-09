@@ -23,7 +23,7 @@ info:
     NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
-    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpYtmzJU/repo
+    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpSjn7z3/repo
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -49,7 +49,7 @@ exit_code: 1
 [107m [0m  feature.txt | 1 [32m+[m
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-[36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
 [36m◎[39m [36mRunning post-merge project hook @ [1m_REPO_[22m[39m
