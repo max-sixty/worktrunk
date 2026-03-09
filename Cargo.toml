@@ -86,6 +86,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shell-escape = "0.1"
 shellexpand = "3.1"
+strsim = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 synoptic = "2"
 terminal_size = "0.4"

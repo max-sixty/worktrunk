@@ -442,10 +442,6 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(last = true, requires = "execute")]
         execute_args: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long)]
-        yes: bool,
-
         /// Remove stale paths at target
         #[arg(long, requires = "branch")]
         clobber: bool,
@@ -457,8 +453,12 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(long)]
         no_cd: bool,
 
+        /// Skip approval prompts
+        #[arg(short, long, help_heading = "Automation")]
+        yes: bool,
+
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
     },
 
@@ -839,13 +839,13 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(long = "no-background", hide = true)]
         no_background: bool,
 
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        verify: bool,
-
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Skip hooks
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        verify: bool,
 
         /// Force worktree removal
         ///
@@ -968,17 +968,21 @@ lint = "cargo clippy"
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
 
+        /// Skip approval prompts
+        #[arg(short, long, help_heading = "Automation")]
+        yes: bool,
+
         /// Force running hooks
         #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", overrides_with = "verify")]
+        #[arg(
+            long = "no-verify",
+            overrides_with = "verify",
+            help_heading = "Automation"
+        )]
         no_verify: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long)]
-        yes: bool,
 
         /// What to stage before committing [default: all]
         #[arg(long)]
@@ -1278,11 +1282,13 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
 | `{{ upstream }}` | Upstream tracking branch (if set) |
+| `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
+| `{{ hook_name }}` | Hook command name (if named) |
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
 
 ```toml
 [post-create]

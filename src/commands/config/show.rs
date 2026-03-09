@@ -358,7 +358,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         "{}",
         format_heading(
             "SYSTEM CONFIG",
-            Some(&format_path_for_display(&system_path))
+            Some(&format!("@ {}", format_path_for_display(&system_path)))
         )
     )?;
 
@@ -394,7 +394,10 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     writeln!(
         out,
         "{}",
-        format_heading("USER CONFIG", Some(&format_path_for_display(&config_path)))
+        format_heading(
+            "USER CONFIG",
+            Some(&format!("@ {}", format_path_for_display(&config_path)))
+        )
     )?;
 
     // Check if file exists
@@ -537,7 +540,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         "{}",
         format_heading(
             "PROJECT CONFIG",
-            Some(&format_path_for_display(&config_path))
+            Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
 

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use color_print::cformat;
 use shell_escape::escape;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -376,8 +377,8 @@ fn load_template(
             let expanded_path = PathBuf::from(shellexpand::tilde(path).as_ref());
             std::fs::read_to_string(&expanded_path).map_err(|e| {
                 anyhow::Error::from(worktrunk::git::GitError::Other {
-                    message: format!(
-                        "Failed to read {} '{}': {}",
+                    message: cformat!(
+                        "Failed to read {} <bold>{}</>: {}",
                         file_type_name,
                         format_path_for_display(&expanded_path),
                         e

@@ -42,4 +42,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mUnknown step command 'deploy' (no aliases configured)[39m
+[31m✗[39m [31mUnknown step command [1mdeploy[22m (no aliases configured)[39m

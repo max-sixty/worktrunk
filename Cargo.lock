@@ -3229,6 +3229,7 @@ dependencies = [
  "signal-hook 0.4.3",
  "similar",
  "skim",
+ "strsim",
  "strum",
  "supports-hyperlinks",
  "synoptic",

@@ -11,12 +11,14 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -52,12 +54,6 @@ Options:
       --no-remove
           Keep worktree after merge
 
-      --no-verify
-          Skip hooks
-
-  -y, --yes
-          Skip approval prompts
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -68,6 +64,13 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+  -y, --yes
+          Skip approval prompts
+
+      --no-verify
+          Skip hooks
 
 Global Options:
   -C <path>
