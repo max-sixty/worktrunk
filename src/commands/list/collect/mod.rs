@@ -874,7 +874,10 @@ pub fn collect(
     } = drain_outcome
     {
         // Warning: what happened + gutter showing which results are missing
-        let mut diag = format!("wt list timed out after 30s ({received_count} results received)");
+        let mut diag = format!(
+            "wt list timed out after {}s ({received_count} results received)",
+            results::DRAIN_TIMEOUT.as_secs()
+        );
 
         if !items_with_missing.is_empty() {
             let missing_lines: Vec<String> = items_with_missing
@@ -1207,7 +1210,10 @@ pub fn populate_item(
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
-        log::warn!("populate_item timed out after 30s ({received_count} results received)");
+        log::warn!(
+            "populate_item timed out after {}s ({received_count} results received)",
+            results::DRAIN_TIMEOUT.as_secs()
+        );
     }
 
     // Log errors silently (statusline shouldn't spam warnings)
