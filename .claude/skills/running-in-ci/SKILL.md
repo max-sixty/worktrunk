@@ -48,9 +48,10 @@ Before pushing commits to a PR branch, check whether it's a fork PR:
 gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
 ```
 
-If the owner is **not** `max-sixty`, it's a fork PR — you cannot push to it.
-Instead, post your suggested changes as code snippets in a comment. Do not
-attempt to push and then clean up; check first.
+If the owner is **not** `max-sixty`, it's a fork PR — the CI bot's
+`GITHUB_TOKEN` doesn't have push access to fork branches. Instead, post your
+suggested changes as code snippets in a comment. Do not attempt to push and then
+clean up; check first.
 
 When posting code from work you did locally, do not reference commit SHAs from
 temporary or deleted branches — those links will 404. Post the code inline
