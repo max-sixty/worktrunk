@@ -384,11 +384,14 @@ gh pr checks <number> --required
      step 4 — no repeated points from previous reviews. **Post the analysis
      first** — if the session times out before dismissing, a stale approval
      (contradicted by red CI) is better than a bare dismissal with no context.
-  2. Dismiss the bot's approval if one exists. Use a short dismiss message
-     summarizing the CI failure (e.g., "CI failed — snapshot tests need
-     updating"). The GitHub API rejects empty dismiss messages, so always
-     provide one. Skip if already dismissed — redundant dismissals create
-     timeline noise.
+  2. Dismiss the bot's approval if one exists. **Use PUT, not POST** — the
+     dismiss endpoint requires it:
+     ```bash
+     gh api "repos/$REPO/pulls/<number>/reviews/$REVIEW_ID/dismissals" \
+       -X PUT -f message="CI failed — <reason>"
+     ```
+     The GitHub API rejects empty dismiss messages, so always provide one.
+     Skip if already dismissed — redundant dismissals create timeline noise.
 
 ### 6. Resolve handled suggestions
 
