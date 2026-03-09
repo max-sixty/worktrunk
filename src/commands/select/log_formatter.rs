@@ -295,6 +295,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     // format_log_output tests use dependency injection for deterministic time formatting.
@@ -326,44 +328,37 @@ mod tests {
 
     #[test]
     fn test_format_log_output_single_commit() {
-        // Simulate git log output with SOH/NUL markers: * SOH full_hash NUL short_hash \x1f timestamp \x1f message
         let full_hash = "abc1234567890123456789012345678901234567ab";
+
+        // With insertions and deletions
         let input = format!("* \x01{}\x00abc1234\x1f1699999000\x1f Fix bug", full_hash);
         let stats = stats_for(full_hash, 5, 2);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
+        assert_snapshot!(output, @"* abc1234   [32m+5[0m   [31m-2[0m [2m  1h[0m Fix bug");
 
-        // Should contain the hash and message
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Fix bug"));
-        // Should contain formatted time
-        assert!(output.contains("1h"));
-        // Should contain stats
-        assert!(output.contains("+5"), "expected +5 in output: {}", output);
+        // With graph prefix (same structure, different message)
+        let input = format!(
+            "* \x01{}\x00abc1234\x1f1699999000\x1f Commit with graph",
+            full_hash
+        );
+        let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
+        assert_snapshot!(output, @"* abc1234   [32m+5[0m   [31m-2[0m [2m  1h[0m Commit with graph");
     }
 
     #[test]
     fn test_format_log_output_with_stats() {
-        // Commit line with pre-computed stats
         let full_hash = "abc1234567890123456789012345678901234567ab";
         let input = format!(
             "* \x01{}\x00abc1234\x1f1699999000\x1f Add feature",
             full_hash
         );
-        // Stats are pre-computed (accumulated from numstat lines)
         let stats = stats_for(full_hash, 13, 5);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        // Should contain the hash and message
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Add feature"));
-        // Verify stats are present (green +13, red -5)
-        assert!(output.contains("+13"), "expected +13 in output: {}", output);
-        assert!(output.contains("-5"), "expected -5 in output: {}", output);
+        assert_snapshot!(output, @"* abc1234  [32m+13[0m   [31m-5[0m [2m  1h[0m Add feature");
     }
 
     #[test]
     fn test_format_log_output_multiple_commits() {
-        // Two commits with pre-computed stats
         let hash1 = "abc1234567890123456789012345678901234567ab";
         let hash2 = "def5678901234567890123456789012345678901cd";
         let input = format!(
@@ -373,16 +368,10 @@ mod tests {
         );
         let stats = multi_stats(&[(hash1, 5, 2), (hash2, 10, 3)]);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        // Both commits should be in output
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("def5678"));
-        assert!(output.contains("First commit"));
-        assert!(output.contains("Second commit"));
-
-        // Output should be two lines (one per commit)
-        let lines: Vec<&str> = output.lines().collect();
-        assert_eq!(lines.len(), 2, "Expected 2 lines, got: {:?}", lines);
+        assert_snapshot!(output, @"
+        * abc1234   [32m+5[0m   [31m-2[0m [2m  1h[0m First commit
+        * def5678  [32m+10[0m   [31m-3[0m [2m  1h[0m Second commit
+        ");
     }
 
     #[test]
@@ -394,7 +383,6 @@ mod tests {
 
     #[test]
     fn test_format_log_output_preserves_graph_lines() {
-        // Merge commit with graph continuation line between commits
         let hash1 = "abc1234567890123456789012345678901234567ab";
         let hash2 = "def5678901234567890123456789012345678901cd";
         let input = format!(
@@ -405,93 +393,56 @@ mod tests {
         );
         let stats = multi_stats(&[(hash1, 0, 0), (hash2, 5, 2)]);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        // Graph line should be preserved between commits
-        assert!(output.contains("|\\"), "graph line should be preserved");
-        assert!(output.contains("abc1234"), "first commit should be present");
-        assert!(
-            output.contains("def5678"),
-            "second commit should be present"
-        );
-
-        // Verify order: merge commit, graph line, feature commit
-        let lines: Vec<&str> = output.lines().collect();
-        assert_eq!(lines.len(), 3, "Expected 3 lines: {:?}", lines);
-        assert!(lines[0].contains("abc1234"));
-        assert!(lines[1].contains("\\"));
-        assert!(lines[2].contains("def5678"));
+        assert_snapshot!(output, @r"
+        *   abc1234           [2m  1h[0m Merge branch
+        |\  
+        | * def5678   [32m+5[0m   [31m-2[0m [2m  1h[0m Feature commit
+        ");
     }
 
     #[test]
-    fn test_format_log_output_no_stats() {
-        // Commit without stats (not in stats map)
+    fn test_format_log_output_no_or_zero_stats() {
         let full_hash = "abc1234567890123456789012345678901234567ab";
+
+        // Not in stats map
         let input = format!(
             "* \x01{}\x00abc1234\x1f1699999000\x1f Just a commit",
             full_hash
         );
-        let stats = HashMap::new(); // Empty stats - shows no diff
+        let stats = HashMap::new();
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
+        assert_snapshot!(output, @"* abc1234           [2m  1h[0m Just a commit");
 
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Just a commit"));
-    }
-
-    #[test]
-    fn test_format_log_output_with_graph_prefix() {
-        // Git graph output includes graph characters
-        let full_hash = "abc1234567890123456789012345678901234567ab";
-        let input = format!(
-            "* \x01{}\x00abc1234\x1f1699999000\x1f Commit with graph",
-            full_hash
-        );
-        let stats = stats_for(full_hash, 5, 2);
-        let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Commit with graph"));
-        // Verify stats are present
-        assert!(output.contains("+5"), "expected +5 in output: {}", output);
-        assert!(output.contains("-2"), "expected -2 in output: {}", output);
-    }
-
-    #[test]
-    fn test_format_log_output_zero_stats() {
-        // Commit with zero stats (e.g., binary-only changes)
-        let full_hash = "abc1234567890123456789012345678901234567ab";
+        // Zero insertions and deletions (e.g., binary-only changes)
         let input = format!("* \x01{}\x00abc1234\x1f1699999000\x1f Add image", full_hash);
         let stats = stats_for(full_hash, 0, 0);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Add image"));
+        assert_snapshot!(output, @"* abc1234           [2m  1h[0m Add image");
     }
 
     #[test]
-    fn test_format_log_output_malformed_commit_line() {
-        // Line without proper field delimiters passes through
-        let input = "abc1234 regular commit line";
+    fn test_format_log_output_malformed() {
         let stats = HashMap::new();
-        let output = format_log_output_with_formatter(input, &stats, fixed_time_formatter);
 
-        // Lines without \x1f delimiter pass through unchanged
-        assert!(output.contains("abc1234"));
-    }
+        // No field delimiters - passes through unchanged
+        let output = format_log_output_with_formatter(
+            "abc1234 regular commit line",
+            &stats,
+            fixed_time_formatter,
+        );
+        assert_snapshot!(output, @"abc1234 regular commit line");
 
-    #[test]
-    fn test_format_log_output_commit_line_missing_second_delimiter() {
-        // Only one delimiter - malformed
-        let input = "abc1234\x1f1699999000 Fix bug";
-        let stats = HashMap::new();
-        let output = format_log_output_with_formatter(input, &stats, fixed_time_formatter);
-
-        // Should output the line as-is since it's malformed (only one \x1f)
-        assert!(output.contains("abc1234"));
+        // Only one delimiter - malformed, passes through
+        let output = format_log_output_with_formatter(
+            "abc1234\x1f1699999000 Fix bug",
+            &stats,
+            fixed_time_formatter,
+        );
+        assert_snapshot!(output, @"abc1234\u{1f}1699999000 Fix bug");
     }
 
     #[test]
     fn test_format_log_output_stats_only_deletions() {
-        // Commit with only deletions (no insertions)
         let full_hash = "abc1234567890123456789012345678901234567ab";
         let input = format!(
             "* \x01{}\x00abc1234\x1f1699999000\x1f Remove old code",
@@ -499,16 +450,11 @@ mod tests {
         );
         let stats = stats_for(full_hash, 0, 50);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Remove old code"));
-        // Should show deletions
-        assert!(output.contains("-50"), "expected -50 in output: {}", output);
+        assert_snapshot!(output, @"* abc1234       [31m-50[0m [2m  1h[0m Remove old code");
     }
 
     #[test]
     fn test_format_log_output_large_stats() {
-        // Commit with large stats (tests K notation)
         let full_hash = "abc1234567890123456789012345678901234567ab";
         let input = format!(
             "* \x01{}\x00abc1234\x1f1699999000\x1f Big refactor",
@@ -516,41 +462,20 @@ mod tests {
         );
         let stats = stats_for(full_hash, 1500, 800);
         let output = format_log_output_with_formatter(&input, &stats, fixed_time_formatter);
-
-        assert!(output.contains("abc1234"));
-        // Large numbers should use K notation
-        assert!(
-            output.contains("+1K") || output.contains("+1.5K"),
-            "expected K notation in output: {}",
-            output
-        );
+        assert_snapshot!(output, @"* abc1234  [1m[32m+1K[0m [31m-800[0m [2m  1h[0m Big refactor");
     }
 
     #[test]
-    fn test_format_commit_line_directly() {
-        // Test the format_commit_line function directly
+    fn test_format_commit_line() {
+        // Standard case: hash, stats, time, message
         let commit_line = "abc1234\x1f1699999000\x1f Test commit";
-        let stats = (10, 5);
-        let target_width = 7; // "abc1234" is 7 chars, no padding needed
-        let output = format_commit_line(commit_line, stats, target_width, &fixed_time_formatter);
+        let output = format_commit_line(commit_line, (10, 5), 7, &fixed_time_formatter);
+        assert_snapshot!(output, @"abc1234  [32m+10[0m   [31m-5[0m [2m  1h[0m Test commit");
 
-        assert!(output.contains("abc1234"));
-        assert!(output.contains("Test commit"));
-        assert!(output.contains("+10"), "expected +10 in output: {}", output);
-        assert!(output.contains("-5"), "expected -5 in output: {}", output);
-        assert!(output.contains("1h"), "expected time in output: {}", output);
-    }
-
-    #[test]
-    fn test_format_commit_line_with_padding() {
-        // Test that padding aligns shorter hashes to target width
+        // With padding: shorter hash padded to target width
         let commit_line = "abc12\x1f1699999000\x1f Short hash";
-        let stats = (5, 2);
-        let target_width = 9; // Pad "abc12" (5 chars) to 9 chars
-        let output = format_commit_line(commit_line, stats, target_width, &fixed_time_formatter);
-
-        // Should have 4 spaces of padding after hash before stats
-        assert!(output.contains("abc12    "), "expected padding: {}", output);
+        let output = format_commit_line(commit_line, (5, 2), 9, &fixed_time_formatter);
+        assert_snapshot!(output, @"abc12       [32m+5[0m   [31m-2[0m [2m  1h[0m Short hash");
     }
 
     // Tests for process_log_with_dimming

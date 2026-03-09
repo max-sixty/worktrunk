@@ -332,39 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_missing_name() {
-        let err = parse(&[]).unwrap_err();
-        assert!(err.to_string().contains("Missing alias name"));
-    }
-
-    #[test]
-    fn test_parse_var_missing_value() {
-        let err = parse(&["deploy", "--var"]).unwrap_err();
-        assert!(err.to_string().contains("--var requires a KEY=VALUE"));
-    }
-
-    #[test]
-    fn test_parse_var_no_equals() {
-        let err = parse(&["deploy", "--var", "noequals"]).unwrap_err();
-        assert!(err.to_string().contains("KEY=VALUE"));
-    }
-
-    #[test]
-    fn test_parse_unknown_flag() {
-        let err = parse(&["deploy", "--verbose"]).unwrap_err();
-        assert!(err.to_string().contains("Unexpected argument '--verbose'"));
-    }
-
-    #[test]
-    fn test_parse_positional_arg_rejected() {
-        let err = parse(&["deploy", "arg1"]).unwrap_err();
-        assert!(err.to_string().contains("Unexpected argument 'arg1'"));
-    }
-
-    #[test]
-    fn test_parse_var_empty_key_rejected() {
-        let err = parse(&["deploy", "--var", "=value"]).unwrap_err();
-        assert!(err.to_string().contains("--var key must not be empty"));
+    fn test_parse_errors() {
+        use insta::assert_snapshot;
+        assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
+        assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
+        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"--var value must be KEY=VALUE");
+        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unexpected argument '--verbose' for alias 'deploy'");
+        assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
+        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"--var key must not be empty (got '=value')");
     }
 
     #[test]

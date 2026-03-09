@@ -285,6 +285,74 @@ fn test_config_loading() {
 
 For environment-dependent tests, use `Command::new()` with `.env()` to set variables in a subprocess, or use the test isolation helpers (`repo.wt_command()`, `wt_command()`).
 
+## Test Style
+
+### Inline snapshots over multi-assert
+
+When a test checks formatted output, use `insta::assert_snapshot!` with an
+inline snapshot instead of multiple `assert!(x.contains(...))` calls. Snapshots
+capture the complete output, so a single snapshot replaces many contains checks
+and catches regressions that spot-checks miss.
+
+```rust
+use insta::assert_snapshot;
+
+// ✅ GOOD: One snapshot captures all formatting
+assert_snapshot!(format_message("hello"), @"  │ hello");
+
+// ❌ BAD: Spot-checks that miss structural regressions
+assert!(result.contains("│"));
+assert!(result.contains("hello"));
+assert!(!result.contains("error"));
+```
+
+Import `assert_snapshot` directly (`use insta::assert_snapshot;`) rather than
+using the qualified `insta::assert_snapshot!` form.
+
+For first-time snapshot creation, leave the inline value empty (`@""`), then
+run `cargo insta test --accept` to fill it.
+
+### One test per belief
+
+Group related inputs into a single test when they verify the same belief about
+the code. A test named `test_wrap_text_at_width` that exercises short text, long
+text, single words, and edge cases is better than five separate test functions
+testing each input individually.
+
+```rust
+// ✅ GOOD: One test for the belief "wrapping respects word boundaries"
+#[test]
+fn test_wrap_text_at_width() {
+    assert_eq!(wrap_text_at_width("short text", 20), vec!["short text"]);
+    assert_eq!(wrap_text_at_width("hello world foo bar", 10), vec!["hello", "world foo", "bar"]);
+    assert_eq!(wrap_text_at_width("superlongword", 5), vec!["superlongword"]);
+    assert_eq!(wrap_text_at_width("", 20), vec![""]);
+}
+```
+
+Table-driven tests work well for functions that map inputs to expected outputs:
+
+```rust
+#[test]
+fn test_bash_token_styles() {
+    let cases = [
+        ("function", AnsiColor::Blue),
+        ("keyword", AnsiColor::Magenta),
+        ("string", AnsiColor::Green),
+    ];
+    for (name, expected) in cases {
+        let style = bash_token_style(name).expect(name);
+        assert_eq!(style.get_fg_color(), Some(Color::Ansi(expected)), "{name}");
+    }
+}
+```
+
+### Don't test constructors or dependencies
+
+Tests that verify `Style::new().bold()` produces a bold style, or that
+`StyledString::raw("x")` stores `"x"`, are testing the dependency — not our
+code. Delete these. Test the behavior that uses these types instead.
+
 ## Deterministic Time in Tests
 
 Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.

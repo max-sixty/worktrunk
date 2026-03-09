@@ -1,0 +1,7 @@
+---
+source: src/commands/select/items.rs
+expression: "WorktreeSkimItem::compute_summary_preview(&main_item)"
+---
+[2m○[22m Generating summary...
+
+Press 5 again to refresh once generation completes.

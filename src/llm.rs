@@ -718,6 +718,7 @@ pub(crate) fn test_commit_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     /// Helper to create a commit context (no squash-specific fields)
     fn commit_context<'a>(
@@ -760,42 +761,107 @@ mod tests {
     #[test]
     fn test_build_commit_prompt_with_default_template() {
         let config = CommitGenerationConfig::default();
-        let context = commit_context("diff content", "main", None, "myrepo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-        assert!(prompt.contains("diff content"));
-        assert!(prompt.contains("main"));
-    }
 
-    #[test]
-    fn test_build_commit_prompt_with_recent_commits() {
-        let config = CommitGenerationConfig::default();
+        // No recent commits
+        let context = commit_context("diff content", "main", None, "myrepo");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+
+        <context>
+        Branch: main
+
+        </context>
+        "#);
+
+        // With recent commits
         let commits = vec!["feat: add feature".to_string(), "fix: bug".to_string()];
         let context = commit_context("diff", "main", Some(&commits), "repo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-        assert!(prompt.contains("feat: add feature"));
-        assert!(prompt.contains("fix: bug"));
-        assert!(prompt.contains("<recent_commits>"));
-    }
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        Write a commit message for the staged changes below.
 
-    #[test]
-    fn test_build_commit_prompt_empty_recent_commits() {
-        let config = CommitGenerationConfig::default();
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff
+        </diff>
+
+        <context>
+        Branch: main
+        <recent_commits>
+        - feat: add feature
+        - fix: bug
+        </recent_commits>
+        </context>
+        "#);
+
+        // Empty recent commits list — should not render commit data section
         let commits = vec![];
         let context = commit_context("diff", "main", Some(&commits), "repo");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        // Should not render the recent commits data section if empty
-        // Note: <recent_commits> is mentioned in the style text, but the actual
-        // data section (with commit list) should not be rendered
-        let prompt = result.unwrap();
-        // The context section should have the branch but no recent_commits content
-        assert!(prompt.contains("Branch: main"));
-        assert!(!prompt.contains("- feat:"));
-        assert!(!prompt.contains("- fix:"));
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        Write a commit message for the staged changes below.
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff
+        </diff>
+
+        <context>
+        Branch: main
+
+        </context>
+        "#);
     }
 
     #[test]
@@ -838,13 +904,7 @@ mod tests {
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Template is empty")
-        );
+        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mTemplate is empty[39m");
     }
 
     #[test]
@@ -875,15 +935,35 @@ mod tests {
         let config = CommitGenerationConfig::default();
         let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
         let context = squash_context("diff content", "feature", None, "repo", &commits, "main");
-        let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-        // Commits should be reversed (chronological order: B first, then A)
-        assert!(prompt.contains("fix: B"));
-        assert!(prompt.contains("feat: A"));
-        assert!(prompt.contains("main"));
-        // Default squash template now includes the diff
-        assert!(prompt.contains("diff content"));
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        Combine these commits into a single commit message.
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match the style of commits being squashed (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <commits branch="feature" target="main">
+        - fix: B
+        - feat: A
+        </commits>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+        "#);
     }
 
     #[test]
@@ -942,13 +1022,7 @@ mod tests {
         let commits: Vec<String> = vec![];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Squash template is empty")
-        );
+        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mSquash template is empty[39m");
     }
 
     #[test]
@@ -1008,60 +1082,38 @@ Diff follows:
             squash_template: None,
             squash_template_file: None,
         };
+
+        // With commits — exercises if-branch, filters, loop.index, whitespace control
         let commits = vec![
             "feat: add auth".to_string(),
             "fix: bug".to_string(),
             "docs: update".to_string(),
         ];
         let context = commit_context("my diff content", "feature-x", Some(&commits), "myapp");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert_snapshot!(prompt, @"
+        === MYAPP ===
+        Branch: feature-x
+        Commits: 3
+          - 1. feat: add auth
+          - 2. fix: bug
+          - 3. docs: update
 
-        // Verify filters work (upper)
-        assert!(prompt.contains("=== MYAPP ==="));
+        Diff follows:
+        my diff content
+        ");
 
-        // Verify length filter
-        assert!(prompt.contains("Commits: 3"));
-
-        // Verify loop.index
-        assert!(prompt.contains("  - 1. feat: add auth"));
-        assert!(prompt.contains("  - 2. fix: bug"));
-        assert!(prompt.contains("  - 3. docs: update"));
-
-        // Verify whitespace control (no blank lines after "Branch:")
-        assert!(prompt.contains("Branch: feature-x\nCommits: 3"));
-
-        // Verify diff is included
-        assert!(prompt.contains("Diff follows:\nmy diff content"));
-    }
-
-    #[test]
-    fn test_build_commit_prompt_with_sophisticated_jinja_no_commits() {
-        // Test the else branch of conditionals
-        let config = CommitGenerationConfig {
-            command: None,
-            template: Some(
-                r#"Repo: {{ repo | upper }}
-{%- if recent_commits %}
-Has commits: {{ recent_commits | length }}
-{%- else %}
-No recent commits
-{%- endif %}"#
-                    .to_string(),
-            ),
-            template_file: None,
-            squash_template: None,
-            squash_template_file: None,
-        };
+        // Without commits — exercises else-branch
         let context = commit_context("diff", "main", None, "test");
-        let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert_snapshot!(prompt, @"
+        === TEST ===
+        Branch: main
+        No recent commits
 
-        assert!(prompt.contains("Repo: TEST"));
-        assert!(prompt.contains("No recent commits"));
-        assert!(!prompt.contains("Has commits"));
+        Diff follows:
+        diff
+        ");
     }
 
     #[test]
@@ -1086,34 +1138,30 @@ Single commit: {{ commits[0] }}
             squash_template_file: None,
         };
 
-        // Test with multiple commits
+        // Multiple commits — reversed for chronological order (C, B, A)
         let commits = vec![
             "commit A".to_string(),
             "commit B".to_string(),
             "commit C".to_string(),
         ];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
-        let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+        assert_snapshot!(prompt, @"
+        Squashing 3 commit(s) from feature to main
+        Multiple commits detected:
+          1/3: commit C
+          2/3: commit B
+          3/3: commit A
+        ");
 
-        // Commits are reversed for chronological order, so we expect C, B, A
-        assert!(prompt.contains("Squashing 3 commit(s) from feature to main"));
-        assert!(prompt.contains("Multiple commits detected:"));
-        assert!(prompt.contains("1/3: commit C")); // First in chronological order
-        assert!(prompt.contains("2/3: commit B"));
-        assert!(prompt.contains("3/3: commit A")); // Last in chronological order
-
-        // Test with single commit
+        // Single commit — exercises else-branch
         let single_commit = vec!["solo commit".to_string()];
         let context = squash_context("diff", "feature", None, "repo", &single_commit, "main");
-        let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-
-        assert!(prompt.contains("Squashing 1 commit(s)"));
-        assert!(prompt.contains("Single commit: solo commit"));
-        assert!(!prompt.contains("Multiple commits detected"));
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+        assert_snapshot!(prompt, @"
+        Squashing 1 commit(s) from feature to main
+        Single commit: solo commit
+        ");
     }
 
     #[test]
@@ -1156,8 +1204,10 @@ Single commit: {{ commits[0] }}
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to read"));
+        // OS error text varies by platform, so use contains
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Failed to read template-file"), "{err}");
+        assert!(err.contains("/nonexistent/path/template.txt"), "{err}");
     }
 
     #[test]
@@ -1202,11 +1252,10 @@ Single commit: {{ commits[0] }}
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
         // Should fail because file doesn't exist
-        assert!(result.is_err());
+        // OS error text varies by platform, so use contains
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Failed to read"));
-        // Error message may display ~ for readability, but the actual file read
-        // should have used the expanded path (verified by the error occurring)
+        assert!(err.contains("Failed to read template-file"), "{err}");
+        assert!(err.contains("~/nonexistent_template_for_test.txt"), "{err}");
     }
 
     #[test]
@@ -1235,19 +1284,35 @@ Single commit: {{ commits[0] }}
 
     #[test]
     fn test_is_lock_file() {
+        // Matches
         assert!(is_lock_file("Cargo.lock"));
         assert!(is_lock_file("package-lock.json"));
         assert!(is_lock_file("pnpm-lock.yaml"));
+        assert!(is_lock_file("yarn-lock.yaml"));
         assert!(is_lock_file(".terraform.lock.hcl"));
+        assert!(is_lock_file("terraform.lock.hcl"));
         assert!(is_lock_file("path/to/Cargo.lock"));
 
+        // Non-matches
         assert!(!is_lock_file("src/main.rs"));
+        assert!(!is_lock_file("README.md"));
+        assert!(!is_lock_file("config.toml"));
         assert!(!is_lock_file("lockfile.txt"));
         assert!(!is_lock_file("my.lock.rs")); // Not a standard lock pattern
     }
 
     #[test]
     fn test_parse_diff_sections() {
+        // Empty input
+        assert!(parse_diff_sections("").is_empty());
+
+        // Single file
+        let diff = "diff --git a/foo.rs b/foo.rs\nsome content\n";
+        let sections = parse_diff_sections(diff);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, "foo.rs");
+
+        // Multiple files
         let diff = r#"diff --git a/src/foo.rs b/src/foo.rs
 index abc..def 100644
 --- a/src/foo.rs
@@ -1262,13 +1327,27 @@ index 111..222 100644
 @@ -1,100 +1,150 @@
  lots of lock content
 "#;
-
         let sections = parse_diff_sections(diff);
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].0, "src/foo.rs");
-        assert!(sections[0].1.contains("fn foo()"));
+        assert_snapshot!(sections[0].1, @"
+        diff --git a/src/foo.rs b/src/foo.rs
+        index abc..def 100644
+        --- a/src/foo.rs
+        +++ b/src/foo.rs
+        @@ -1,3 +1,4 @@
+         fn foo() {}
+        +fn bar() {}
+        ");
         assert_eq!(sections[1].0, "Cargo.lock");
-        assert!(sections[1].1.contains("lots of lock content"));
+        assert_snapshot!(sections[1].1, @"
+        diff --git a/Cargo.lock b/Cargo.lock
+        index 111..222 100644
+        --- a/Cargo.lock
+        +++ b/Cargo.lock
+        @@ -1,100 +1,150 @@
+         lots of lock content
+        ");
     }
 
     #[test]
@@ -1292,10 +1371,18 @@ index abc..def 100644
 
         // Truncate to 8 lines (should keep header + first few content lines)
         let truncated = truncate_diff_section(section, 8);
-        assert!(truncated.contains("diff --git"));
-        assert!(truncated.contains("@@"));
-        assert!(truncated.contains("... ("));
-        assert!(truncated.contains("lines omitted)"));
+        assert_snapshot!(truncated, @"
+        diff --git a/file.rs b/file.rs
+        index abc..def 100644
+        --- a/file.rs
+        +++ b/file.rs
+        @@ -1,10 +1,15 @@
+         line 1
+         line 2
+         line 3
+
+        ... (7 lines omitted)
+        ");
     }
 
     #[test]
@@ -1352,20 +1439,6 @@ diff --git a/Cargo.lock b/Cargo.lock
     }
 
     #[test]
-    fn test_parse_diff_sections_empty() {
-        let sections = parse_diff_sections("");
-        assert!(sections.is_empty());
-    }
-
-    #[test]
-    fn test_parse_diff_sections_single_file() {
-        let diff = "diff --git a/foo.rs b/foo.rs\nsome content\n";
-        let sections = parse_diff_sections(diff);
-        assert_eq!(sections.len(), 1);
-        assert_eq!(sections[0].0, "foo.rs");
-    }
-
-    #[test]
     fn test_truncate_diff_section_short() {
         // Section shorter than max lines should pass through unchanged
         let section = "line1\nline2\nline3\n";
@@ -1378,44 +1451,27 @@ diff --git a/Cargo.lock b/Cargo.lock
         // Section without @@ marker
         let section = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n";
         let truncated = truncate_diff_section(section, 3);
-        assert!(truncated.contains("line1"));
-        assert!(truncated.contains("lines omitted"));
+        assert_snapshot!(truncated, @"
+        line1
+        line2
+        line3
+
+        ... (5 lines omitted)
+        ");
     }
 
     #[test]
-    fn test_format_reproduction_command_simple() {
-        // Simple command without shell metacharacters - no wrapping needed
+    fn test_format_reproduction_command() {
+        // Simple command — no wrapping needed
         let result = format_reproduction_command("git diff", "llm -m haiku");
-        assert_eq!(result, "git diff | llm -m haiku");
-    }
+        assert_snapshot!(result, @"git diff | llm -m haiku");
 
-    #[test]
-    fn test_format_reproduction_command_with_env_var() {
-        // Command starting with env var assignment needs shell wrapping
+        // Env var assignment — needs shell wrapping
         let result = format_reproduction_command("git diff", "MAX_THINKING_TOKENS=0 claude -p");
-        assert!(result.contains("sh -c"));
-        assert!(result.contains("git diff |"));
-    }
+        assert_snapshot!(result, @"git diff | sh -c 'MAX_THINKING_TOKENS=0 claude -p'");
 
-    #[test]
-    fn test_format_reproduction_command_with_metacharacters() {
-        // Commands with shell metacharacters need wrapping
+        // Shell metacharacters — needs wrapping
         let result = format_reproduction_command("git diff", "cmd1 && cmd2");
-        assert!(result.contains("sh -c"));
-    }
-
-    #[test]
-    fn test_is_lock_file_matches() {
-        assert!(is_lock_file("Cargo.lock"));
-        assert!(is_lock_file("package-lock.json"));
-        assert!(is_lock_file("yarn-lock.yaml"));
-        assert!(is_lock_file("terraform.lock.hcl"));
-    }
-
-    #[test]
-    fn test_is_lock_file_non_matches() {
-        assert!(!is_lock_file("main.rs"));
-        assert!(!is_lock_file("README.md"));
-        assert!(!is_lock_file("config.toml"));
+        assert_snapshot!(result, @"git diff | sh -c 'cmd1 && cmd2'");
     }
 }

@@ -376,21 +376,12 @@ mod tests {
 
     #[test]
     fn test_divergence_styled() {
-        // None returns None
+        use insta::assert_snapshot;
         assert!(Divergence::None.styled().is_none());
-
-        // Other variants return styled strings
-        let styled = Divergence::InSync.styled().unwrap();
-        assert!(styled.contains("|"));
-
-        let styled = Divergence::Ahead.styled().unwrap();
-        assert!(styled.contains("⇡"));
-
-        let styled = Divergence::Behind.styled().unwrap();
-        assert!(styled.contains("⇣"));
-
-        let styled = Divergence::Diverged.styled().unwrap();
-        assert!(styled.contains("⇅"));
+        assert_snapshot!(Divergence::InSync.styled().unwrap(), @"[2m|[22m");
+        assert_snapshot!(Divergence::Ahead.styled().unwrap(), @"[2m⇡[22m");
+        assert_snapshot!(Divergence::Behind.styled().unwrap(), @"[2m⇣[22m");
+        assert_snapshot!(Divergence::Diverged.styled().unwrap(), @"[2m⇅[22m");
     }
 
     // ============================================================================
@@ -442,23 +433,12 @@ mod tests {
 
     #[test]
     fn test_main_state_styled() {
-        // None returns None
+        use insta::assert_snapshot;
         assert!(MainState::None.styled().is_none());
-
-        // WouldConflict is yellow
-        let styled = MainState::WouldConflict.styled().unwrap();
-        assert!(styled.contains("✗"));
-
-        // Other states are dimmed
-        let styled = MainState::IsMain.styled().unwrap();
-        assert!(styled.contains("^"));
-
-        let styled = MainState::Ahead.styled().unwrap();
-        assert!(styled.contains("↑"));
-
-        // Orphan is dimmed (informational, not a warning)
-        let styled = MainState::Orphan.styled().unwrap();
-        assert!(styled.contains("∅"));
+        assert_snapshot!(MainState::WouldConflict.styled().unwrap(), @"[33m✗[39m");
+        assert_snapshot!(MainState::IsMain.styled().unwrap(), @"[2m^[22m");
+        assert_snapshot!(MainState::Ahead.styled().unwrap(), @"[2m↑[22m");
+        assert_snapshot!(MainState::Orphan.styled().unwrap(), @"[2m∅[22m");
     }
 
     #[test]
@@ -639,19 +619,11 @@ mod tests {
 
     #[test]
     fn test_operation_state_styled() {
-        // None returns None
+        use insta::assert_snapshot;
         assert!(OperationState::None.styled().is_none());
-
-        // Conflicts is red
-        let styled = OperationState::Conflicts.styled().unwrap();
-        assert!(styled.contains("✘"));
-
-        // Rebase and Merge are yellow
-        let styled = OperationState::Rebase.styled().unwrap();
-        assert!(styled.contains("⤴"));
-
-        let styled = OperationState::Merge.styled().unwrap();
-        assert!(styled.contains("⤵"));
+        assert_snapshot!(OperationState::Conflicts.styled().unwrap(), @"[31m✘[39m");
+        assert_snapshot!(OperationState::Rebase.styled().unwrap(), @"[33m⤴[39m");
+        assert_snapshot!(OperationState::Merge.styled().unwrap(), @"[33m⤵[39m");
     }
 
     #[test]

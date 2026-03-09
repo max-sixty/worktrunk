@@ -47,7 +47,8 @@ pub(crate) use handlers::{
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{
-    print_shell_install_result, print_skipped_shells, prompt_shell_integration,
+    print_shell_install_result, print_shell_uninstall_result, print_skipped_shells,
+    prompt_shell_integration,
 };
 // Re-export commit generation functions
 pub(crate) use commit_generation::prompt_commit_generation;

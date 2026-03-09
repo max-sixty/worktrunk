@@ -319,6 +319,8 @@ impl StatusSymbols {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     #[test]
@@ -432,8 +434,7 @@ mod tests {
             main_state: MainState::Ahead,
             ..Default::default()
         };
-        let compact = symbols.format_compact();
-        assert!(compact.contains("↑"));
+        assert_snapshot!(symbols.format_compact(), @"[2m↑[22m");
 
         // Multiple symbols
         let symbols = StatusSymbols {
@@ -441,10 +442,7 @@ mod tests {
             main_state: MainState::Ahead,
             ..Default::default()
         };
-        let compact = symbols.format_compact();
-        assert!(compact.contains("+"));
-        assert!(compact.contains("!"));
-        assert!(compact.contains("↑"));
+        assert_snapshot!(symbols.format_compact(), @"[36m+[39m[36m![39m[2m↑[22m");
     }
 
     #[test]
@@ -454,9 +452,7 @@ mod tests {
             ..Default::default()
         };
         let rendered = symbols.render_with_mask(&PositionMask::FULL);
-        // Should have fixed-width output with spacing
-        assert!(!rendered.is_empty());
-        assert!(rendered.contains("↑"));
+        assert_snapshot!(rendered, @"    [2m↑[22m");
     }
 
     #[test]

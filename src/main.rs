@@ -10,11 +10,8 @@ use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{
     Repository, ResolvedWorktree, current_or_recover, cwd_removed_hint, exit_code, set_base_path,
 };
-use worktrunk::path::format_path_for_display;
-use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
-    eprintln, error_message, format_with_gutter, hint_message, info_message, success_message,
-    warning_message,
+    eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
 use commands::command_approval::approve_hooks;
@@ -66,9 +63,6 @@ use cli::{
 };
 use worktrunk::HookType;
 
-const NO_BACKGROUND_DEPRECATED_MSG: &str =
-    "--no-background is deprecated; use --foreground instead";
-
 /// Enhance clap errors with command-specific hints, then exit.
 ///
 /// For unrecognized subcommands that match nested commands, suggests the full path.
@@ -95,10 +89,6 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     err.exit()
 }
 
-fn warn_no_background_deprecated() {
-    eprintln!("{}", warning_message(NO_BACKGROUND_DEPRECATED_MSG));
-}
-
 #[cfg(not(unix))]
 fn print_windows_picker_unavailable() {
     eprintln!(
@@ -109,13 +99,6 @@ fn print_windows_picker_unavailable() {
         "{}",
         hint_message(cformat!("Specify a branch: <underline>wt switch BRANCH</>"))
     );
-}
-
-fn is_foreground_mode(foreground: bool, no_background: bool) -> bool {
-    if no_background {
-        warn_no_background_deprecated();
-    }
-    foreground || no_background
 }
 
 fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
@@ -141,11 +124,9 @@ fn run_toggleable_hook(
     yes: bool,
     dry_run: bool,
     foreground: bool,
-    no_background: bool,
     name: Option<&str>,
     vars: &[(String, String)],
 ) -> anyhow::Result<()> {
-    let foreground = is_foreground_mode(foreground, no_background);
     run_hook(hook_type, yes, Some(foreground), dry_run, name, vars)
 }
 
@@ -154,17 +135,6 @@ fn warn_select_deprecated() {
         "{}",
         warning_message("wt select is deprecated; use wt switch instead")
     );
-}
-
-fn shell_extension_descriptor(shell: worktrunk::shell::Shell) -> &'static str {
-    if matches!(
-        shell,
-        worktrunk::shell::Shell::Bash | worktrunk::shell::Shell::Zsh
-    ) {
-        "shell extension & completions"
-    } else {
-        "shell extension"
-    }
 }
 
 fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
@@ -190,14 +160,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             yes,
             dry_run,
             foreground,
-            no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostStart,
             yes,
             dry_run,
             foreground,
-            no_background,
             name.as_deref(),
             &vars,
         ),
@@ -206,14 +174,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             yes,
             dry_run,
             foreground,
-            no_background,
             vars,
         } => run_toggleable_hook(
             HookType::PostSwitch,
             yes,
             dry_run,
             foreground,
-            no_background,
             name.as_deref(),
             &vars,
         ),
@@ -437,124 +403,9 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
             let explicit_shell = shell.is_some();
             handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                 .map_err(|e| anyhow::anyhow!("{}", e))
-                .map(|scan_result| {
-                    // For --dry-run, preview was already shown by handler
-                    if dry_run {
-                        return;
-                    }
-
-                    // Count unique shells, not file results (fish may have 2 files: functions/ and legacy conf.d/)
-                    let mut shells: Vec<_> = scan_result.results.iter().map(|r| r.shell).collect();
-                    shells.sort_by_key(|s| s.to_string());
-                    shells.dedup();
-                    let shell_count = shells.len();
-                    let completion_count = scan_result.completion_results.len();
-                    let total_changes = shell_count + completion_count;
-
-                    // Show shell extension results
-                    for result in &scan_result.results {
-                        let shell = result.shell;
-                        let path = format_path_for_display(&result.path);
-                        let what = shell_extension_descriptor(shell);
-
-                        eprintln!(
-                            "{}",
-                            success_message(cformat!(
-                                "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
-                                result.action.description(),
-                            ))
-                        );
-                    }
-
-                    // Show completion results
-                    for result in &scan_result.completion_results {
-                        let shell = result.shell;
-                        let path = format_path_for_display(&result.path);
-
-                        eprintln!(
-                            "{}",
-                            success_message(cformat!(
-                                "{} completions for <bold>{shell}</> @ <bold>{path}</>",
-                                result.action.description(),
-                            ))
-                        );
-                    }
-
-                    // Show not found - warning if explicit shell, hint if auto-scan
-                    for (shell, path) in &scan_result.not_found {
-                        let path = format_path_for_display(path);
-                        // Use consistent terminology matching install/uninstall messages
-                        let what = shell_extension_descriptor(*shell);
-                        if explicit_shell {
-                            eprintln!("{}", warning_message(format!("No {what} found in {path}")));
-                        } else {
-                            eprintln!(
-                                "{}",
-                                hint_message(cformat!("No <underline>{shell}</> {what} in {path}"))
-                            );
-                        }
-                    }
-
-                    // Show completion files not found (only fish has separate completion files)
-                    // Only show this if the shell extension was ALSO not found - if we removed
-                    // the shell extension, no need to warn about missing completions
-                    for (shell, path) in &scan_result.completion_not_found {
-                        let shell_was_removed =
-                            scan_result.results.iter().any(|r| r.shell == *shell);
-                        if shell_was_removed {
-                            continue; // Shell extension was removed, don't warn about completions
-                        }
-                        let path = format_path_for_display(path);
-                        if explicit_shell {
-                            eprintln!(
-                                "{}",
-                                warning_message(format!("No completions found in {path}"))
-                            );
-                        } else {
-                            eprintln!(
-                                "{}",
-                                hint_message(cformat!(
-                                    "No <underline>{shell}</> completions in {path}"
-                                ))
-                            );
-                        }
-                    }
-
-                    // Exit with info if nothing was found
-                    let all_not_found =
-                        scan_result.not_found.len() + scan_result.completion_not_found.len();
-                    if total_changes == 0 {
-                        if all_not_found == 0 {
-                            eprintln!();
-                            eprintln!("{}", hint_message("No shell integration found to remove"));
-                        }
-                        return;
-                    }
-
-                    // Summary
-                    eprintln!();
-                    let plural = if shell_count == 1 { "" } else { "s" };
-                    eprintln!(
-                        "{}",
-                        success_message(format!(
-                            "Removed integration from {shell_count} shell{plural}"
-                        ))
-                    );
-
-                    // Hint about restarting shell (only if current shell was affected)
-                    let current_shell = std::env::var("SHELL")
-                        .ok()
-                        .and_then(|s| extract_filename_from_path(&s).map(String::from));
-
-                    let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
-                        scan_result
-                            .results
-                            .iter()
-                            .any(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
-                    });
-
-                    if current_shell_affected {
-                        eprintln!("{}", hint_message("Restart shell to complete uninstall"));
+                .map(|result| {
+                    if !dry_run {
+                        crate::output::print_shell_uninstall_result(&result, explicit_shell);
                     }
                 })
         }
@@ -599,17 +450,11 @@ fn handle_list_command(
             };
             commands::statusline::run(effective_format)
         }
-        None => (|| {
+        None => {
             let (repo, _recovered) = current_or_recover()?;
-
-            let progressive_opt = match (progressive, no_progressive) {
-                (true, _) => Some(true),
-                (_, true) => Some(false),
-                _ => None,
-            };
-            let render_mode = RenderMode::detect(progressive_opt);
+            let render_mode = RenderMode::detect(flag_pair(progressive, no_progressive));
             handle_list(repo, format, branches, remotes, full, render_mode)
-        })(),
+        }
     }
 }
 
@@ -627,7 +472,7 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     std::process::exit(1);
 }
 
-struct SwitchCommandSpec {
+struct SwitchCommandArgs {
     branch: Option<String>,
     branches: bool,
     remotes: bool,
@@ -641,7 +486,7 @@ struct SwitchCommandSpec {
     verify: bool,
 }
 
-fn handle_switch_command(spec: SwitchCommandSpec) -> anyhow::Result<()> {
+fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
@@ -680,23 +525,20 @@ fn handle_switch_command(spec: SwitchCommandSpec) -> anyhow::Result<()> {
         })
 }
 
-struct RemoveCommandSpec {
+struct RemoveCommandArgs {
     branches: Vec<String>,
     delete_branch: bool,
     force_delete: bool,
     foreground: bool,
-    no_background: bool,
     verify: bool,
     yes: bool,
     force: bool,
 }
 
-fn handle_remove_command(spec: RemoveCommandSpec) -> anyhow::Result<()> {
+fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
-            let background = !is_foreground_mode(spec.foreground, spec.no_background);
-
             // Validate conflicting flags
             if !spec.delete_branch && spec.force_delete {
                 return Err(worktrunk::git::GitError::Other {
@@ -746,7 +588,7 @@ fn handle_remove_command(spec: RemoveCommandSpec) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = spec.verify && approve_remove(spec.yes)?;
 
-                handle_remove_output(&result, background, run_hooks, false)
+                handle_remove_output(&result, spec.foreground, run_hooks, false)
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 // This supports partial success - some may fail validation while others succeed.
@@ -865,17 +707,17 @@ fn handle_remove_command(spec: RemoveCommandSpec) -> anyhow::Result<()> {
                 // Phase 3: Execute all validated plans
                 // Remove other worktrees first
                 for result in plans_others {
-                    handle_remove_output(&result, background, run_hooks, false)?;
+                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
                 }
 
                 // Handle branch-only cases
                 for result in plans_branch_only {
-                    handle_remove_output(&result, background, run_hooks, false)?;
+                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
                 }
 
                 // Remove current worktree last (if it was in the list)
                 if let Some(result) = plan_current {
-                    handle_remove_output(&result, background, run_hooks, false)?;
+                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
                 }
 
                 // Exit with failure if any validation errors occurred
@@ -1064,7 +906,7 @@ fn main() {
             clobber,
             no_cd,
             verify,
-        } => handle_switch_command(SwitchCommandSpec {
+        } => handle_switch_command(SwitchCommandArgs {
             branch,
             branches,
             remotes,
@@ -1082,16 +924,14 @@ fn main() {
             delete_branch,
             force_delete,
             foreground,
-            no_background,
             verify,
             yes,
             force,
-        } => handle_remove_command(RemoveCommandSpec {
+        } => handle_remove_command(RemoveCommandArgs {
             branches,
             delete_branch,
             force_delete,
             foreground,
-            no_background,
             verify,
             yes,
             force,

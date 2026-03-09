@@ -434,6 +434,8 @@ pub fn expand_template(
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     /// Test fixture that creates a real temporary git repository.
@@ -657,12 +659,10 @@ mod tests {
         assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
 
         // Display impl renders source line but no available vars hint for syntax errors
-        let display = err.to_string();
-        assert!(display.contains("{{ unclosed"), "should show source line");
-        assert!(
-            !display.contains("Available variables:"),
-            "syntax errors should not show available vars"
-        );
+        assert_snapshot!(err, @"
+        [31m✗[39m [31mFailed to expand test: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
+        [107m [0m {{ unclosed
+        ");
     }
 
     #[test]
@@ -684,13 +684,11 @@ mod tests {
         assert_eq!(err.source_line.as_deref(), Some("echo {{ target }}"));
 
         // Display impl renders source line and available vars hint
-        let display = err.to_string();
-        assert!(
-            display.contains("echo {{ target }}"),
-            "should show source line"
-        );
-        assert!(display.contains("Available variables:"), "should show hint");
-        assert!(display.contains("branch"), "should list available vars");
+        assert_snapshot!(err, @"
+        [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
+        [107m [0m echo {{ target }}
+        [2m↳[22m [2mAvailable variables: [4mbranch, remote[24m[22m
+        ");
     }
 
     #[test]

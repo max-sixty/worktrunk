@@ -188,6 +188,7 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_llm_tool_command_name() {
@@ -197,13 +198,8 @@ mod tests {
 
     #[test]
     fn test_llm_tool_recommended_config() {
-        let claude_config = LlmTool::Claude.recommended_config();
-        assert!(claude_config.contains("claude"));
-        assert!(claude_config.contains("haiku"));
-
-        let codex_config = LlmTool::Codex.recommended_config();
-        assert!(codex_config.contains("codex exec"));
-        assert!(codex_config.contains("gpt-5.1-codex-mini"));
+        assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
     }
 
     #[test]
@@ -221,19 +217,13 @@ mod tests {
         // Long commands stay as single-line TOML
         let cmd = LlmTool::Claude.recommended_config();
         let result = format_command_for_display(cmd);
-        assert!(result.starts_with('"') || result.starts_with('\''));
-        assert!(result.contains("claude"));
-        assert!(result.contains("haiku"));
+        assert_snapshot!(result, @r#""MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
     }
 
     #[test]
     fn test_format_command_special_chars() {
         let result = format_command_for_display(r#"echo "hello""#);
-        // toml crate may use literal strings ('...') or basic strings ("...")
-        assert!(
-            result.contains("echo") && result.contains("hello"),
-            "Command content should be preserved: {result}"
-        );
+        assert_snapshot!(result, @r#"'echo "hello"'"#);
     }
 
     #[test]

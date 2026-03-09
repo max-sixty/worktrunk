@@ -117,6 +117,8 @@ impl DiffStats {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     // ============================================================================
@@ -319,11 +321,7 @@ mod tests {
             insertions: 45,
             deletions: 12,
         };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 3);
-        assert_eq!(summary[0], "3 files");
-        assert!(summary[1].contains("45"));
-        assert!(summary[2].contains("12"));
+        assert_snapshot!(stats.format_summary().join(", "), @"3 files, [32m+45[39m, [31m-12[39m");
     }
 
     #[test]
@@ -333,10 +331,7 @@ mod tests {
             insertions: 10,
             deletions: 0,
         };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 2);
-        assert_eq!(summary[0], "1 file");
-        assert!(summary[1].contains("10"));
+        assert_snapshot!(stats.format_summary().join(", "), @"1 file, [32m+10[39m");
     }
 
     // ============================================================================

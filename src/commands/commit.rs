@@ -238,24 +238,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_message_for_display_single_line() {
+    fn test_format_message_for_display() {
+        use insta::assert_snapshot;
         let config = CommitGenerationConfig::default();
         let generator = CommitGenerator::new(&config);
-        let result = generator.format_message_for_display("Simple commit message");
-        // Should contain the message text with styling
-        assert!(result.contains("Simple commit message"));
-        // Should be styled (output differs from plain input)
-        assert!(result.len() > "Simple commit message".len());
-    }
 
-    #[test]
-    fn test_format_message_for_display_multiline() {
-        let config = CommitGenerationConfig::default();
-        let generator = CommitGenerator::new(&config);
-        let result = generator.format_message_for_display("First line\nSecond line\nThird line");
-        assert!(result.contains("First line"));
-        assert!(result.contains("Second line"));
-        assert!(result.contains("Third line"));
+        assert_snapshot!(generator.format_message_for_display("Simple commit message"), @"[1mSimple commit message[22m");
+        assert_snapshot!(generator.format_message_for_display("First line\nSecond line\nThird line"), @"
+        [1mFirst line[22m
+        Second line
+        Third line
+        ");
     }
 
     #[test]

@@ -372,8 +372,10 @@ mod tests {
     #[test]
     fn test_format_config_section_file_not_found() {
         let result = format_config_section(std::path::Path::new("/nonexistent/path.toml"), "Test");
-        assert!(result.contains("Test: /nonexistent/path.toml"));
-        assert!(result.contains("(file not found)"));
+        insta::assert_snapshot!(result, @"
+        Test: /nonexistent/path.toml
+        (file not found)
+        ");
     }
 
     #[test]
