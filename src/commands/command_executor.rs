@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
@@ -67,8 +68,8 @@ impl<'a> CommandContext<'a> {
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-) -> HashMap<String, String> {
-    let repo_root = ctx.repo.repo_path();
+) -> Result<HashMap<String, String>> {
+    let repo_root = ctx.repo.repo_path()?;
     let repo_name = ctx.repo.repo_name();
 
     // Convert paths to POSIX format for Git Bash compatibility on Windows.
@@ -135,7 +136,7 @@ pub fn build_hook_context(
         map.insert((*k).into(), (*v).into());
     }
 
-    map
+    Ok(map)
 }
 
 /// Expand commands from a CommandConfig without approval
@@ -153,29 +154,31 @@ fn expand_commands(
         return Ok(Vec::new());
     }
 
-    let base_context = build_hook_context(ctx, extra_vars);
+    let mut base_context = build_hook_context(ctx, extra_vars)?;
 
-    // Convert to &str references for expand_template
-    let vars: HashMap<&str, &str> = base_context
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
+    // hook_type is always available as a template variable and in JSON context
+    base_context.insert("hook_type".into(), hook_type.to_string());
 
     let mut result = Vec::new();
 
     for cmd in commands {
+        // hook_name is per-command: available as template variable and in JSON context
+        let mut cmd_context = base_context.clone();
+        if let Some(ref name) = cmd.name {
+            cmd_context.insert("hook_name".into(), name.clone());
+        }
+
+        let vars: HashMap<&str, &str> = cmd_context
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
         let template_name = match &cmd.name {
             Some(name) => format!("{}:{}", source, name),
             None => format!("{} {} hook", source, hook_type),
         };
         let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?;
 
-        // Build per-command JSON with hook_type and hook_name
-        let mut cmd_context = base_context.clone();
-        cmd_context.insert("hook_type".into(), hook_type.to_string());
-        if let Some(ref name) = cmd.name {
-            cmd_context.insert("hook_name".into(), name.clone());
-        }
         let context_json = serde_json::to_string(&cmd_context)
             .expect("HashMap<String, String> serialization should never fail");
 

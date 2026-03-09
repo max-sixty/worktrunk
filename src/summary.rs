@@ -258,8 +258,23 @@ mod tests {
     #[test]
     fn test_render_prompt_includes_diff_and_stat() {
         let result = render_prompt("diff content here", "stat content here").unwrap();
-        assert!(result.contains("diff content here"));
-        assert!(result.contains("stat content here"));
+        insta::assert_snapshot!(result, @r#"
+        Write a summary of this branch's changes as a commit message.
+
+        <format>
+        - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
+        - Blank line, then a body paragraph or bullet list explaining the key changes
+        - Output only the message — no quotes, code blocks, or labels
+        </format>
+
+        <diffstat>
+        stat content here
+        </diffstat>
+
+        <diff>
+        diff content here
+        </diff>
+        "#);
     }
 
     #[test]

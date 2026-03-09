@@ -724,8 +724,8 @@ fn allocate_columns_with_priority(
             continue;
         };
 
-        let skip_spacing = !needs_spacing(&pending);
-        let allocated = try_allocate(&mut remaining, ideal_width, spacing, skip_spacing);
+        let is_first = !needs_spacing(&pending);
+        let allocated = try_allocate(&mut remaining, ideal_width, spacing, is_first);
         if allocated > 0 {
             pending.push(PendingColumn {
                 spec,

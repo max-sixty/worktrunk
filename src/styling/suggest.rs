@@ -8,7 +8,7 @@
 //!
 //! let branch = "feature";
 //! let cmd = suggest_command("remove", &[branch], &["--force"]);
-//! println!("{}", hint_message(cformat!("To force delete, run <bright-black>{cmd}</>")));
+//! println!("{}", hint_message(cformat!("To force delete, run <underline>{cmd}</>")));
 //! // → ↳ To force delete, run wt remove --force feature
 //! ```
 //!

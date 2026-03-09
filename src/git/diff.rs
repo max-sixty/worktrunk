@@ -117,6 +117,8 @@ impl DiffStats {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     // ============================================================================
@@ -124,52 +126,36 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_line_diff_default() {
-        let diff = LineDiff::default();
-        assert_eq!(diff.added, 0);
-        assert_eq!(diff.deleted, 0);
+    fn test_line_diff_is_empty() {
+        assert!(LineDiff::default().is_empty());
+        assert!(
+            LineDiff {
+                added: 0,
+                deleted: 0
+            }
+            .is_empty()
+        );
+        assert!(
+            !LineDiff {
+                added: 5,
+                deleted: 0
+            }
+            .is_empty()
+        );
+        assert!(
+            !LineDiff {
+                added: 0,
+                deleted: 5
+            }
+            .is_empty()
+        );
     }
 
     #[test]
-    fn test_line_diff_is_empty_true() {
-        let diff = LineDiff {
-            added: 0,
-            deleted: 0,
-        };
-        assert!(diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_is_empty_false_added() {
-        let diff = LineDiff {
-            added: 5,
-            deleted: 0,
-        };
-        assert!(!diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_is_empty_false_deleted() {
-        let diff = LineDiff {
-            added: 0,
-            deleted: 5,
-        };
-        assert!(!diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_from_tuple() {
+    fn test_line_diff_tuple_roundtrip() {
         let diff: LineDiff = (10, 5).into();
         assert_eq!(diff.added, 10);
         assert_eq!(diff.deleted, 5);
-    }
-
-    #[test]
-    fn test_tuple_from_line_diff() {
-        let diff = LineDiff {
-            added: 10,
-            deleted: 5,
-        };
         let tuple: (usize, usize) = diff.into();
         assert_eq!(tuple, (10, 5));
     }
@@ -319,11 +305,7 @@ mod tests {
             insertions: 45,
             deletions: 12,
         };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 3);
-        assert_eq!(summary[0], "3 files");
-        assert!(summary[1].contains("45"));
-        assert!(summary[2].contains("12"));
+        assert_snapshot!(stats.format_summary().join(", "), @"3 files, [32m+45[39m, [31m-12[39m");
     }
 
     #[test]
@@ -333,10 +315,7 @@ mod tests {
             insertions: 10,
             deletions: 0,
         };
-        let summary = stats.format_summary();
-        assert_eq!(summary.len(), 2);
-        assert_eq!(summary[0], "1 file");
-        assert!(summary[1].contains("10"));
+        assert_snapshot!(stats.format_summary().join(", "), @"1 file, [32m+10[39m");
     }
 
     // ============================================================================

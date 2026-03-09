@@ -69,7 +69,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[]);
+        let context_map = build_hook_context(&ctx, &[])?;
 
         // Convert to &str references for expand_template
         let vars: HashMap<&str, &str> = context_map
@@ -138,7 +138,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 }
 
 /// Error from running a command in a worktree
-enum CommandError {
+pub(crate) enum CommandError {
     /// Command failed to spawn (e.g., command not found, permission denied)
     SpawnFailed(String),
     /// Command exited with non-zero status
@@ -159,7 +159,7 @@ enum CommandError {
 /// - Tee stderr (stream + capture) for gutter display on failure
 /// - Add `--gutter` flag to capture and format output
 /// - Accept current behavior as consistent with hooks
-fn run_command_streaming(
+pub(crate) fn run_command_streaming(
     command: &str,
     working_dir: &std::path::Path,
     stdin_content: Option<&str>,

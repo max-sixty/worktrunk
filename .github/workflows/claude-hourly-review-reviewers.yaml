@@ -1,18 +1,17 @@
-name: claude-nightly-review-reviewers
+name: claude-hourly-review-reviewers
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Nightly analysis of Claude CI session logs — identifies behavioral problems,
+# Hourly analysis of Claude CI session logs — identifies behavioral problems,
 # skill gaps, and workflow issues across all Claude-powered CI runs.
 on:
   schedule:
-    # Run at 5:47 AM UTC daily (off-peak minute, after nightly-benchmark at 4:17)
-    - cron: '47 5 * * *'
+    # Run at :47 past every hour (off-peak minute)
+    - cron: '47 * * * *'
   workflow_dispatch:
 
 # Consistent with ci.yaml for cache compatibility
 env:
   CARGO_TERM_COLOR: always
-  CLICOLOR_FORCE: 1
   RUSTFLAGS: "-C debuginfo=0"
   RUSTDOCFLAGS: "-Dwarnings"
 
@@ -50,19 +49,13 @@ jobs:
             actions: read
 
           prompt: |
-            You are running as a nightly job that reviews the behavior of all Claude-powered CI workflows from the past 24 hours. Your goal is to identify behavioral problems, skill gaps, and workflow issues — then create issues and/or PRs to fix them.
+            You are running as an hourly job that reviews the behavior of all Claude-powered CI workflows from the past hour. Your goal is to identify behavioral problems, skill gaps, and workflow issues — then create issues and/or PRs to fix them.
 
             ## Step 1: Find recent Claude CI runs
 
-            Use `gh run list` to find all runs from Claude workflows in the past 24 hours:
+            Run `.github/scripts/list-recent-runs.sh` to get a JSON array of recently completed Claude CI runs (filters out in-progress runs and keeps only those that finished in the past hour — see script comments for details).
 
-            ```
-            for wf in claude-review claude-ci-fix claude-issue-triage claude-mention claude-renovate claude-nightly-review-reviewers claude-nightly-cleaner; do
-              gh run list --workflow "${wf}.yaml" --created ">=$(date -d '24 hours ago' +%Y-%m-%dT%H:%M:%S)" --json databaseId,conclusion,createdAt --limit 50
-            done
-            ```
-
-            If no Claude CI runs occurred in the past 24 hours, report "no runs to review" and exit.
+            If the output is an empty array, report "no runs to review" and exit.
 
             ## Step 2: Download session logs
 
@@ -98,16 +91,27 @@ jobs:
 
             This is the strongest signal — it shows what the reviewer actually missed, not just whether it followed process.
 
+            **Important**: Although you only look at runs from the past hour, always pull in the **full context** of the PR or issue when assessing a session. Read the complete PR description, all comments, all reviews, and all commits — not just the ones from the past hour. You need the full history to judge whether the bot's response was appropriate.
+
             ## Step 5: Identify problems
 
             Compare each session against CLAUDE.md and project conventions. Flag anything where Claude's behavior diverged from the guidelines or produced a poor outcome. Include findings from the cross-check in Step 4.
 
-            ## Step 6: Check for existing issues
+            ## Step 6: Check for existing issues and PRs (deduplication)
 
-            Before creating any new issues or PRs, check for duplicates:
+            Because this job runs hourly, deduplication is critical. Before creating any new issue or PR, thoroughly check for existing ones that cover the same problem:
+
             ```
-            gh issue list --state open --json number,title
-            gh pr list --state open --json number,title,headRefName
+            gh issue list --state open --label claude-behavior --json number,title,body
+            gh issue list --state open --json number,title,body
+            gh pr list --state open --json number,title,headRefName,body
+            ```
+
+            For each finding, search issue titles AND bodies for related keywords. If an existing issue or PR already covers the same behavioral problem — even partially or with different wording — do NOT create a duplicate. Only comment on an existing issue if you have material new cases that would change the approach to fixing it or increase its prioritization (e.g., the same bug manifesting in a new workflow, or evidence that the impact is worse than originally reported). Do NOT comment with progress updates, fix-PR status, or re-statements of evidence already in the issue.
+
+            Also check recently closed issues (past 7 days) to avoid re-filing problems that were already addressed:
+            ```
+            gh issue list --state closed --label claude-behavior --json number,title,closedAt --limit 30
             ```
 
             ## Step 7: Report findings
@@ -119,7 +123,7 @@ jobs:
                - Use `gh issue create`
 
             2. **For actionable fixes** (skill edits, workflow tweaks, CLAUDE.md updates):
-               - Create a branch: `git checkout -b nightly/review-${{ github.run_id }}`
+               - Create a branch: `git checkout -b hourly/review-${{ github.run_id }}`
                - Make the changes
                - Commit and push
                - Create a PR referencing the issue

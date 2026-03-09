@@ -22,6 +22,7 @@ pub use update::handle_config_update;
 mod tests {
     use std::collections::HashMap;
 
+    use insta::assert_snapshot;
     use worktrunk::config::{ProjectConfig, UserConfig};
 
     use super::create::comment_out_config;
@@ -31,91 +32,78 @@ mod tests {
     // ==================== comment_out_config tests ====================
 
     #[test]
-    fn test_comment_out_config_basic() {
-        let input = "key = \"value\"\n";
-        let expected = "# key = \"value\"\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
+    fn test_comment_out_config() {
+        // Basic key-value
+        assert_snapshot!(comment_out_config("key = \"value\"\n"), @r#"# key = "value""#);
 
-    #[test]
-    fn test_comment_out_config_preserves_existing_comments() {
-        let input = "# This is a comment\nkey = \"value\"\n";
-        let expected = "# This is a comment\n# key = \"value\"\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
+        // Preserves existing comments
+        assert_snapshot!(comment_out_config("# This is a comment\nkey = \"value\"\n"), @r#"
+        # This is a comment
+        # key = "value"
+        "#);
 
-    #[test]
-    fn test_comment_out_config_preserves_empty_lines() {
-        let input = "key1 = \"value\"\n\nkey2 = \"value\"\n";
-        let expected = "# key1 = \"value\"\n\n# key2 = \"value\"\n";
-        assert_eq!(comment_out_config(input), expected);
+        // Preserves empty lines (not commented)
+        assert_snapshot!(comment_out_config("key1 = \"value\"\n\nkey2 = \"value\"\n"), @r#"
+        # key1 = "value"
+
+        # key2 = "value"
+        "#);
+
+        // Section headers
+        assert_snapshot!(comment_out_config("[hooks]\ncommand = \"npm test\"\n"), @r#"
+        # [hooks]
+        # command = "npm test"
+        "#);
+
+        // Empty input
+        assert_snapshot!(comment_out_config(""), @"");
+
+        // Only empty lines
+        assert_snapshot!(comment_out_config("\n\n\n"), @"");
+
+        // Only comments (unchanged)
+        assert_snapshot!(comment_out_config("# comment 1\n# comment 2\n"), @"
+        # comment 1
+        # comment 2
+        ");
+
+        // Mixed content
+        assert_snapshot!(
+            comment_out_config("# Header comment\n\n[section]\nkey = \"value\"\n\n# Another comment\nkey2 = true\n"),
+            @r#"
+        # Header comment
+
+        # [section]
+        # key = "value"
+
+        # Another comment
+        # key2 = true
+        "#
+        );
+
+        // Inline table
+        assert_snapshot!(comment_out_config("point = { x = 1, y = 2 }\n"), @"# point = { x = 1, y = 2 }");
+
+        // Multiline array
+        assert_snapshot!(comment_out_config("args = [\n  \"--flag\",\n  \"value\"\n]\n"), @r#"
+        # args = [
+        #   "--flag",
+        #   "value"
+        # ]
+        "#);
+
+        // Whitespace-only lines are not empty, so they get commented
+        assert_snapshot!(comment_out_config("key = 1\n   \nkey2 = 2\n"), @"
+        # key = 1
+        #    
+        # key2 = 2
+        ");
     }
 
     #[test]
     fn test_comment_out_config_preserves_trailing_newline() {
-        let with_newline = "key = \"value\"\n";
-        let without_newline = "key = \"value\"";
-
-        assert!(comment_out_config(with_newline).ends_with('\n'));
-        assert!(!comment_out_config(without_newline).ends_with('\n'));
-    }
-
-    #[test]
-    fn test_comment_out_config_section_headers() {
-        let input = "[hooks]\ncommand = \"npm test\"\n";
-        let expected = "# [hooks]\n# command = \"npm test\"\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_empty_input() {
-        assert_eq!(comment_out_config(""), "");
-    }
-
-    #[test]
-    fn test_comment_out_config_only_empty_lines() {
-        let input = "\n\n\n";
-        let expected = "\n\n\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_only_comments() {
-        let input = "# comment 1\n# comment 2\n";
-        let expected = "# comment 1\n# comment 2\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_mixed_content() {
-        let input =
-            "# Header comment\n\n[section]\nkey = \"value\"\n\n# Another comment\nkey2 = true\n";
-        let expected = "# Header comment\n\n# [section]\n# key = \"value\"\n\n# Another comment\n# key2 = true\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_inline_table() {
-        let input = "point = { x = 1, y = 2 }\n";
-        let expected = "# point = { x = 1, y = 2 }\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_multiline_array() {
-        let input = "args = [\n  \"--flag\",\n  \"value\"\n]\n";
-        let expected = "# args = [\n#   \"--flag\",\n#   \"value\"\n# ]\n";
-        assert_eq!(comment_out_config(input), expected);
-    }
-
-    #[test]
-    fn test_comment_out_config_whitespace_only_line() {
-        // Lines with only whitespace are not empty - they should NOT be commented
-        // Actually, let's check what the current behavior is:
-        // The function checks `!line.is_empty()` - a line with spaces is not empty
-        let input = "key = 1\n   \nkey2 = 2\n";
-        let expected = "# key = 1\n#    \n# key2 = 2\n";
-        assert_eq!(comment_out_config(input), expected);
+        assert!(comment_out_config("key = \"value\"\n").ends_with('\n'));
+        assert!(!comment_out_config("key = \"value\"").ends_with('\n'));
     }
 
     // ==================== warn_unknown_keys tests ====================
@@ -127,19 +115,16 @@ mod tests {
     }
 
     #[test]
-    fn test_warn_unknown_keys_single() {
+    fn test_warn_unknown_keys() {
+        // Single unknown key
         let mut unknown = HashMap::new();
         unknown.insert(
             "unknown-key".to_string(),
             toml::Value::String("value".to_string()),
         );
-        let out = warn_unknown_keys::<UserConfig>(&unknown);
-        assert!(out.contains("unknown-key"));
-        assert!(out.contains("Unknown"));
-    }
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mUnknown key [1munknown-key[22m will be ignored[39m");
 
-    #[test]
-    fn test_warn_unknown_keys_multiple() {
+        // Multiple unknown keys (output is sorted deterministically)
         let mut unknown = HashMap::new();
         unknown.insert(
             "key1".to_string(),
@@ -149,29 +134,25 @@ mod tests {
             "key2".to_string(),
             toml::Value::String("value2".to_string()),
         );
-        let out = warn_unknown_keys::<UserConfig>(&unknown);
-        assert!(out.contains("key1"));
-        assert!(out.contains("key2"));
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"
+        [33m▲[39m [33mUnknown key [1mkey1[22m will be ignored[39m
+        [33m▲[39m [33mUnknown key [1mkey2[22m will be ignored[39m
+        ");
     }
 
     #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
-        // Test: commit-generation in project config should suggest user config
+        // commit-generation in project config should suggest user config
         let mut unknown = HashMap::new();
-        // Build a commit-generation table value
         let mut inner = toml::map::Map::new();
         inner.insert(
             "command".to_string(),
             toml::Value::String("claude".to_string()),
         );
         unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        let out = warn_unknown_keys::<ProjectConfig>(&unknown);
-        assert!(
-            out.contains("user config"),
-            "Should suggest user config for commit-generation in project config: {out}"
-        );
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m");
 
-        // Test: ci in user config should suggest project config
+        // ci in user config should suggest project config
         let mut unknown = HashMap::new();
         let mut inner = toml::map::Map::new();
         inner.insert(
@@ -179,51 +160,32 @@ mod tests {
             toml::Value::String("github".to_string()),
         );
         unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        let out = warn_unknown_keys::<UserConfig>(&unknown);
-        assert!(
-            out.contains("project config"),
-            "Should suggest project config for ci in user config: {out}"
-        );
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m");
     }
 
     // ==================== render_ci_tool_status tests ====================
 
     #[test]
-    fn test_render_ci_tool_status_installed_authenticated() {
+    fn test_render_ci_tool_status() {
+        // Installed and authenticated
         let mut out = String::new();
         render_ci_tool_status(&mut out, "gh", "GitHub", true, true).unwrap();
-        assert!(out.contains("gh"));
-        assert!(out.contains("installed"));
-        assert!(out.contains("authenticated"));
-    }
+        assert_snapshot!(out, @"[32m✓[39m [32m[1mgh[22m installed & authenticated[39m");
 
-    #[test]
-    fn test_render_ci_tool_status_installed_not_authenticated() {
+        // Installed but not authenticated
         let mut out = String::new();
         render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
-        assert!(out.contains("gh"));
-        assert!(out.contains("installed"));
-        assert!(out.contains("not authenticated"));
-        assert!(out.contains("gh auth login"));
-    }
+        assert_snapshot!(out, @"[33m▲[39m [33m[1mgh[22m installed but not authenticated; run [1mgh auth login[22m[39m");
 
-    #[test]
-    fn test_render_ci_tool_status_not_installed() {
+        // Not installed
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
-        assert!(out.contains("glab"));
-        assert!(out.contains("not found"));
-        assert!(out.contains("GitLab"));
-        assert!(out.contains("CI status unavailable"));
-    }
+        assert_snapshot!(out, @"[2m↳[22m [2m[1mglab[22m not found (GitLab CI status unavailable)[22m");
 
-    #[test]
-    fn test_render_ci_tool_status_glab() {
+        // glab installed and authenticated
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
-        assert!(out.contains("glab"));
-        assert!(out.contains("installed"));
-        assert!(out.contains("authenticated"));
+        assert_snapshot!(out, @"[32m✓[39m [32m[1mglab[22m installed & authenticated[39m");
     }
 
     // ==================== require_user_config_path tests ====================

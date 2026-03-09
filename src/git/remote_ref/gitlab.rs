@@ -330,7 +330,6 @@ mod tests {
         };
 
         let result = fetch_gitlab_project_urls(&github_info, std::path::Path::new("."));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-GitLab ref"));
+        insta::assert_snapshot!(result.unwrap_err(), @"fetch_gitlab_project_urls called on non-GitLab ref");
     }
 }

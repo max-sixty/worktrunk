@@ -84,6 +84,16 @@
 # pre-remove = "docker compose down"
 
 # ============================================================================
+# Aliases (experimental) — run with `wt step <name>`
+# ============================================================================
+# Command templates that support the same variables as hooks.
+# Project-config aliases require command approval on first run.
+#
+# [aliases]
+# deploy = "make deploy BRANCH={{ branch }}"
+# url = "echo http://localhost:{{ branch | hash_port }}"
+
+# ============================================================================
 # Dev Server URL (shown in `wt list`)
 # ============================================================================
 # [list]

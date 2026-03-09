@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.29.0
+
+### Improved
+
+- **`wt step <alias>` command**: User-defined command templates with template variables (`{{ branch }}`, `{{ worktree }}`, custom `--var KEY=VALUE`). Project-config aliases require approval; user-config aliases are trusted. [Docs](https://worktrunk.dev/step/) ([#1348](https://github.com/max-sixty/worktrunk/pull/1348), thanks @cavanaug for the feature request in [#1214](https://github.com/max-sixty/worktrunk/issues/1214))
+
+- **Remove worktrees from switch picker**: `alt-r` in `wt switch` interactive picker removes the highlighted worktree directly (no force flags — matches safety defaults). ([#1253](https://github.com/max-sixty/worktrunk/pull/1253), thanks @alfredomtx for the feature request in [#1251](https://github.com/max-sixty/worktrunk/issues/1251))
+
+- **`wt hook <type> --dry-run`**: Preview hook expansion with template variables resolved, without executing. ([#1361](https://github.com/max-sixty/worktrunk/pull/1361))
+
+- **Hook template variables**: `{{ hook_type }}` and `{{ hook_name }}` are now available in hook command templates. ([#1364](https://github.com/max-sixty/worktrunk/pull/1364))
+
+- **Typo suggestions for step commands**: Unknown step commands and aliases now suggest the closest match. ([#1363](https://github.com/max-sixty/worktrunk/pull/1363))
+
+- **Syntax-highlighted `--help`**: Code blocks in `--help` output now render with language-aware syntax highlighting (TOML, bash) instead of plain dimmed text. Help options are grouped under navigational headings (Picker Options, Automation). ([#1365](https://github.com/max-sixty/worktrunk/pull/1365), [#1355](https://github.com/max-sixty/worktrunk/pull/1355), [#1359](https://github.com/max-sixty/worktrunk/pull/1359))
+
+- **Nix Home Manager module**: Install worktrunk via Nix Home Manager. ([#1287](https://github.com/max-sixty/worktrunk/pull/1287), thanks @DuskyElf; thanks @meicale for reporting [#1257](https://github.com/max-sixty/worktrunk/issues/1257))
+
+- **Output styling**: Bold names replace quoted names in error messages, underlined references replace bright-black in hints, `@ path` convention unified in section headings, and branch-worktree mismatch warnings now show both actual and expected paths. ([#1375](https://github.com/max-sixty/worktrunk/pull/1375), [#1380](https://github.com/max-sixty/worktrunk/pull/1380), [#1285](https://github.com/max-sixty/worktrunk/pull/1285), [#1376](https://github.com/max-sixty/worktrunk/pull/1376), [#1377](https://github.com/max-sixty/worktrunk/pull/1377), thanks @jhigh2000 for reporting [#1184](https://github.com/max-sixty/worktrunk/issues/1184))
+
+### Fixed
+
+- **`--no-cd` with interactive picker**: The `--no-cd` flag is now passed through when using `wt switch` with the interactive picker. ([#1331](https://github.com/max-sixty/worktrunk/pull/1331), thanks @cperalt for reporting [#1330](https://github.com/max-sixty/worktrunk/issues/1330))
+
+- **Remote branches with `/` in picker**: `wt switch --remotes` now correctly handles remote branches with `/` in the name (e.g., `origin/user/feature`). ([#1266](https://github.com/max-sixty/worktrunk/pull/1266), thanks @curtbushko for reporting [#1260](https://github.com/max-sixty/worktrunk/issues/1260))
+
+- **Nushell config path on Windows**: `wt config shell install` now uses the platform-appropriate config directory for nushell on Windows. ([#1294](https://github.com/max-sixty/worktrunk/pull/1294), thanks @deltoss for reporting [#1293](https://github.com/max-sixty/worktrunk/issues/1293))
+
+- **Git for Windows per-user install**: Detect per-user Git for Windows installations and show a clean error message instead of panicking when Git Bash is not found. ([#1261](https://github.com/max-sixty/worktrunk/pull/1261), [#1262](https://github.com/max-sixty/worktrunk/pull/1262), thanks @JefMasereel for reporting [#1259](https://github.com/max-sixty/worktrunk/issues/1259))
+
+- **JSON output `summary` field**: `wt list --format=json` now includes the `summary` field. ([#1339](https://github.com/max-sixty/worktrunk/pull/1339))
+
+- **Squash merge message**: Uses source branch name instead of target branch in the merge commit message. ([#1319](https://github.com/max-sixty/worktrunk/pull/1319), thanks @ricafeal)
+
+- **Alias approval errors**: Propagate the real error (e.g., "no remote URL found") instead of a vague "Cannot determine project identifier". ([#1374](https://github.com/max-sixty/worktrunk/pull/1374))
+
+- **`wt step prune` output**: Summary uses cleaner paired format ("Pruned 1 worktree & branch") and fixes post-remove hook display path for non-current worktrees. ([#1344](https://github.com/max-sixty/worktrunk/pull/1344))
+
+- **VCS metadata in `copy-ignored`**: Exclude `.git`, `.hg`, `.svn`, `_darcs` directories from `wt step copy-ignored`. ([#1250](https://github.com/max-sixty/worktrunk/pull/1250))
+
+- **Nix evaluation warning**: Use `stdenv.hostPlatform.system` instead of deprecated `system`. ([#1336](https://github.com/max-sixty/worktrunk/pull/1336), thanks @onelocked)
+
+### Documentation
+
+- **Home page SEO**: Canonical URL deduplication and consistent tagline. ([#1357](https://github.com/max-sixty/worktrunk/pull/1357))
+
+- **LLM commit tools**: Add opencode and consolidate other LLM commit tool references. ([#1295](https://github.com/max-sixty/worktrunk/pull/1295))
+
+### Internal
+
+- **Git plumbing**: Replace porcelain commands with plumbing alternatives (`rev-parse --symbolic-full-name`, `log --no-walk`, `for-each-ref`) for more robust output parsing. Cache deprecated-variable regexes and fix silent wrong results in `same_commit()`/`trees_match()`. ([#1345](https://github.com/max-sixty/worktrunk/pull/1345), [#1338](https://github.com/max-sixty/worktrunk/pull/1338), [#1358](https://github.com/max-sixty/worktrunk/pull/1358))
+
+- **Error propagation**: `repo_path()` and `ShellConfig::get()` now return `Result` instead of silently falling back. ([#1280](https://github.com/max-sixty/worktrunk/pull/1280), [#1262](https://github.com/max-sixty/worktrunk/pull/1262))
+
+- **CI improvements**: Consolidated setup into composite action, replaced `gh run watch` with poll loops, added conflict resolution for bot PRs in nightly cleaner. ([#1273](https://github.com/max-sixty/worktrunk/pull/1273), [#1329](https://github.com/max-sixty/worktrunk/pull/1329), [#1307](https://github.com/max-sixty/worktrunk/pull/1307))
+
 ## 0.28.2
 
 ### Improved

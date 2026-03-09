@@ -53,6 +53,8 @@ Key skills:
 
 ## Testing
 
+See `tests/CLAUDE.md` for test infrastructure, assertion style, and test granularity guidelines.
+
 ### Running Tests
 
 ```bash

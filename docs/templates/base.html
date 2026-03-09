@@ -76,12 +76,18 @@
     <meta name="view-transition" content="same-origin">
     {% set page_description = page.description | default(value=config.extra.site_description) %}
     <meta name="description" content="{{ page_description }}">
+    {% if page.extra.canonical %}
+    <link rel="canonical" href="{{ config.base_url | trim_end_matches(pat='/') }}{{ page.extra.canonical }}">
+    {% else %}
     <link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
+    {% endif %}
 
     <!-- OpenGraph -->
+    {% set og_title = page.title | default(value="") %}
     <meta property="og:type" content="website">
-    <meta property="og:url" content="{{ current_url | default(value=config.base_url) }}">
-    <meta property="og:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
+    <meta property="og:url" content="{% if page.extra.canonical %}{{ config.base_url | trim_end_matches(pat='/') }}{{ page.extra.canonical }}{% else %}{{ current_url | default(value=config.base_url) }}{% endif %}">
+    {% if og_title %}{% set og_title_full = og_title ~ " | " ~ config.title %}{% else %}{% set og_title_full = config.title ~ " — " ~ config.extra.site_description %}{% endif %}
+    <meta property="og:title" content="{{ og_title_full }}">
     <meta property="og:description" content="{{ page_description }}">
     <meta property="og:image" content="{{ config.base_url }}assets/social/social-card.png">
     <meta property="og:image:width" content="1200">
@@ -89,7 +95,7 @@
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
+    <meta name="twitter:title" content="{{ og_title_full }}">
     <meta name="twitter:description" content="{{ page_description }}">
     <meta name="twitter:image" content="{{ config.base_url }}assets/social/social-card.png">
 

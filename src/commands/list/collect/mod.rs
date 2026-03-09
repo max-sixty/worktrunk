@@ -14,7 +14,7 @@
 //!
 //! Pre-skeleton runs a **fixed number of git commands** regardless of worktree count.
 //! This is achieved through:
-//! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
+//! - **Batching** — timestamp fetch passes all SHAs to one `git log --no-walk` command
 //! - **Parallelization** — independent commands run concurrently via `join!` macro
 //!
 //! **Steady-state (6-8 commands):**
@@ -28,7 +28,7 @@
 //! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
+//! | `git log --no-walk --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -409,7 +409,7 @@ pub fn collect(
         let msg =
             cformat!("Configured default branch <bold>{configured}</> does not exist locally");
         eprintln!("{}", warning_message(msg));
-        let hint = cformat!("To reset, run <bright-black>wt config state default-branch clear</>");
+        let hint = cformat!("To reset, run <underline>wt config state default-branch clear</>");
         eprintln!("{}", hint_message(hint));
     }
 
@@ -430,7 +430,7 @@ pub fn collect(
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
     // Filter out null OIDs from unborn branches — a single null OID would cause
-    // `git show` to fail for ALL shas in the batch.
+    // `git log --no-walk` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
         .iter()
         .map(|wt| wt.head.as_str())
@@ -874,7 +874,10 @@ pub fn collect(
     } = drain_outcome
     {
         // Warning: what happened + gutter showing which results are missing
-        let mut diag = format!("wt list timed out after 30s ({received_count} results received)");
+        let mut diag = format!(
+            "wt list timed out after {}s ({received_count} results received)",
+            results::DRAIN_TIMEOUT.as_secs()
+        );
 
         if !items_with_missing.is_empty() {
             let missing_lines: Vec<String> = items_with_missing
@@ -896,7 +899,7 @@ pub fn collect(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "A git command likely hung; run with <bright-black>-v</> for details, <bright-black>-vv</> to create a diagnostic file"
+                "A git command likely hung; run with <underline>-v</> for details, <underline>-vv</> to create a diagnostic file"
             ))
         );
     }
@@ -1207,7 +1210,10 @@ pub fn populate_item(
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
-        log::warn!("populate_item timed out after 30s ({received_count} results received)");
+        log::warn!(
+            "populate_item timed out after {}s ({received_count} results received)",
+            results::DRAIN_TIMEOUT.as_secs()
+        );
     }
 
     // Log errors silently (statusline shouldn't spam warnings)

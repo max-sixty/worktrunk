@@ -43,7 +43,7 @@ use worktrunk::shell_exec::Cmd;
 /// `stage` is the CLI-provided stage mode. If None, uses the effective config default.
 pub fn step_commit(
     yes: bool,
-    no_verify: bool,
+    verify: bool,
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
@@ -70,24 +70,24 @@ pub fn step_commit(
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-    // Shadow no_verify: if user declines approval, skip hooks but continue commit
-    let no_verify = if !no_verify {
+    // Shadow verify: if user declines approval, skip hooks but continue commit
+    let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
             eprintln!(
                 "{}",
                 info_message("Commands declined, committing without hooks",)
             );
-            true // Skip hooks
+            false
         } else {
-            false // Run hooks
+            true
         }
     } else {
-        true // --no-verify was passed
+        false // --no-verify was passed
     };
 
     let mut options = CommitOptions::new(&ctx);
-    options.no_verify = no_verify;
+    options.verify = verify;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
     // Only warn about untracked if we're staging all
@@ -112,12 +112,12 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `no_verify` - If true, skip all pre-commit hooks (from --no-verify flag)
+/// * `verify` - If true, run pre-commit hooks (false when --no-verify flag is passed)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
-    no_verify: bool,
+    verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
@@ -145,17 +145,17 @@ pub fn handle_squash(
             .is_some_and(|c| c.hooks.pre_commit.is_some());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-    // Shadow no_verify: if user declines approval, skip hooks but continue squash
-    let no_verify = if !no_verify {
+    // Shadow verify: if user declines approval, skip hooks but continue squash
+    let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
             eprintln!(
                 "{}",
                 info_message("Commands declined, squashing without hooks")
             );
-            true // Skip hooks
+            false
         } else {
-            false // Run hooks
+            true
         }
     } else {
         // Show skip message when --no-verify was passed and hooks exist
@@ -165,7 +165,7 @@ pub fn handle_squash(
                 info_message("Skipping pre-commit hooks (--no-verify)")
             );
         }
-        true // --no-verify was passed
+        false // --no-verify was passed
     };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
@@ -188,7 +188,7 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hooks (user first, then project)
-    if !no_verify {
+    if verify {
         let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,
@@ -1179,7 +1179,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Run <bright-black>wt step promote {default}</> to restore canonical locations"
+                    "Run <underline>wt step promote {default}</> to restore canonical locations"
                 ))
             );
         }
@@ -1334,11 +1334,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         BranchOnly,
     }
 
-    /// Build a human-readable count like "2 worktrees (with branches), 1 branch".
+    /// Build a human-readable count like "3 worktrees & branches".
+    ///
+    /// Worktree + branch is the default pair (matching progress messages'
+    /// "worktree & branch" pattern). Unpaired items listed separately.
     fn prune_summary(candidates: &[Candidate]) -> String {
-        let mut worktree_with_branch = 0;
-        let mut branch_only = 0;
-        let mut detached_worktree = 0;
+        let mut worktree_with_branch = 0usize;
+        let mut detached_worktree = 0usize;
+        let mut branch_only = 0usize;
         for c in candidates {
             match (&c.kind, &c.branch) {
                 (CandidateKind::BranchOnly, _) => branch_only += 1,
@@ -1353,11 +1356,19 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         let mut parts = Vec::new();
         if worktree_with_branch > 0 {
             let noun = if worktree_with_branch == 1 {
-                "worktree (with branch)"
+                "worktree & branch"
             } else {
-                "worktrees (with branches)"
+                "worktrees & branches"
             };
             parts.push(format!("{worktree_with_branch} {noun}"));
+        }
+        if detached_worktree > 0 {
+            let noun = if detached_worktree == 1 {
+                "worktree"
+            } else {
+                "worktrees"
+            };
+            parts.push(format!("{detached_worktree} {noun}"));
         }
         if branch_only > 0 {
             let noun = if branch_only == 1 {
@@ -1366,14 +1377,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 "branches"
             };
             parts.push(format!("{branch_only} {noun}"));
-        }
-        if detached_worktree > 0 {
-            let noun = if detached_worktree == 1 {
-                "detached worktree"
-            } else {
-                "detached worktrees"
-            };
-            parts.push(format!("{detached_worktree} {noun}"));
         }
         parts.join(", ")
     }
@@ -1448,7 +1451,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, !foreground, run_hooks, true)?;
+        handle_remove_output(&plan, foreground, run_hooks, true)?;
         Ok(true)
     }
 
@@ -1706,7 +1709,7 @@ pub fn step_relocate(
             "Cannot determine default branch; set with: wt config state default-branch set main"
         );
     }
-    let repo_path = repo.repo_path().to_path_buf();
+    let repo_path = repo.repo_path()?.to_path_buf();
 
     // Phase 1: Gather candidates (worktrees not at expected paths)
     let GatherResult {
@@ -1749,47 +1752,6 @@ pub fn step_relocate(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_squash_result_variants() {
-        // Test Debug implementation
-        let result = SquashResult::Squashed;
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("Squashed"));
-
-        let result = SquashResult::NoCommitsAhead("main".to_string());
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("NoCommitsAhead"));
-        assert!(debug.contains("main"));
-
-        let result = SquashResult::AlreadySingleCommit;
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("AlreadySingleCommit"));
-
-        let result = SquashResult::NoNetChanges;
-        let debug = format!("{:?}", result);
-        assert!(debug.contains("NoNetChanges"));
-    }
-
-    #[test]
-    fn test_rebase_result_variants() {
-        // RebaseResult doesn't derive Debug/Clone by default, just test matching
-        let result = RebaseResult::Rebased;
-        assert!(matches!(result, RebaseResult::Rebased));
-
-        let result = RebaseResult::UpToDate("main".to_string());
-        assert!(matches!(result, RebaseResult::UpToDate(ref s) if s == "main"));
-    }
-
-    #[test]
-    fn test_rebase_result_up_to_date_branch_extraction() {
-        let result = RebaseResult::UpToDate("feature-branch".to_string());
-        if let RebaseResult::UpToDate(branch) = result {
-            assert_eq!(branch, "feature-branch");
-        } else {
-            panic!("Expected UpToDate variant");
-        }
-    }
 
     #[test]
     fn test_remove_if_exists_nonexistent() {

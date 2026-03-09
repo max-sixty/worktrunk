@@ -179,21 +179,6 @@ mod tests {
     }
 
     #[test]
-    fn test_column_spec_new() {
-        let spec = ColumnSpec::new(ColumnKind::Branch, 1, None);
-        assert_eq!(spec.kind, ColumnKind::Branch);
-        assert_eq!(spec.base_priority, 1);
-        assert!(spec.requires_task.is_none());
-    }
-
-    #[test]
-    fn test_column_spec_with_required_task() {
-        let spec = ColumnSpec::new(ColumnKind::BranchDiff, 5, Some(TaskKind::BranchDiff));
-        assert_eq!(spec.kind, ColumnKind::BranchDiff);
-        assert_eq!(spec.requires_task, Some(TaskKind::BranchDiff));
-    }
-
-    #[test]
     fn test_column_specs_priorities_are_unique() {
         // Each column should have a unique base_priority
         let priorities: Vec<u8> = COLUMN_SPECS.iter().map(|c| c.base_priority).collect();

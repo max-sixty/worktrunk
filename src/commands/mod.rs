@@ -1,3 +1,4 @@
+mod alias;
 pub(crate) mod branch_deletion;
 pub(crate) mod command_approval;
 pub(crate) mod command_executor;
@@ -23,6 +24,7 @@ pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
+pub(crate) use alias::{AliasOptions, step_alias};
 pub(crate) use config::{
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
     handle_hints_get, handle_logs_get, handle_state_clear, handle_state_clear_all,
@@ -100,27 +102,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_command_label_with_name() {
-        let result = format_command_label("post-create", Some("install"));
-        assert!(result.contains("Running"));
-        assert!(result.contains("post-create"));
-        assert!(result.contains("install"));
-    }
-
-    #[test]
-    fn test_format_command_label_without_name() {
-        let result = format_command_label("pre-merge", None);
-        assert_eq!(result, "Running pre-merge");
-    }
-
-    #[test]
-    fn test_format_command_label_various_types() {
-        let result = format_command_label("post-start", Some("build"));
-        assert!(result.contains("post-start"));
-        assert!(result.contains("build"));
-
-        let result = format_command_label("pre-commit", None);
-        assert!(result.contains("pre-commit"));
-        assert!(!result.contains("None"));
+    fn test_format_command_label() {
+        use insta::assert_snapshot;
+        assert_snapshot!(format_command_label("post-create", Some("install")), @"Running post-create [1minstall[22m");
+        assert_snapshot!(format_command_label("pre-merge", None), @"Running pre-merge");
+        assert_snapshot!(format_command_label("post-start", Some("build")), @"Running post-start [1mbuild[22m");
+        assert_snapshot!(format_command_label("pre-commit", None), @"Running pre-commit");
     }
 }

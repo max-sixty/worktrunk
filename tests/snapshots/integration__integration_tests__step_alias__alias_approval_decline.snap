@@ -1,0 +1,13 @@
+---
+source: tests/integration_tests/step_alias.rs
+expression: combined
+---
+exit_code: 1
+----- stdout -----
+
+----- stderr -----
+[33m▲[39m [33m[1morigin[22m needs approval to execute [1m1[22m command:[39m
+[2m○[22m alias [1mdeploy[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m deploying
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt hook approvals add[24m[22m

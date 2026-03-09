@@ -420,79 +420,55 @@ pub fn format_bash_with_gutter(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
+    /// Wraps at word boundaries; never breaks a word; degrades gracefully on edge cases.
     #[test]
-    fn test_wrap_text_at_width_no_wrap_needed() {
-        let result = wrap_text_at_width("short text", 20);
-        assert_eq!(result, vec!["short text"]);
+    fn test_wrap_text_at_width() {
+        assert_eq!(wrap_text_at_width("short text", 20), vec!["short text"]);
+        assert_eq!(
+            wrap_text_at_width("hello world foo bar", 10),
+            vec!["hello", "world foo", "bar"]
+        );
+        // Single long word is never broken
+        assert_eq!(
+            wrap_text_at_width("superlongword", 5),
+            vec!["superlongword"]
+        );
+        // Multiple spaces preserved when no wrapping needed
+        assert_eq!(
+            wrap_text_at_width("hello    world", 20),
+            vec!["hello    world"]
+        );
+        // Edge cases: zero width and empty input
+        assert_eq!(wrap_text_at_width("hello world", 0), vec!["hello world"]);
+        assert_eq!(wrap_text_at_width("", 20), vec![""]);
     }
 
+    /// Same word-boundary contract as wrap_text_at_width, plus preserves leading indent.
     #[test]
-    fn test_wrap_text_at_width_basic_wrap() {
-        let result = wrap_text_at_width("hello world foo bar", 10);
-        // Words wrap at boundaries, each line fits within max_width
-        assert_eq!(result, vec!["hello", "world foo", "bar"]);
+    fn test_wrap_styled_text_edge_cases() {
+        assert_eq!(wrap_styled_text("short text", 20), vec!["short text"]);
+        assert_eq!(wrap_styled_text("hello world", 0), vec!["hello world"]);
+        assert_eq!(wrap_styled_text("", 20), vec![""]);
+        // Whitespace is preserved
+        assert_eq!(
+            wrap_styled_text("          Print help", 80),
+            vec!["          Print help"]
+        );
+        assert_eq!(wrap_styled_text("          ", 80), vec!["          "]);
     }
 
-    #[test]
-    fn test_wrap_text_at_width_zero_width() {
-        let result = wrap_text_at_width("hello world", 0);
-        assert_eq!(result, vec!["hello world"]);
-    }
-
-    #[test]
-    fn test_wrap_text_at_width_empty_input() {
-        let result = wrap_text_at_width("", 20);
-        assert_eq!(result, vec![""]);
-    }
-
-    #[test]
-    fn test_wrap_text_at_width_single_long_word() {
-        // Single word longer than max_width should still be included
-        let result = wrap_text_at_width("superlongword", 5);
-        assert_eq!(result, vec!["superlongword"]);
-    }
-
-    #[test]
-    fn test_wrap_styled_text_no_wrap_needed() {
-        let result = wrap_styled_text("short text", 20);
-        assert_eq!(result, vec!["short text"]);
-    }
-
-    #[test]
-    fn test_wrap_styled_text_zero_width() {
-        let result = wrap_styled_text("hello world", 0);
-        assert_eq!(result, vec!["hello world"]);
-    }
-
-    #[test]
-    fn test_wrap_styled_text_empty_input() {
-        let result = wrap_styled_text("", 20);
-        assert_eq!(result, vec![""]);
-    }
-
-    #[test]
-    fn test_wrap_styled_text_preserves_leading_whitespace() {
-        let result = wrap_styled_text("          Print help", 80);
-        assert_eq!(result, vec!["          Print help"]);
-    }
-
-    #[test]
-    fn test_wrap_styled_text_only_whitespace() {
-        let result = wrap_styled_text("          ", 80);
-        assert_eq!(result, vec!["          "]);
-    }
-
+    /// Continuation lines keep the same leading indent as the first line.
     #[test]
     fn test_wrap_styled_text_preserves_indent_on_wrap() {
-        // Force wrapping by using a narrow width - text should wrap and preserve indent
         let result = wrap_styled_text(
             "          This is a longer text that should wrap across multiple lines",
             40,
         );
         assert!(result.len() > 1);
-        // All lines should have the 10-space indent
         for line in &result {
             assert!(
                 line.starts_with("          "),
@@ -502,142 +478,75 @@ mod tests {
         }
     }
 
+    /// Gutter formatting: single, multiline, empty, and wrapping cases.
     #[test]
-    fn test_format_with_gutter_basic() {
-        let result = format_with_gutter("hello", Some(80));
-        // Should have gutter formatting, no trailing newline (caller adds it)
-        assert!(result.contains("hello"));
-        assert!(!result.ends_with('\n'));
+    fn test_format_with_gutter() {
+        assert_snapshot!(format_with_gutter("hello", Some(80)), @"[107m [0m hello");
+        assert_snapshot!(format_with_gutter("line1\nline2", Some(80)), @"
+        [107m [0m line1
+        [107m [0m line2
+        ");
+        assert_snapshot!(format_with_gutter("", Some(80)), @"");
+        assert_snapshot!(format_with_gutter("word1 word2 word3 word4", Some(15)), @"
+        [107m [0m word1 word2
+        [107m [0m word3 word4
+        ");
     }
 
-    #[test]
-    fn test_format_with_gutter_multiline() {
-        let result = format_with_gutter("line1\nline2", Some(80));
-        // Each line should be formatted separately
-        assert!(result.contains("line1"));
-        assert!(result.contains("line2"));
-        // Should have 1 newline (between lines, not trailing)
-        assert_eq!(result.matches('\n').count(), 1);
-    }
-
-    #[test]
-    fn test_gutter_overhead_constant() {
-        // Verify the overhead matches documented value
-        assert_eq!(GUTTER_OVERHEAD, 2);
-    }
-
-    #[test]
-    fn test_format_with_gutter_empty() {
-        let result = format_with_gutter("", Some(80));
-        // Empty input should produce empty output
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_format_with_gutter_wrapping() {
-        // Use a very narrow width to force wrapping
-        let result = format_with_gutter("word1 word2 word3 word4", Some(15));
-        // Content should be wrapped to multiple lines (newlines between, not trailing)
-        let line_count = result.matches('\n').count();
-        assert!(
-            line_count >= 1,
-            "Expected at least one newline (between wrapped lines), got {}",
-            line_count
-        );
-    }
-
-    #[test]
-    fn test_wrap_text_at_width_with_multiple_spaces() {
-        // wrap_text_at_width uses split_whitespace which joins with single space
-        // Let's verify behavior by checking what actually happens
-        let result = wrap_text_at_width("hello    world", 20);
-        // split_whitespace preserves word boundaries but normalizes whitespace
-        // Actually looking at the code - split_whitespace + rejoin with single space
-        // yields "hello world" when joining
-        assert!(result[0].contains("hello"));
-        assert!(result[0].contains("world"));
-    }
-
+    /// ANSI codes don't affect wrapping width and are preserved in output.
     #[test]
     fn test_wrap_styled_text_with_ansi() {
-        // Text with ANSI codes should wrap based on visible width
         let styled = "\u{1b}[1mbold text\u{1b}[0m here";
         let result = wrap_styled_text(styled, 100);
-        // Should preserve the content
-        assert!(result[0].contains("bold"));
-        assert!(result[0].contains("text"));
+        assert_snapshot!(result[0], @"[1mbold text[0m here");
     }
 
+    /// wrap_ansi's injected [39m]/[49m] resets are stripped (we use [0m] only).
     #[test]
     fn test_wrap_styled_text_strips_injected_resets() {
-        // If wrap_ansi injects [39m or [49m, they should be stripped
         let styled = "some colored text";
         let result = wrap_styled_text(styled, 50);
-        // Result should not contain the specific reset codes we strip
         assert!(!result[0].contains("\u{1b}[39m"));
         assert!(!result[0].contains("\u{1b}[49m"));
     }
 
+    /// Continuation lines after wrap restore dim styling (wrap_ansi drops it).
     #[test]
     fn test_wrap_styled_text_restores_dim_on_continuation() {
-        // When wrap_ansi wraps dim+color text, it restores the color but not dim.
-        // We fix this by prepending dim to continuation lines that start with a color.
         let dim = "\x1b[2m";
         let green = "\x1b[32m";
         let reset = "\x1b[0m";
-
-        // Simulate what format_bash_with_gutter_impl produces for a string token
         let styled = format!(
             "{dim}{green}This is a very long string that definitely needs to wrap across multiple lines{reset}"
         );
 
-        // Force wrapping at 30 chars - should produce multiple lines
         let result = wrap_styled_text(&styled, 30);
         assert!(result.len() > 1);
-
-        // First line should have dim+green (as input)
         assert!(result[0].starts_with("\x1b[2m\x1b[32m"));
-
-        // Continuation lines should ALSO have dim before the color (restored by our fix)
         for line in result.iter().skip(1) {
             assert!(line.starts_with("\x1b[2m\x1b[32m") || line.starts_with("\x1b[2m"));
         }
     }
 
+    /// Bash syntax highlighting with gutter: single-line, multi-line, complex commands.
     #[test]
     #[cfg(feature = "syntax-highlighting")]
-    fn test_format_bash_with_gutter_at_width_basic() {
-        let result = format_bash_with_gutter_at_width("echo hello", 80);
-        assert!(result.contains("echo"));
-        assert!(result.contains("hello"));
-        // No trailing newline - caller is responsible for element separation
-        assert!(!result.ends_with('\n'));
+    fn test_format_bash_with_gutter() {
+        assert_snapshot!(format_bash_with_gutter_at_width("echo hello", 80), @"[107m [0m [2m[0m[2m[34mecho[0m[2m hello[0m");
+        assert_snapshot!(
+            format_bash_with_gutter_at_width("echo line1\necho line2", 80),
+            @"
+        [107m [0m [2m[0m[2m[34mecho[0m[2m line1[0m
+        [107m [0m [2m[0m[2m[34mecho[0m[2m line2[0m
+        "
+        );
+        assert_snapshot!(
+            format_bash_with_gutter_at_width("npm install && cargo build --release", 100),
+            @"[107m [0m [2m[0m[2m[34mnpm[0m[2m install [0m[2m[36m&&[0m[2m [0m[2m[34mcargo[0m[2m build [0m[2m[36m--release[0m[2m[0m"
+        );
     }
 
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_format_bash_with_gutter_at_width_multiline() {
-        let result = format_bash_with_gutter_at_width("echo line1\necho line2", 80);
-        assert!(result.contains("line1"));
-        assert!(result.contains("line2"));
-        // Two lines should have one newline (between, not trailing)
-        assert_eq!(result.matches('\n').count(), 1);
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_format_bash_with_gutter_complex_command() {
-        let result = format_bash_with_gutter_at_width("npm install && cargo build --release", 100);
-        assert!(result.contains("npm"));
-        assert!(result.contains("cargo"));
-        assert!(result.contains("--release"));
-    }
-
-    /// Regression test: tree-sitter 0.26 properly highlights multi-line commands.
-    ///
-    /// With tree-sitter-bash 0.25.1+, unified highlighting (processing the entire
-    /// command at once) correctly identifies `&&` as operators even when they appear
-    /// at line ends. This enables switching from line-by-line to unified highlighting.
+    /// Regression: tree-sitter identifies `&&` as operators even at line ends.
     #[test]
     #[cfg(feature = "syntax-highlighting")]
     fn test_unified_multiline_highlighting() {
@@ -659,7 +568,6 @@ mod tests {
 
         let mut highlighter = Highlighter::new();
 
-        // Collect highlight events as tagged text for verification
         let mut output = String::new();
         let highlights = highlighter
             .highlight(&config, cmd.as_bytes(), None, |_| None)
@@ -678,26 +586,14 @@ mod tests {
             }
         }
 
-        // Unified highlighting should identify && as operators
-        assert!(
-            output.contains("[operator:&&]"),
-            "Should identify && as operator in multi-line command"
-        );
-
-        // Should identify echo as function on each line
-        assert_eq!(
-            output.matches("[function:echo]").count(),
-            3,
-            "Should identify all three echo commands"
-        );
+        assert_snapshot!(output, @"
+        [function:echo] [string:'line1'] [operator:&&]
+        [function:echo] [string:'line2'] [operator:&&]
+        [function:echo] [string:'line3']
+        ");
     }
 
-    /// Regression test: template variables inside quotes are restored correctly.
-    ///
-    /// When `{{ }}` appears inside double quotes (e.g., `"{{ target }}"`), the
-    /// placeholder must not contain quote characters — otherwise tree-sitter
-    /// reinterprets quote boundaries and ANSI codes break the contiguous
-    /// placeholder, making the restore `.replace()` fail silently.
+    /// Regression: `{{ }}` inside double quotes are restored without breaking highlighting.
     #[test]
     #[cfg(feature = "syntax-highlighting")]
     fn test_template_vars_inside_quotes_restored() {
@@ -706,18 +602,10 @@ mod tests {
         let cmd = r#"if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#;
         let result = format_bash_with_gutter_at_width(cmd, 120);
 
-        let plain = result.ansi_strip();
-
-        // The output must contain {{ and }}, not the placeholders
-        assert!(plain.contains("{{"), "{plain}");
-        assert!(plain.contains("}}"), "{plain}");
-        assert!(!plain.contains("WTO"), "{plain}");
-        assert!(!plain.contains("WTC"), "{plain}");
+        assert_snapshot!(result.ansi_strip(), @r#"  if [ "{{ target }}" = "main" ]; then git pull && git push; fi"#);
     }
 
-    /// Regression test: template syntax ({{ }}) doesn't break highlighting.
-    ///
-    /// Tree-sitter parses around template variables, still identifying commands.
+    /// Regression: template syntax `{{ }}` doesn't prevent command identification.
     #[test]
     #[cfg(feature = "syntax-highlighting")]
     fn test_highlighting_with_template_syntax() {
@@ -754,18 +642,6 @@ mod tests {
             }
         }
 
-        // Commands should still be identified despite template syntax
-        assert!(
-            output.contains("[function:echo]"),
-            "Should identify echo despite template syntax"
-        );
-        assert!(
-            output.contains("[function:mkdir]"),
-            "Should identify mkdir despite template syntax"
-        );
-        assert!(
-            output.contains("[operator:&&]"),
-            "Should identify && operator"
-        );
+        assert_snapshot!(output, @"[function:echo] {{ branch }} [operator:&&] [function:mkdir] {{ path }}");
     }
 }

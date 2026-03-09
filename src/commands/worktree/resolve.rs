@@ -80,7 +80,7 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &UserConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.repo_path();
+    let repo_root = repo.repo_path()?;
     let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare()?;
 

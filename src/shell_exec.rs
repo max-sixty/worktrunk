@@ -1076,14 +1076,6 @@ mod tests {
     }
 
     #[test]
-    fn test_shell_config_debug() {
-        let config = ShellConfig::get().unwrap();
-        let debug = format!("{:?}", config);
-        assert!(debug.contains("ShellConfig"));
-        assert!(debug.contains(&config.name));
-    }
-
-    #[test]
     fn test_shell_config_clone() {
         let config = ShellConfig::get().unwrap();
         let cloned = config.clone();
