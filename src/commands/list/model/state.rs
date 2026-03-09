@@ -648,14 +648,9 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_git_operation_state_default() {
-        let state = ActiveGitOperation::default();
-        assert_eq!(state, ActiveGitOperation::None);
-    }
-
-    #[test]
     fn test_git_operation_state_is_none() {
         assert!(ActiveGitOperation::None.is_none());
+        assert!(ActiveGitOperation::default().is_none());
         assert!(!ActiveGitOperation::Rebase.is_none());
         assert!(!ActiveGitOperation::Merge.is_none());
     }

@@ -126,52 +126,36 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_line_diff_default() {
-        let diff = LineDiff::default();
-        assert_eq!(diff.added, 0);
-        assert_eq!(diff.deleted, 0);
+    fn test_line_diff_is_empty() {
+        assert!(LineDiff::default().is_empty());
+        assert!(
+            LineDiff {
+                added: 0,
+                deleted: 0
+            }
+            .is_empty()
+        );
+        assert!(
+            !LineDiff {
+                added: 5,
+                deleted: 0
+            }
+            .is_empty()
+        );
+        assert!(
+            !LineDiff {
+                added: 0,
+                deleted: 5
+            }
+            .is_empty()
+        );
     }
 
     #[test]
-    fn test_line_diff_is_empty_true() {
-        let diff = LineDiff {
-            added: 0,
-            deleted: 0,
-        };
-        assert!(diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_is_empty_false_added() {
-        let diff = LineDiff {
-            added: 5,
-            deleted: 0,
-        };
-        assert!(!diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_is_empty_false_deleted() {
-        let diff = LineDiff {
-            added: 0,
-            deleted: 5,
-        };
-        assert!(!diff.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_from_tuple() {
+    fn test_line_diff_tuple_roundtrip() {
         let diff: LineDiff = (10, 5).into();
         assert_eq!(diff.added, 10);
         assert_eq!(diff.deleted, 5);
-    }
-
-    #[test]
-    fn test_tuple_from_line_diff() {
-        let diff = LineDiff {
-            added: 10,
-            deleted: 5,
-        };
         let tuple: (usize, usize) = diff.into();
         assert_eq!(tuple, (10, 5));
     }

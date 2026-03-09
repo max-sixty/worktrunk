@@ -170,38 +170,6 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_command_new() {
-        let cmd = Command::new(Some("build".to_string()), "cargo build".to_string());
-        assert_eq!(cmd.name, Some("build".to_string()));
-        assert_eq!(cmd.template, "cargo build");
-        assert_eq!(cmd.expanded, "cargo build"); // Same as template when not expanded
-    }
-
-    #[test]
-    fn test_command_new_unnamed() {
-        let cmd = Command::new(None, "npm install".to_string());
-        assert_eq!(cmd.name, None);
-        assert_eq!(cmd.template, "npm install");
-        assert_eq!(cmd.expanded, "npm install");
-    }
-
-    #[test]
-    fn test_command_with_expansion() {
-        let cmd = Command::with_expansion(
-            Some("test".to_string()),
-            "cargo test --package {{ repo }}".to_string(),
-            "cargo test --package myrepo".to_string(),
-        );
-        assert_eq!(cmd.name, Some("test".to_string()));
-        assert_eq!(cmd.template, "cargo test --package {{ repo }}");
-        assert_eq!(cmd.expanded, "cargo test --package myrepo");
-    }
-
-    // ============================================================================
-    // CommandConfig Deserialization Tests
-    // ============================================================================
-
-    #[test]
     fn test_deserialize_single_string() {
         let toml_str = r#"command = "npm install""#;
 

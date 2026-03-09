@@ -254,31 +254,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_nu_config_output_valid_path() {
-        let stdout = b"/home/user/.config/nushell\n";
+    fn test_parse_nu_config_output() {
         assert_eq!(
-            parse_nu_config_output(stdout),
+            parse_nu_config_output(b"/home/user/.config/nushell\n"),
             Some(PathBuf::from("/home/user/.config/nushell"))
         );
-    }
-
-    #[test]
-    fn test_parse_nu_config_output_trims_whitespace() {
-        let stdout = b"  /home/user/.config/nushell  \n";
+        // Trims whitespace
         assert_eq!(
-            parse_nu_config_output(stdout),
+            parse_nu_config_output(b"  /home/user/.config/nushell  \n"),
             Some(PathBuf::from("/home/user/.config/nushell"))
         );
-    }
-
-    #[test]
-    fn test_parse_nu_config_output_empty() {
+        // Empty / whitespace-only / invalid UTF-8
         assert_eq!(parse_nu_config_output(b""), None);
         assert_eq!(parse_nu_config_output(b"  \n"), None);
-    }
-
-    #[test]
-    fn test_parse_nu_config_output_invalid_utf8() {
         assert_eq!(parse_nu_config_output(&[0xFF, 0xFE]), None);
     }
 

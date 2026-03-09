@@ -467,13 +467,4 @@ mod tests {
         assert_eq!(mask.width(PositionMask::UPSTREAM_DIVERGENCE), 1);
         assert_eq!(mask.width(PositionMask::USER_MARKER), 2);
     }
-
-    #[test]
-    fn test_position_mask_default() {
-        let mask = PositionMask::default();
-        // Default has all widths at 0
-        for i in 0..7 {
-            assert_eq!(mask.width(i), 0);
-        }
-    }
 }

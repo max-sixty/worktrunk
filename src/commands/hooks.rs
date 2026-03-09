@@ -512,52 +512,39 @@ mod tests {
     }
 
     #[test]
-    fn test_parsed_filter_no_prefix() {
-        let filter = ParsedFilter::parse("foo");
-        assert!(filter.source.is_none());
-        assert_eq!(filter.name, "foo");
-        assert!(filter.matches_source(HookSource::User));
-        assert!(filter.matches_source(HookSource::Project));
-    }
+    fn test_parsed_filter() {
+        // No prefix — matches all sources
+        let f = ParsedFilter::parse("foo");
+        assert!(f.source.is_none());
+        assert_eq!(f.name, "foo");
+        assert!(f.matches_source(HookSource::User));
+        assert!(f.matches_source(HookSource::Project));
 
-    #[test]
-    fn test_parsed_filter_user_prefix() {
-        let filter = ParsedFilter::parse("user:foo");
-        assert_eq!(filter.source, Some(HookSource::User));
-        assert_eq!(filter.name, "foo");
-        assert!(filter.matches_source(HookSource::User));
-        assert!(!filter.matches_source(HookSource::Project));
-    }
+        // user: prefix
+        let f = ParsedFilter::parse("user:foo");
+        assert_eq!(f.source, Some(HookSource::User));
+        assert_eq!(f.name, "foo");
+        assert!(f.matches_source(HookSource::User));
+        assert!(!f.matches_source(HookSource::Project));
 
-    #[test]
-    fn test_parsed_filter_project_prefix() {
-        let filter = ParsedFilter::parse("project:bar");
-        assert_eq!(filter.source, Some(HookSource::Project));
-        assert_eq!(filter.name, "bar");
-        assert!(!filter.matches_source(HookSource::User));
-        assert!(filter.matches_source(HookSource::Project));
-    }
+        // project: prefix
+        let f = ParsedFilter::parse("project:bar");
+        assert_eq!(f.source, Some(HookSource::Project));
+        assert_eq!(f.name, "bar");
+        assert!(!f.matches_source(HookSource::User));
+        assert!(f.matches_source(HookSource::Project));
 
-    #[test]
-    fn test_parsed_filter_colon_in_name() {
-        // A name like "my:hook" without valid prefix should be parsed as-is
-        let filter = ParsedFilter::parse("my:hook");
-        assert!(filter.source.is_none());
-        assert_eq!(filter.name, "my:hook");
-    }
+        // Unknown prefix treated as name (colon in name)
+        let f = ParsedFilter::parse("my:hook");
+        assert!(f.source.is_none());
+        assert_eq!(f.name, "my:hook");
 
-    #[test]
-    fn test_parsed_filter_source_only() {
-        // "user:" means all user hooks (empty name)
-        let filter = ParsedFilter::parse("user:");
-        assert_eq!(filter.source, Some(HookSource::User));
-        assert_eq!(filter.name, "");
-        assert!(filter.matches_source(HookSource::User));
-        assert!(!filter.matches_source(HookSource::Project));
-
-        // "project:" means all project hooks
-        let filter = ParsedFilter::parse("project:");
-        assert_eq!(filter.source, Some(HookSource::Project));
-        assert_eq!(filter.name, "");
+        // Source-only (empty name matches all hooks from source)
+        let f = ParsedFilter::parse("user:");
+        assert_eq!(f.source, Some(HookSource::User));
+        assert_eq!(f.name, "");
+        let f = ParsedFilter::parse("project:");
+        assert_eq!(f.source, Some(HookSource::Project));
+        assert_eq!(f.name, "");
     }
 }

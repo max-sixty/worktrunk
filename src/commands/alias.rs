@@ -280,55 +280,113 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_name_only() {
-        let opts = parse(&["deploy"]).unwrap();
-        assert_eq!(opts.name, "deploy");
-        assert!(!opts.dry_run);
-        assert!(!opts.yes);
-        assert!(opts.vars.is_empty());
-    }
-
-    #[test]
-    fn test_parse_dry_run() {
-        let opts = parse(&["deploy", "--dry-run"]).unwrap();
-        assert!(opts.dry_run);
-    }
-
-    #[test]
-    fn test_parse_yes_long() {
-        let opts = parse(&["deploy", "--yes"]).unwrap();
-        assert!(opts.yes);
-    }
-
-    #[test]
-    fn test_parse_yes_short() {
-        let opts = parse(&["deploy", "-y"]).unwrap();
-        assert!(opts.yes);
-    }
-
-    #[test]
-    fn test_parse_var_separate() {
-        let opts = parse(&["deploy", "--var", "key=value"]).unwrap();
-        assert_eq!(opts.vars, vec![("key".into(), "value".into())]);
-    }
-
-    #[test]
-    fn test_parse_var_equals() {
-        let opts = parse(&["deploy", "--var=key=value"]).unwrap();
-        assert_eq!(opts.vars, vec![("key".into(), "value".into())]);
-    }
-
-    #[test]
-    fn test_parse_var_value_with_equals() {
-        let opts = parse(&["deploy", "--var", "url=http://host?a=1"]).unwrap();
-        assert_eq!(opts.vars[0], ("url".into(), "http://host?a=1".into()));
-    }
-
-    #[test]
-    fn test_parse_multiple_vars() {
-        let opts = parse(&["deploy", "--var", "a=1", "--var", "b=2", "--dry-run"]).unwrap();
-        assert_eq!(opts.vars.len(), 2);
-        assert!(opts.dry_run);
+    fn test_parse() {
+        use insta::assert_debug_snapshot;
+        assert_debug_snapshot!(parse(&["deploy"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+        }
+        "#);
+        assert_debug_snapshot!(parse(&["deploy", "--dry-run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: true,
+            yes: false,
+            vars: [],
+        }
+        "#);
+        assert_debug_snapshot!(parse(&["deploy", "--yes"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: true,
+            vars: [],
+        }
+        "#);
+        assert_debug_snapshot!(parse(&["deploy", "-y"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: true,
+            vars: [],
+        }
+        "#);
+        assert_debug_snapshot!(parse(&["deploy", "--var", "key=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "key",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // --var=key=value (equals form)
+        assert_debug_snapshot!(parse(&["deploy", "--var=key=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "key",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Value containing equals sign
+        assert_debug_snapshot!(parse(&["deploy", "--var", "url=http://host?a=1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "url",
+                    "http://host?a=1",
+                ),
+            ],
+        }
+        "#);
+        // Multiple vars + flags
+        assert_debug_snapshot!(parse(&["deploy", "--var", "a=1", "--var", "b=2", "--dry-run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: true,
+            yes: false,
+            vars: [
+                (
+                    "a",
+                    "1",
+                ),
+                (
+                    "b",
+                    "2",
+                ),
+            ],
+        }
+        "#);
+        // Empty value accepted
+        assert_debug_snapshot!(parse(&["deploy", "--var", "key="]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "key",
+                    "",
+                ),
+            ],
+        }
+        "#);
     }
 
     #[test]
@@ -343,34 +401,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_var_empty_value_accepted() {
-        let opts = parse(&["deploy", "--var", "key="]).unwrap();
-        assert_eq!(opts.vars, vec![("key".into(), String::new())]);
-    }
-
-    #[test]
-    fn test_find_closest_match_typo() {
+    fn test_find_closest_match() {
         assert_eq!(
             find_closest_match("deplyo", &["deploy", "hello"]),
-            Some("deploy"),
+            Some("deploy")
         );
-    }
-
-    #[test]
-    fn test_find_closest_match_missing_letter() {
         assert_eq!(
             find_closest_match("comit", &["commit", "squash", "push", "rebase"]),
-            Some("commit"),
+            Some("commit")
         );
-    }
-
-    #[test]
-    fn test_find_closest_match_no_match() {
         assert_eq!(find_closest_match("zzz", &["deploy", "hello"]), None);
-    }
-
-    #[test]
-    fn test_find_closest_match_empty_candidates() {
         assert_eq!(find_closest_match("deploy", &[]), None);
     }
 

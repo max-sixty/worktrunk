@@ -1464,31 +1464,6 @@ command = "llm -m opus"
     }
 
     #[test]
-    fn test_migrate_commit_generation_simple() {
-        let content = r#"
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("[commit-generation]"));
-    }
-
-    #[test]
-    fn test_migrate_commit_generation_with_args() {
-        let content = r#"
-[commit-generation]
-command = "llm"
-args = ["-m", "haiku"]
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("args"));
-    }
-
-    #[test]
     fn test_migrate_commit_generation_args_with_spaces() {
         let content = r#"
 [commit-generation]
@@ -1496,21 +1471,11 @@ command = "llm"
 args = ["-m", "claude haiku 4.5"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        // Args with spaces should be quoted
-        assert!(result.contains("command = \"llm -m 'claude haiku 4.5'\""));
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_commit_generation_project_level() {
-        let content = r#"
-[projects."github.com/user/repo".commit-generation]
-command = "llm -m gpt-4"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[projects.\"github.com/user/repo\".commit.generation]"));
-        assert!(result.contains("command = \"llm -m gpt-4\""));
-        assert!(!result.contains("commit-generation"));
+        [commit.generation]
+        command = "llm -m 'claude haiku 4.5'"
+        "#);
     }
 
     #[test]
@@ -1521,25 +1486,12 @@ command = "llm -m haiku"
 template = "Write commit: {{ diff }}"
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(result.contains("template = \"Write commit: {{ diff }}\""));
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_commit_generation_preserves_existing_commit_section() {
-        let content = r#"
-[commit]
-stage = "all"
-
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit]"));
-        assert!(result.contains("stage = \"all\""));
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
+        [commit.generation]
+        command = "llm -m haiku"
+        template = "Write commit: {{ diff }}"
+        "#);
     }
 
     #[test]
@@ -1549,14 +1501,11 @@ command = "llm -m haiku"
 command = "llm -m haiku"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Should return unchanged content
         assert_eq!(result, content);
     }
 
     #[test]
     fn test_migrate_skips_when_new_section_exists() {
-        // When both old and new sections exist, migration should NOT overwrite
-        // the new section (new takes precedence)
         let content = r#"
 [commit.generation]
 command = "new-command"
@@ -1565,16 +1514,15 @@ command = "new-command"
 command = "old-command"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // New section should be preserved, old section should be removed but not migrated
-        assert!(
-            result.contains("command = \"new-command\""),
-            "New command should be preserved"
-        );
-        // Old section is left alone (not migrated since new exists)
-        assert!(
-            result.contains("[commit-generation]"),
-            "Old section is left as-is since new already exists"
-        );
+        // Old section left as-is since new already exists
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "new-command"
+
+        [commit-generation]
+        command = "old-command"
+        "#);
     }
 
     #[test]
@@ -1624,8 +1572,6 @@ command = "old-command"
 
     #[test]
     fn test_combined_migrations_template_vars_and_section_rename() {
-        // Test that both deprecated template variables AND deprecated
-        // [commit-generation] section are migrated in a single pass
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
@@ -1633,22 +1579,15 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 command = "llm"
 args = ["-m", "haiku"]
 "#;
-        // First apply template var replacements
         let step1 = replace_deprecated_vars(content);
-        assert!(step1.contains("{{ repo }}"), "main_worktree → repo");
-
-        // Then apply section migration
         let step2 = migrate_commit_generation_sections(&step1);
-        assert!(step2.contains("[commit.generation]"), "Section renamed");
-        assert!(
-            step2.contains("command = \"llm -m haiku\""),
-            "Args merged into command"
-        );
-        assert!(
-            !step2.contains("[commit-generation]"),
-            "Old section removed"
-        );
-        assert!(!step2.contains("args"), "Args field removed");
+        insta::assert_snapshot!(step2, @r#"
+
+        worktree-path = "../{{ repo }}.{{ branch }}"
+
+        [commit.generation]
+        command = "llm -m haiku"
+        "#);
     }
 
     // Tests for inline table handling
@@ -1737,28 +1676,6 @@ commit-generation = { command = "llm", args = ["-m", "gpt-4"] }
     }
 
     #[test]
-    fn test_migrate_preserves_existing_commit_stage() {
-        // When [commit] section already exists with other fields, preserve them
-        let content = r#"
-[commit]
-stage = "all"
-
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("stage = \"all\""), "Should preserve stage");
-        assert!(
-            result.contains("[commit.generation]"),
-            "Should add generation subsection"
-        );
-        assert!(
-            result.contains("command = \"llm -m haiku\""),
-            "Should migrate command"
-        );
-    }
-
-    #[test]
     fn test_find_deprecations_empty_inline_table() {
         // Empty inline table should not be flagged
         let content = r#"
@@ -1773,76 +1690,51 @@ commit-generation = {}
 
     #[test]
     fn test_migrate_args_without_command_preserved() {
-        // When args exists but command doesn't, args should be preserved
-        // (merge_args_into_command won't run without a command)
+        // Args preserved when no command to merge into
         let content = r#"
 [commit-generation]
 args = ["-m", "haiku"]
 template = "some template"
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(
-            result.contains("[commit.generation]"),
-            "Section should be renamed"
-        );
-        // Args should be preserved since there's no command to merge into
-        assert!(
-            result.contains("args ="),
-            "Args should be preserved when no command exists"
-        );
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        args = ["-m", "haiku"]
+        template = "some template"
+        "#);
     }
 
     #[test]
     fn test_migrate_args_with_non_string_command() {
-        // When command is not a string (e.g., integer), args should be preserved
+        // Args preserved when command is not a string
         let content = r#"
 [commit-generation]
 command = 123
 args = ["-m", "haiku"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Args should be preserved since command is not a string
-        assert!(
-            result.contains("args ="),
-            "Args should be preserved when command is not a string"
-        );
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_command_only_no_args() {
-        // When only command exists (no args), it should migrate cleanly
-        let content = r#"
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("args"));
+        [commit.generation]
+        command = 123
+        args = ["-m", "haiku"]
+        "#);
     }
 
     #[test]
     fn test_migrate_empty_command_with_args() {
-        // When command is empty string but args exist, args become the command
         let content = r#"
 [commit-generation]
 command = ""
 args = ["-m", "haiku"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(
-            result.contains("[commit.generation]"),
-            "Section should be renamed"
-        );
-        // Empty command + args should produce just args as command
-        assert!(
-            result.contains("command = \"-m haiku\""),
-            "Empty command should be replaced with args"
-        );
-        assert!(
-            !result.contains("args"),
-            "Args field should be removed after merge"
-        );
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "-m haiku"
+        "#);
     }
 
     #[test]
@@ -2036,31 +1928,6 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
     // Tests for remove_approved_commands_from_config
 
     #[test]
-    fn test_remove_approved_commands_simple() {
-        let content = r#"
-[projects."github.com/user/repo"]
-approved-commands = ["npm install", "npm test"]
-"#;
-        let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        // Empty project section and empty projects table should be removed
-        assert!(!result.contains("[projects"));
-    }
-
-    #[test]
-    fn test_remove_approved_commands_preserves_other_fields() {
-        let content = r#"
-[projects."github.com/user/repo"]
-approved-commands = ["npm install"]
-worktree-path = ".worktrees/{{ branch | sanitize }}"
-"#;
-        let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        assert!(result.contains("worktree-path"));
-        assert!(result.contains("projects"));
-    }
-
-    #[test]
     fn test_remove_approved_commands_multiple_projects() {
         let content = r#"
 [projects."github.com/user/repo1"]
@@ -2071,12 +1938,11 @@ approved-commands = ["cargo test"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 "#;
         let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        // repo1 had only approved-commands, so its section should be removed
-        assert!(!result.contains("repo1"));
-        // repo2 has other fields, so its section should remain
-        assert!(result.contains("repo2"));
-        assert!(result.contains("worktree-path"));
+        insta::assert_snapshot!(result, @r#"
+
+        [projects."github.com/user/repo2"]
+        worktree-path = ".worktrees/{{ branch | sanitize }}"
+        "#);
     }
 
     #[test]

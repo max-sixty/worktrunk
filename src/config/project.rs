@@ -221,82 +221,6 @@ pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, to
 mod tests {
     use super::*;
 
-    // ============================================================================
-    // ProjectConfig Default Tests
-    // ============================================================================
-
-    #[test]
-    fn test_project_config_default() {
-        let config = ProjectConfig::default();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.post_start.is_none());
-        assert!(config.hooks.post_switch.is_none());
-        assert!(config.hooks.pre_commit.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-        assert!(config.hooks.post_merge.is_none());
-        assert!(config.hooks.pre_remove.is_none());
-        assert!(config.list.is_none());
-        assert!(config.ci.is_none());
-    }
-
-    // ============================================================================
-    // Deserialization Tests
-    // ============================================================================
-
-    #[test]
-    fn test_deserialize_empty_config() {
-        let contents = "";
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-    }
-
-    #[test]
-    fn test_deserialize_post_create_string() {
-        let contents = r#"post-create = "npm install""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_post_start_table() {
-        let contents = r#"
-[post-start]
-build = "cargo build"
-test = "cargo test"
-"#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_start.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_merge() {
-        let contents = r#"pre-merge = "cargo test""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_merge.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_post_merge() {
-        let contents = r#"post-merge = "git push origin main""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_merge.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_remove() {
-        let contents = r#"pre-remove = "echo cleaning up""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_remove.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_commit() {
-        let contents = r#"pre-commit = "cargo fmt --check""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_commit.is_some());
-    }
-
     #[test]
     fn test_deserialize_all_hooks() {
         let contents = r#"
@@ -348,13 +272,6 @@ url = "http://localhost:{{ branch | hash_port }}"
         let list = config.list.unwrap();
         assert!(list.url.is_none());
         assert!(!list.is_configured());
-    }
-
-    #[test]
-    fn test_list_config_default() {
-        let config = ProjectListConfig::default();
-        assert!(config.url.is_none());
-        assert!(!config.is_configured());
     }
 
     // ============================================================================
