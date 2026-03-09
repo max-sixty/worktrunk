@@ -314,27 +314,12 @@ pub fn handle_select(
 
         // --print: just output the selected branch name and exit (read-only, no side effects)
         if print_only {
-            let identifier = match action {
-                PickerAction::Create => {
-                    let query = out.query.trim().to_string();
-                    if query.is_empty() {
-                        anyhow::bail!("Cannot create worktree: no branch name entered");
-                    }
-                    query
-                }
-                PickerAction::Switch => {
-                    let selected = out
-                        .selected_items
-                        .first()
-                        .context("skim accept has no selection")?;
-                    selected.output().to_string()
-                }
-                PickerAction::Remove => {
-                    anyhow::bail!(
-                        "--print is read-only and cannot be combined with remove (alt-r)"
-                    );
-                }
-            };
+            let selected_name = out
+                .selected_items
+                .first()
+                .map(|item| item.output().to_string());
+            let query = out.query.trim().to_string();
+            let identifier = resolve_print_identifier(&action, query, selected_name)?;
             println!("{identifier}");
             return Ok(());
         }
@@ -448,9 +433,32 @@ pub fn handle_select(
     Ok(())
 }
 
+/// Resolve the identifier to print for `--print` mode.
+///
+/// Extracted from the picker callback for testability.
+fn resolve_print_identifier(
+    action: &PickerAction,
+    query: String,
+    selected_name: Option<String>,
+) -> anyhow::Result<String> {
+    match action {
+        PickerAction::Create => {
+            if query.is_empty() {
+                anyhow::bail!("Cannot create worktree: no branch name entered");
+            }
+            Ok(query)
+        }
+        PickerAction::Switch => selected_name.context("skim accept has no selection"),
+        PickerAction::Remove => {
+            anyhow::bail!("--print is read-only and cannot be combined with remove (alt-r)")
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
+    use super::{PickerAction, resolve_print_identifier};
     use std::fs;
 
     #[test]
@@ -486,5 +494,33 @@ pub mod tests {
         // Down calculates based on item count
         let spec = PreviewLayout::Down.to_preview_window_spec(5);
         assert!(spec.starts_with("down:"));
+    }
+
+    #[test]
+    fn test_resolve_print_identifier() {
+        // Switch returns the selected name
+        let result = resolve_print_identifier(
+            &PickerAction::Switch,
+            String::new(),
+            Some("feature/foo".into()),
+        );
+        assert_eq!(result.unwrap(), "feature/foo");
+
+        // Switch with no selection is an error
+        let result = resolve_print_identifier(&PickerAction::Switch, String::new(), None);
+        assert!(result.is_err());
+
+        // Create returns the query
+        let result = resolve_print_identifier(&PickerAction::Create, "new-branch".into(), None);
+        assert_eq!(result.unwrap(), "new-branch");
+
+        // Create with empty query is an error
+        let result = resolve_print_identifier(&PickerAction::Create, String::new(), None);
+        assert!(result.unwrap_err().to_string().contains("no branch name"));
+
+        // Remove is always an error
+        let result =
+            resolve_print_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
+        assert!(result.unwrap_err().to_string().contains("read-only"));
     }
 }
