@@ -326,7 +326,7 @@ pub fn handle_select(
                     let selected = out
                         .selected_items
                         .first()
-                        .expect("skim accept has selection");
+                        .context("skim accept has no selection")?;
                     selected.output().to_string()
                 }
                 PickerAction::Remove => {
