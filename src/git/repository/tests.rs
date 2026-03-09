@@ -403,6 +403,98 @@ fn repo_path_error_when_is_bare_fails() {
 }
 
 #[test]
+fn repo_name_from_directory_name() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    let cache = RepoCache::default();
+    // Pre-populate: non-bare repo with a valid repo_path
+    cache.is_bare.set(false).unwrap();
+    cache
+        .repo_path
+        .set(PathBuf::from("/home/user/projects/my-project"))
+        .unwrap();
+
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/home/user/projects/my-project"),
+        git_common_dir: PathBuf::from("/home/user/projects/my-project/.git"),
+        cache: Arc::new(cache),
+    };
+
+    assert_eq!(repo.repo_name().unwrap(), "my-project");
+    // Second call should return cached value
+    assert_eq!(repo.repo_name().unwrap(), "my-project");
+}
+
+#[test]
+fn repo_name_error_propagates_from_repo_path() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    // Non-existent git_common_dir makes both repo_path() and is_bare() fail
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/nonexistent/repo"),
+        git_common_dir: PathBuf::from("/nonexistent/.git"),
+        cache: Arc::new(RepoCache::default()),
+    };
+
+    let err = repo.repo_name().unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("failed to check if repository is bare"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[test]
+fn repo_name_bare_repo_without_remote_uses_directory_name() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    let cache = RepoCache::default();
+    // Pre-populate: bare repo, no remote URL
+    cache.is_bare.set(true).unwrap();
+    cache
+        .repo_path
+        .set(PathBuf::from("/home/user/repos/my-bare-repo"))
+        .unwrap();
+    cache.primary_remote_url.set(None).unwrap();
+
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/home/user/repos/my-bare-repo"),
+        git_common_dir: PathBuf::from("/home/user/repos/my-bare-repo"),
+        cache: Arc::new(cache),
+    };
+
+    assert_eq!(repo.repo_name().unwrap(), "my-bare-repo");
+}
+
+#[test]
+fn repo_name_bare_repo_with_remote_uses_url() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    let cache = RepoCache::default();
+    cache.is_bare.set(true).unwrap();
+    cache
+        .repo_path
+        .set(PathBuf::from("/home/user/repos/project.git"))
+        .unwrap();
+    cache
+        .primary_remote_url
+        .set(Some("https://github.com/org/cool-project.git".to_string()))
+        .unwrap();
+
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/home/user/repos/project.git"),
+        git_common_dir: PathBuf::from("/home/user/repos/project.git"),
+        cache: Arc::new(cache),
+    };
+
+    assert_eq!(repo.repo_name().unwrap(), "cool-project");
+}
+
+#[test]
 fn extract_failed_command_from_stream_error() {
     use super::StreamCommandError;
 
