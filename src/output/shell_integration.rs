@@ -499,11 +499,15 @@ mod tests {
         );
         // Should extract filename and give targeted advice
         assert!(!reason.contains(r"C:\Users")); // No full path
-        assert_snapshot!(reason, @"");
+        assert!(reason.contains("git-wt.exe"), "{reason}");
+        assert!(reason.contains("without .exe"), "{reason}");
 
         // Windows paths are case-insensitive
         let reason = compute_shell_warning_reason_inner(true, true, r"C:\path\to\WT.EXE", "wt");
-        assert_snapshot!(reason, @"");
+        assert!(
+            reason.contains("WT.EXE") || reason.contains(".exe"),
+            "{reason}"
+        );
     }
 
     #[test]

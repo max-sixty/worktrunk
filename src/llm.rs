@@ -1204,7 +1204,10 @@ Single commit: {{ commits[0] }}
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mFailed to read template-file [1m/nonexistent/path/template.txt[22m: No such file or directory (os error 2)[39m");
+        // OS error text varies by platform, so use contains
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Failed to read template-file"), "{err}");
+        assert!(err.contains("/nonexistent/path/template.txt"), "{err}");
     }
 
     #[test]
@@ -1249,7 +1252,10 @@ Single commit: {{ commits[0] }}
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
         // Should fail because file doesn't exist
-        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mFailed to read template-file [1m~/nonexistent_template_for_test.txt[22m: No such file or directory (os error 2)[39m");
+        // OS error text varies by platform, so use contains
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Failed to read template-file"), "{err}");
+        assert!(err.contains("~/nonexistent_template_for_test.txt"), "{err}");
     }
 
     #[test]
