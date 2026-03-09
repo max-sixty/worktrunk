@@ -14,7 +14,9 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::styling::{eprintln, format_with_gutter, info_message, progress_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, progress_message, warning_message,
+};
 
 use crate::commands::command_approval::approve_alias;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -157,6 +159,28 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .and_then(|pc| pc.aliases.clone())
         .unwrap_or_default();
     aliases.extend(user_config.aliases(project_id.as_deref()));
+
+    // Warn about aliases that shadow built-in step commands
+    let shadowed: Vec<_> = aliases
+        .keys()
+        .filter(|k| BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
+        .collect();
+    if !shadowed.is_empty() {
+        let names = shadowed
+            .iter()
+            .map(|k| cformat!("<bold>{k}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let (noun, verb) = if shadowed.len() == 1 {
+            ("Alias", "shadows a built-in step command")
+        } else {
+            ("Aliases", "shadow built-in step commands")
+        };
+        eprintln!(
+            "{}",
+            warning_message(format!("{noun} {names} {verb} and will never run"))
+        );
+    }
 
     let Some(template) = aliases.get(&opts.name) else {
         // Check for typos against both built-in commands and aliases

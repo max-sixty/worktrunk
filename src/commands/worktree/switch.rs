@@ -648,7 +648,7 @@ pub fn execute_switch(
     plan: SwitchPlan,
     config: &UserConfig,
     force: bool,
-    no_verify: bool,
+    run_hooks: bool,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
     match plan {
         SwitchPlan::Existing {
@@ -861,7 +861,7 @@ pub fn execute_switch(
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // Execute post-create commands
-            if !no_verify {
+            if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
 
                 match &method {

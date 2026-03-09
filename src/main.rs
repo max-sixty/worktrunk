@@ -235,7 +235,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             verify,
             stage,
             show_prompt,
-        } => step_commit(yes, !verify, stage, show_prompt),
+        } => step_commit(yes, verify, stage, show_prompt),
         StepCommand::Squash {
             target,
             yes,
@@ -248,7 +248,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
                 commands::step_show_squash_prompt(target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result {
+                handle_squash(target.as_deref(), yes, verify, stage).map(|result| match result {
                     SquashResult::Squashed | SquashResult::NoNetChanges => {}
                     SquashResult::NoCommitsAhead(branch) => {
                         eprintln!(

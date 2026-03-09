@@ -163,7 +163,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
-            options.no_verify = !verify;
+            options.verify = verify;
             options.stage_mode = stage_mode;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
@@ -181,7 +181,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             super::step_commands::handle_squash(
                 Some(&target_branch),
                 yes,
-                !verify, // skip_pre_commit when !verify
+                verify,
                 Some(stage_mode)
             )?,
             super::step_commands::SquashResult::Squashed

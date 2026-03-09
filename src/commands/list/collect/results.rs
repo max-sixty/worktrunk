@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 use crossbeam_channel as chan;
 use worktrunk::git::LineDiff;
 
+/// Deadline for the entire drain operation. Generous to avoid flaky timeouts
+/// under CI load where process spawning for ~70 work items can be slow.
+pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
+
 use super::super::model::{CommitDetails, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::execution::ExpectedResults;
 use super::types::{DrainOutcome, MissingResult, StatusContext, TaskError, TaskKind, TaskResult};
@@ -100,7 +104,7 @@ pub(super) fn apply_default(
 /// item index and a reference to the updated item, allowing progressive mode
 /// to update the live table while buffered mode does nothing.
 ///
-/// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
+/// Uses [`DRAIN_TIMEOUT`] to prevent infinite hangs if git commands stall.
 /// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
 ///
 /// Errors are collected in the `errors` vec for display after rendering.
@@ -116,8 +120,7 @@ pub(super) fn drain_results(
     expected_results: &ExpectedResults,
     mut on_result: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) -> DrainOutcome {
-    // Deadline for the entire drain operation (30 seconds should be more than enough)
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + DRAIN_TIMEOUT;
 
     // Track which result kinds we've received per item (for timeout diagnostics)
     let mut received_by_item: Vec<Vec<TaskKind>> = vec![Vec::new(); items.len()];

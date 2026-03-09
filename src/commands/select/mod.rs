@@ -370,8 +370,9 @@ pub fn handle_select(
 
                 // Switch to existing worktree or create new one
                 let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
-                let skip_hooks = !approve_switch_hooks(&repo, config, &plan, false, true)?;
-                let (result, branch_info) = execute_switch(&repo, plan, config, false, skip_hooks)?;
+                let hooks_approved = approve_switch_hooks(&repo, config, &plan, false, true)?;
+                let (result, branch_info) =
+                    execute_switch(&repo, plan, config, false, hooks_approved)?;
 
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
@@ -400,7 +401,7 @@ pub fn handle_select(
                 )?;
 
                 // Spawn background hooks after success message
-                if !skip_hooks {
+                if hooks_approved {
                     let extra_vars = switch_extra_vars(&result);
                     spawn_switch_background_hooks(
                         &repo,
