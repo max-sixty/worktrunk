@@ -325,7 +325,7 @@ pub fn handle_select(
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
                 let result = handle_remove(
                     &branch_name,
-                    false, // no_delete_branch: delete branch (default behavior)
+                    false, // keep_branch: delete branch (default behavior)
                     false, // force_delete: no -D
                     false, // force_worktree: no -f
                     config,

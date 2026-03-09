@@ -137,7 +137,7 @@ impl SwitchPlan {
 
 /// How the branch should be handled after worktree removal.
 ///
-/// This enum replaces the previous `no_delete_branch: bool, force_delete: bool` pattern,
+/// This enum replaces the previous boolean flag pair,
 /// making the three valid states explicit and preventing invalid combinations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchDeletionMode {
@@ -153,8 +153,8 @@ impl BranchDeletionMode {
     /// Create from CLI flags.
     ///
     /// `--no-delete-branch` takes precedence over `-D` (force delete).
-    pub fn from_flags(no_delete_branch: bool, force_delete: bool) -> Self {
-        if no_delete_branch {
+    pub fn from_flags(keep_branch: bool, force_delete: bool) -> Self {
+        if keep_branch {
             Self::Keep
         } else if force_delete {
             Self::ForceDelete
