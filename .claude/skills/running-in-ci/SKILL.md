@@ -1,6 +1,6 @@
 ---
 name: running-in-ci
-description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, and comment formatting.
+description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, comment formatting, and investigating session logs from other runs.
 ---
 
 # Running in CI
@@ -198,6 +198,66 @@ session. This makes PRs easier to review, revert, and bisect.
 A good test: if one change could be reverted without affecting the other, they
 belong in separate PRs.
 
+## Investigating Other CI Runs
+
+When asked to diagnose what a bot did in a previous CI run, the primary evidence
+is the session log artifact — not the console output. Console output
+(`gh run view <id> --log`) contains only workflow boilerplate because
+`show_full_output` defaults to `false`. The actual conversation is in the
+artifact.
+
+### Downloading session logs
+
+All Claude workflows upload session logs as artifacts named
+`claude-session-logs`. Download with:
+
+```bash
+gh run download <run-id> -n claude-session-logs -D /tmp/session-logs-<run-id>
+```
+
+The artifact contains JSONL files under a path like
+`-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`.
+
+### Parsing session logs
+
+Each JSONL line is a message with a `type` field (`user`, `assistant`, `system`).
+
+```bash
+# Skills loaded
+jq -r 'select(.type == "assistant") | .message.content[]? |
+  select(.type == "tool_use" and .name == "Skill") | .input.skill' <FILE>.jsonl
+
+# Tool calls
+jq -r 'select(.type == "assistant") | .message.content[]? |
+  select(.type == "tool_use") |
+  "\(.name): \(.input | tostring | .[0:100])"' <FILE>.jsonl
+
+# Assistant reasoning
+jq -r 'select(.type == "assistant") | .message.content[]? |
+  select(.type == "text") | .text' <FILE>.jsonl
+```
+
+### Finding the right run
+
+Multiple workflows may trigger on the same event. Use the event type to narrow:
+
+```bash
+gh api 'repos/{owner}/{repo}/actions/runs?per_page=30' \
+  --jq '.workflow_runs[] | select(.name | startswith("claude-")) |
+    {id, name, event, head_branch, created_at, conclusion}'
+```
+
+Check which runs have artifacts before downloading:
+
+```bash
+gh api repos/{owner}/{repo}/actions/runs/<run-id>/artifacts \
+  --jq '.artifacts[] | {name, size_in_bytes}'
+```
+
+Review-response runs triggered by `pull_request_review` or
+`pull_request_review_comment` events sometimes produce no artifact when the
+session is very short.
+
 ## Thoroughness — Grounded Analysis
 
 CI runs are not interactive chat. There is no back-and-forth — the user reads
@@ -219,6 +279,9 @@ actually examined.
 - **Distinguish what you verified from what you inferred.** If you couldn't
   verify something (e.g., logs weren't available), say so explicitly rather than
   hedging with "may" or "suggests."
+- **Check artifacts, not just console logs.** Console output from Claude runs is
+  hidden by default. Session log artifacts are the primary evidence source — see
+  "Investigating Other CI Runs" above.
 
 The user can't ask follow-up questions in the same session. Treat every response
 as your final answer.
