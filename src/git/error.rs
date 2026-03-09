@@ -340,7 +340,7 @@ impl GitError {
 
             GitError::DetachedHead { action } => {
                 let message = match action {
-                    Some(action) => format!("Cannot {action}: not on a branch (detached HEAD)"),
+                    Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
                     None => "Not on a branch (detached HEAD)".to_string(),
                 };
                 write!(
@@ -434,7 +434,7 @@ impl GitError {
 
             GitError::NotInWorktree { action } => {
                 let message = match action {
-                    Some(action) => format!("Cannot {action}: not in a worktree"),
+                    Some(action) => cformat!("Cannot {action}: not in a worktree"),
                     None => "Not in a worktree".to_string(),
                 };
                 write!(
