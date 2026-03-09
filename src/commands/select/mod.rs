@@ -42,6 +42,7 @@ pub fn handle_select(
     cli_branches: bool,
     cli_remotes: bool,
     change_dir: bool,
+    print_only: bool,
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
@@ -310,6 +311,33 @@ pub fn handle_select(
             Event::EvActAccept(Some(label)) if label == "remove" => PickerAction::Remove,
             _ => PickerAction::Switch,
         };
+
+        // --print: just output the selected branch name and exit (read-only, no side effects)
+        if print_only {
+            let identifier = match action {
+                PickerAction::Create => {
+                    let query = out.query.trim().to_string();
+                    if query.is_empty() {
+                        anyhow::bail!("Cannot create worktree: no branch name entered");
+                    }
+                    query
+                }
+                PickerAction::Switch => {
+                    let selected = out
+                        .selected_items
+                        .first()
+                        .expect("skim accept has selection");
+                    selected.output().to_string()
+                }
+                PickerAction::Remove => {
+                    anyhow::bail!(
+                        "--print is read-only and cannot be combined with remove (alt-r)"
+                    );
+                }
+            };
+            println!("{identifier}");
+            return Ok(());
+        }
 
         match action {
             PickerAction::Remove => {

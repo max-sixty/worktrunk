@@ -446,6 +446,13 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(long, requires = "branch")]
         clobber: bool,
 
+        /// Print selected worktree name and exit
+        ///
+        /// Opens the picker, prints the branch name on selection, and
+        /// exits without switching. Useful for scripting.
+        #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber", "branch"])]
+        print: bool,
+
         /// Skip directory change after switching
         ///
         /// Hooks still run normally. Useful when hooks handle navigation

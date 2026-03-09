@@ -227,6 +227,12 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--remotes</span></b>
           Include remote branches
 
+      <b><span class=c>--print</span></b>
+          Print selected worktree name and exit
+
+          Opens the picker, prints the branch name on selection, and exits
+          without switching. Useful for scripting.
+
 <b><span class=g>Automation:</span></b>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

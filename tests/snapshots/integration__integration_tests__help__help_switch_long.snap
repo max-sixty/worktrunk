@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -88,6 +89,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
       [1m[36m--remotes[0m
           Include remote branches
+
+      [1m[36m--print[0m
+          Print selected worktree name and exit[0m
+          
+          Opens the picker, prints the branch name on selection, and exits without switching. Useful for scripting.[0m
 
 [1m[32mAutomation:[0m
   [1m[36m-y[0m, [1m[36m--yes[0m

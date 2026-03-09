@@ -462,7 +462,7 @@ fn handle_list_command(
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_select
     warn_select_deprecated();
-    handle_select(branches, remotes, true)
+    handle_select(branches, remotes, true, false)
 }
 
 #[cfg(not(unix))]
@@ -482,6 +482,7 @@ struct SwitchCommandArgs {
     execute_args: Vec<String>,
     yes: bool,
     clobber: bool,
+    print: bool,
     no_cd: bool,
     verify: bool,
 }
@@ -494,13 +495,13 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, !spec.no_cd);
+                    return handle_select(spec.branches, spec.remotes, !spec.no_cd, spec.print);
                 }
 
                 #[cfg(not(unix))]
                 {
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes);
+                    let _ = (spec.branches, spec.remotes, spec.print);
 
                     print_windows_picker_unavailable();
                     std::process::exit(2);
@@ -904,6 +905,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            print,
             no_cd,
             verify,
         } => handle_switch_command(SwitchCommandArgs {
@@ -916,6 +918,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            print,
             no_cd,
             verify,
         }),
