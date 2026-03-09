@@ -1343,6 +1343,7 @@ pub fn execute_command_in_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_format_switch_message() {
@@ -1350,29 +1351,21 @@ mod tests {
 
         // Switched to existing worktree (no creation)
         let msg = format_switch_message("feature", &path, false, false, None, None);
-        assert!(msg.contains("Switched to worktree for"));
-        assert!(msg.contains("feature"));
+        assert_snapshot!(msg, @"Switched to worktree for [1mfeature[22m @ [1m/tmp/test[22m");
 
         // Created branch and worktree with --create
         let msg = format_switch_message("feature", &path, true, true, Some("main"), None);
-        assert!(msg.contains("Created branch"));
-        assert!(msg.contains("and worktree"));
-        assert!(msg.contains("from"));
-        assert!(msg.contains("main"));
+        assert_snapshot!(msg, @"Created branch [1mfeature[22m from [1mmain[22m and worktree @ [1m/tmp/test[22m");
 
         // Created worktree from remote (DWIM) - also creates local tracking branch
         let msg =
             format_switch_message("feature", &path, true, false, None, Some("origin/feature"));
-        assert!(msg.contains("Created branch"));
-        assert!(msg.contains("tracking"));
-        assert!(msg.contains("origin/feature"));
-        assert!(msg.contains("and worktree"));
+        assert_snapshot!(msg, @"Created branch [1mfeature[22m (tracking [1morigin/feature[22m) and worktree @ [1m/tmp/test[22m");
 
         // Created worktree only (local branch already existed)
         let msg = format_switch_message("feature", &path, true, false, None, None);
-        assert!(msg.contains("Created worktree for"));
-        assert!(msg.contains("feature"));
         assert!(!msg.contains("branch")); // Should NOT mention branch creation
+        assert_snapshot!(msg, @"Created worktree for [1mfeature[22m @ [1m/tmp/test[22m");
     }
 
     #[test]
@@ -1499,13 +1492,12 @@ mod tests {
     #[test]
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
-        assert!(hint.contains("wt config shell install"));
+        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
     }
 
     #[test]
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
-        assert!(warning.contains("git-wt"));
-        assert!(warning.contains("with the"));
+        assert_snapshot!(warning, @"For automatic cd, invoke directly (with the [4m-[24m): [4mgit-wt[24m");
     }
 }

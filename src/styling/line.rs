@@ -159,6 +159,8 @@ impl StyledLine {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     /// Width calculation ignores ANSI escape codes and OSC 8 hyperlinks.
@@ -237,9 +239,7 @@ mod tests {
         assert_eq!(line.plain_text(), "hello world!");
 
         // render() includes ANSI codes but preserves text
-        let rendered = line.render();
-        assert!(rendered.contains("hello"));
-        assert!(rendered.contains("world"));
+        assert_snapshot!(line.render(), @"hello[1m world[0m!");
 
         // extend merges segments
         let mut a = StyledLine::new();
@@ -281,8 +281,6 @@ mod tests {
     fn test_styled_string_render_styled() {
         let style = Style::new().bold();
         let s = StyledString::styled("test", style);
-        let rendered = s.render();
-        assert!(rendered.contains("test"));
-        assert!(rendered.starts_with("\u{1b}["));
+        assert_snapshot!(s.render(), @"[1mtest[0m");
     }
 }

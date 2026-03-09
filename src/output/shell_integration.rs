@@ -454,47 +454,42 @@ pub fn prompt_shell_integration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
-        assert!(hint.contains("wt config shell install"));
+        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
     }
 
     #[test]
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
-        assert!(warning.contains("git-wt"));
-        assert!(warning.contains("with the"));
+        assert_snapshot!(warning, @"For automatic cd, invoke directly (with the [4m-[24m): [4mgit-wt[24m");
     }
 
     #[test]
-    fn test_compute_shell_warning_reason_not_installed() {
+    fn test_compute_shell_warning_reason() {
         // Shell integration not configured -> "not installed"
         let reason = compute_shell_warning_reason_inner(false, false, "wt", "wt");
         assert_eq!(reason, "shell integration not installed");
-    }
 
-    #[test]
-    fn test_compute_shell_warning_reason_explicit_path_same_name() {
         // When filename matches wraps, show full path (the path IS the useful info)
         let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
-        assert!(reason.contains("./target/debug/wt"));
-        assert!(reason.contains("wraps"));
-    }
+        assert_snapshot!(reason, @"ran [1m./target/debug/wt[22m; shell integration wraps [1mwt[22m");
 
-    #[test]
-    fn test_compute_shell_warning_reason_explicit_path_different_binary() {
         // When invoked binary differs from wrapped binary, show both
         let reason = compute_shell_warning_reason_inner(true, true, "/usr/local/bin/git-wt", "wt");
-        assert!(reason.contains("git-wt"));
-        assert!(reason.contains("wt"));
-        assert!(reason.contains("wraps"));
+        assert_snapshot!(reason, @"ran [1mgit-wt[22m; shell integration wraps [1mwt[22m");
+
+        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
+        assert_eq!(reason, "shell requires restart");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_compute_shell_warning_reason_windows_exe_suffix() {
+    fn test_compute_shell_warning_reason_windows() {
         // Windows: invoked as git-wt.exe, wraps git-wt -> targeted .exe message
         let reason = compute_shell_warning_reason_inner(
             true,
@@ -503,32 +498,22 @@ mod tests {
             "git-wt",
         );
         // Should extract filename and give targeted advice
-        assert!(reason.contains("git-wt.exe"));
-        assert!(reason.contains("without .exe"));
         assert!(!reason.contains(r"C:\Users")); // No full path
-    }
+        assert_snapshot!(reason, @"");
 
-    #[test]
-    #[cfg(windows)]
-    fn test_compute_shell_warning_reason_windows_exe_case_insensitive() {
         // Windows paths are case-insensitive
         let reason = compute_shell_warning_reason_inner(true, true, r"C:\path\to\WT.EXE", "wt");
-        assert!(reason.contains("without .exe"));
-    }
-
-    #[test]
-    fn test_compute_shell_warning_reason_needs_restart() {
-        // Shell integration configured + NOT explicit path -> "shell requires restart"
-        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
-        assert_eq!(reason, "shell requires restart");
+        assert_snapshot!(reason, @"");
     }
 
     #[test]
     fn test_explicit_path_hint_format() {
-        // Verify hint contains the branch name and "switch" command
         let hint = explicit_path_hint("feature-branch");
-        assert!(hint.contains("switch"));
-        assert!(hint.contains("feature-branch"));
-        assert!(hint.contains("To change directory"));
+        // binary_name() returns the test binary hash in test context; normalize it
+        let mut settings = insta::Settings::clone_current();
+        settings.add_filter(r"wt-[0-9a-f]+", "wt");
+        settings.bind(|| {
+            assert_snapshot!(hint, @"To change directory, run [4mwt switch feature-branch[24m");
+        });
     }
 }

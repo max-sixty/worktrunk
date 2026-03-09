@@ -439,11 +439,16 @@ fn colorize_status_symbols(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     /// Test helper: render markdown without prose wrapping
     fn render_markdown_in_help(help: &str) -> String {
         render_markdown_in_help_with_width(help, None)
     }
+
+    // ============================================================================
+    // strip_markdown_links / unescape_table_pipes (exact transformations)
+    // ============================================================================
 
     #[test]
     fn test_render_inline_formatting_strips_links() {
@@ -452,16 +457,6 @@ mod tests {
             render_inline_formatting("See [wt hook](@/hook.md) for details"),
             "See wt hook for details"
         );
-    }
-
-    #[test]
-    fn test_render_inline_formatting_backticks_in_link() {
-        // Backticks inside link text should be preserved and rendered as code
-        let result = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
-        // Should contain dimmed "wt hook" (code style)
-        assert!(result.contains("\u{1b}[2mwt hook\u{1b}[0m"));
-        assert!(result.contains("See "));
-        assert!(result.contains(" for details"));
     }
 
     #[test]
@@ -497,150 +492,133 @@ mod tests {
 
     #[test]
     fn test_unescape_table_pipes() {
-        // Basic conversion
         assert_eq!(unescape_table_pipes(r"a \| b"), "a | b");
-        // Multiple escapes
         assert_eq!(
             unescape_table_pipes(r"\| start \| end \|"),
             "| start | end |"
         );
-        // No escapes - unchanged
         assert_eq!(unescape_table_pipes("no pipes here"), "no pipes here");
-        // Regular pipe - unchanged
         assert_eq!(unescape_table_pipes("a | b"), "a | b");
     }
 
-    #[test]
-    fn test_render_table_escaped_pipe() {
-        // In markdown tables, \| represents a literal pipe character
-        // We preprocess to convert \| to | before sending to termimad
-        let lines = vec![
-            "| Category | Symbol | Meaning |",
-            "| --- | --- | --- |",
-            r"| Remote | `\|` | In sync |",
-        ];
-        let result = render_table(&lines, None);
-        // Table should render with the content
-        assert!(
-            result.contains("Remote"),
-            "Table should contain cell content"
-        );
-        assert!(
-            result.contains("In sync"),
-            "Table should contain cell content"
-        );
-        // The escaped pipe should be converted to a literal pipe
-        assert!(result.contains('|'));
-        assert!(!result.contains(r"\|"));
-    }
-
     // ============================================================================
-    // render_markdown_in_help Tests
+    // render_inline_formatting (ANSI styling)
     // ============================================================================
 
     #[test]
-    fn test_render_markdown_in_help_h1() {
-        let result = render_markdown_in_help("# Header");
-        // H1 should be UPPERCASE green
-        assert!(result.contains("HEADER")); // Uppercase
-        assert!(result.contains("\u{1b}[32m")); // Green
+    fn test_render_inline_formatting_styles() {
+        // Inline code
+        let code = render_inline_formatting("`code`");
+        assert_snapshot!(code, @"[2mcode[0m");
+
+        // Bold
+        let bold = render_inline_formatting("**bold**");
+        assert_snapshot!(bold, @"[1mbold[0m");
+
+        // Nested: code inside bold
+        let bold_code = render_inline_formatting("**`wt list`:**");
+        assert_snapshot!(bold_code, @"[1m[2mwt list[0m:[0m");
+
+        // Mixed formatting
+        let mixed = render_inline_formatting("text `code` more **bold** end");
+        assert_snapshot!(mixed, @"text [2mcode[0m more [1mbold[0m end");
+
+        // Backticks inside link text
+        let link_code = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
+        assert_snapshot!(link_code, @"See [2mwt hook[0m for details");
+
+        // Unclosed backtick
+        let unclosed_code = render_inline_formatting("`unclosed");
+        assert_snapshot!(unclosed_code, @"[2munclosed[0m");
+
+        // Unclosed bold
+        let unclosed_bold = render_inline_formatting("**unclosed");
+        assert_snapshot!(unclosed_bold, @"[1munclosed[0m");
     }
 
-    #[test]
-    fn test_render_markdown_in_help_h2() {
-        let result = render_markdown_in_help("## Section");
-        // H2 should be bold green (anstyle emits separate codes)
-        assert!(result.contains("Section"));
-        assert!(result.contains("\u{1b}[1m")); // Bold
-        assert!(result.contains("\u{1b}[32m")); // Green
-    }
+    // ============================================================================
+    // render_markdown_in_help
+    // ============================================================================
 
     #[test]
-    fn test_render_markdown_in_help_h3() {
-        let result = render_markdown_in_help("### Subsection");
-        // H3 should be green (no bold)
-        assert!(result.contains("Subsection"));
-        assert!(result.contains("\u{1b}[32m")); // Green
-        assert!(!result.contains("\u{1b}[1m")); // Not bold
-    }
-
-    #[test]
-    fn test_render_markdown_in_help_h4() {
-        let result = render_markdown_in_help("#### Nested");
-        // H4 should be bold (no color)
-        assert!(result.contains("Nested"));
-        assert!(result.contains("\u{1b}[1m")); // Bold
-        assert!(!result.contains("\u{1b}[32m")); // Not green
+    fn test_render_markdown_in_help_headers() {
+        // All header levels in one snapshot to show the visual hierarchy:
+        // H1: UPPERCASE green, H2: bold green, H3: green, H4: bold
+        let md = "# Title\n## Section\n### Subsection\n#### Nested";
+        let result = render_markdown_in_help(md);
+        assert_snapshot!(result, @"
+        [32mTITLE[0m
+        [1m[32mSection[0m
+        [32mSubsection[0m
+        [1mNested[0m
+        ");
     }
 
     #[test]
     fn test_render_markdown_in_help_horizontal_rule() {
         let result = render_markdown_in_help("before\n\n---\n\n## Section");
-        // Horizontal rule becomes visible divider line
-        assert!(!result.contains("---"));
-        assert!(result.contains("────────────────────────────────────────"));
-        assert!(result.contains("before"));
-        assert!(result.contains("Section"));
+        assert_snapshot!(result, @"
+        before
+
+        [2m────────────────────────────────────────[0m
+
+        [1m[32mSection[0m
+        ");
     }
 
     #[test]
     fn test_render_markdown_in_help_code_block() {
-        let md = "```\ncode here\n```\nafter";
-        let result = render_markdown_in_help(md);
-        // Code is dimmed with indent
-        assert!(result.contains("code here"));
-        assert!(result.contains("after"));
+        let result = render_markdown_in_help("```\ncode here\n```\nafter");
+        assert_snapshot!(result, @"
+        [107m [0m [2mcode here[0m
+        after
+        ");
     }
 
     #[test]
     fn test_render_markdown_in_help_toml_code_block() {
-        let md = "```toml\n[section]\nkey = \"value\"\n```\nafter";
-        let result = render_markdown_in_help(md);
-        // TOML blocks get syntax highlighting with gutter
-        assert!(result.contains("section"));
-        assert!(result.contains("after"));
-        // Should have gutter (BrightWhite background = SGR 107)
-        assert!(result.contains("\u{1b}[107m"));
+        let result = render_markdown_in_help("```toml\n[section]\nkey = \"value\"\n```\nafter");
+        assert_snapshot!(result, @r#"
+        [107m [0m [2m[36m[section][0m
+        [107m [0m [2mkey = [0m[2m[32m"value"[0m
+        after
+        "#);
     }
 
     #[test]
     fn test_render_markdown_in_help_html_comment() {
-        let md = "<!-- comment -->\nvisible";
-        let result = render_markdown_in_help(md);
-        // Comments should be stripped
-        assert!(!result.contains("comment"));
-        assert!(result.contains("visible"));
+        let result = render_markdown_in_help("<!-- comment -->\nvisible");
+        assert_snapshot!(result, @"visible");
     }
 
     #[test]
     fn test_render_markdown_in_help_plain_text() {
         let result = render_markdown_in_help("Just plain text");
-        assert!(result.contains("Just plain text"));
+        assert_snapshot!(result, @"Just plain text");
     }
 
     #[test]
     fn test_render_markdown_in_help_table() {
-        let md = "| A | B |\n| - | - |\n| 1 | 2 |";
-        let result = render_markdown_in_help(md);
-        // Table should be rendered
-        assert!(result.contains("A"));
-        assert!(result.contains("B"));
-        assert!(result.contains("1"));
-        assert!(result.contains("2"));
+        let result = render_markdown_in_help("| A | B |\n| - | - |\n| 1 | 2 |");
+        assert_snapshot!(result, @"
+         A   B  
+        ─── ─── 
+        1   2
+        ");
     }
 
     // ============================================================================
-    // render_markdown_table Tests
+    // render_markdown_table
     // ============================================================================
 
     #[test]
     fn test_render_markdown_table_basic() {
-        let md = "| Col1 | Col2 |\n| ---- | ---- |\n| A | B |";
-        let result = render_markdown_table(md);
-        assert!(result.contains("Col1"));
-        assert!(result.contains("Col2"));
-        assert!(result.contains("A"));
-        assert!(result.contains("B"));
+        let result = render_markdown_table("| Col1 | Col2 |\n| ---- | ---- |\n| A | B |");
+        assert_snapshot!(result, @"
+        Col1 Col2 
+        ──── ──── 
+        A    B
+        ");
     }
 
     #[test]
@@ -651,134 +629,71 @@ mod tests {
 
     #[test]
     fn test_render_markdown_table_with_non_table_lines() {
-        let md = "Not a table\n| A | B |\nAlso not\n| - | - |\n| 1 | 2 |";
-        let result = render_markdown_table(md);
-        // Should only include table rows
-        assert!(result.contains("A"));
-        assert!(result.contains("B"));
-        assert!(!result.contains("Not a table"));
-        assert!(!result.contains("Also not"));
+        let result =
+            render_markdown_table("Not a table\n| A | B |\nAlso not\n| - | - |\n| 1 | 2 |");
+        assert_snapshot!(result, @"
+         A   B  
+        ─── ─── 
+        1   2
+        ");
     }
 
     // ============================================================================
-    // colorize_status_symbols Tests
+    // colorize_status_symbols
     // ============================================================================
 
     #[test]
-    fn test_colorize_status_symbols_working_tree() {
-        // These symbols should become cyan
+    fn test_colorize_status_symbols() {
         let dim = Style::new().dimmed();
-        let input = format!("{}+{dim:#} staged", dim);
-        let result = colorize_status_symbols(&input);
-        // Should have cyan color code (36)
-        assert!(result.contains("\u{1b}[36m+"));
-    }
 
-    #[test]
-    fn test_colorize_status_symbols_conflicts() {
-        // ✘ should become red
-        let dim = Style::new().dimmed();
-        let input = format!("{}✘{dim:#} conflicts", dim);
-        let result = colorize_status_symbols(&input);
-        // Should have red color code (31)
-        assert!(result.contains("\u{1b}[31m✘"));
-    }
+        // Working tree symbols → cyan
+        let working_tree = colorize_status_symbols(&format!("{dim}+{dim:#} staged"));
+        assert_snapshot!(working_tree, @"[36m+[0m staged");
 
-    #[test]
-    fn test_colorize_status_symbols_git_ops() {
-        // ⤴ and ⤵ should become yellow
-        let dim = Style::new().dimmed();
-        let input = format!("{}⤴{dim:#} rebase", dim);
-        let result = colorize_status_symbols(&input);
-        // Should have yellow color code (33)
-        assert!(result.contains("\u{1b}[33m⤴"));
-    }
+        // Conflicts → red
+        let conflicts = colorize_status_symbols(&format!("{dim}✘{dim:#} conflicts"));
+        assert_snapshot!(conflicts, @"[31m✘[0m conflicts");
 
-    #[test]
-    fn test_colorize_status_symbols_ci_green() {
-        let result = colorize_status_symbols("● passed");
-        // Should have green color (32)
-        assert!(result.contains("\u{1b}[32m●"));
-    }
+        // Git operations → yellow
+        let git_ops = colorize_status_symbols(&format!("{dim}⤴{dim:#} rebase"));
+        assert_snapshot!(git_ops, @"[33m⤴[0m rebase");
 
-    #[test]
-    fn test_colorize_status_symbols_ci_red() {
-        let result = colorize_status_symbols("● failed");
-        // Should have red color (31)
-        assert!(result.contains("\u{1b}[31m●"));
-    }
+        // CI status: passed → green, failed → red, running → blue
+        let ci_passed = colorize_status_symbols("● passed");
+        assert_snapshot!(ci_passed, @"[32m●[0m passed");
 
-    #[test]
-    fn test_colorize_status_symbols_ci_running() {
-        let result = colorize_status_symbols("● running");
-        // Should have blue color (34)
-        assert!(result.contains("\u{1b}[34m●"));
+        let ci_failed = colorize_status_symbols("● failed");
+        assert_snapshot!(ci_failed, @"[31m●[0m failed");
+
+        let ci_running = colorize_status_symbols("● running");
+        assert_snapshot!(ci_running, @"[34m●[0m running");
     }
 
     #[test]
     fn test_colorize_status_symbols_no_change() {
-        // Text without symbols should pass through unchanged
         let input = "plain text here";
         let result = colorize_status_symbols(input);
         assert_eq!(result, input);
     }
 
     // ============================================================================
-    // render_inline_formatting Tests
+    // render_table
     // ============================================================================
 
     #[test]
-    fn test_render_inline_formatting_inline_code() {
-        let result = render_inline_formatting("`code`");
-        // Should have dim escape codes
-        assert!(result.contains("code"));
-        assert!(result.contains("\u{1b}[2m")); // Dimmed
+    fn test_render_table_escaped_pipe() {
+        let lines = vec![
+            "| Category | Symbol | Meaning |",
+            "| --- | --- | --- |",
+            r"| Remote | `\|` | In sync |",
+        ];
+        let result = render_table(&lines, None);
+        assert_snapshot!(result, @"
+        Category Symbol Meaning 
+        ──────── ────── ─────── 
+        Remote   [2m|[0m      In sync
+        ");
     }
-
-    #[test]
-    fn test_render_inline_formatting_bold() {
-        let result = render_inline_formatting("**bold**");
-        assert!(result.contains("bold"));
-        assert!(result.contains("\u{1b}[1m")); // Bold
-    }
-
-    #[test]
-    fn test_render_inline_formatting_bold_with_code() {
-        // Nested formatting: **`wt list`:** should render code inside bold
-        let result = render_inline_formatting("**`wt list`:**");
-        assert!(result.contains("wt list"));
-        assert!(result.contains("\u{1b}[1m")); // Bold
-        assert!(result.contains("\u{1b}[2m")); // Dimmed (for code)
-        assert!(!result.contains('`')); // Backticks should be consumed
-    }
-
-    #[test]
-    fn test_render_inline_formatting_mixed() {
-        let result = render_inline_formatting("text `code` more **bold** end");
-        assert!(result.contains("text"));
-        assert!(result.contains("code"));
-        assert!(result.contains("more"));
-        assert!(result.contains("bold"));
-        assert!(result.contains("end"));
-    }
-
-    #[test]
-    fn test_render_inline_formatting_unclosed_code() {
-        // Unclosed backtick - should consume until end
-        let result = render_inline_formatting("`unclosed");
-        assert!(result.contains("unclosed"));
-    }
-
-    #[test]
-    fn test_render_inline_formatting_unclosed_bold() {
-        // Unclosed bold - should consume until end
-        let result = render_inline_formatting("**unclosed");
-        assert!(result.contains("unclosed"));
-    }
-
-    // ============================================================================
-    // render_markdown_table_impl Tests (via render_table)
-    // ============================================================================
 
     #[test]
     fn test_render_table_column_alignment() {
@@ -788,38 +703,36 @@ mod tests {
             "| A | B |",
         ];
         let result = render_table(&lines, None);
-        // Should have proper column alignment
-        assert!(result.contains("Short"));
-        assert!(result.contains("LongerHeader"));
-        // Should have separator line with ─
-        assert!(result.contains('─'));
+        assert_snapshot!(result, @"
+        Short LongerHeader 
+        ───── ──────────── 
+        A     B
+        ");
     }
 
     #[test]
     fn test_render_table_uneven_columns() {
         let lines = vec!["| A | B | C |", "| --- | --- | --- |", "| 1 | 2 |"];
         let result = render_table(&lines, None);
-        // Should handle rows with different column counts
-        assert!(result.contains("A"));
-        assert!(result.contains("1"));
+        assert_snapshot!(result, @"
+         A   B   C  
+        ─── ─── ─── 
+        1   2
+        ");
     }
 
     #[test]
     fn test_render_table_no_separator() {
-        // Table without separator row
         let lines = vec!["| A | B |", "| 1 | 2 |"];
         let result = render_table(&lines, None);
-        // Should still render, just without separator line
-        assert!(result.contains("A"));
-        assert!(result.contains("1"));
-        // Should NOT have separator line
-        assert!(!result.contains('─'));
+        assert_snapshot!(result, @"
+        A   B  
+        1   2
+        ");
     }
 
     #[test]
     fn test_render_markdown_in_help_table_wrapping() {
-        // Test the full render_markdown_in_help_with_width function
-        // which is what actually runs on the help text
         let help = r#"### Other environment variables
 
 | Variable | Purpose |
@@ -829,20 +742,18 @@ mod tests {
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
 | NO_COLOR | Disable colored output (standard) |
 "#;
-        let rendered = render_markdown_in_help_with_width(help, Some(80));
+        let result = render_markdown_in_help_with_width(help, Some(80));
+        assert_snapshot!(result, @"
+        [32mOther environment variables[0m
 
-        // Check for pipe characters
-        for line in rendered.lines() {
-            assert!(
-                !line.trim_start().starts_with("| "),
-                "Line should not start with '| ': {:?}",
-                line
-            );
-            assert!(
-                !line.trim_end().ends_with(" |"),
-                "Line should not end with ' |': {:?}",
-                line
-            );
-        }
+                     Variable                                Purpose                    
+         ───────────────────────────────── ──────────────────────────────────────────── 
+         [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers      
+                                           (useful for testing dev builds)              
+         WORKTRUNK_CONFIG_PATH             Override user config file location           
+         [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32).     
+                                           Lower if hitting resource limits.            
+         NO_COLOR                          Disable colored output (standard)
+        ");
     }
 }

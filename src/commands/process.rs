@@ -464,29 +464,49 @@ pub fn build_remove_command(
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     #[test]
     fn test_sanitize_for_filename() {
-        // Path separators (hash suffix appended)
-        assert!(sanitize_for_filename("feature/branch").starts_with("feature-branch-"));
-        assert!(sanitize_for_filename("feature\\branch").starts_with("feature-branch-"));
-
-        // Windows-illegal characters
-        assert!(sanitize_for_filename("bug:123").starts_with("bug-123-"));
-        assert!(sanitize_for_filename("fix<angle>").starts_with("fix-angle-"));
-        assert!(sanitize_for_filename("fix|pipe").starts_with("fix-pipe-"));
-        assert!(sanitize_for_filename("fix?question").starts_with("fix-question-"));
-        assert!(sanitize_for_filename("fix*wildcard").starts_with("fix-wildcard-"));
-        assert!(sanitize_for_filename("fix\"quotes\"").starts_with("fix-quotes-"));
-
-        // Multiple special characters
-        assert!(sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j").starts_with("a-b-c-d-e-f-g-h-i-j-"));
-
-        // Already safe (still gets hash suffix)
-        assert!(sanitize_for_filename("normal-branch").starts_with("normal-branch-"));
-        assert!(
-            sanitize_for_filename("branch_with_underscore").starts_with("branch_with_underscore-")
+        // Path separators, Windows-illegal characters, multiple special chars,
+        // already-safe names, and reserved prefix names
+        assert_snapshot!(
+            [
+                ("path separator /", sanitize_for_filename("feature/branch")),
+                ("path separator \\", sanitize_for_filename("feature\\branch")),
+                ("colon", sanitize_for_filename("bug:123")),
+                ("angle brackets", sanitize_for_filename("fix<angle>")),
+                ("pipe", sanitize_for_filename("fix|pipe")),
+                ("question mark", sanitize_for_filename("fix?question")),
+                ("wildcard", sanitize_for_filename("fix*wildcard")),
+                ("quotes", sanitize_for_filename("fix\"quotes\"")),
+                ("multiple special", sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j")),
+                ("already safe", sanitize_for_filename("normal-branch")),
+                ("underscore", sanitize_for_filename("branch_with_underscore")),
+                ("reserved prefix CONSOLE", sanitize_for_filename("CONSOLE")),
+                ("reserved prefix COM10", sanitize_for_filename("COM10")),
+            ]
+            .into_iter()
+            .map(|(label, val)| format!("{label}: {val}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+            @r"
+        path separator /: feature-branch-30k
+        path separator \: feature-branch-k37
+        colon: bug-123-4xh
+        angle brackets: fix-angle-q9m
+        pipe: fix-pipe-68k
+        question mark: fix-question-ab6
+        wildcard: fix-wildcard-38y
+        quotes: fix-quotes-2xu
+        multiple special: a-b-c-d-e-f-g-h-i-j-obi
+        already safe: normal-branch-83y
+        underscore: branch_with_underscore-b65
+        reserved prefix CONSOLE: CONSOLE-8fv
+        reserved prefix COM10: COM10-1s2
+        "
         );
 
         // Windows reserved device names are handled (produce valid filenames)
@@ -498,10 +518,6 @@ mod tests {
             let result = sanitize_for_filename(name);
             assert!(!result.is_empty() && result.len() > 3, "{name} -> {result}");
         }
-
-        // Longer names containing reserved prefixes are fine
-        assert!(sanitize_for_filename("CONSOLE").starts_with("CONSOLE-"));
-        assert!(sanitize_for_filename("COM10").starts_with("COM10-"));
 
         // Collision avoidance: different inputs produce different outputs
         let a = sanitize_for_filename("feature/x");
@@ -537,32 +553,20 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // Without branch deletion, without force
-        let cmd = build_remove_command(&path, None, false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("/tmp/test-worktree"));
-        assert!(!cmd.contains("branch -D"));
-        assert!(!cmd.contains("--force"));
+        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove /tmp/test-worktree");
 
         // With branch deletion, without force
-        let cmd = build_remove_command(&path, Some("feature-branch"), false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("git branch -D"));
-        assert!(cmd.contains("feature-branch"));
-        assert!(!cmd.contains("--force"));
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        let cmd = build_remove_command(&path, None, true);
-        assert!(cmd.contains("git worktree remove --force"));
+        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove --force /tmp/test-worktree");
 
         // With branch deletion and force
-        let cmd = build_remove_command(&path, Some("feature-branch"), true);
-        assert!(cmd.contains("git worktree remove --force"));
-        assert!(cmd.contains("git branch -D"));
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
-        assert!(cmd.contains("worktree remove"));
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]
@@ -593,115 +597,39 @@ mod tests {
     #[test]
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/my-project.feature.wt-removing-1234567890");
+        assert_snapshot!(build_remove_command_staged(&staged_path), @"rm -rf -- /tmp/my-project.feature.wt-removing-1234567890");
 
-        let cmd = build_remove_command_staged(&staged_path);
-        assert!(cmd.starts_with("rm -rf -- ")); // -- prevents option parsing
-        assert!(cmd.contains("wt-removing-1234567890"));
-        assert!(!cmd.contains("branch -D")); // Branch deleted synchronously, not in background
-        assert!(!cmd.contains("sleep")); // No sleep in staged removal
-
-        // Shell escaping for special characters
+        // Shell escaping for special characters (space in path)
         let special_path = PathBuf::from("/tmp/test worktree.wt-removing-123");
-        let cmd = build_remove_command_staged(&special_path);
-        assert!(cmd.contains("rm -rf "));
-        // Verify the path is escaped (single-quoted for shell safety)
-        assert!(
-            cmd.contains("'/tmp/test worktree.wt-removing-123'"),
-            "path should be escaped: {}",
-            cmd
-        );
+        assert_snapshot!(build_remove_command_staged(&special_path), @"rm -rf -- '/tmp/test worktree.wt-removing-123'");
     }
 
     #[test]
-    fn test_hook_log_hook_suffix() {
+    fn test_hook_log_suffix() {
         use worktrunk::git::HookType;
 
         // Suffix includes sanitized name with hash for collision avoidance
-        let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-post-start-server-"),
-            "Expected pattern: {suffix}"
-        );
+        // Constructor and parse produce identical suffixes
+        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PostStart, "server").suffix(), @"user-post-start-server-f4t");
+        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PostCreate, "build").suffix(), @"project-post-create-build-seq");
+        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup").suffix(), @"user-pre-remove-cleanup-non");
+        assert_snapshot!(HookLog::parse("user:post-start:server").unwrap().suffix(), @"user-post-start-server-f4t");
+        assert_snapshot!(HookLog::parse("project:post-create:build").unwrap().suffix(), @"project-post-create-build-seq");
 
-        let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("project-post-create-build-"),
-            "Expected pattern: {suffix}"
-        );
-
-        let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-pre-remove-cleanup-"),
-            "Expected pattern: {suffix}"
-        );
-    }
-
-    #[test]
-    fn test_hook_log_internal_suffix() {
-        let log = HookLog::internal(InternalOp::Remove);
-        assert_eq!(log.suffix(), "remove");
+        // Internal operation suffix
+        assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
     }
 
     #[test]
     fn test_hook_log_filename() {
         use worktrunk::git::HookType;
 
-        // Filenames now include hash suffixes for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let filename = log.filename("main");
-        assert!(
-            filename.starts_with("main-"),
-            "Expected main- prefix: {filename}"
-        );
-        assert!(
-            filename.contains("-user-post-start-"),
-            "Expected -user-post-start-: {filename}"
-        );
-        assert!(
-            filename.ends_with(".log"),
-            "Expected .log suffix: {filename}"
-        );
+        assert_snapshot!(log.filename("main"), @"main-vfz-user-post-start-server-f4t.log");
+        // Slash in branch name gets sanitized
+        assert_snapshot!(log.filename("feature/auth"), @"feature-auth-j34-user-post-start-server-f4t.log");
 
-        let filename = log.filename("feature/auth");
-        assert!(
-            filename.starts_with("feature-"),
-            "Expected feature- prefix (slash sanitized): {filename}"
-        );
-        assert!(
-            filename.contains("-user-post-start-"),
-            "Expected -user-post-start-: {filename}"
-        );
-
-        let log = HookLog::internal(InternalOp::Remove);
-        let filename = log.filename("main");
-        assert!(
-            filename.starts_with("main-"),
-            "Expected main- prefix: {filename}"
-        );
-        assert!(
-            filename.ends_with("-remove.log"),
-            "Expected -remove.log suffix: {filename}"
-        );
-    }
-
-    #[test]
-    fn test_hook_log_parse_hook() {
-        let log = HookLog::parse("user:post-start:server").unwrap();
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-post-start-server-"),
-            "Expected pattern: {suffix}"
-        );
-
-        let log = HookLog::parse("project:post-create:build").unwrap();
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("project-post-create-build-"),
-            "Expected pattern: {suffix}"
-        );
+        assert_snapshot!(HookLog::internal(InternalOp::Remove).filename("main"), @"main-vfz-remove.log");
     }
 
     #[test]
@@ -712,40 +640,26 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_log_parse_invalid_source() {
-        let result = HookLog::parse("invalid:post-start:server");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown source"));
-    }
+    fn test_hook_log_parse_errors() {
+        // Unknown source
+        assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
-    #[test]
-    fn test_hook_log_parse_invalid_hook_type() {
-        let result = HookLog::parse("user:invalid-hook:server");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown hook type"));
-    }
+        // Unknown hook type
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-create, post-start, post-switch, pre-commit, pre-merge, post-merge, pre-remove, post-remove");
 
-    #[test]
-    fn test_hook_log_parse_invalid_internal_op() {
-        let result = HookLog::parse("internal:unknown");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown internal operation"));
-    }
+        // Unknown internal operation
+        assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");
 
-    #[test]
-    fn test_hook_log_parse_invalid_format() {
-        // Single word (no colons)
-        let result = HookLog::parse("remove");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid log spec"));
+        // Invalid formats: single word, two non-internal parts, missing segment
+        assert_snapshot!(HookLog::parse("remove").unwrap_err(), @"Invalid log spec: [1mremove[22m. Format: source:hook-type:name or internal:op");
+        assert_snapshot!(HookLog::parse("foo:bar").unwrap_err(), @"Invalid log spec: [1mfoo:bar[22m. Format: source:hook-type:name or internal:op");
+        assert_snapshot!(HookLog::parse("user:").unwrap_err(), @"Invalid log spec: [1muser:[22m. Format: source:hook-type:name or internal:op");
 
-        // Two parts but not internal:op (missing hook name)
-        let result = HookLog::parse("foo:bar");
-        assert!(result.is_err());
+        // Colons in hook names (ambiguous parsing)
+        assert_snapshot!(HookLog::parse("user:post-start:my:server").unwrap_err(), @"Invalid log spec: [1muser:post-start:my:server[22m. Format: source:hook-type:name or internal:op");
 
-        // Missing hook-type segment
-        let result = HookLog::parse("user:");
-        assert!(result.is_err());
+        // Empty hook name
+        assert_snapshot!(HookLog::parse("user:post-start:").unwrap_err(), @"Invalid log spec: [1muser:post-start:[22m. Format: source:hook-type:name or internal:op");
     }
 
     #[test]
@@ -788,21 +702,5 @@ mod tests {
         assert_eq!(spec, "internal:remove");
         let parsed = HookLog::parse(&spec).unwrap();
         assert_eq!(original, parsed);
-    }
-
-    #[test]
-    fn test_hook_log_parse_rejects_colons_in_name() {
-        // Hook names cannot contain colons (would make parsing ambiguous)
-        let result = HookLog::parse("user:post-start:my:server");
-        assert!(result.is_err(), "Colons in hook names should be rejected");
-        assert!(result.unwrap_err().contains("Invalid log spec"));
-    }
-
-    #[test]
-    fn test_hook_log_parse_rejects_empty_name() {
-        // Empty hook name should be rejected
-        let result = HookLog::parse("user:post-start:");
-        assert!(result.is_err(), "Empty hook name should be rejected");
-        assert!(result.unwrap_err().contains("Invalid log spec"));
     }
 }

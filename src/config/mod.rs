@@ -103,6 +103,8 @@ pub use user::{
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
     use crate::git::Repository;
 
@@ -131,17 +133,10 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        let config = UserConfig::default();
-        let toml = toml::to_string(&config).unwrap();
-        // worktree-path is not serialized when None (uses built-in default)
-        assert!(!toml.contains("worktree-path"));
-        // commit and commit-generation sections are not serialized when None
-        assert!(!toml.contains("[commit]"));
-        assert!(!toml.contains("[commit-generation]"));
-    }
+        // Default config serializes to empty (no optional fields)
+        assert_snapshot!(toml::to_string(&UserConfig::default()).unwrap(), @"[projects]");
 
-    #[test]
-    fn test_config_serialization_with_worktree_path() {
+        // With worktree-path set
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some("custom/{{ branch }}".to_string()),
@@ -149,9 +144,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("custom/{{ branch }}"));
+        assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
+        worktree-path = "custom/{{ branch }}"
+
+        [projects]
+        "#);
     }
 
     #[test]
@@ -450,8 +447,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        // Verify it serialized back as a string
-        assert!(serialized.contains(r#"post-create = "npm install""#));
+        assert_snapshot!(serialized, @r#"post-create = "npm install""#);
     }
 
     #[test]
@@ -465,10 +461,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        // Verify it serialized back as a named table
-        assert!(serialized.contains("[post-start]"));
-        assert!(serialized.contains(r#"server = "npm run dev""#));
-        assert!(serialized.contains(r#"watch = "npm run watch""#));
+        assert_snapshot!(serialized, @r#"
+        [post-start]
+        server = "npm run dev"
+        watch = "npm run watch"
+        "#);
     }
 
     #[test]
@@ -622,9 +619,10 @@ squash-template-file = "~/file.txt"
             squash_template_file: None,
         };
 
-        let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("llm -m model"));
-        assert!(toml.contains("template"));
+        assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
+        command = "llm -m model"
+        template = "template content"
+        "#);
     }
 
     #[test]

@@ -416,139 +416,90 @@ impl WorktreeSkimItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
-    fn test_render_preview_tabs_working_tree_mode() {
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
-        // Tab 1 should be bold (active), tabs 2/3/4/5 dimmed
-        assert!(output.contains("1: HEAD±"));
-        assert!(output.contains("2: log"));
-        assert!(output.contains("3: main…±"));
-        assert!(output.contains("4: remote⇅"));
-        assert!(output.contains("5: summary"));
-        assert!(output.contains("Enter: switch"));
-        assert!(output.contains("alt-r: remove"));
-        // Verify structure: tabs on first line, controls on second
-        assert!(output.contains(" | "));
-        assert!(output.ends_with("\n\n"));
+    fn test_render_preview_tabs() {
+        // All PreviewMode variants: verify tab labels, active styling, and structure
+        for (name, mode) in [
+            ("working_tree", PreviewMode::WorkingTree),
+            ("log", PreviewMode::Log),
+            ("branch_diff", PreviewMode::BranchDiff),
+            ("upstream_diff", PreviewMode::UpstreamDiff),
+            ("summary", PreviewMode::Summary),
+        ] {
+            assert_snapshot!(name, WorktreeSkimItem::render_preview_tabs(mode));
+        }
     }
 
     #[test]
-    fn test_render_preview_tabs_log_mode() {
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::Log);
-        assert!(output.contains("1: HEAD±"));
-        assert!(output.contains("2: log"));
-        assert!(output.contains("3: main…±"));
-        assert!(output.contains("4: remote⇅"));
-        assert!(output.contains("5: summary"));
-    }
-
-    #[test]
-    fn test_render_preview_tabs_branch_diff_mode() {
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::BranchDiff);
-        assert!(output.contains("1: HEAD±"));
-        assert!(output.contains("2: log"));
-        assert!(output.contains("3: main…±"));
-        assert!(output.contains("4: remote⇅"));
-        assert!(output.contains("5: summary"));
-    }
-
-    #[test]
-    fn test_render_preview_tabs_upstream_diff_mode() {
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::UpstreamDiff);
-        assert!(output.contains("1: HEAD±"));
-        assert!(output.contains("2: log"));
-        assert!(output.contains("3: main…±"));
-        assert!(output.contains("4: remote⇅"));
-        assert!(output.contains("5: summary"));
-    }
-
-    #[test]
-    fn test_render_preview_tabs_summary_mode() {
-        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::Summary);
-        assert!(output.contains("1: HEAD±"));
-        assert!(output.contains("2: log"));
-        assert!(output.contains("3: main…±"));
-        assert!(output.contains("4: remote⇅"));
-        assert!(output.contains("5: summary"));
-    }
-
-    #[test]
-    fn test_compute_summary_preview_always_shows_generating() {
-        // All items show the same "Generating..." placeholder synchronously.
-        // The background thread produces the correct result (which may be
-        // "No changes to summarize" for the default branch).
+    fn test_compute_summary_preview() {
+        // All inputs produce the same synchronous placeholder.
+        // The background thread produces the real summary (or "No changes to summarize"
+        // for the default branch).
         use crate::commands::list::model::{ItemKind, WorktreeData};
 
-        let mut item = ListItem::new_branch("abc123".to_string(), "main".to_string());
-        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+        let mut main_item = ListItem::new_branch("abc123".to_string(), "main".to_string());
+        main_item.kind = ItemKind::Worktree(Box::new(WorktreeData {
             is_main: true,
             ..Default::default()
         }));
 
-        let output = WorktreeSkimItem::compute_summary_preview(&item);
-        assert!(output.contains("Generating summary..."));
-    }
+        let feature_item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
 
-    #[test]
-    fn test_compute_summary_preview_feature_branch() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-
-        let output = WorktreeSkimItem::compute_summary_preview(&item);
-        assert!(output.contains("Generating summary..."));
-        assert!(output.contains("Press 5 again"));
-    }
-
-    #[test]
-    fn test_compute_preview_summary_mode() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-
-        let output = WorktreeSkimItem::compute_preview(&item, PreviewMode::Summary, 80, 40);
-        assert!(output.contains("Generating summary..."));
-    }
-
-    #[test]
-    fn test_preview_for_mode_summary_cache_hit() {
-        let item = Arc::new(ListItem::new_branch(
-            "abc123".to_string(),
-            "feature".to_string(),
-        ));
-        let preview_cache: PreviewCache = Arc::new(DashMap::new());
-        preview_cache.insert(
-            ("feature".to_string(), PreviewMode::Summary),
-            "Add auth module\n\nImplements JWT-based authentication.".to_string(),
+        // Direct call and compute_preview dispatch both return the placeholder
+        assert_snapshot!(
+            "direct",
+            WorktreeSkimItem::compute_summary_preview(&main_item)
         );
-
-        let skim_item = WorktreeSkimItem {
-            display_text: String::new(),
-            display_text_with_ansi: String::new(),
-            branch_name: "feature".to_string(),
-            item,
-            preview_cache,
-        };
-
-        let output = skim_item.preview_for_mode(PreviewMode::Summary, 80, 40);
-        assert!(output.contains("Add auth module"));
+        assert_snapshot!(
+            "via_compute_preview",
+            WorktreeSkimItem::compute_preview(&feature_item, PreviewMode::Summary, 80, 40)
+        );
     }
 
     #[test]
-    fn test_preview_for_mode_summary_cache_miss() {
+    fn test_preview_for_mode_summary_cache() {
+        // Cache hit returns cached content; cache miss computes the placeholder
         let item = Arc::new(ListItem::new_branch(
             "abc123".to_string(),
             "feature".to_string(),
         ));
-        let preview_cache: PreviewCache = Arc::new(DashMap::new());
 
-        let skim_item = WorktreeSkimItem {
-            display_text: String::new(),
-            display_text_with_ansi: String::new(),
-            branch_name: "feature".to_string(),
-            item,
-            preview_cache,
+        let cache_hit = {
+            let preview_cache: PreviewCache = Arc::new(DashMap::new());
+            preview_cache.insert(
+                ("feature".to_string(), PreviewMode::Summary),
+                "Add auth module\n\nImplements JWT-based authentication.".to_string(),
+            );
+            WorktreeSkimItem {
+                display_text: String::new(),
+                display_text_with_ansi: String::new(),
+                branch_name: "feature".to_string(),
+                item: Arc::clone(&item),
+                preview_cache,
+            }
         };
 
-        let output = skim_item.preview_for_mode(PreviewMode::Summary, 80, 40);
-        assert!(output.contains("Generating summary..."));
+        let cache_miss = {
+            let preview_cache: PreviewCache = Arc::new(DashMap::new());
+            WorktreeSkimItem {
+                display_text: String::new(),
+                display_text_with_ansi: String::new(),
+                branch_name: "feature".to_string(),
+                item: Arc::clone(&item),
+                preview_cache,
+            }
+        };
+
+        assert_snapshot!(
+            "cache_hit",
+            cache_hit.preview_for_mode(PreviewMode::Summary, 80, 40)
+        );
+        assert_snapshot!(
+            "cache_miss",
+            cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)
+        );
     }
 
     #[test]

@@ -275,7 +275,6 @@ mod tests {
         assert_snapshot!(format_heading("", None), @"[36m[39m");
     }
 
-
     #[test]
     fn test_formatted_message_into_inner() {
         let msg = success_message("Done");

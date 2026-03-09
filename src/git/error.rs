@@ -1151,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_hook_skip_hint() {
+    fn snapshot_add_hook_skip_hint() {
         // Wraps HookCommandFailed with --no-verify hint
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
@@ -1160,26 +1160,49 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        let display = format!("{}", add_hook_skip_hint(inner));
-        assert!(display.contains("--no-verify") && display.contains("pre-merge"));
+        assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
+        [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
+        [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-verify[24m[22m
+        ");
 
-        // Passes through non-hook errors
+        // pre-commit hook type
+        let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreCommit,
+            command_name: Some("build".into()),
+            error: "Build failed".into(),
+            exit_code: Some(1),
+        }
+        .into();
+        assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
+        [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
+        [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-verify[24m[22m
+        ");
+
+        // Passes through non-hook errors unchanged (no --no-verify hint)
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "test".into(),
         }
         .into();
-        assert!(!format!("{}", add_hook_skip_hint(err)).contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
 
         let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!format!("{}", add_hook_skip_hint(err)).contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+
+        let err: anyhow::Error = GitError::Other {
+            message: "some error".into(),
+        }
+        .into();
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
     }
 
     #[test]
     fn test_format_error_block() {
         let header = "Error occurred".to_string();
-        let result = format_error_block(header.clone(), "  some error text  ");
-        assert!(result.contains("Error occurred") && result.contains("some error text"));
+        assert_snapshot!(format_error_block(header.clone(), "  some error text  "), @"
+        Error occurred
+        [107m [0m some error text
+        ");
 
         // Empty/whitespace returns header only
         assert_eq!(format_error_block(header.clone(), ""), header);
@@ -1187,23 +1210,20 @@ mod tests {
     }
 
     #[test]
-    fn test_worktrunk_error_display() {
-        // ChildProcessExited
+    fn snapshot_worktrunk_error_display() {
         let err = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "Command failed".into(),
         };
-        assert!(format!("{err}").contains("Command failed"));
+        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mCommand failed[39m");
 
-        // HookCommandFailed with/without name
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("lint".into()),
             error: "lint failed".into(),
             exit_code: Some(1),
         };
-        let display = format!("{err}");
-        assert!(display.contains("pre-merge") && display.contains("lint"));
+        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
 
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PostCreate,
@@ -1211,10 +1231,9 @@ mod tests {
             error: "setup failed".into(),
             exit_code: None,
         };
-        let display = format!("{err}");
-        assert!(display.contains("post-create") && display.contains("setup failed"));
+        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mpost-create command failed: setup failed[39m");
 
-        // Silent errors
+        // Silent errors produce empty output
         assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
         assert_eq!(
             format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
@@ -1223,75 +1242,69 @@ mod tests {
     }
 
     #[test]
-    fn test_git_error_not_in_worktree() {
-        // With action
+    fn snapshot_not_in_worktree() {
         let err = GitError::NotInWorktree {
             action: Some("resolve @".into()),
         };
-        let display = err.to_string();
-        assert!(display.contains("Cannot resolve @"));
-        assert!(display.contains("not in a worktree"));
-        assert!(display.contains("specify a branch name"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCannot resolve @: not in a worktree[39m
+        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
+        ");
 
-        // Without action
         let err = GitError::NotInWorktree { action: None };
-        let display = err.to_string();
-        assert!(display.contains("Not in a worktree"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mNot in a worktree[39m
+        [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_worktree_path_occupied() {
-        // With occupant branch
+    fn snapshot_worktree_path_occupied() {
         let err = GitError::WorktreePathOccupied {
             branch: "feature".into(),
             path: PathBuf::from("/tmp/repo"),
             occupant: Some("main".into()),
         };
-        let display = err.to_string();
-        assert!(display.contains("Cannot switch to"));
-        assert!(display.contains("feature"));
-        assert!(display.contains("there's a worktree at the expected path"));
-        assert!(display.contains("on branch"));
-        assert!(display.contains("main"));
-        assert!(display.contains("To switch the worktree at"));
-        assert!(display.contains(", run ")); // ANSI codes follow, then command
-        assert!(display.contains("cd /tmp/repo && git switch feature"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCannot switch to [1mfeature[22m — there's a worktree at the expected path [1m/tmp/repo[22m on branch [1mmain[22m[39m
+        [2m↳[22m [2mTo switch the worktree at [4m/tmp/repo[24m to [4mfeature[24m, run [4mcd /tmp/repo && git switch feature[24m[22m
+        ");
 
-        // Without occupant (detached)
         let err = GitError::WorktreePathOccupied {
             branch: "feature".into(),
             path: PathBuf::from("/tmp/repo"),
             occupant: None,
         };
-        let display = err.to_string();
-        assert!(display.contains("detached worktree"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCannot switch to [1mfeature[22m — there's a detached worktree at the expected path [1m/tmp/repo[22m[39m
+        [2m↳[22m [2mTo switch the worktree at [4m/tmp/repo[24m to [4mfeature[24m, run [4mcd /tmp/repo && git switch feature[24m[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_worktree_creation_failed() {
-        // With base branch
+    fn snapshot_worktree_creation_failed() {
         let err = GitError::WorktreeCreationFailed {
             branch: "feature".into(),
             base_branch: Some("main".into()),
             error: "git error".into(),
             command: None,
         };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
-        assert!(display.contains("main"));
-        assert!(display.contains("git error"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
+        [107m [0m git error
+        ");
 
-        // Without base branch
         let err = GitError::WorktreeCreationFailed {
             branch: "feature".into(),
             base_branch: None,
             error: "git error".into(),
             command: None,
         };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mFailed to create worktree for [1mfeature[22m[39m
+        [107m [0m git error
+        ");
 
-        // With command info
         let err = GitError::WorktreeCreationFailed {
             branch: "feature".into(),
             base_branch: Some("main".into()),
@@ -1301,110 +1314,109 @@ mod tests {
                 exit_info: "exit code 128".into(),
             }),
         };
-        let display = err.to_string();
-        assert!(display.contains("fatal: ref exists"));
-        assert!(display.contains("worktree add"));
-        assert!(display.contains("Failed command"));
-        assert!(display.contains("exit code 128"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
+        [107m [0m fatal: ref exists
+        [2m↳[22m [2mFailed command, [4mexit code 128[24m:[22m
+        [107m [0m [2m[0m[2m[34mgit[0m[2m worktree add /path [0m[2m[36m-b[0m[2m feature main[0m
+        ");
     }
 
     #[test]
-    fn test_git_error_worktree_locked_with_reason() {
+    fn snapshot_worktree_locked() {
         let err = GitError::WorktreeLocked {
             branch: "feature".into(),
             path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("Testing lock".into()),
         };
-        let display = err.to_string();
-        assert!(display.contains("Cannot remove"));
-        assert!(display.contains("feature"));
-        assert!(display.contains(", worktree is locked"));
-        assert!(display.contains("(Testing lock)"));
-        assert!(display.contains("git worktree unlock /tmp/repo.feature"));
-    }
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCannot remove [1mfeature[22m, worktree is locked (Testing lock)[39m
+        [2m↳[22m [2mTo unlock, run [4mgit worktree unlock /tmp/repo.feature[24m[22m
+        ");
 
-    #[test]
-    fn test_git_error_worktree_locked_no_reason() {
-        // When git outputs "locked" without a reason, we get Some("")
+        // Empty reason should not show parentheses
         let err = GitError::WorktreeLocked {
             branch: "feature".into(),
             path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("".into()),
         };
         let display = err.to_string();
-        assert!(display.contains("Cannot remove"));
-        assert!(display.contains("feature"));
-        assert!(display.contains(", worktree is locked"));
+        assert_snapshot!(display, @"
+        [31m✗[39m [31mCannot remove [1mfeature[22m, worktree is locked[39m
+        [2m↳[22m [2mTo unlock, run [4mgit worktree unlock /tmp/repo.feature[24m[22m
+        ");
         assert!(
             !display.contains("locked ("),
             "should not show parentheses without reason"
         );
-        assert!(display.contains("git worktree unlock /tmp/repo.feature"));
     }
 
     #[test]
-    fn test_git_error_not_rebased() {
+    fn snapshot_not_rebased() {
         let err = GitError::NotRebased {
             target_branch: "main".into(),
         };
-        let display = err.to_string();
-        assert!(display.contains("main"));
-        assert!(display.contains("not rebased"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mBranch not rebased onto [1mmain[22m[39m
+        [2m↳[22m [2mTo rebase first, run [4mwt step rebase main[24m; or remove [4m--no-rebase[24m[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_hook_command_not_found() {
-        // With available commands
+    fn snapshot_hook_command_not_found() {
         let err = GitError::HookCommandNotFound {
             name: "unknown".into(),
             available: vec!["lint".into(), "test".into()],
         };
-        let display = err.to_string();
-        assert!(display.contains("unknown"));
-        assert!(display.contains("lint"));
+        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mNo command named [1munknown[22m (available: [1mlint[22m, [1mtest[22m)[39m");
 
-        // No available commands
         let err = GitError::HookCommandNotFound {
             name: "unknown".into(),
             available: vec![],
         };
-        let display = err.to_string();
-        assert!(display.contains("no named commands"));
+        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mNo command named [1munknown[22m (hook has no named commands)[39m");
     }
 
     #[test]
-    fn test_git_error_llm_command_failed() {
-        // With reproduction command
+    fn snapshot_llm_command_failed() {
         let err = GitError::LlmCommandFailed {
             command: "llm".into(),
             error: "connection failed".into(),
             reproduction_command: Some("wt step commit --show-prompt | llm".into()),
         };
-        let display = err.to_string();
-        assert!(display.contains("connection failed"));
-        assert!(display.contains("wt step commit"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCommit generation command failed[39m
+        [107m [0m connection failed
+        [2m○[22m Ran command:
+        [107m [0m wt step commit --show-prompt | llm
+        ");
 
-        // Without reproduction command
         let err = GitError::LlmCommandFailed {
             command: "llm --model gpt-4".into(),
             error: "timeout".into(),
             reproduction_command: None,
         };
-        let display = err.to_string();
-        assert!(display.contains("llm --model gpt-4"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCommit generation command failed[39m
+        [107m [0m timeout
+        [2m○[22m Ran command:
+        [107m [0m llm --model gpt-4
+        ");
     }
 
     #[test]
-    fn test_git_error_uncommitted_changes_variants() {
-        // Action only
+    fn snapshot_uncommitted_changes() {
+        // Action only (negative assertion kept: no --force)
         let err = GitError::UncommittedChanges {
             action: Some("push".into()),
             branch: None,
             force_hint: false,
         };
         let display = err.to_string();
-        assert!(display.contains("Cannot push"));
-        assert!(display.contains("working tree"));
+        assert_snapshot!(display, @"
+        [31m✗[39m [31mCannot push: working tree has uncommitted changes[39m
+        [2m↳[22m [2mCommit or stash changes first[22m
+        ");
         assert!(!display.contains("--force"));
 
         // Branch only
@@ -1413,18 +1425,21 @@ mod tests {
             branch: Some("feature".into()),
             force_hint: false,
         };
-        let display = err.to_string();
-        assert!(display.contains("feature"));
-        assert!(display.contains("uncommitted"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31m[1mfeature[22m has uncommitted changes[39m
+        [2m↳[22m [2mCommit or stash changes first[22m
+        ");
 
-        // Neither
+        // Neither action nor branch
         let err = GitError::UncommittedChanges {
             action: None,
             branch: None,
             force_hint: false,
         };
-        let display = err.to_string();
-        assert!(display.contains("Working tree"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mWorking tree has uncommitted changes[39m
+        [2m↳[22m [2mCommit or stash changes first[22m
+        ");
 
         // With force_hint
         let err = GitError::UncommittedChanges {
@@ -1432,157 +1447,101 @@ mod tests {
             branch: Some("feature".into()),
             force_hint: true,
         };
-        let display = err.to_string();
-        assert!(display.contains("Cannot remove worktree"));
-        assert!(display.contains("wt remove --force feature"));
-        assert!(display.contains("to lose uncommitted changes, run"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCannot remove worktree: [1mfeature[22m has uncommitted changes[39m
+        [2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [4mwt remove --force feature[24m[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_not_fast_forward_empty_commits() {
-        // Test with empty commits_formatted to cover that branch
+    fn snapshot_not_fast_forward() {
+        // Empty commits, outside merge context
         let err = GitError::NotFastForward {
             target_branch: "main".into(),
             commits_formatted: "".into(),
             in_merge_context: false,
         };
-        let display = err.to_string();
-        assert!(display.contains("main"));
-        assert!(display.contains("newer commits"));
-        // Should still have hint
-        assert!(display.contains("rebase"));
-    }
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+        [2m↳[22m [2mTo rebase onto [4mmain[24m, run [4mwt step rebase main[24m[22m
+        ");
 
-    #[test]
-    fn test_git_error_not_fast_forward_outside_merge() {
-        // Test outside merge context (in_merge_context = false)
+        // With commits, outside merge context
         let err = GitError::NotFastForward {
             target_branch: "develop".into(),
             commits_formatted: "abc123 Some commit".into(),
             in_merge_context: false,
         };
-        let display = err.to_string();
-        assert!(display.contains("develop"));
-        // Should have generic rebase hint, not "wt merge"
-        assert!(display.contains("rebase"));
-        // commits_formatted should be in gutter
-        assert!(display.contains("abc123"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCan't push to local [1mdevelop[22m branch: it has newer commits[39m
+        [107m [0m abc123 Some commit
+        [2m↳[22m [2mTo rebase onto [4mdevelop[24m, run [4mwt step rebase develop[24m[22m
+        ");
+
+        // In merge context
+        let err = GitError::NotFastForward {
+            target_branch: "main".into(),
+            commits_formatted: "def456 Another commit".into(),
+            in_merge_context: true,
+        };
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+        [107m [0m def456 Another commit
+        [2m↳[22m [2mTo incorporate these changes, run [4mwt merge main[24m again[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_conflicting_changes_empty_files() {
-        // Test with empty files list
+    fn snapshot_conflicting_changes_empty_files() {
         let err = GitError::ConflictingChanges {
             target_branch: "main".into(),
             files: vec![],
             worktree_path: PathBuf::from("/tmp/repo"),
         };
-        let display = err.to_string();
-        assert!(display.contains("conflicting"));
-        // Should still have hint about commit/stash
-        assert!(display.contains("Commit or stash"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
+        [2m↳[22m [2mCommit or stash these changes in /tmp/repo first[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_cli_api_error() {
+    fn snapshot_cli_api_error() {
         let err = GitError::CliApiError {
             ref_type: RefType::Pr,
             message: "gh api failed for PR #42".into(),
             stderr: "error: unexpected response\ncode: 500".into(),
         };
-        let display = err.to_string();
-        // Verify header and gutter content are present
-        assert!(display.contains("gh api failed"));
-        assert!(display.contains("unexpected response"));
-        assert!(display.contains("500"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mgh api failed for PR #42[39m
+        [107m [0m error: unexpected response
+        [107m [0m code: 500
+        ");
     }
 
     #[test]
-    fn test_git_error_no_remote_for_repo() {
+    fn snapshot_no_remote_for_repo() {
         let err = GitError::NoRemoteForRepo {
             owner: "upstream-owner".into(),
             repo: "upstream-repo".into(),
             suggested_url: "https://github.com/upstream-owner/upstream-repo.git".into(),
         };
-        let display = err.to_string();
-        // Verify error message and hint
-        assert!(display.contains("No remote found"));
-        assert!(display.contains("upstream-owner/upstream-repo"));
-        assert!(display.contains("git remote add upstream"));
-        assert!(display.contains("https://github.com/upstream-owner/upstream-repo.git"));
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mNo remote found for [1mupstream-owner/upstream-repo[22m[39m
+        [2m↳[22m [2mAdd the remote: [4mgit remote add upstream https://github.com/upstream-owner/upstream-repo.git[24m[22m
+        ");
     }
 
     #[test]
-    fn test_hook_error_with_hint_source() {
-        use crate::HookType;
-
-        // Create a WorktrunkError with hook_type
-        let inner_error: anyhow::Error = WorktrunkError::HookCommandFailed {
-            hook_type: HookType::PreMerge,
-            command_name: Some("test".into()),
-            error: "Test failed".into(),
-            exit_code: Some(1),
-        }
-        .into();
-
-        // Wrap it using add_hook_skip_hint
-        let wrapped = add_hook_skip_hint(inner_error);
-
-        // The source() method should return the underlying error
-        let source = wrapped.source();
-        // source can be Some or None depending on implementation
-        let _ = source;
-    }
-
-    #[test]
-    fn test_add_hook_skip_hint_with_hook_type() {
-        use crate::HookType;
-
-        let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
-            hook_type: HookType::PreCommit,
-            command_name: Some("build".into()),
-            error: "Build failed".into(),
-            exit_code: Some(1),
-        }
-        .into();
-
-        let wrapped = add_hook_skip_hint(inner);
-        let display = wrapped.to_string();
-
-        // Should include the original error
-        assert!(display.contains("build"));
-        // Should include the hint
-        assert!(display.contains("--no-verify"));
-        assert!(display.contains("pre-commit"));
-    }
-
-    #[test]
-    fn test_add_hook_skip_hint_non_hook_error() {
-        // Test with a non-hook error (should pass through unchanged)
-        let inner: anyhow::Error = GitError::Other {
-            message: "some error".into(),
-        }
-        .into();
-
-        let wrapped = add_hook_skip_hint(inner);
-        let display = wrapped.to_string();
-
-        // Should include the original error
-        assert!(display.contains("some error"));
-        // Should NOT include hint (not a hook error)
-        assert!(!display.contains("--no-verify"));
-    }
-
-    #[test]
-    fn test_rebase_conflict_empty_output() {
+    fn snapshot_rebase_conflict_empty_output() {
         let err = GitError::RebaseConflict {
             target_branch: "main".into(),
             git_output: "".into(),
         };
-        let display = err.to_string();
-        assert!(display.contains("incomplete"));
-        assert!(display.contains("main"));
-        // Empty output shouldn't cause issues
+        assert_snapshot!(err.to_string(), @"
+        [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
+        [2m↳[22m [2mTo continue after resolving conflicts, run [4mgit rebase --continue[24m[22m
+        [2m↳[22m [2mTo abort, run [4mgit rebase --abort[24m[22m
+        ");
     }
 
     #[test]

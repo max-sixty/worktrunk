@@ -308,19 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_operations_debug() {
-        let ops = MergeOperations {
-            committed: true,
-            squashed: false,
-            rebased: true,
-        };
-        let debug = format!("{:?}", ops);
-        assert!(debug.contains("committed: true"));
-        assert!(debug.contains("squashed: false"));
-        assert!(debug.contains("rebased: true"));
-    }
-
-    #[test]
     fn test_remove_result_removed_worktree() {
         let result = RemoveResult::RemovedWorktree {
             main_path: PathBuf::from("/main"),

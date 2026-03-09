@@ -161,6 +161,8 @@ impl Serialize for CommandConfig {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     // ============================================================================
@@ -301,8 +303,7 @@ third = "echo 3"
             },
         };
 
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("cmd = \"npm install\""));
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"cmd = "npm install""#);
     }
 
     #[test]
@@ -322,11 +323,11 @@ third = "echo 3"
             },
         };
 
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("build"));
-        assert!(serialized.contains("cargo build"));
-        assert!(serialized.contains("test"));
-        assert!(serialized.contains("cargo test"));
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
+        [cmd]
+        build = "cargo build"
+        test = "cargo test"
+        "#);
     }
 
     #[test]
@@ -474,8 +475,10 @@ third = "echo 3"
 
         // Should not panic - generates "_1" for unnamed command
         let wrapper = Wrapper { cmd: merged };
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("npm install"), "{serialized}");
-        assert!(serialized.contains("echo setup"), "{serialized}");
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
+        [cmd]
+        _1 = "npm install"
+        setup = "echo setup"
+        "#);
     }
 }
