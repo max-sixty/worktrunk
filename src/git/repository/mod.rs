@@ -462,13 +462,11 @@ impl Repository {
         self.cache.repo_name.get_or_init(|| {
             let is_bare = self.is_bare().unwrap_or(false);
 
-            if is_bare {
-                // Try to get repo name from primary remote URL (local-only, no network)
-                if let Some(url) = self.primary_remote_url() {
-                    if let Some(parsed) = GitRemoteUrl::parse(&url) {
-                        return parsed.repo().to_string();
-                    }
-                }
+            if is_bare
+                && let Some(url) = self.primary_remote_url()
+                && let Some(parsed) = GitRemoteUrl::parse(&url)
+            {
+                return parsed.repo().to_string();
             }
 
             // Non-bare repos: use repo_path directory name (parent of .git)
