@@ -90,21 +90,7 @@ pub fn compute_worktree_path(
         return Ok(repo_root.to_path_buf());
     }
 
-    let repo_name = repo_root
-        .file_name()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path has no filename: {}",
-                format_path_for_display(repo_root)
-            )
-        })?
-        .to_str()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path contains invalid UTF-8: {}",
-                format_path_for_display(repo_root)
-            )
-        })?;
+    let repo_name = repo.repo_name();
 
     let project = repo.project_identifier().ok();
     let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;

@@ -625,6 +625,19 @@ impl NestedBareRepoTest {
         test.project_path = canonicalize(&test.project_path).unwrap();
         test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
 
+        // Add a remote so {{ repo }} resolves to "project" via remote URL parsing
+        let mut remote_cmd = Command::new("git");
+        remote_cmd
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/test-user/project.git",
+            ])
+            .current_dir(&test.bare_repo_path);
+        test.configure_git_cmd(&mut remote_cmd);
+        remote_cmd.output().unwrap();
+
         // Write config with template for worktrees as siblings to .git
         // For nested bare repos (project/.git), we use "../{{ branch }}" to create
         // worktrees at project/main, project/feature (siblings to .git)
@@ -980,7 +993,7 @@ fn test_nested_bare_repo_template_repo_variable() {
         "wt switch failed:\nstderr: {stderr}"
     );
 
-    // The repo variable should be "project" (parent dir name), NOT ".git"
+    // The repo variable should be "project" (from remote URL), NOT ".git"
     assert!(
         stderr.contains("REPO=project"),
         "Expected repo='project' but got:\nstderr: {stderr}"

@@ -99,6 +99,8 @@ pub(super) struct RepoCache {
     pub(super) is_bare: OnceCell<bool>,
     /// Repository root path (main worktree for normal repos, bare directory for bare repos)
     pub(super) repo_path: OnceCell<PathBuf>,
+    /// Human-meaningful repository name (derived from directory name or remote URL)
+    pub(super) repo_name: OnceCell<String>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -415,15 +417,7 @@ impl Repository {
     pub fn repo_path(&self) -> &Path {
         self.cache.repo_path.get_or_init(|| {
             // Bare repos have no worktree — the git directory IS the repo.
-            // However, worktree-based setups often use `.git` as a bare-style
-            // common dir (e.g. /project/.git with sibling worktrees).  In that
-            // case the meaningful project path is the parent directory.
             if self.is_bare().unwrap_or(false) {
-                if self.git_common_dir.file_name().and_then(|n| n.to_str()) == Some(".git")
-                    && let Some(parent) = self.git_common_dir.parent()
-                {
-                    return parent.to_path_buf();
-                }
                 return self.git_common_dir.clone();
             }
 
@@ -443,6 +437,37 @@ impl Repository {
                 .parent()
                 .expect("Git directory has no parent")
                 .to_path_buf()
+        })
+    }
+
+    /// A human-meaningful repository name for use in templates (`{{ repo }}`).
+    ///
+    /// Resolution order:
+    /// 1. **Not bare** → directory name of `repo_path()` (current behavior)
+    /// 2. **Bare + has primary remote** → repo name parsed from remote URL
+    /// 3. **Bare + no remote** → directory name of `git_common_dir` (fallback)
+    ///
+    /// Result is cached in the repository's shared cache (same for all clones).
+    pub fn repo_name(&self) -> &str {
+        self.cache.repo_name.get_or_init(|| {
+            let is_bare = self.is_bare().unwrap_or(false);
+
+            if is_bare {
+                // Try to get repo name from primary remote URL (local-only, no network)
+                if let Some(url) = self.primary_remote_url() {
+                    if let Some(parsed) = GitRemoteUrl::parse(&url) {
+                        return parsed.repo().to_string();
+                    }
+                }
+            }
+
+            // Non-bare repos: use repo_path directory name (parent of .git)
+            // Bare repos without remote: use git_common_dir name (fallback)
+            self.repo_path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
         })
     }
 
