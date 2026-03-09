@@ -212,10 +212,10 @@ pub fn handle_switch(
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
     // If user declines, skip hooks but continue with worktree operation
-    let skip_hooks = !approve_switch_hooks(&repo, config, &plan, yes, verify)?;
+    let hooks_approved = approve_switch_hooks(&repo, config, &plan, yes, verify)?;
 
     // Execute the validated plan
-    let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
+    let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
@@ -264,7 +264,7 @@ pub fn handle_switch(
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
     // - post-start: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
-    if !skip_hooks {
+    if hooks_approved {
         spawn_switch_background_hooks(
             &repo,
             config,

@@ -638,7 +638,7 @@ fn main() {
                 verify,
                 stage,
                 show_prompt,
-            } => step_commit(yes, !verify, stage, show_prompt),
+            } => step_commit(yes, verify, stage, show_prompt),
             StepCommand::Squash {
                 target,
                 yes,
@@ -651,24 +651,25 @@ fn main() {
                     commands::step_show_squash_prompt(target.as_deref())
                 } else {
                     // Approval is handled inside handle_squash (like step_commit)
-                    handle_squash(target.as_deref(), yes, !verify, stage).map(|result| match result
-                    {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            eprintln!(
-                                "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                ))
-                            );
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            eprintln!(
-                                "{}",
-                                info_message("Nothing to squash; already a single commit")
-                            );
-                        }
-                    })
+                    handle_squash(target.as_deref(), yes, verify, stage).map(
+                        |result| match result {
+                            SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                            SquashResult::NoCommitsAhead(branch) => {
+                                eprintln!(
+                                    "{}",
+                                    info_message(format!(
+                                        "Nothing to squash; no commits ahead of {branch}"
+                                    ))
+                                );
+                            }
+                            SquashResult::AlreadySingleCommit => {
+                                eprintln!(
+                                    "{}",
+                                    info_message("Nothing to squash; already a single commit")
+                                );
+                            }
+                        },
+                    )
                 }
             }
             StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),

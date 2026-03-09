@@ -43,7 +43,7 @@ use worktrunk::shell_exec::Cmd;
 /// `stage` is the CLI-provided stage mode. If None, uses the effective config default.
 pub fn step_commit(
     yes: bool,
-    no_verify: bool,
+    verify: bool,
     stage: Option<StageMode>,
     show_prompt: bool,
 ) -> anyhow::Result<()> {
@@ -70,24 +70,24 @@ pub fn step_commit(
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-    // Shadow no_verify: if user declines approval, skip hooks but continue commit
-    let no_verify = if !no_verify {
+    // Shadow verify: if user declines approval, skip hooks but continue commit
+    let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
             eprintln!(
                 "{}",
                 info_message("Commands declined, committing without hooks",)
             );
-            true // Skip hooks
+            false
         } else {
-            false // Run hooks
+            true
         }
     } else {
-        true // --no-verify was passed
+        false // --no-verify was passed
     };
 
     let mut options = CommitOptions::new(&ctx);
-    options.no_verify = no_verify;
+    options.verify = verify;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
     // Only warn about untracked if we're staging all
@@ -112,12 +112,12 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `no_verify` - If true, skip all pre-commit hooks (from --no-verify flag)
+/// * `verify` - If true, run pre-commit hooks (false when --no-verify flag is passed)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
-    no_verify: bool,
+    verify: bool,
     stage: Option<StageMode>,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
@@ -145,17 +145,17 @@ pub fn handle_squash(
             .is_some_and(|c| c.hooks.pre_commit.is_some());
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-    // Shadow no_verify: if user declines approval, skip hooks but continue squash
-    let no_verify = if !no_verify {
+    // Shadow verify: if user declines approval, skip hooks but continue squash
+    let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
         if !approved {
             eprintln!(
                 "{}",
                 info_message("Commands declined, squashing without hooks")
             );
-            true // Skip hooks
+            false
         } else {
-            false // Run hooks
+            true
         }
     } else {
         // Show skip message when --no-verify was passed and hooks exist
@@ -165,7 +165,7 @@ pub fn handle_squash(
                 info_message("Skipping pre-commit hooks (--no-verify)")
             );
         }
-        true // --no-verify was passed
+        false // --no-verify was passed
     };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
@@ -188,7 +188,7 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hooks (user first, then project)
-    if !no_verify {
+    if verify {
         let extra_vars = [("target", integration_target.as_str())];
         run_hook_with_filter(
             &ctx,

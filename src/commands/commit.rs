@@ -17,7 +17,7 @@ pub use worktrunk::config::StageMode;
 pub struct CommitOptions<'a> {
     pub ctx: &'a CommandContext<'a>,
     pub target_branch: Option<&'a str>,
-    pub no_verify: bool,
+    pub verify: bool,
     pub stage_mode: StageMode,
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
@@ -29,7 +29,7 @@ impl<'a> CommitOptions<'a> {
         Self {
             ctx,
             target_branch: None,
-            no_verify: false,
+            verify: true,
             stage_mode: StageMode::All,
             warn_about_untracked: true,
             show_no_squash_note: false,
@@ -165,14 +165,14 @@ impl CommitOptions<'_> {
         let any_hooks_exist = user_hooks_exist || project_hooks_exist;
 
         // Show skip message
-        if self.no_verify && any_hooks_exist {
+        if !self.verify && any_hooks_exist {
             eprintln!(
                 "{}",
                 info_message("Skipping pre-commit hooks (--no-verify)")
             );
         }
 
-        if !self.no_verify {
+        if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
