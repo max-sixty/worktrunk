@@ -243,8 +243,8 @@ PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 
 **Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
 rejects self-approvals. Submit as COMMENT when there are concerns, or stay
-silent if there are none. **If staying silent, you are done — do not proceed to
-steps 4–6.**
+silent if there are none. **If staying silent, skip steps 4 (posting) and 6
+(resolve threads) — proceed directly to step 5 (CI monitoring).**
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
@@ -377,9 +377,7 @@ GitHub rejects.
 
 ### 5. Monitor CI
 
-If you stayed silent (self-authored PR, no concerns) → **done, stop here.**
-
-After approving, monitor CI using the poll approach from `/running-in-ci`.
+After approving or staying silent, monitor CI using the poll approach from `/running-in-ci`.
 Exclude the current workflow's own check to avoid a circular wait:
 
 ```bash
