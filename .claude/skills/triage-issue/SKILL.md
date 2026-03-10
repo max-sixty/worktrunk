@@ -151,8 +151,7 @@ git commit -m "test: add reproduction for #$ARGUMENTS
 Co-authored-by: Claude <noreply@anthropic.com>"
 git push -u origin repro/issue-$ARGUMENTS
 gh pr create --title "test: reproduction for #$ARGUMENTS" --label "automated-fix" --body "## Context
-Adds a failing test that reproduces #$ARGUMENTS. The fix is not yet included —
-this PR captures the reproduction so a maintainer can investigate.
+Adds a failing test that reproduces #$ARGUMENTS. The fix is not yet included — this PR captures the reproduction so a maintainer can investigate.
 
 ---
 Automated triage for #<issue-number>"
@@ -179,62 +178,47 @@ Choose the appropriate template:
 
 ### Fix PR created
 
-> Thanks for reporting this! I was able to reproduce the issue and identified
-> the root cause: [one-sentence explanation].
+> Thanks for reporting this! I was able to reproduce the issue and identified the root cause: [one-sentence explanation].
 >
 > I've opened #PR_NUMBER with a fix. A maintainer will review it shortly.
 
 ### Reproduction test only (no fix attempted)
 
-> Thanks for reporting this! I was able to reproduce the issue — #PR_NUMBER
-> adds a failing test that demonstrates the bug.
+> Thanks for reporting this! I was able to reproduce the issue — #PR_NUMBER adds a failing test that demonstrates the bug.
 >
-> Root cause appears to be [brief explanation if known, or "still under
-> investigation"]. A maintainer will take a closer look.
+> Root cause appears to be [brief explanation if known, or "still under investigation"]. A maintainer will take a closer look.
 
 ### Could not reproduce
 
-> Thanks for reporting this! I tried to reproduce this but wasn't able to with
-> the information provided.
+> Thanks for reporting this! I tried to reproduce this but wasn't able to with the information provided.
 >
-> Could you share [specific information needed — exact command, config file,
-> git repo structure, OS, shell, etc.]? That would help narrow it down.
+> Could you share [specific information needed — exact command, config file, git repo structure, OS, shell, etc.]? That would help narrow it down.
 >
 > A maintainer will also take a look.
 
 ### Bug already fixed
 
-> Thanks for reporting this! I looked into this and it appears the behavior
-> described may already be fixed on `main` (the relevant test passes).
+> Thanks for reporting this! I looked into this and it appears the behavior described may already be fixed on `main` (the relevant test passes).
 >
-> Could you confirm which version you're running (`wt --version`)? If you're
-> on an older release, updating should resolve this. A maintainer will
-> confirm.
+> Could you confirm which version you're running (`wt --version`)? If you're on an older release, updating should resolve this. A maintainer will confirm.
 
 ### Feature may already exist
 
-> Thanks for the suggestion! It's possible that [existing feature — specific
-> behavior, config/flag] already does what you're looking for: [brief
-> description of how it works].
+> Thanks for the suggestion! It's possible that [existing feature — specific behavior, config/flag] already does what you're looking for: [brief description of how it works].
 >
-> If that's not quite what you had in mind, could you clarify what additional
-> behavior you're looking for? A maintainer will take a look either way.
+> If that's not quite what you had in mind, could you clarify what additional behavior you're looking for? A maintainer will take a look either way.
 
 ### Feature does not exist
 
-> Thanks for the suggestion! I searched the codebase and didn't find an
-> existing implementation of this. [Optionally: the closest related
-> functionality is X, which does Y.]
+> Thanks for the suggestion! I searched the codebase and didn't find an existing implementation of this. [Optionally: the closest related functionality is X, which does Y.]
 >
 > I'll leave it for a maintainer to evaluate and prioritize.
 
 ### Question
 
-> Thanks for reaching out! This looks like a usage question rather than a bug
-> report.
+> Thanks for reaching out! This looks like a usage question rather than a bug report.
 >
-> [Brief answer if obvious from the codebase, or pointer to relevant docs/help
-> text.]
+> [Brief answer if obvious from the codebase, or pointer to relevant docs/help text.]
 >
 > A maintainer can provide more detail if needed.
 
