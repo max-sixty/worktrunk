@@ -1340,17 +1340,14 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 
 ## JSON context
 
-Hooks receive context as JSON on stdin — all template variables plus `hook_type` and `hook_name`. This enables complex logic that templates can't express:
+Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
 
 ```toml
 [post-create]
 setup = "python3 scripts/post-create-setup.py"
 ```
 
-The script reads JSON from stdin:
-
 ```python
-# scripts/post-create-setup.py
 import json, sys, subprocess
 ctx = json.load(sys.stdin)
 if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
