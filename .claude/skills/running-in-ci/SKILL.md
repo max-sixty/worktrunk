@@ -48,10 +48,24 @@ Before pushing commits to a PR branch, check whether it's a fork PR:
 gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
 ```
 
-If the owner is **not** `max-sixty`, it's a fork PR. Do **not** create new
-branches and push them to `origin` — that pushes to the upstream repo, not the
-fork. Instead, post your suggested changes as code snippets in a comment. Do not
-attempt to push and then clean up; check first.
+If the owner is **not** `max-sixty`, it's a fork PR. The key rule: **never
+create new branches on `origin`** — that pushes to the upstream repo, not the
+fork.
+
+Instead, push directly to the fork's PR branch:
+
+```bash
+# Get the fork's clone URL and branch name
+gh pr view <number> --json headRepository,headRefName \
+  --jq '"\(.headRepository.owner.login)/\(.headRepository.name) \(.headRefName)"'
+
+# Add the fork as a remote and push
+git remote add fork https://github.com/<owner>/<repo>.git
+git push fork HEAD:<branch>
+```
+
+If pushing to the fork fails (e.g., "Allow edits from maintainers" is disabled),
+fall back to posting suggested changes as code snippets in a comment.
 
 When posting code from work you did locally, do not reference commit SHAs from
 temporary or deleted branches — those links will 404. Post the code inline
