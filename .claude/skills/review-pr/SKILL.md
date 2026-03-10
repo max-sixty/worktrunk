@@ -473,11 +473,16 @@ gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 Outdated comments (null line) are best-effort — skip if the original context
 can't be located.
 
-### 7. Push mechanical fixes on bot PRs
+### 7. Push mechanical fixes
 
-If the review found concrete, fixable issues on a bot PR (Dependabot, renovate,
-etc.) where there's no human author to act on feedback, commit and push the fix
+**Bot PRs** (Dependabot, renovate, etc.): If the review found concrete, fixable
+issues and there's no human author to act on feedback, commit and push the fix
 directly to the PR branch.
+
+**Human PRs**: Post inline suggestions first (one-click apply is fastest for the
+author). Additionally, **offer to push a commit** when the fixes are mechanical
+and correctness is obvious — e.g., "I can push these changes in a commit if
+you'd like." Only push after the author accepts the offer.
 
 ```bash
 gh pr checkout <number>
@@ -488,5 +493,4 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 git push
 ```
 
-Only do this for mechanical changes where correctness is obvious. For human PRs,
-leave inline suggestions for the author instead.
+Only push mechanical changes where correctness is obvious.
