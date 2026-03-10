@@ -264,7 +264,7 @@ Clean up Xcode's DerivedData when removing a worktree. Each DerivedData director
 # ~/.config/worktrunk/config.toml
 [post-remove]
 clean-derived = """
-  grep -rl {{ worktree_path }} \
+  grep -Fl {{ worktree_path }} \
     ~/Library/Developer/Xcode/DerivedData/*/info.plist 2>/dev/null \
   | while read plist; do
       derived_dir=$(dirname "$plist")
