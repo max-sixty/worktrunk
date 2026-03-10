@@ -138,6 +138,7 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 - Editing a comment or issue body re-triggers the same response
 
 **Does not trigger:**
+- Issues authored by `worktrunk-bot` (prevents self-triggering when bot-created issues incidentally mention `@worktrunk-bot` in body text)
 - `worktrunk-bot`'s own comments or reviews (loop prevention)
 - Empty approvals on `worktrunk-bot` PRs (approved with no body)
 - Comments on issues or PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
