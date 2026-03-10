@@ -55,13 +55,11 @@ fork.
 Instead, push directly to the fork's PR branch:
 
 ```bash
-# Get the fork's clone URL and branch name
-gh pr view <number> --json headRepository,headRefName \
-  --jq '"\(.headRepository.owner.login)/\(.headRepository.name) \(.headRefName)"'
+# Checks out the PR branch and sets up the fork remote automatically
+gh pr checkout <number>
 
-# Add the fork as a remote and push
-git remote add fork https://github.com/<owner>/<repo>.git
-git push fork HEAD:<branch>
+# After making changes, push back to the fork
+git push
 ```
 
 If pushing to the fork fails (e.g., "Allow edits from maintainers" is disabled),
