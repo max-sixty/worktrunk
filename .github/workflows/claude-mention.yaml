@@ -29,16 +29,18 @@ jobs:
     # and where to look; Claude reads the full context itself via gh/skills.
     #
     # Note: secrets cannot be used in job-level `if:` (actions/runner#520) —
-    # doing so causes GitHub to fail the workflow on push validation. For review
-    # comments on fork PRs (which don't receive secrets), we detect forks via
-    # github.event context instead. Use a Conversation tab comment for fork PRs.
+    # doing so causes GitHub to fail the workflow on push validation.
+    #
+    # Unlike `pull_request`, the `pull_request_review_comment` event runs on
+    # the base repo and has access to secrets even for fork PRs — no fork
+    # filter needed. (The `issue_comment` path already works on fork PRs
+    # for the same reason.)
     if: |
       (github.event_name == 'issues' &&
         contains(github.event.issue.body, '@worktrunk-bot')) ||
       (github.event_name == 'issue_comment' &&
         github.event.comment.user.login != 'worktrunk-bot') ||
       (github.event_name == 'pull_request_review_comment' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.comment.user.login != 'worktrunk-bot')
     # Job-level concurrency (not workflow-level) so that runs skipped by the
     # `if:` above don't enter the concurrency group. Workflow-level concurrency
