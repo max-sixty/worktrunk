@@ -333,6 +333,10 @@ the diff, offer to push a fix commit instead.
 **Correct — inline suggestion on the line:**
 
 `````bash
+cat > /tmp/review-body.md << 'EOF'
+Summary of suggestions
+EOF
+
 cat > /tmp/review-payload.json << 'ENDJSON'
 {
   "event": "COMMENT",
