@@ -130,7 +130,7 @@ jobs:
             - Body: Include the run ID, specific log excerpts showing the problem, analysis of root cause, and what makes it hard to fix directly
             - Label: `claude-behavior`
 
-            When you have multiple findings, group by **broad theme** into a single PR rather than creating many small patches. If findings are unrelated, separate PRs are fine.
+            When you have multiple findings, group PRs by **broad theme**
 
             ## Step 8: Summary
 
