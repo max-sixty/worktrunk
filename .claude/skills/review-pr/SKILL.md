@@ -243,7 +243,8 @@ PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 
 **Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
 rejects self-approvals. Submit as COMMENT when there are concerns, or stay
-silent if there are none.
+silent if there are none. **If staying silent, you are done — do not proceed to
+steps 4–6.**
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
