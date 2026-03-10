@@ -267,6 +267,26 @@ To create a worktree and immediately attach:
 wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
 ```
 
+## Xcode DerivedData cleanup
+
+Clean up Xcode's DerivedData when removing a worktree. Each DerivedData directory contains an `info.plist` recording its project path — grep for the worktree path to find and remove the matching build cache:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-remove]
+clean-derived = """
+  grep -rl {{ worktree_path }} \
+    ~/Library/Developer/Xcode/DerivedData/*/info.plist 2>/dev/null \
+  | while read plist; do
+      derived_dir=$(dirname "$plist")
+      rm -rf "$derived_dir"
+      echo "Cleaned DerivedData: $derived_dir"
+    done
+"""
+```
+
+This precisely targets only the DerivedData for the removed worktree, leaving caches for other worktrees and the main repository intact.
+
 ## Subdomain routing with Caddy
 <!-- Hand-tested 2026-03-07 -->
 
