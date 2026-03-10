@@ -97,7 +97,7 @@ All workflows pass BOT_TOKEN to both paths.
 | **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
 | **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, fork check on inline review comments, non-mention triggers verified against bot engagement via API |
-| **ci-fix** | Failed CI logs | Minimal (must break CI on main) | Fixed prompt, automatic trigger |
+| **ci-fix** | Failed CI/docs-build logs | Minimal (must break CI or docs build on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
 ### Secret exfiltration via modified workflows
