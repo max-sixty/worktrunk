@@ -96,7 +96,7 @@ All workflows pass BOT_TOKEN to both paths.
 |----------|-------------------|-------------------|-------------|
 | **review** | PR diff content (initial review), review body on bot PRs (respond) | Full (any external PR) / Medium (anyone who can review bot PRs) | Fixed prompt, merge restriction |
 | **triage** | Issue body | Partial (structured skill) | Fixed prompt, merge restriction, environment protection |
-| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, non-mention triggers verified against bot engagement via API |
+| **mention** | Comment body on any issue/PR, inline/conversation comments on bot-engaged PRs | Full | Fixed prompt, merge restriction, fork check on inline review comments, non-mention triggers verified against bot engagement via API |
 | **ci-fix** | Failed CI/docs-build logs | Minimal (must break CI or docs build on main) | Fixed prompt, automatic trigger |
 | **renovate** | None | None | Fixed prompt, scheduled trigger |
 
@@ -141,6 +141,7 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 - `worktrunk-bot`'s own comments or reviews (loop prevention)
 - Empty approvals on `worktrunk-bot` PRs (approved with no body)
 - Comments on issues or PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
+- Inline review comments on fork PRs (secrets unavailable)
 - Inline review comments from `worktrunk-bot` itself (loop prevention)
 - Draft PRs
 
@@ -154,6 +155,20 @@ GitHub treats PRs as a superset of issues. Comments on a PR arrive via two diffe
 - **Files changed (inline)** → `pull_request_review_comment` event. The PR is at `github.event.pull_request`. There is no `github.event.issue`.
 
 The `claude-mention` workflow handles both with separate checkout steps.
+
+### Fork PR secret availability
+
+Not all event types have access to secrets when triggered by fork PRs:
+
+| Event type | Fork PR secrets | Runs in context of |
+|---|---|---|
+| `pull_request` | **No** | Fork repo |
+| `pull_request_target` | **Yes** | Base repo |
+| `pull_request_review_comment` | **No** | Fork repo |
+| `pull_request_review` | **No** | Fork repo |
+| `issue_comment` | **Yes** | Base repo |
+
+For fork PRs, use Conversation tab comments (`issue_comment`) to interact with the bot. Inline review comments (`pull_request_review_comment`) are filtered out by the fork check in `claude-mention`.
 
 ### pull_request_review
 
