@@ -141,7 +141,7 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 - `worktrunk-bot`'s own comments or reviews (loop prevention)
 - Empty approvals on `worktrunk-bot` PRs (approved with no body)
 - Comments on issues or PRs where `worktrunk-bot` hasn't engaged and no `@worktrunk-bot` mention
-- Inline review comments on fork PRs (secrets unavailable)
+- Inline review comments on fork PRs (secrets unavailable; a `fork-pr-redirect` job replies with a notice to use the Conversation tab instead)
 - Draft PRs
 
 **Routing:** Formal reviews (`pull_request_review`) → `claude-review`. Inline comments (`pull_request_review_comment`) and conversation comments (`issue_comment`) → `claude-mention`.

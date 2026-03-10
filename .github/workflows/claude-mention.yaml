@@ -16,6 +16,28 @@ env:
   RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
+  fork-pr-redirect:
+    # When someone @mentions the bot in an inline review comment on a fork PR,
+    # secrets aren't available so the main job is skipped. Post a helpful reply
+    # using GITHUB_TOKEN instead of silently ignoring the mention.
+    if: |
+      github.event_name == 'pull_request_review_comment' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      contains(github.event.comment.body, '@worktrunk-bot') &&
+      github.event.comment.user.login != 'worktrunk-bot'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 💬 Reply with fork PR notice
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/${{ github.event.comment.id }}/replies" \
+            -F body=@/dev/stdin <<'EOF'
+          I can't respond to inline review comments on fork PRs (secrets aren't available in this context). Please re-post your request as a **Conversation tab** comment and I'll pick it up there.
+          EOF
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   claude:
     # Two triggers:
     # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
