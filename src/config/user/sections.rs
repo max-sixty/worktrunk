@@ -45,7 +45,7 @@ pub struct CommitGenerationConfig {
     ///
     /// Examples:
     /// - `"llm -m claude-haiku-4.5"`
-    /// - `"MAX_THINKING_TOKENS=0 claude -p --model=haiku"`
+    /// - `"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku"`
     ///
     /// The command receives the prompt via stdin and should output the commit message.
     #[serde(default)]

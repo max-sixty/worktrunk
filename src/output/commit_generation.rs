@@ -34,7 +34,7 @@ impl LlmTool {
     pub fn recommended_config(&self) -> &'static str {
         match self {
             LlmTool::Claude => {
-                "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+                "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
             }
             LlmTool::Codex => {
                 r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_llm_tool_recommended_config() {
-        assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
+        assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
         assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
     }
 
@@ -217,7 +217,7 @@ mod tests {
         // Long commands stay as single-line TOML
         let cmd = LlmTool::Claude.recommended_config();
         let result = format_command_for_display(cmd);
-        assert_snapshot!(result, @r#""MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
+        assert_snapshot!(result, @r#""MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
     }
 
     #[test]
