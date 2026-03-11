@@ -156,6 +156,11 @@ breakdowns, surveys, and multi-section analyses always need collapsible
 sections — even if every section feels essential. The reader should be able to
 get the gist from the summary line without expanding.
 
+**When NOT to use `<details>` tags:** When the full response *is* the answer —
+e.g., someone asked for a survey or detailed analysis, and the content is the
+primary response, not supporting detail. Long replies are fine when the length
+is the substance, not boilerplate around a short conclusion.
+
 ### Use Links
 
 When referencing files, issues, PRs, or docs, always use markdown links so
