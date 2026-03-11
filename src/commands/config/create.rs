@@ -97,16 +97,16 @@ fn create_config_file(
         // Build hint message based on whether the other config exists
         let hint = if other_config_exists {
             // Both configs exist
-            cformat!("To view both user and project configs, run <bright-black>wt config show</>")
+            cformat!("To view both user and project configs, run <underline>wt config show</>")
         } else if is_project {
             // Project config exists, no user config
             cformat!(
-                "To view, run <bright-black>wt config show</>. To create a user config, run <bright-black>wt config create</>"
+                "To view, run <underline>wt config show</>. To create a user config, run <underline>wt config create</>"
             )
         } else {
             // User config exists, no project config
             cformat!(
-                "To view, run <bright-black>wt config show</>. To create a project config, run <bright-black>wt config create --project</>"
+                "To view, run <underline>wt config show</>. To create a project config, run <underline>wt config create --project</>"
             )
         };
         eprintln!("{}", hint_message(hint));

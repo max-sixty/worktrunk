@@ -396,20 +396,20 @@ fn test_doc_example_database_url(repo: TestRepo) {
 #[rstest]
 fn test_doc_example_dev_server(repo: TestRepo) {
     // From docs/content/hook.md lines 168-170:
-    // dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
+    // dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
     vars.insert("branch", "feature-auth");
 
-    let template = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}";
+    let template = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}";
 
     let result = expand_template(template, &vars, false, &repository, "test").unwrap();
 
     let expected_port = hash_port("feature-auth");
     assert_eq!(
         result,
-        format!("npm run dev -- --host feature-auth.lvh.me --port {expected_port}")
+        format!("npm run dev -- --host feature-auth.localhost --port {expected_port}")
     );
 }
 

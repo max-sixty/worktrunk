@@ -1,9 +1,28 @@
+use std::fmt;
+
 use worktrunk::config::{Command, ProjectConfig};
 use worktrunk::git::HookType;
 
+/// What triggered a project command — determines the label in approval prompts.
 #[derive(Clone)]
-pub struct HookCommand {
-    pub hook_type: HookType,
+pub enum Phase {
+    Hook(HookType),
+    Alias,
+}
+
+impl fmt::Display for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Phase::Hook(hook_type) => write!(f, "{hook_type}"),
+            Phase::Alias => write!(f, "alias"),
+        }
+    }
+}
+
+/// A project-config command pending approval.
+#[derive(Clone)]
+pub struct ApprovableCommand {
+    pub phase: Phase,
     pub command: Command,
 }
 
@@ -11,7 +30,7 @@ pub struct HookCommand {
 pub fn collect_commands_for_hooks(
     project_config: &ProjectConfig,
     hooks: &[HookType],
-) -> Vec<HookCommand> {
+) -> Vec<ApprovableCommand> {
     let mut commands = Vec::new();
     for hook in hooks {
         if let Some(config) = project_config.hooks.get(*hook) {
@@ -20,8 +39,8 @@ pub fn collect_commands_for_hooks(
                     .commands()
                     .iter()
                     .cloned()
-                    .map(|command| HookCommand {
-                        hook_type: *hook,
+                    .map(|command| ApprovableCommand {
+                        phase: Phase::Hook(*hook),
                         command,
                     }),
             );
@@ -117,6 +136,9 @@ build = "npm run build"
         let config = make_project_config_with_hooks();
         let commands = collect_commands_for_hooks(&config, &[HookType::PostCreate]);
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].hook_type, HookType::PostCreate);
+        assert!(matches!(
+            commands[0].phase,
+            Phase::Hook(HookType::PostCreate)
+        ));
     }
 }

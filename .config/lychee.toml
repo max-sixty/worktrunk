@@ -5,9 +5,11 @@
 root_dir = "docs/static"
 
 # Network resilience - handles transient failures
-max_retries = 5
+max_retries = 6
+retry_wait_time = 2
 timeout = 20
 max_redirects = 5
+max_concurrency = 8
 
 # Accepted HTTP status codes
 accept = [200, 206, 429]
@@ -25,11 +27,17 @@ exclude = [
     # Private or authenticated GitHub resources
     "github\\.com/anthropics/claude-code/issues",
 
-    # GitHub immutable resources (occasionally return 502/504 on heavy load)
+    # GitHub resources that are either immutable or not our content to maintain
+    # (user profiles, stargazers, commit SHAs, external repo issues/PRs/actions)
     "github\\.com/[^/]+/[^/]+/commit",
     "github\\.com/[^/]+/[^/]+/issues",
     "github\\.com/[^/]+/[^/]+/pull",
     "github\\.com/[^/]+/[^/]+/actions",
+    "github\\.com/[^/]+/[^/]+/stargazers",
+    "github\\.com/[^/]+/[^/]+/releases/tag",
+
+    # GitHub user/org profiles (no content we control, frequently 429/502)
+    "github\\.com/[a-zA-Z0-9_-]+$",
 
     # Social media (blocks GitHub Actions)
     "twitter\\.com",

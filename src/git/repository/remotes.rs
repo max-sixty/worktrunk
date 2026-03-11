@@ -178,7 +178,7 @@ impl Repository {
 
                 // Fall back to full canonical path (use worktree base for consistency across all worktrees)
                 // Full path avoids collisions across unrelated repos with the same directory name
-                let repo_root = self.repo_path();
+                let repo_root = self.repo_path()?;
                 let canonical =
                     dunce::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
                 let path_str = canonical
@@ -213,5 +213,35 @@ impl Repository {
             &format!("refs/remotes/{}", ref_name),
         ])
         .is_ok()
+    }
+
+    /// Strip the remote prefix from a remote-tracking branch name.
+    ///
+    /// Given a name like `origin/username/feature-1`, returns `Some("username/feature-1")`
+    /// if it's a valid remote-tracking ref. Returns `None` if the name isn't a remote ref
+    /// or the remote can't be identified.
+    ///
+    /// This handles remote names that don't contain `/` (the common case). It lists
+    /// all configured remotes and finds the one that matches the prefix.
+    ///
+    /// TODO: A cleaner approach would be to strip the prefix upstream — either have
+    /// `list_remote_branches()` return `(remote, local_branch, sha)` tuples, or track
+    /// `is_remote` on `ListItem` so the picker outputs just the local branch name.
+    /// Either would eliminate this runtime `git remote` call. See #1260.
+    pub fn strip_remote_prefix(&self, ref_name: &str) -> Option<String> {
+        // Quick check: is this actually a remote-tracking ref?
+        if !self.is_remote_tracking_branch(ref_name) {
+            return None;
+        }
+
+        // List all remotes and find the one that is a prefix of ref_name
+        let output = self.run_command(&["remote"]).ok()?;
+        output.lines().find_map(|remote| {
+            let prefix = format!("{}/", remote.trim());
+            ref_name
+                .strip_prefix(&prefix)
+                .filter(|branch| !branch.is_empty())
+                .map(|branch| branch.to_string())
+        })
     }
 }

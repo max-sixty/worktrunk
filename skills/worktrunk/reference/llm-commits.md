@@ -15,32 +15,27 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' 
 
 `CLAUDECODE=` unsets the nesting guard so `claude -p` works from within a Claude Code session. The other flags disable tools, skills, settings, and system prompt for fast text-only output. See [Claude Code docs](https://docs.anthropic.com/en/docs/build-with-claude/claude-code) for installation.
 
-### llm
-
-```toml
-[commit.generation]
-command = "llm -m claude-haiku-4.5"
-```
-
-Install with `uv tool install llm llm-anthropic && llm keys set anthropic`. See [llm docs](https://llm.datasette.io/).
-
-### aichat
-
-```toml
-[commit.generation]
-command = "aichat -m claude:claude-haiku-4.5"
-```
-
-See [aichat docs](https://github.com/sigoden/aichat).
-
 ### Codex
 
 ```toml
 [commit.generation]
-command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-Uses the fast mini model with low reasoning effort. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+Uses the fast mini model with low reasoning effort and an empty system prompt for faster output. Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.com/codex/cli/).
+
+### Other tools
+
+```toml
+# opencode — use a fast model variant
+command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+
+# llm
+command = "llm -m claude-haiku-4.5"
+
+# aichat
+command = "aichat -m claude:claude-haiku-4.5"
+```
 
 ## How it works
 

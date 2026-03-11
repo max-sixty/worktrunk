@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -43,5 +44,5 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mPromoting creates mismatched worktree state (shown as ⚑ in wt list)[39m
-[2m↳[22m [2mRun [90mwt step promote main[39m to restore canonical locations[22m
+[2m↳[22m [2mRun [4mwt step promote main[24m to restore canonical locations[22m
 [32m✓[39m [32mPromoted: main worktree now has [1mfeature[22m; _REPO_.feature now has [1mmain[22m[39m

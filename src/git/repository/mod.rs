@@ -412,30 +412,40 @@ impl Repository {
     ///
     /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
     /// normal repos). This avoids fragile path-based detection of submodules.
-    pub fn repo_path(&self) -> &Path {
-        self.cache.repo_path.get_or_init(|| {
-            // Bare repos have no worktree — the git directory IS the repo
-            if self.is_bare().unwrap_or(false) {
-                return self.git_common_dir.clone();
-            }
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `is_bare()` fails (e.g., git timeout). This surfaces
+    /// the failure early rather than caching a potentially wrong path.
+    pub fn repo_path(&self) -> anyhow::Result<&Path> {
+        self.cache
+            .repo_path
+            .get_or_try_init(|| {
+                // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
+                if let Ok(out) = Cmd::new("git")
+                    .args(["rev-parse", "--show-toplevel"])
+                    .current_dir(&self.git_common_dir)
+                    .context(path_to_logging_context(&self.git_common_dir))
+                    .run()
+                    && out.status.success()
+                {
+                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+                }
 
-            // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
-            if let Ok(out) = Cmd::new("git")
-                .args(["rev-parse", "--show-toplevel"])
-                .current_dir(&self.git_common_dir)
-                .context(path_to_logging_context(&self.git_common_dir))
-                .run()
-                && out.status.success()
-            {
-                return PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-            }
-
-            // Normal repos: --show-toplevel fails from inside .git, use implicit relationship
-            self.git_common_dir
-                .parent()
-                .expect("Git directory has no parent")
-                .to_path_buf()
-        })
+                // --show-toplevel failed:
+                // 1. Bare repos (no working tree) → git_common_dir IS the repo
+                // 2. Normal repos from inside .git → parent is the repo
+                if self.is_bare()? {
+                    Ok(self.git_common_dir.clone())
+                } else {
+                    Ok(self
+                        .git_common_dir
+                        .parent()
+                        .expect("Git directory has no parent")
+                        .to_path_buf())
+                }
+            })
+            .map(|p| p.as_path())
     }
 
     /// Check if this is a bare repository (no working tree).

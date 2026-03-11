@@ -3,14 +3,14 @@ source: tests/integration_tests/shell_integration_prompt.rs
 expression: "&output"
 ---
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 
 [36m❯[39m Install shell integration? [1m[y/N/?][22m y
 [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
-[2m↳[22m [2mSkipped [90mzsh[39m; [90m~/.zshrc[39m not found[22m
-[2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/functions[39m not found[22m
-[2m↳[22m [2mSkipped [90mnu[39m; [90m~/.config/nushell/vendor/autoload[39m not found[22m
+[2m↳[22m [2mSkipped [4mzsh[24m; [4m~/.zshrc[24m not found[22m
+[2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
+[2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
 [32m✓[39m [32mConfigured 1 shell[39m
 [2m↳[22m [2mRestart shell to activate shell integration[22m

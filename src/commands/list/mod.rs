@@ -456,45 +456,20 @@ mod tests {
     }
 
     #[test]
-    fn test_format_summary_message_no_errors() {
-        let msg = format_summary_message(&[], false, 0, 0, 0);
-        assert!(msg.contains("Showing 0 worktrees"));
-        assert!(!msg.contains("failed"));
-        assert!(!msg.contains("timed out"));
-    }
+    fn test_format_summary_message_error_variants() {
+        use insta::assert_snapshot;
 
-    #[test]
-    fn test_format_summary_message_all_timeouts() {
-        // 3 errors, all timeouts
-        let msg = format_summary_message(&[], false, 0, 3, 3);
-        assert!(msg.contains("3 tasks timed out"));
-        assert!(!msg.contains("failed"));
-    }
-
-    #[test]
-    fn test_format_summary_message_mixed_errors() {
-        // 5 errors, 3 are timeouts
-        let msg = format_summary_message(&[], false, 0, 5, 3);
-        assert!(msg.contains("5 tasks failed (3 timed out)"));
-    }
-
-    #[test]
-    fn test_format_summary_message_no_timeouts() {
-        // 2 errors, none are timeouts
-        let msg = format_summary_message(&[], false, 0, 2, 0);
-        assert!(msg.contains("2 tasks failed"));
-        assert!(!msg.contains("timed out"));
-    }
-
-    #[test]
-    fn test_format_summary_message_single_error() {
-        let msg = format_summary_message(&[], false, 0, 1, 0);
-        assert!(msg.contains("1 task failed"));
-    }
-
-    #[test]
-    fn test_format_summary_message_single_timeout() {
-        let msg = format_summary_message(&[], false, 0, 1, 1);
-        assert!(msg.contains("1 task timed out"));
+        // No errors
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
+        // All timeouts
+        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees. 3 tasks timed out[0m");
+        // Mixed errors and timeouts
+        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees. 5 tasks failed (3 timed out)[0m");
+        // Only failures, no timeouts
+        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
+        // Single error
+        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
+        // Single timeout
+        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
     }
 }

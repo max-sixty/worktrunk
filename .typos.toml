@@ -9,3 +9,6 @@ ede = "ede"  # Part of commit hashes like ede2fd3
 mis = "mis"
 # "PNGs" is correct (Portable Network Graphics plural)
 PNGs = "PNGs"
+# Intentional typos in tests for "did you mean?" suggestions
+deplyo = "deplyo"
+comit = "comit"

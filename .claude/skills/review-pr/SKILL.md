@@ -1,5 +1,5 @@
 ---
-name: pr-review
+name: review-pr
 description: Reviews a pull request for idiomatic Rust, project conventions, and code quality. Use when asked to review a PR or when running as an automated PR reviewer.
 argument-hint: "[PR number]"
 ---
@@ -147,8 +147,43 @@ the same broken path across all workflow files.
 rg 'env\.HOME' .github/workflows/
 ```
 
-If the same issue exists elsewhere, add inline suggestions fixing each
-occurrence.
+If the same issue exists in files already in the diff, add inline suggestions
+fixing each occurrence. If the occurrence is in a file **not in the diff**,
+offer to push a fix commit with the correction.
+
+**Duplication check (mandatory for new functions/types):**
+
+For every new public or module-level function added in the diff, search the
+codebase for existing functions that do the same thing. LLM-generated code
+frequently reinvents internal APIs — this is the highest-value check for
+externally contributed PRs.
+
+Two search strategies, both required:
+
+1. **Similar names and signatures.** Search for functions with similar names,
+   return types, or parameter types:
+
+   ```bash
+   # For a new `detect_pr_provider` function, search for existing detection
+   rg "fn detect.*provider|fn get.*platform|fn .*_provider" --type rust
+   ```
+
+2. **Overlapping subgoals.** Identify the intermediate steps the new code
+   performs (e.g., iterating remotes, parsing URLs, resolving an org name) and
+   search for existing code that does the same sub-tasks. Then read the
+   functions *that code* consumes — shared helpers often already exist one
+   layer down:
+
+   ```bash
+   # New code iterates remotes and parses URLs — who else does that?
+   rg "all_remote_urls|remote_url|GitRemoteUrl::parse" --type rust
+   # New code shells out to `git remote -v` — is there an existing wrapper?
+   rg "git remote|remote_urls" --type rust
+   ```
+
+If an existing function does substantially the same thing, flag it — reuse is
+almost always better than a parallel implementation. If shared helpers exist
+for the sub-steps, suggest using them instead of reimplementing.
 
 ### 4. Submit
 
@@ -213,12 +248,23 @@ silent if there are none.
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
 
-When approving with no issues, approve with an empty body and react:
+When approving with no issues, approve with an empty body:
 
 ```bash
 gh pr review <number> --approve -b ""
+```
+
+- **Looks good but not confident enough to approve** (unfamiliar module, subtle
+  logic, want human eyes): Don't approve. Instead, add a `+1` reaction to
+  signal "I reviewed this and it looks reasonable, but a human should decide":
+
+```bash
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
+
+  If there are specific observations (not blocking, just noting), combine the
+  reaction with a COMMENT review. If there's nothing to say beyond "looks fine
+  to me", the reaction alone is sufficient — no review needed.
 
 - **Unsure** (complex logic, edge cases, untested paths): Run tests locally
   (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
@@ -230,9 +276,13 @@ Increases confidence: small diffs, existing test coverage, mechanical changes,
 author has deep familiarity with the affected code.
 
 Decreases confidence: new algorithms, concurrency, error handling changes,
-untested paths, author hasn't
-contributed to the affected module before, LLM-generated code (may duplicate
-existing APIs or miss design intent).
+untested paths, author hasn't contributed to the affected module before,
+LLM-generated code (may duplicate existing APIs or miss design intent).
+
+**LLM-generated PRs** have a high rate of
+duplicating existing internal APIs because the author lacks codebase context.
+Always run the duplication check above, and read the existing modules that the
+new code touches (not just the diff) before approving.
 
 **When confidence is low**, go beyond checking the implementation — question the
 approach:
@@ -245,9 +295,16 @@ approach:
 
 #### Posting
 
-Submit **one formal review per run** via `gh pr review`. Note that `--comment`
-requires a non-empty body (`-b ""` fails) — if there's nothing to say, use the
-approve-with-empty-body pattern instead.
+Post exactly one review per run. API calls can succeed server-side while
+appearing to hang, so always verify before calling `gh pr review`:
+```bash
+gh api "repos/$REPO/pulls/<number>/reviews" \
+  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\" and .commit_id == \"$HEAD_SHA\")] | last | .submitted_at // empty"
+```
+If this returns a timestamp, the review is already posted — you're done.
+Otherwise, submit via `gh pr review`. Note that `--comment` requires a non-empty
+body (`-b ""` fails) — if there's nothing to say, use the approve-with-empty-body
+pattern instead.
 
 - Always give a verdict: **approve** or **comment**. Don't use "request changes"
   (that implies authority to block).
@@ -263,6 +320,9 @@ exact line — never as a code block in the review body. Inline suggestions let
 the author apply with one click; code blocks in the body force them to find the
 line and copy-paste manually.
 
+**Exception: lines outside the diff.** If a fix targets a file or line not in
+the diff, offer to push a fix commit instead.
+
 **Anti-pattern — code block in review body:**
 
 > The description on line 3 should be updated:
@@ -273,16 +333,35 @@ line and copy-paste manually.
 **Correct — inline suggestion on the line:**
 
 `````bash
+cat > /tmp/review-body.md << 'EOF'
+Summary of suggestions
+EOF
+
+cat > /tmp/review-payload.json << 'ENDJSON'
+{
+  "event": "COMMENT",
+  "comments": [
+    {
+      "path": ".claude/skills/example/SKILL.md",
+      "line": 3,
+      "body": "```suggestion\ndescription: new text here\n```"
+    }
+  ]
+}
+ENDJSON
+
+# Read body from file to avoid shell expansion issues
+BODY=$(cat /tmp/review-body.md)
+jq --arg body "$BODY" '.body = $body' /tmp/review-payload.json > /tmp/review-final.json
+
 gh api "repos/$REPO/pulls/<number>/reviews" \
   --method POST \
-  -f event=COMMENT \
-  -f body="Summary of suggestions" \
-  -f 'comments[0][path]=.claude/skills/example/SKILL.md' \
-  -f 'comments[0][line]=3' \
-  -f 'comments[0][body]=```suggestion
-description: new text here
-```'
+  --input /tmp/review-final.json
 `````
+
+**Do not** use `-f 'comments[0][path]=...'` flag syntax — `gh api` converts
+array indices to object keys (`{"0": {...}}` instead of `[{...}]`), which
+GitHub rejects.
 
 - Use suggestions for any small fix — no limit on count.
 - If a review has both suggestions and prose observations, put the suggestions
@@ -290,35 +369,48 @@ description: new text here
 - Prose-only comments are for changes too large or uncertain for a direct
   suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
+  **Minimize the range** — only include lines that actually need changing. A
+  range that's too wide can delete correct code adjacent to the bug. Before
+  posting, verify that every line in [`start_line`, `line`] is either removed
+  or rewritten in the suggestion body.
 
 ### 5. Monitor CI
 
-After approving, check whether CI has finished. Exclude the current workflow's
-own check to avoid a circular wait (Claude polling itself):
+If you stayed silent (self-authored PR, no concerns) → **done, stop here.**
+
+After approving, monitor CI using the poll approach from `/running-in-ci`.
+Exclude the current workflow's own check to avoid a circular wait:
 
 ```bash
-# $GITHUB_WORKFLOW is set in CI; when unset, no checks are excluded.
-gh pr view <number> --json statusCheckRollup \
-  --jq '[.statusCheckRollup[]
-    | select(env.GITHUB_WORKFLOW == null
-             or (.workflowName == env.GITHUB_WORKFLOW | not))]
-    | .[]
-    | {name, status, conclusion}'
+gh pr checks <number> --required
 ```
 
-- **All checks passed** → done, no further action.
-- **Checks still running** → poll until complete (sleep 30–60s between checks).
-  Polling is intentionally unbounded — CI compute is cheap and catching failures
-  before the author looks at the PR is more valuable than saving a few minutes
-  of polling. The results are always visible on the PR regardless, so the worst
-  case of a long poll is wasted compute, not missed information.
+Poll with `gh pr checks <number> --required` every 60 seconds until all
+required checks complete. Non-required checks (e.g., benchmarks) are ignored —
+do not wait for them.
+
+Then verify final status:
+
+```bash
+gh pr checks <number> --required
+```
+
+- **All required checks passed** → done, no further action.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
   failure, no action needed. If the failure is related to the PR changes:
-  1. Dismiss the bot's approval if one exists (empty dismiss message). Skip
-     if already dismissed — redundant dismissals create timeline noise.
-  2. Investigate the failure and post a follow-up review (COMMENT) with
+  1. Investigate the failure and post a follow-up review (COMMENT) with
      analysis, inline suggestions, and an offer to fix. Same rules as
-     step 4 — no repeated points from previous reviews.
+     step 4 — no repeated points from previous reviews. **Post the analysis
+     first** — if the session times out before dismissing, a stale approval
+     (contradicted by red CI) is better than a bare dismissal with no context.
+  2. Dismiss the bot's approval if one exists. **Use PUT, not POST** — the
+     dismiss endpoint requires it:
+     ```bash
+     gh api "repos/$REPO/pulls/<number>/reviews/$REVIEW_ID/dismissals" \
+       -X PUT -f message="CI failed — <reason>"
+     ```
+     The GitHub API rejects empty dismiss messages, so always provide one.
+     Skip if already dismissed — redundant dismissals create timeline noise.
 
 ### 6. Resolve handled suggestions
 

@@ -13,14 +13,18 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -58,10 +62,10 @@ Custom status text or emoji shown in the [2mwt list[0m Status column.
 
 Markers appear at the start of the Status column:
 
-  [2mBranch    Status   Path[0m
-  [2mmain      ^        ~/code/myproject[0m
-  [2mfeature   🚧↑      ~/code/myproject.feature[0m
-  [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix[0m
+[107m [0m [2mBranch    Status   Path[0m
+[107m [0m [2mmain      ^        ~/code/myproject[0m
+[107m [0m [2mfeature   🚧↑      ~/code/myproject.feature[0m
+[107m [0m [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix[0m
 
 [1m[32mUse cases[0m
 
@@ -73,6 +77,6 @@ Markers appear at the start of the Status column:
 
 Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
 
-  [2mgit config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'[0m
+[107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.

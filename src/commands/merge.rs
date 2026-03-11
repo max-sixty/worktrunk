@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
-use super::project_config::{HookCommand, collect_commands_for_hooks};
+use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
     BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
@@ -45,7 +45,7 @@ fn collect_merge_commands(
     verify: bool,
     will_remove: bool,
     squash_enabled: bool,
-) -> anyhow::Result<(Vec<HookCommand>, String)> {
+) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
     let mut all_commands = Vec::new();
     let project_config = match repo.load_project_config()? {
         Some(cfg) => cfg,
@@ -163,7 +163,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
-            options.no_verify = !verify;
+            options.verify = verify;
             options.stage_mode = stage_mode;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
@@ -181,7 +181,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             super::step_commands::handle_squash(
                 Some(&target_branch),
                 yes,
-                !verify, // skip_pre_commit when !verify
+                verify,
                 Some(stage_mode)
             )?,
             super::step_commands::SquashResult::Squashed
@@ -269,7 +269,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (collect_merge_commands)
-        crate::output::handle_remove_output(&remove_result, true, verify, false)?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
     } else {
         // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)
         let message = if in_main {

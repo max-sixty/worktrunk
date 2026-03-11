@@ -635,7 +635,7 @@ fn test_repo_path_in_submodule() {
 
     // The key assertion: repo_path() should return the submodule's working directory,
     // NOT something like parent/.git/modules/sub
-    let repo_path = repository.repo_path();
+    let repo_path = repository.repo_path().unwrap();
 
     // Canonicalize both paths for comparison (handles symlinks like /var -> /private/var on macOS)
     let expected = dunce::canonicalize(&submodule_path).unwrap();
@@ -720,6 +720,25 @@ fn test_branch_returns_none_for_detached_head() {
     assert!(
         result.unwrap().is_none(),
         "branch() should return None for detached HEAD"
+    );
+}
+
+#[test]
+fn test_branch_returns_branch_for_unborn_repo() {
+    let repo = TestRepo::empty();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(
+        result.is_ok(),
+        "branch() should succeed for unborn repo (no commits)"
+    );
+    assert_eq!(
+        result.unwrap(),
+        Some("main".to_string()),
+        "branch() should return the default branch name even without commits"
     );
 }
 

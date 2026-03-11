@@ -1175,7 +1175,7 @@ mod tests {
             },
         );
         assert_eq!(result.width(), total);
-        assert!(result.render().contains("999"));
+        insta::assert_snapshot!(result.render(), @"[32m+999[0m [31m-999[0m");
 
         // Case 2: Positive overflow (1000 exceeds 3 digits)
         // Should show: "+1K -500" (positive with K suffix, negative normal)
@@ -1195,9 +1195,7 @@ mod tests {
             },
         );
         assert_eq!(overflow_result.width(), total);
-        let rendered = overflow_result.render();
-        assert!(rendered.contains("+1") && rendered.contains('K'));
-        assert!(rendered.contains("500"));
+        insta::assert_snapshot!(overflow_result.render(), @" [1m[32m+1K[0m [31m-500[0m");
 
         // Case 3: Negative overflow
         // Should show: "+500 -1K" (positive normal, negative with K suffix)
@@ -1217,9 +1215,7 @@ mod tests {
             },
         );
         assert_eq!(overflow_result2.width(), total);
-        let rendered2 = overflow_result2.render();
-        assert!(rendered2.contains("500"));
-        assert!(rendered2.contains("-1") && rendered2.contains('K'));
+        insta::assert_snapshot!(overflow_result2.render(), @"[32m+500[0m  [1m[31m-1K[0m");
 
         // Case 4: Extreme overflow (>= 10K values show ∞ to avoid false precision)
         let extreme_overflow = format_diff_like_column(
@@ -1242,9 +1238,7 @@ mod tests {
             total,
             "100K overflow should fit in allocated width"
         );
-        let extreme_rendered = extreme_overflow.render();
-        assert!(extreme_rendered.contains("+∞"));
-        assert!(extreme_rendered.contains("-∞"));
+        insta::assert_snapshot!(extreme_overflow.render(), @"  [1m[32m+∞[0m   [1m[31m-∞[0m");
 
         // Test overflow with Arrows variant (↑ and ↓)
         let arrow_total = 7;
@@ -1267,9 +1261,7 @@ mod tests {
             },
         );
         assert_eq!(arrow_overflow.width(), arrow_total);
-        let arrow_rendered = arrow_overflow.render();
-        assert!(arrow_rendered.contains("↑1") && arrow_rendered.contains('K'));
-        assert!(arrow_rendered.contains("50"));
+        insta::assert_snapshot!(arrow_overflow.render(), @"[1m[32m↑1K[0m [31m↓50[0m");
 
         // Case 6: Arrow negative overflow
         // Should show with K suffix
@@ -1289,9 +1281,7 @@ mod tests {
             },
         );
         assert_eq!(arrow_overflow2.width(), arrow_total);
-        let arrow_rendered2 = arrow_overflow2.render();
-        assert!(arrow_rendered2.contains("50"));
-        assert!(arrow_rendered2.contains("↓1") && arrow_rendered2.contains('K'));
+        insta::assert_snapshot!(arrow_overflow2.render(), @"[32m↑50[0m [1m[31m↓1K[0m");
     }
 
     #[test]
@@ -1315,7 +1305,7 @@ mod tests {
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.summary = None;
         let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
-        assert!(cell.render().contains('⋯'));
+        insta::assert_snapshot!(cell.render(), @"[2m⋯[0m");
 
         // Case 2: summary = Some(None) (loaded, no summary → blank)
         item.summary = Some(None);
@@ -1325,7 +1315,6 @@ mod tests {
         // Case 3: summary = Some(Some(text)) (has summary)
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
-        let rendered = cell.render();
-        assert!(rendered.contains("Add user authentication"));
+        insta::assert_snapshot!(cell.render(), @"Add user authentication");
     }
 }

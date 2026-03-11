@@ -12,6 +12,7 @@ use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::path::Path;
 
 /// Execute wt in a PTY, waiting for the approval prompt before sending input.
 fn exec_wt_in_pty(
@@ -20,13 +21,17 @@ fn exec_wt_in_pty(
     env_vars: &[(String, String)],
     input: &str,
 ) -> (String, i32) {
-    let cmd = build_pty_command(
-        wt_bin().to_str().unwrap(),
-        args,
-        repo.root_path(),
-        env_vars,
-        None,
-    );
+    exec_wt_in_pty_cwd(repo.root_path(), args, env_vars, input)
+}
+
+/// Execute wt in a PTY from a specific directory.
+fn exec_wt_in_pty_cwd(
+    cwd: &Path,
+    args: &[&str],
+    env_vars: &[(String, String)],
+    input: &str,
+) -> (String, i32) {
+    let cmd = build_pty_command(wt_bin().to_str().unwrap(), args, cwd, env_vars, None);
     exec_cmd_in_pty_prompted(cmd, &[input], "[y/N")
 }
 
@@ -407,4 +412,89 @@ fn test_approval_prompt_remove_decline(repo: TestRepo) {
     approval_pty_settings(&repo).bind(|| {
         assert_snapshot!("approval_prompt_remove_decline", &output);
     });
+}
+
+#[rstest]
+fn test_approval_prompt_step_commit_decline(mut repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Add pre-commit hook to project config and commit it
+    repo.write_project_config(r#"pre-commit = "echo 'pre-commit hook'""#);
+    repo.commit("Add pre-commit config");
+
+    // Create a feature worktree
+    let feature_wt = repo.add_worktree("feature-commit");
+
+    // Make dirty changes in the feature worktree
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    // Configure LLM commit generation
+    repo.write_test_config(
+        r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: test commit message'"
+"#,
+    );
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    // Decline the pre-commit hook approval prompt
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "commit"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Commit should succeed even when hooks declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Commands declined"),
+        "Should show 'Commands declined' message. Output:\n{output}"
+    );
+    assert!(
+        output.contains("committing without hooks"),
+        "Should indicate commit proceeds without hooks. Output:\n{output}"
+    );
+}
+
+#[rstest]
+fn test_approval_prompt_step_squash_decline(mut repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Add pre-commit hook to project config and commit it
+    repo.write_project_config(r#"pre-commit = "echo 'pre-commit hook'""#);
+    repo.commit("Add pre-commit config");
+
+    // Create a feature worktree with multiple commits ahead of main
+    let feature_wt = repo.add_worktree("feature-squash");
+    repo.commit_in_worktree(&feature_wt, "file1.txt", "content 1", "feat: first change");
+    repo.commit_in_worktree(&feature_wt, "file2.txt", "content 2", "feat: second change");
+
+    // Configure LLM commit generation
+    repo.write_test_config(
+        r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: squashed commit message'"
+"#,
+    );
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    // Decline the pre-commit hook approval prompt
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "squash"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Squash should succeed even when hooks declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Commands declined"),
+        "Should show 'Commands declined' message. Output:\n{output}"
+    );
+    assert!(
+        output.contains("squashing without hooks"),
+        "Should indicate squash proceeds without hooks. Output:\n{output}"
+    );
 }

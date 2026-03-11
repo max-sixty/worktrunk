@@ -244,7 +244,7 @@ pub fn validate_candidates(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To auto-commit changes before relocating, use <bright-black>--commit</>"
+                        "To auto-commit changes before relocating, use <underline>--commit</>"
                     ))
                 );
                 skipped += 1;
@@ -317,7 +317,7 @@ impl RelocationExecutor {
                     "Skipping <bold>{branch}</> (target is worktree for <bold>{occupant_name}</>)"
                 );
                 eprintln!("{}", warning_message(msg));
-                let hint = cformat!("Relocate or remove <bright-black>{occupant_name}</> first");
+                let hint = cformat!("Relocate or remove <underline>{occupant_name}</> first");
                 eprintln!("{}", hint_message(hint));
                 blocked.insert(i);
                 skipped += 1;
@@ -356,7 +356,7 @@ impl RelocationExecutor {
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To backup blocking paths, use <bright-black>--clobber</>"
+                        "To backup blocking paths, use <underline>--clobber</>"
                     ))
                 );
                 blocked.insert(i);

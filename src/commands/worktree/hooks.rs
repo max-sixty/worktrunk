@@ -9,7 +9,7 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, SourcedCommand, execute_hook, prepare_hook_commands,
+    HookCommandSpec, HookFailureStrategy, SourcedCommand, execute_hook, prepare_hook_commands,
 };
 
 impl<'a> CommandContext<'a> {
@@ -81,14 +81,16 @@ impl<'a> CommandContext<'a> {
         let user_hooks = self.config.hooks(self.project_id().as_deref());
         prepare_hook_commands(
             self,
-            user_hooks.post_remove.as_ref(),
-            project_config
-                .as_ref()
-                .and_then(|c| c.hooks.post_remove.as_ref()),
-            HookType::PostRemove,
-            &extra_vars,
-            None,
-            display_path,
+            HookCommandSpec {
+                user_config: user_hooks.post_remove.as_ref(),
+                project_config: project_config
+                    .as_ref()
+                    .and_then(|c| c.hooks.post_remove.as_ref()),
+                hook_type: HookType::PostRemove,
+                extra_vars: &extra_vars,
+                name_filter: None,
+                display_path,
+            },
         )
     }
 }

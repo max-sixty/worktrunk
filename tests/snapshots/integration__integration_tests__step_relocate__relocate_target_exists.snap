@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -42,6 +43,6 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mSkipping [1mfeature[22m (target blocked: _REPO_.feature)[39m
-[2m↳[22m [2mTo backup blocking paths, use [90m--clobber[39m[22m
+[2m↳[22m [2mTo backup blocking paths, use [4m--clobber[24m[22m
 
 [2m○[22m Relocated 0 worktrees, skipped 1 worktree
