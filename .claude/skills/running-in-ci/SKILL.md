@@ -40,6 +40,22 @@ When the triggering comment asks for a PR (e.g., "make a new PR", "open a PR",
 "create a PR"), create it directly with `gh pr create`. The comment is the
 user's explicit request — don't downgrade it to a compare link.
 
+### Before creating a PR
+
+**Check for existing work.** Before creating a new branch or PR, check whether
+someone (including the bot) has already opened a PR for the same issue or topic:
+
+```bash
+# Check open PRs — look for related titles and branches
+gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)]: \(.title)"'
+
+# Check for fix branches
+git branch -r --list 'origin/fix/*'
+```
+
+If an existing PR addresses the same problem, work on that PR instead of
+creating a duplicate. Comment on the existing PR or the issue linking to it.
+
 ## Fork PRs
 
 Before pushing commits to a PR branch, check whether it's a fork PR:
