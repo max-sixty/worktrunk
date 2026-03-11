@@ -33,7 +33,7 @@ exit_code: 0
 ----- stderr -----
 wt remove - Remove worktree; delete branch if merged[0m
 
-Defaults to the current worktree.[0m
+Defaults to the current worktree. Also works on branches without a worktree — useful for cleaning up stale local branches.[0m
 
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
@@ -86,6 +86,10 @@ Remove specific worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature-branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove old-feature another-branch[0m
+
+Remove a local branch (no worktree needed):
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove stale-branch[0m
 
 Keep the branch:
 
