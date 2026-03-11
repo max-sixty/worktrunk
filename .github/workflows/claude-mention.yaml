@@ -208,11 +208,11 @@ jobs:
               || github.event.comment.html_url
               && (contains(github.event.comment.body, '@worktrunk-bot')
                 && format(
-                  'You were mentioned in a comment ({0}). Read the full issue or PR (description, diff, recent comments, CI status) and respond. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it. When providing code suggestions on a PR, use the review-pr skill — post inline suggestions on the exact diff lines (never code blocks in a conversation comment) and offer to push a commit for mechanical fixes.',
+                  'You were mentioned in a comment ({0}). Read the full issue or PR (description, diff, recent comments, CI status) and respond. If they''re requesting changes, make the changes, commit, and push. If they''re asking a question, answer it. When suggesting code changes on a PR, use the review-pr skill for inline suggestions.',
                   github.event.comment.html_url
                 )
                 || format(
-                  'A user commented on an issue/PR where you previously participated ({0}). Read the full context (description, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding. When providing code suggestions on a PR, use the review-pr skill — post inline suggestions on the exact diff lines (never code blocks in a conversation comment) and offer to push a commit for mechanical fixes.',
+                  'A user commented on an issue/PR where you previously participated ({0}). Read the full context (description, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding. When suggesting code changes on a PR, use the review-pr skill for inline suggestions.',
                   github.event.comment.html_url
                 ))
               || format(

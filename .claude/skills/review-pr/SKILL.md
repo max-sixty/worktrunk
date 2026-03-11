@@ -492,5 +492,3 @@ git commit -m "fix: <description>
 Co-Authored-By: Claude <noreply@anthropic.com>"
 git push
 ```
-
-Only push mechanical changes where correctness is obvious.
