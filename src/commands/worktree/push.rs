@@ -380,3 +380,101 @@ pub fn handle_no_ff_merge(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::worktree::types::MergeOperations;
+
+    #[test]
+    fn test_format_operations_note() {
+        // None → empty
+        assert_eq!(format_operations_note(None), "");
+
+        // All operations happened → empty (nothing skipped)
+        assert_eq!(
+            format_operations_note(Some(MergeOperations {
+                committed: true,
+                squashed: true,
+                rebased: true,
+            })),
+            ""
+        );
+
+        // Nothing happened → both skipped
+        assert_eq!(
+            format_operations_note(Some(MergeOperations {
+                committed: false,
+                squashed: false,
+                rebased: false,
+            })),
+            " (no commit/squash/rebase needed)"
+        );
+
+        // Only rebase skipped
+        assert_eq!(
+            format_operations_note(Some(MergeOperations {
+                committed: true,
+                squashed: false,
+                rebased: false,
+            })),
+            " (no rebase needed)"
+        );
+
+        // Only commit/squash skipped
+        assert_eq!(
+            format_operations_note(Some(MergeOperations {
+                committed: false,
+                squashed: false,
+                rebased: true,
+            })),
+            " (no commit/squash needed)"
+        );
+    }
+
+    #[test]
+    fn test_format_up_to_date_context() {
+        // None → empty
+        assert_eq!(format_up_to_date_context(None), "");
+
+        // All operations happened → empty
+        assert_eq!(
+            format_up_to_date_context(Some(MergeOperations {
+                committed: true,
+                squashed: true,
+                rebased: true,
+            })),
+            ""
+        );
+
+        // Nothing happened → both noted
+        assert_eq!(
+            format_up_to_date_context(Some(MergeOperations {
+                committed: false,
+                squashed: false,
+                rebased: false,
+            })),
+            " (no new commits, no rebase needed)"
+        );
+
+        // Only rebase not needed
+        assert_eq!(
+            format_up_to_date_context(Some(MergeOperations {
+                committed: true,
+                squashed: false,
+                rebased: false,
+            })),
+            " (no rebase needed)"
+        );
+
+        // Only no new commits
+        assert_eq!(
+            format_up_to_date_context(Some(MergeOperations {
+                committed: false,
+                squashed: false,
+                rebased: true,
+            })),
+            " (no new commits)"
+        );
+    }
+}
