@@ -56,19 +56,6 @@ git branch -r --list 'origin/fix/*'
 If an existing PR addresses the same problem, work on that PR instead of
 creating a duplicate. Comment on the existing PR or the issue linking to it.
 
-### Before committing code changes
-
-Always run `cargo fmt` before committing Rust code changes. Ideally run the full
-lint and test suite:
-
-```bash
-cargo fmt
-cargo run -- hook pre-merge --yes   # full tests + lints
-```
-
-At minimum, `cargo fmt` prevents formatting-only CI failures that waste a round
-trip (push, wait for CI, fix formatting, push again, wait again).
-
 ## Fork PRs
 
 Before pushing commits to a PR branch, check whether it's a fork PR:

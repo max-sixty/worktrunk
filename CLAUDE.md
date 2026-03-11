@@ -8,6 +8,8 @@ cargo run -- hook pre-merge --yes   # run all tests + lints (do this before comm
 
 For Claude Code web environments, run `task setup-web` first. See [Testing](#testing) for more commands.
 
+**Before committing code changes**, always run `pre-commit run --all-files` to catch formatting and lint issues locally. This prevents CI failures that waste a round trip.
+
 ## Project Status
 
 **This project has a growing user base. Balance clean design with reasonable compatibility.**
