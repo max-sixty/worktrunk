@@ -278,12 +278,22 @@ author has deep familiarity with the affected code.
 
 Decreases confidence: new algorithms, concurrency, error handling changes,
 untested paths, author hasn't contributed to the affected module before,
-LLM-generated code (may duplicate existing APIs or miss design intent).
+LLM-generated code (may duplicate existing APIs or miss design intent),
+**maintainer has expressed design-level concerns in PR comments** (e.g.,
+questioning whether the feature belongs, suggesting a different approach, or
+asking for community input before merging).
 
 **LLM-generated PRs** have a high rate of
 duplicating existing internal APIs because the author lacks codebase context.
 Always run the duplication check above, and read the existing modules that the
 new code touches (not just the diff) before approving.
+
+**Active maintainer discussion overrides code quality.** If a maintainer has
+posted comments questioning the feature's value, suggesting an alternative
+approach, or asking for broader input — **do not approve**, regardless of code
+quality. The bot reviews code correctness; it cannot judge whether a feature
+belongs in the project. Use the `+1` reaction (or COMMENT if there are code
+observations) and let the maintainer decide.
 
 **When confidence is low**, go beyond checking the implementation — question the
 approach:
