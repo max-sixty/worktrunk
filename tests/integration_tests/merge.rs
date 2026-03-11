@@ -1,8 +1,8 @@
 use crate::common::{
-    make_snapshot_cmd, merge_scenario,
+    TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings, TestRepo,
+    repo_with_multi_commit_feature, setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -2364,5 +2364,141 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
     assert_eq!(
         main_tip, wt_head,
         "Target worktree HEAD should match main after reset --hard"
+    );
+}
+
+/// --no-ff merge with non-overlapping dirty files in the target worktree.
+///
+/// The target worktree has uncommitted changes to a file that doesn't overlap
+/// with the merge. These should be auto-stashed, the merge commit created,
+/// and the stash restored afterward.
+#[rstest]
+fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+
+    // Make main worktree dirty with a non-conflicting file
+    fs::write(main_wt.join("notes.txt"), "temporary notes").unwrap();
+
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify dirty file was restored after autostash
+    let notes = fs::read_to_string(main_wt.join("notes.txt")).unwrap();
+    assert_eq!(
+        notes, "temporary notes",
+        "Autostash should restore dirty file"
+    );
+
+    // Verify autostash cleaned up (no leftover stash entries)
+    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty(),
+        "Autostash should clean up after itself"
+    );
+
+    // Verify merge commit was created
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(parents.len(), 2, "Should create merge commit");
+}
+
+/// --no-ff merge with overlapping dirty files in the target worktree.
+///
+/// The target worktree has uncommitted changes to a file that overlaps with
+/// the merge range. The merge should fail safely without creating a merge
+/// commit or losing the dirty changes.
+#[rstest]
+fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+
+    // Make main worktree dirty with a file that will conflict
+    fs::write(main_wt.join("conflict.txt"), "old content").unwrap();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "conflict.txt", "new content", "Add conflict");
+
+    // Should fail due to conflicting uncommitted changes in target
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify target worktree file is untouched
+    let contents = fs::read_to_string(main_wt.join("conflict.txt")).unwrap();
+    assert_eq!(
+        contents, "old content",
+        "Target dirty file should be untouched"
+    );
+
+    // Verify no stash was created
+    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty(),
+        "No stash should be created on conflict"
+    );
+
+    // Verify no merge commit was created (main should not have 2 parents)
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert!(
+        parents.len() < 2,
+        "No merge commit should be created on conflict"
+    );
+}
+
+/// --no-ff merge when the target branch has no checked-out worktree.
+///
+/// The merge should succeed without attempting reset --hard (no worktree to sync).
+#[rstest]
+fn test_merge_no_ff_target_without_worktree(repo: TestRepo) {
+    // Move primary off main so main has no worktree
+    repo.switch_primary_to("develop");
+
+    // Make a commit on develop so there's something to merge
+    repo.commit_in_worktree(
+        repo.root_path(),
+        "feature.txt",
+        "feature content",
+        "Add feature",
+    );
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--no-ff"],
+        None
+    ));
+
+    // Verify merge commit was created
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Should create merge commit even without target worktree"
     );
 }
