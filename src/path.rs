@@ -28,7 +28,10 @@ use std::path::PathBuf;
 /// - `/tmp/test/repo` → `/tmp/test/repo` (unchanged on Unix)
 #[cfg(windows)]
 pub fn to_posix_path(path: &str) -> String {
-    let Some(cygpath) = find_cygpath_from_shell(ShellConfig::get()) else {
+    let Ok(shell) = ShellConfig::get() else {
+        return path.to_string();
+    };
+    let Some(cygpath) = find_cygpath_from_shell(shell) else {
         return path.to_string();
     };
 

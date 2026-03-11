@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -49,4 +50,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mConfigured default branch [1mnonexistent[22m does not exist locally[39m
-[2m↳[22m [2mTo reset, run [90mwt config state default-branch clear[39m[22m
+[2m↳[22m [2mTo reset, run [4mwt config state default-branch clear[24m[22m

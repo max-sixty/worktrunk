@@ -158,7 +158,7 @@ wt remove                         # after PR is merged
 <span style='background:var(--bright-white,#fff)'> </span>  lib.rs  |  2 <span class=g>++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
-<span class=c>◎ Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
 {% end %}
 
@@ -186,4 +186,5 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - [Claude Code: Best practices for agentic coding](https://www.anthropic.com/engineering/claude-code-best-practices) — Anthropic's official guide, including the worktree pattern
 - [Shipping faster with Claude Code and Git Worktrees](https://incident.io/blog/shipping-faster-with-claude-code-and-git-worktrees) — incident.io's workflow for parallel agents
 - [Git worktree pattern discussion](https://github.com/anthropics/claude-code/issues/1052) — Community discussion in the Claude Code repo
+- [@DevOpsToolbox's video on Worktrunk](https://youtu.be/WBQiqr6LevQ?t=345)
 - [git-worktree documentation](https://git-scm.com/docs/git-worktree) — Official git reference

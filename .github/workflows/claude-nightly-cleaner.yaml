@@ -1,19 +1,18 @@
 name: claude-nightly-cleaner
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Nightly code quality sweep — reviews all commits merged to main in the past
-# 24 hours for bugs, inconsistencies, and improvement opportunities. Also closes
-# open issues that have been resolved by recent (or earlier unlinked) merges.
+# Nightly code quality sweep — resolves merge conflicts on bot PRs, reviews all
+# commits merged to main in the past 24 hours for bugs, inconsistencies, and
+# improvement opportunities, and closes open issues resolved by recent merges.
 on:
   schedule:
-    # Run at 6:17 AM UTC daily (off-peak minute, 30 min after review-reviewers)
+    # Run at 6:17 AM UTC daily (off-peak minute)
     - cron: '17 6 * * *'
   workflow_dispatch:
 
 # Consistent with ci.yaml for cache compatibility
 env:
   CARGO_TERM_COLOR: always
-  CLICOLOR_FORCE: 1
   RUSTFLAGS: "-C debuginfo=0"
   RUSTDOCFLAGS: "-Dwarnings"
 
@@ -36,34 +35,8 @@ jobs:
           # Use bot token so pushed commits trigger CI workflows
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
-
-      - name: Install cargo-insta
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-insta
-          version: "=1.46.3"
-
-      - name: Install cargo-nextest
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-nextest
-          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
-          version: "=0.9.128"
-
-      - name: 💰 Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ${{ hashFiles('Cargo.lock') }}
-          save-if: false
-
-      - name: Install shells (zsh, fish)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zsh fish
+      - name: 🔧 Setup build tools
+        uses: ./.github/actions/claude-setup
 
       - name: 🤖 Run Claude Code for nightly cleanup
         id: claude
@@ -71,11 +44,40 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           additional_permissions: |
             actions: read
 
           prompt: |
-            You are running as a nightly code quality sweep. Your job is to review all commits merged to main in the past 24 hours, find mistakes and improvement opportunities, and create issues or PRs.
+            You are running as a nightly code quality sweep. Your job has two phases: first resolve conflicts on bot PRs, then review recent commits.
+
+            ## Step 0: Resolve conflicts on bot PRs
+
+            Check for open PRs authored by `worktrunk-bot` that have merge conflicts:
+
+            ```
+            gh pr list --author worktrunk-bot --json number,title,mergeable,headRefName \
+              --jq '.[] | select(.mergeable == "CONFLICTING")'
+            ```
+
+            If there are conflicted PRs, resolve each one using a subagent (use the Task tool). For each conflicted PR, dispatch a subagent with these instructions:
+
+            1. Check out the PR branch: `gh pr checkout <number>`
+            2. Merge the default branch: `git merge origin/main`
+            3. If there are conflicts, resolve them by reading the conflicting files, understanding both sides, and making the correct resolution. Use `git diff` and read the files to understand the conflict context. After resolving, `git add` the resolved files and `git commit --no-edit`.
+            4. Push the result: `git push`
+            5. Comment on the PR with a brief summary of what was resolved (e.g., `gh pr comment <number> --body "..."`).
+            6. If the conflicts are too complex to resolve confidently, abort with `git merge --abort` and comment on the PR explaining that manual resolution is needed.
+            7. After pushing, poll CI with `gh pr checks <number>` every 60 seconds until all checks complete. If CI fails, investigate and fix.
+
+            Run subagents in parallel for independent PRs. Each subagent must work in an isolated directory to avoid checkout conflicts (e.g., `git worktree add /tmp/pr-<number> <branch>` or `git clone . /tmp/pr-<number>`). After all subagents complete, clean up temp directories and switch back to main before proceeding:
+
+            ```
+            git checkout main
+            ```
+
+            If no PRs have conflicts, skip this step.
 
             ## Step 1: Find recent commits
 
@@ -154,7 +156,7 @@ jobs:
                - Run tests to verify: use the test commands from CLAUDE.md
                - Commit and push
                - Create a PR referencing the issue(s)
-               - Monitor CI with `gh run watch`
+               - Poll CI with `gh pr checks <number>` every 60 seconds until all checks complete
 
             ## Step 7: Summary
 

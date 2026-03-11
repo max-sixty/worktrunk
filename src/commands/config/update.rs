@@ -173,7 +173,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
 
     // Linked worktrees can't apply the update — suggest -C to main worktree
     if is_linked {
-        let cmd = suggest_command_in_dir(repo.repo_path(), "config", &["update"], &[]);
+        let cmd = suggest_command_in_dir(repo.repo_path()?, "config", &["update"], &[]);
         eprintln!("{}", hint_message("To update project config:"));
         eprintln!("{}", format_bash_with_gutter(&cmd));
         return Ok(None);

@@ -23,6 +23,9 @@ use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+
+#[cfg(unix)]
+use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(not(unix))]
@@ -298,7 +301,7 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
 #[cfg(unix)]
 fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
     let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
-    let shell = ShellConfig::get();
+    let shell = ShellConfig::get()?;
 
     // Use exec() to replace wt process with the command.
     // This gives the command full TTY access (stdin, stdout, stderr all inherited),
@@ -312,12 +315,12 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
         .exec();
 
     // exec() only returns on error
-    Err(anyhow::anyhow!(
-        "Failed to exec '{}' with {}: {}",
+    Err(anyhow::anyhow!(cformat!(
+        "Failed to exec <bold>{}</> with {}: {}",
         command,
         shell.name,
         err
-    ))
+    )))
 }
 
 /// Execute a command in the given directory (non-Unix: spawn and wait)

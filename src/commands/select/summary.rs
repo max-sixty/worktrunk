@@ -53,6 +53,8 @@ pub(super) fn generate_and_cache_summary(
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
     use std::fs;
@@ -247,35 +249,79 @@ mod tests {
     #[test]
     fn test_render_prompt() {
         use crate::summary::render_prompt;
-        let result = render_prompt("diff content", "1 file changed");
-        assert!(result.is_ok());
-        let prompt = result.unwrap();
-        assert!(prompt.contains("diff content"));
-        assert!(prompt.contains("1 file changed"));
+
+        // With diff content and stat
+        let prompt = render_prompt("diff content", "1 file changed").unwrap();
+        assert_snapshot!(prompt, @r#"
+        Write a summary of this branch's changes as a commit message.
+
+        <format>
+        - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
+        - Blank line, then a body paragraph or bullet list explaining the key changes
+        - Output only the message — no quotes, code blocks, or labels
+        </format>
+
+        <diffstat>
+        1 file changed
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+        "#);
+
+        // Empty inputs still include format instructions
+        let empty_prompt = render_prompt("", "").unwrap();
+        assert_snapshot!(empty_prompt, @r#"
+        Write a summary of this branch's changes as a commit message.
+
+        <format>
+        - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
+        - Blank line, then a body paragraph or bullet list explaining the key changes
+        - Output only the message — no quotes, code blocks, or labels
+        </format>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+
+        </diff>
+        "#);
     }
 
     #[test]
-    fn test_render_prompt_commit_message_format() {
-        use crate::summary::render_prompt;
-        let result = render_prompt("", "").unwrap();
-        assert!(result.contains("commit message"));
-        assert!(result.contains("imperative mood"));
-    }
+    fn test_render_summary() {
+        // Multi-line: subject promoted to bold H4, body preserved
+        assert_snapshot!(
+            render_summary("Add new feature\n\nSome body text here.", 80),
+            @"
+        [1mAdd new feature[0m
 
-    #[test]
-    fn test_render_summary_subject_bold() {
-        let text = "Add new feature\n\nSome body text here.";
-        let rendered = render_summary(text, 80);
-        assert!(rendered.contains("\x1b[1m"));
-        assert!(rendered.contains("Add new feature"));
-    }
+        Some body text here.
+        "
+        );
 
-    #[test]
-    fn test_render_summary_single_line() {
-        let text = "Add new feature";
-        let rendered = render_summary(text, 80);
-        assert!(rendered.contains("\x1b[1m"));
-        assert!(rendered.contains("Add new feature"));
+        // Single line: also promoted to bold H4
+        assert_snapshot!(render_summary("Add new feature", 80), @"[1mAdd new feature[0m");
+
+        // Bullet list body preserved
+        assert_snapshot!(
+            render_summary("Subject\n\n- First bullet\n- Second bullet", 80),
+            @"
+        [1mSubject[0m
+
+        - First bullet
+        - Second bullet
+        "
+        );
+
+        // Pre-styled text (ANSI escapes) skips H4 promotion
+        assert_snapshot!(
+            render_summary("\x1b[2mNo changes to summarize.\x1b[0m", 80),
+            @"[2mNo changes to summarize.[0m"
+        );
     }
 
     #[test]
@@ -283,22 +329,6 @@ mod tests {
         let text = format!("Subject\n\n{}", "word ".repeat(30));
         let rendered = render_summary(&text, 40);
         assert!(rendered.lines().count() > 3);
-    }
-
-    #[test]
-    fn test_render_summary_body_preserved() {
-        let text = "Subject\n\n- First bullet\n- Second bullet";
-        let rendered = render_summary(text, 80);
-        assert!(rendered.contains("First bullet"));
-        assert!(rendered.contains("Second bullet"));
-    }
-
-    #[test]
-    fn test_render_summary_prestyled_skips_h4() {
-        let text = "\x1b[2mNo changes to summarize.\x1b[0m";
-        let rendered = render_summary(text, 80);
-        assert!(!rendered.contains("####"));
-        assert!(rendered.contains("No changes to summarize."));
     }
 
     #[test]
@@ -438,7 +468,7 @@ mod tests {
             "echo 'should not run'",
             &repo,
         );
-        assert!(summary.contains("No changes to summarize"));
+        assert_snapshot!(summary, @"[2mNo changes to summarize on main.[22m");
     }
 
     #[test]

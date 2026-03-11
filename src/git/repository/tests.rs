@@ -271,28 +271,6 @@ fn test_parse_remote_default_branch_branch_with_slash() {
 use super::ResolvedWorktree;
 
 #[test]
-fn test_resolved_worktree_debug() {
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: Some("feature".to_string()),
-    };
-    let debug = format!("{:?}", wt);
-    assert!(debug.contains("Worktree"));
-    assert!(debug.contains("/path/to/worktree"));
-    assert!(debug.contains("feature"));
-}
-
-#[test]
-fn test_resolved_worktree_branch_only_debug() {
-    let wt = ResolvedWorktree::BranchOnly {
-        branch: "feature".to_string(),
-    };
-    let debug = format!("{:?}", wt);
-    assert!(debug.contains("BranchOnly"));
-    assert!(debug.contains("feature"));
-}
-
-#[test]
 fn test_resolved_worktree_clone() {
     let wt = ResolvedWorktree::Worktree {
         path: PathBuf::from("/path/to/worktree"),
@@ -398,6 +376,30 @@ fn test_default_branch_name_display() {
             .unwrap();
         assert_eq!(branch, expected);
     }
+}
+
+#[test]
+fn repo_path_error_when_is_bare_fails() {
+    use super::RepoCache;
+    use std::sync::Arc;
+
+    // Create a Repository with a non-existent git_common_dir.
+    // This makes --show-toplevel fail (reaching the is_bare branch),
+    // and then is_bare() also fails because git can't run in a missing dir.
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/nonexistent/repo"),
+        git_common_dir: PathBuf::from("/nonexistent/.git"),
+        cache: Arc::new(RepoCache::default()),
+    };
+
+    let err = repo.repo_path().unwrap_err();
+    let msg = format!("{err:#}");
+    // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
+    // "The directory name is invalid." on Windows), so only assert the stable prefix.
+    assert!(
+        msg.starts_with("failed to check if repository is bare: "),
+        "unexpected error message: {msg}"
+    );
 }
 
 #[test]

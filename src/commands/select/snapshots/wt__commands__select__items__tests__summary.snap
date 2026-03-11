@@ -1,0 +1,6 @@
+---
+source: src/commands/select/items.rs
+expression: "WorktreeSkimItem::render_preview_tabs(mode)"
+---
+[2m1: HEAD±[22m[0m | [2m2: log[22m[0m | [2m3: main…±[22m[0m | [2m4: remote⇅[22m[0m | [1m5: summary[22m[0m
+[33m[2mEnter: switch | alt-c: create | alt-r: remove | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle[39m[22m[0m

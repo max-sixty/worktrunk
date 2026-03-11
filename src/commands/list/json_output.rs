@@ -92,6 +92,10 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
+    /// LLM-generated branch summary (requires `[list] summary = true`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+
     /// Pre-formatted statusline for statusline tools (tmux, starship)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusline: Option<String>,
@@ -337,6 +341,9 @@ impl JsonItem {
             .map(|b| repo.kv_entries(b))
             .unwrap_or_default();
 
+        // Summary: flatten Option<Option<String>> → Option<String>
+        let summary = item.summary.as_ref().and_then(|s| s.clone());
+
         JsonItem {
             branch: item.branch.clone(),
             path,
@@ -355,6 +362,7 @@ impl JsonItem {
             ci,
             url: item.url.clone(),
             url_active: item.url_active,
+            summary,
             statusline,
             symbols,
             kv,
@@ -470,6 +478,8 @@ pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
     use crate::commands::list::ci_status::CiStatus;
     use crate::commands::list::model::{
@@ -483,24 +493,19 @@ mod tests {
 
     #[test]
     fn test_json_diff_from_line_diff() {
-        let line_diff = LineDiff {
+        let nonzero = JsonDiff::from(LineDiff {
             added: 10,
             deleted: 5,
-        };
-        let json_diff = JsonDiff::from(line_diff);
-        assert_eq!(json_diff.added, 10);
-        assert_eq!(json_diff.deleted, 5);
-    }
+        });
+        assert_eq!(nonzero.added, 10);
+        assert_eq!(nonzero.deleted, 5);
 
-    #[test]
-    fn test_json_diff_from_line_diff_zeros() {
-        let line_diff = LineDiff {
+        let zeros = JsonDiff::from(LineDiff {
             added: 0,
             deleted: 0,
-        };
-        let json_diff = JsonDiff::from(line_diff);
-        assert_eq!(json_diff.added, 0);
-        assert_eq!(json_diff.deleted, 0);
+        });
+        assert_eq!(zeros.added, 0);
+        assert_eq!(zeros.deleted, 0);
     }
 
     // ============================================================================
@@ -508,84 +513,50 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_json_ci_from_passed() {
-        let pr = PrStatus {
+    fn test_json_ci_from_pr_status() {
+        // Full field mapping with URL
+        let passed = JsonCi::from(&PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "passed");
-        assert_eq!(json.source, CiSource::PullRequest);
-        assert!(!json.stale);
+        });
+        assert_eq!(passed.status, "passed");
+        assert_eq!(passed.source, CiSource::PullRequest);
+        assert!(!passed.stale);
         assert_eq!(
-            json.url,
+            passed.url,
             Some("https://github.com/org/repo/pull/123".to_string())
         );
-    }
 
-    #[test]
-    fn test_json_ci_from_failed_branch() {
-        let pr = PrStatus {
+        // Stale branch with no URL
+        let failed = JsonCi::from(&PrStatus {
             ci_status: CiStatus::Failed,
             source: CiSource::Branch,
             is_stale: true,
             url: None,
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "failed");
-        assert_eq!(json.source, CiSource::Branch);
-        assert!(json.stale);
-        assert!(json.url.is_none());
-    }
+        });
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.source, CiSource::Branch);
+        assert!(failed.stale);
+        assert!(failed.url.is_none());
 
-    #[test]
-    fn test_json_ci_from_running() {
-        let pr = PrStatus {
-            ci_status: CiStatus::Running,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            url: None,
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "running");
-    }
-
-    #[test]
-    fn test_json_ci_from_conflicts() {
-        let pr = PrStatus {
-            ci_status: CiStatus::Conflicts,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            url: None,
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "conflicts");
-    }
-
-    #[test]
-    fn test_json_ci_from_no_ci() {
-        let pr = PrStatus {
-            ci_status: CiStatus::NoCI,
-            source: CiSource::Branch,
-            is_stale: false,
-            url: None,
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "no-ci");
-    }
-
-    #[test]
-    fn test_json_ci_from_error() {
-        let pr = PrStatus {
-            ci_status: CiStatus::Error,
-            source: CiSource::Branch,
-            is_stale: false,
-            url: None,
-        };
-        let json = JsonCi::from(&pr);
-        assert_eq!(json.status, "error");
+        // All status string mappings
+        let status_mappings = [
+            (CiStatus::Running, "running"),
+            (CiStatus::Conflicts, "conflicts"),
+            (CiStatus::NoCI, "no-ci"),
+            (CiStatus::Error, "error"),
+        ];
+        for (ci_status, expected) in status_mappings {
+            let json = JsonCi::from(&PrStatus {
+                ci_status,
+                source: CiSource::Branch,
+                is_stale: false,
+                url: None,
+            });
+            assert_eq!(json.status, expected);
+        }
     }
 
     // ============================================================================
@@ -740,84 +711,58 @@ mod tests {
     #[test]
     fn test_format_raw_symbols_empty() {
         let symbols = StatusSymbols::default();
-        let result = format_raw_symbols(&symbols);
-        assert!(result.is_empty());
+        assert!(format_raw_symbols(&symbols).is_empty());
     }
 
     #[test]
-    fn test_format_raw_symbols_working_tree() {
-        let symbols = StatusSymbols {
+    fn test_format_raw_symbols_each_category() {
+        let working_tree = format_raw_symbols(&StatusSymbols {
             working_tree: WorkingTreeStatus::new(true, true, true, false, false),
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('+'));
-        assert!(result.contains('!'));
-        assert!(result.contains('?'));
-    }
+        });
+        assert_snapshot!(working_tree, @"+!?");
 
-    #[test]
-    fn test_format_raw_symbols_main_state() {
-        let symbols = StatusSymbols {
+        let main_state = format_raw_symbols(&StatusSymbols {
             main_state: MainState::Ahead,
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('↑'));
-    }
+        });
+        assert_snapshot!(main_state, @"↑");
 
-    #[test]
-    fn test_format_raw_symbols_upstream_divergence() {
-        let symbols = StatusSymbols {
+        let upstream = format_raw_symbols(&StatusSymbols {
             upstream_divergence: Divergence::Behind,
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('⇣'));
-    }
+        });
+        assert_snapshot!(upstream, @"⇣");
 
-    #[test]
-    fn test_format_raw_symbols_operation_state() {
-        let symbols = StatusSymbols {
+        // Operation state takes priority over worktree state
+        let operation = format_raw_symbols(&StatusSymbols {
             operation_state: OperationState::Rebase,
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('⤴'));
-    }
+        });
+        assert_snapshot!(operation, @"⤴");
 
-    #[test]
-    fn test_format_raw_symbols_worktree_state() {
-        let symbols = StatusSymbols {
+        let worktree = format_raw_symbols(&StatusSymbols {
             worktree_state: WorktreeState::Locked,
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('⊞'));
-    }
+        });
+        assert_snapshot!(worktree, @"⊞");
 
-    #[test]
-    fn test_format_raw_symbols_user_marker() {
-        let symbols = StatusSymbols {
-            user_marker: Some("🔥".to_string()),
+        let marker = format_raw_symbols(&StatusSymbols {
+            user_marker: Some("\u{1f525}".to_string()),
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains("🔥"));
+        });
+        assert_snapshot!(marker, @"🔥");
     }
 
     #[test]
     fn test_format_raw_symbols_combined() {
-        let symbols = StatusSymbols {
+        let result = format_raw_symbols(&StatusSymbols {
             working_tree: WorkingTreeStatus::new(true, false, false, false, false),
             main_state: MainState::Behind,
             upstream_divergence: Divergence::Ahead,
             ..Default::default()
-        };
-        let result = format_raw_symbols(&symbols);
-        assert!(result.contains('+'));
-        assert!(result.contains('↓'));
-        assert!(result.contains('⇡'));
+        });
+        assert_snapshot!(result, @"+↓⇡");
     }
 
     // ============================================================================
@@ -825,22 +770,24 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_json_commit_serialization() {
-        let commit = JsonCommit {
+    fn test_json_serialization() {
+        let commit = serde_json::to_string_pretty(&JsonCommit {
             sha: "abc123def456".to_string(),
             short_sha: "abc123d".to_string(),
             message: "Fix bug".to_string(),
             timestamp: 1700000000,
-        };
-        let json = serde_json::to_string(&commit).unwrap();
-        assert!(json.contains("abc123def456"));
-        assert!(json.contains("Fix bug"));
-        assert!(json.contains("1700000000"));
-    }
+        })
+        .unwrap();
+        assert_snapshot!(commit, @r#"
+        {
+          "sha": "abc123def456",
+          "short_sha": "abc123d",
+          "message": "Fix bug",
+          "timestamp": 1700000000
+        }
+        "#);
 
-    #[test]
-    fn test_json_working_tree_serialization() {
-        let wt = JsonWorkingTree {
+        let working_tree = serde_json::to_string_pretty(&JsonWorkingTree {
             staged: true,
             modified: false,
             untracked: true,
@@ -850,63 +797,122 @@ mod tests {
                 added: 10,
                 deleted: 5,
             }),
-        };
-        let json = serde_json::to_string(&wt).unwrap();
-        assert!(json.contains("\"staged\":true"));
-        assert!(json.contains("\"modified\":false"));
-        assert!(json.contains("\"added\":10"));
-    }
+        })
+        .unwrap();
+        assert_snapshot!(working_tree, @r#"
+        {
+          "staged": true,
+          "modified": false,
+          "untracked": true,
+          "renamed": false,
+          "deleted": false,
+          "diff": {
+            "added": 10,
+            "deleted": 5
+          }
+        }
+        "#);
 
-    #[test]
-    fn test_json_main_serialization() {
-        let main = JsonMain {
+        let main = serde_json::to_string_pretty(&JsonMain {
             ahead: 3,
             behind: 1,
             diff: Some(JsonDiff {
                 added: 50,
                 deleted: 20,
             }),
-        };
-        let json = serde_json::to_string(&main).unwrap();
-        assert!(json.contains("\"ahead\":3"));
-        assert!(json.contains("\"behind\":1"));
-    }
+        })
+        .unwrap();
+        assert_snapshot!(main, @r#"
+        {
+          "ahead": 3,
+          "behind": 1,
+          "diff": {
+            "added": 50,
+            "deleted": 20
+          }
+        }
+        "#);
 
-    #[test]
-    fn test_json_remote_serialization() {
-        let remote = JsonRemote {
+        let remote = serde_json::to_string_pretty(&JsonRemote {
             name: "origin".to_string(),
             branch: "feature".to_string(),
             ahead: 2,
             behind: 0,
-        };
-        let json = serde_json::to_string(&remote).unwrap();
-        assert!(json.contains("\"name\":\"origin\""));
-        assert!(json.contains("\"branch\":\"feature\""));
-    }
+        })
+        .unwrap();
+        assert_snapshot!(remote, @r#"
+        {
+          "name": "origin",
+          "branch": "feature",
+          "ahead": 2,
+          "behind": 0
+        }
+        "#);
 
-    #[test]
-    fn test_json_worktree_serialization() {
-        let wt = JsonWorktree {
+        let worktree = serde_json::to_string_pretty(&JsonWorktree {
             state: Some("locked"),
             reason: Some("manual".to_string()),
             detached: false,
-        };
-        let json = serde_json::to_string(&wt).unwrap();
-        assert!(json.contains("\"state\":\"locked\""));
-        assert!(json.contains("\"reason\":\"manual\""));
+        })
+        .unwrap();
+        assert_snapshot!(worktree, @r#"
+        {
+          "state": "locked",
+          "reason": "manual",
+          "detached": false
+        }
+        "#);
+    }
+
+    fn test_repo() -> (tempfile::TempDir, Repository) {
+        let tmp = tempfile::tempdir().unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(tmp.path())
+            .run()
+            .unwrap();
+        let repo = Repository::at(tmp.path()).unwrap();
+        (tmp, repo)
+    }
+
+    #[test]
+    fn test_json_item_summary_present() {
+        let (_tmp, repo) = test_repo();
+
+        let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
+        item.summary = Some(Some("Add login page".to_string()));
+        let json_item = JsonItem::from_list_item(&item, &repo);
+        assert_eq!(json_item.summary, Some("Add login page".to_string()));
+    }
+
+    #[test]
+    fn test_json_item_summary_absent() {
+        let (_tmp, repo) = test_repo();
+
+        let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
+        // None = not loaded, Some(None) = loaded but no summary — both should be absent in JSON
+        assert!(JsonItem::from_list_item(&item, &repo).summary.is_none());
+
+        item.summary = Some(None);
+        assert!(JsonItem::from_list_item(&item, &repo).summary.is_none());
     }
 
     #[test]
     fn test_json_ci_serialization() {
-        let ci = JsonCi {
+        let json = serde_json::to_string_pretty(&JsonCi {
             status: "passed",
             source: CiSource::PullRequest,
             stale: false,
             url: Some("https://example.com".to_string()),
-        };
-        let json = serde_json::to_string(&ci).unwrap();
-        assert!(json.contains("\"status\":\"passed\""));
-        assert!(json.contains("\"source\":\"pr\""));
+        })
+        .unwrap();
+        assert_snapshot!(json, @r#"
+        {
+          "status": "passed",
+          "source": "pr",
+          "stale": false,
+          "url": "https://example.com"
+        }
+        "#);
     }
 }

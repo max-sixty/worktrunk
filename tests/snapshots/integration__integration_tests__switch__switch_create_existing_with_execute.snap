@@ -23,13 +23,16 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
@@ -44,4 +47,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mBranch [1memails[22m already exists[39m
-[2m↳[22m [2mTo switch to the existing branch, run without [90m--create[39m: [90mwt switch emails --execute=claude -- 'Check my emails'[39m[22m
+[2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude -- 'Check my emails'[24m[22m

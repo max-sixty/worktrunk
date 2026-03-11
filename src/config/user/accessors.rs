@@ -3,10 +3,10 @@
 //! These methods on `UserConfig` return the effective configuration for a given
 //! project by merging global settings with project-specific overrides.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::config::HooksConfig;
-use crate::config::expansion::{TemplateExpandError, expand_template};
+use crate::config::expansion::expand_template;
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
@@ -184,6 +184,20 @@ impl UserConfig {
         }
     }
 
+    /// Returns effective aliases for a specific project.
+    ///
+    /// Merges global user aliases with per-project user aliases (per-project overrides on collision).
+    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, String> {
+        let mut result = self.configs.aliases.clone().unwrap_or_default();
+        if let Some(proj_aliases) = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|proj| proj.overrides.aliases.as_ref())
+        {
+            result.extend(proj_aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        result
+    }
+
     // ---- Resolved config (concrete types with defaults applied) ----
 
     /// Returns all resolved config with defaults applied.
@@ -207,19 +221,21 @@ impl UserConfig {
         branch: &str,
         repo: &crate::git::Repository,
         project: Option<&str>,
-    ) -> Result<String, TemplateExpandError> {
+    ) -> anyhow::Result<String> {
         let template = match project {
             Some(p) => self.worktree_path_for_project(p),
             None => self.worktree_path(),
         };
         // Use native path format (not POSIX) since this is used for filesystem operations
-        let repo_path = repo.repo_path().to_string_lossy().to_string();
+        let repo_path = repo.repo_path()?.to_string_lossy().to_string();
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
-        expand_template(&template, &vars, false, repo, "worktree-path")
-            .map(|p| shellexpand::tilde(&p).into_owned())
+        Ok(
+            expand_template(&template, &vars, false, repo, "worktree-path")
+                .map(|p| shellexpand::tilde(&p).into_owned())?,
+        )
     }
 }

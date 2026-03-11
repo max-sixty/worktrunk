@@ -18,7 +18,8 @@ use shell_escape::escape;
 use crate::git::Repository;
 use crate::path::to_posix_path;
 use crate::styling::{
-    eprintln, error_message, format_with_gutter, hint_message, info_message, verbosity,
+    eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
+    info_message, verbosity,
 };
 
 /// Known template variables available in hook commands.
@@ -40,11 +41,13 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "target", // Added by merge/rebase hooks via extra_vars
-    "base",   // Added by creation hooks via extra_vars
+    "hook_type", // Added by expand_commands / expand_command_template
+    "hook_name", // Added by expand_commands / expand_command_template (named commands only)
+    "target",    // Added by merge/rebase hooks via extra_vars
+    "base",      // Added by creation hooks via extra_vars
     "base_worktree_path", // Added by creation hooks via extra_vars
-              // Note: `kv` is NOT listed here — it's a structured object injected by expand_template,
-              // not a simple string that --var can override.
+                 // Note: `kv` is NOT listed here — it's a structured object injected by expand_template,
+                 // not a simple string that --var can override.
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -234,7 +237,7 @@ impl std::fmt::Display for TemplateExpandError {
         if !self.available_vars.is_empty() {
             parts.push(
                 hint_message(cformat!(
-                    "Available variables: <bright-black>{}</>",
+                    "Available variables: <underline>{}</>",
                     self.available_vars.join(", ")
                 ))
                 .to_string(),
@@ -444,21 +447,20 @@ pub fn expand_template(
     // Single atomic write to avoid interleaving in multi-threaded execution
     if verbose == 1 {
         let header = info_message(cformat!("Expanding <bold>{name}</>"));
-        let content = if template.contains('\n') || result.contains('\n') {
-            // Multiline: template lines, dim →, result lines
-            cformat!("{template}\n<dim>→</>\n{result}")
-        } else {
-            // Single line: template → result
-            cformat!("{template} <dim>→</> {result}")
-        };
-        let gutter = format_with_gutter(&content, None);
-        eprintln!("{header}\n{gutter}");
+        // Format template and result as bash (dim + syntax highlighting),
+        // with a dim → separator that bypasses the syntax highlighter
+        let template_gutter = format_bash_with_gutter(template);
+        let arrow = format_with_gutter(&cformat!("<dim>→</>"), None);
+        let result_gutter = format_bash_with_gutter(&result);
+        eprintln!("{header}\n{template_gutter}\n{arrow}\n{result_gutter}");
     }
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     /// Test fixture that creates a real temporary git repository.
@@ -682,12 +684,10 @@ mod tests {
         assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
 
         // Display impl renders source line but no available vars hint for syntax errors
-        let display = err.to_string();
-        assert!(display.contains("{{ unclosed"), "should show source line");
-        assert!(
-            !display.contains("Available variables:"),
-            "syntax errors should not show available vars"
-        );
+        assert_snapshot!(err, @"
+        [31m✗[39m [31mFailed to expand test: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
+        [107m [0m {{ unclosed
+        ");
     }
 
     #[test]
@@ -709,13 +709,11 @@ mod tests {
         assert_eq!(err.source_line.as_deref(), Some("echo {{ target }}"));
 
         // Display impl renders source line and available vars hint
-        let display = err.to_string();
-        assert!(
-            display.contains("echo {{ target }}"),
-            "should show source line"
-        );
-        assert!(display.contains("Available variables:"), "should show hint");
-        assert!(display.contains("branch"), "should list available vars");
+        assert_snapshot!(err, @"
+        [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
+        [107m [0m echo {{ target }}
+        [2m↳[22m [2mAvailable variables: [4mbranch, remote[24m[22m
+        ");
     }
 
     #[test]

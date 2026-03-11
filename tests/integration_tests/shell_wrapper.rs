@@ -739,6 +739,9 @@ const STANDARD_TEST_ENV: &[(&str, &str)] = &[
     ("LANG", "C"),
     ("LC_ALL", "C"),
     ("WORKTRUNK_TEST_EPOCH", "1735776000"),
+    // Suppress delayed-stream progress output so git worktree add doesn't
+    // produce extra lines when the system is under load (>400ms threshold).
+    ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
 ];
 
 /// Build standard test env vars with config and approvals paths
@@ -1839,21 +1842,36 @@ approved-commands = ["echo 'bash background'"]
         let wt_bin = wt_bin();
         let wrapper_script = generate_wrapper(&repo, "bash");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".completions_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper and checks if completion is registered
         // (completions are inline in the wrapper via lazy loading)
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
         let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
             export WORKTRUNK_BIN={}
             export WORKTRUNK_CONFIG_PATH={}
             export WORKTRUNK_APPROVALS_PATH={}
             {}
-            # Check if wt completion is registered
-            complete -p wt 2>/dev/null && echo "__COMPLETION_REGISTERED__" || echo "__NO_COMPLETION__"
+            # Check if wt completion is registered and write result to marker file
+            if complete -p wt 2>/dev/null; then
+                echo "__COMPLETION_REGISTERED__" > {}
+            else
+                echo "__NO_COMPLETION__" > {}
+            fi
             "#,
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
+            wt_bin_quoted,
+            config_quoted,
+            approvals_quoted,
+            wrapper_script,
+            marker_quoted,
+            marker_quoted,
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1865,14 +1883,18 @@ approved-commands = ["echo 'bash background'"]
             ("TERM", "xterm"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("bash", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__COMPLETION_REGISTERED__"),
-            "Bash completions should be registered after sourcing wrapper.\nOutput:\n{}",
-            combined
+            result.contains("__COMPLETION_REGISTERED__"),
+            "Bash completions should be registered after sourcing wrapper.\nMarker file content:\n{}",
+            result
         );
     }
 
@@ -1883,10 +1905,16 @@ approved-commands = ["echo 'bash background'"]
         let wrapper_script = generate_wrapper(&repo, "fish");
         let completions_script = generate_completions(&repo, "fish");
 
+        // Use a marker file to avoid PTY output race conditions.
+        // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
+        let marker_file = repo.root_path().join(".completions_test_marker");
+        let marker_path = marker_file.to_string_lossy().to_string();
+
         // Script that sources wrapper, completions, and checks if completion is registered
         let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
         let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
         let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+        let marker_quoted = shell_quote(&marker_path);
         let script = format!(
             r#"
             set -x WORKTRUNK_BIN {}
@@ -1894,14 +1922,20 @@ approved-commands = ["echo 'bash background'"]
             set -x WORKTRUNK_APPROVALS_PATH {}
             {}
             {}
-            # Check if wt completions are registered
+            # Check if wt completions are registered and write result to marker file
             if complete -c wt 2>/dev/null | grep -q .
-                echo "__COMPLETION_REGISTERED__"
+                echo "__COMPLETION_REGISTERED__" > {}
             else
-                echo "__NO_COMPLETION__"
+                echo "__NO_COMPLETION__" > {}
             end
             "#,
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script, completions_script
+            wt_bin_quoted,
+            config_quoted,
+            approvals_quoted,
+            wrapper_script,
+            completions_script,
+            marker_quoted,
+            marker_quoted,
         );
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
@@ -1913,14 +1947,18 @@ approved-commands = ["echo 'bash background'"]
             ("TERM", "xterm"),
         ];
 
-        let (combined, exit_code) =
+        let (_combined, exit_code) =
             exec_in_pty_interactive("fish", &final_script, repo.root_path(), &env_vars, &[]);
 
         assert_eq!(exit_code, 0);
+
+        // Poll for marker file instead of relying on PTY output
+        wait_for_file_content(&marker_file);
+        let result = std::fs::read_to_string(&marker_file).unwrap();
         assert!(
-            combined.contains("__COMPLETION_REGISTERED__"),
-            "Fish completions should be registered after sourcing wrapper.\nOutput:\n{}",
-            combined
+            result.contains("__COMPLETION_REGISTERED__"),
+            "Fish completions should be registered after sourcing wrapper.\nMarker file content:\n{}",
+            result
         );
     }
 
@@ -2151,6 +2189,9 @@ approved-commands = ["echo 'bash background'"]
     fn test_fish_binary_not_found_clear_error(#[case] shell: &str, repo: TestRepo) {
         let wrapper_script = generate_wrapper(&repo, shell);
 
+        // Use a marker file for the exit code — PTY output capture can be empty on macOS
+        let marker_file = repo.root_path().join(".test-exit-code-marker");
+
         // Script that clears PATH and does NOT set WORKTRUNK_BIN
         // This simulates having the fish function installed but wt not available
         let script = format!(
@@ -2160,11 +2201,14 @@ approved-commands = ["echo 'bash background'"]
             # Explicitly unset WORKTRUNK_BIN to ensure it's not set
             set -e WORKTRUNK_BIN
             set -x CLICOLOR_FORCE 1
-            {}
+            {wrapper_script}
             wt --version
-            echo "exit_code: $status"
+            set -l wt_exit_status $status
+            # Write exit code to marker file (reliable even when PTY output is empty)
+            echo $wt_exit_status > {marker_file}
             "#,
-            wrapper_script
+            wrapper_script = wrapper_script,
+            marker_file = marker_file.display()
         );
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
@@ -2181,19 +2225,35 @@ approved-commands = ["echo 'bash background'"]
             exit_code,
         };
 
-        // The function should show a clear error message
+        // PRIMARY CHECK: Verify exit code 127 via marker file (reliable on all platforms)
         assert!(
-            output.combined.contains("wt: command not found"),
-            "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+            marker_file.exists(),
+            "Fish wrapper did not complete (marker file not created).\n\
+             Exit code: {}\nOutput:\n{}",
+            output.exit_code,
             output.combined
         );
 
-        // And return exit code 127 (standard "command not found" exit code)
-        assert!(
-            output.combined.contains("exit_code: 127"),
-            "Fish wrapper should return exit code 127 when binary is missing.\nOutput:\n{}",
-            output.combined
+        let marker_content = fs::read_to_string(&marker_file).unwrap_or_default();
+        let marker_exit_code: i32 = marker_content.trim().parse().unwrap_or(-1);
+
+        assert_eq!(
+            marker_exit_code, 127,
+            "Fish wrapper should return exit code 127 when binary is missing.\n\
+             Marker file content: {:?}\nPTY exit code: {}\nOutput:\n{}",
+            marker_content, output.exit_code, output.combined
         );
+
+        // TODO(macos-pty): PTY output capture for fish returns empty on macOS, so we
+        // can only assert the error message on Linux. We'd like to re-enable this on
+        // macOS once the underlying PTY issue is resolved. See #1268.
+        if !output.combined.is_empty() {
+            assert!(
+                output.combined.contains("wt: command not found"),
+                "Fish wrapper should show 'wt: command not found' when binary is missing.\nOutput:\n{}",
+                output.combined
+            );
+        }
     }
 
     /// Test that fish WRAPPER (bootstrap) handles missing binary gracefully

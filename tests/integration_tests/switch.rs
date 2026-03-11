@@ -149,6 +149,42 @@ fn test_switch_dwim_from_remote(#[from(repo_with_remote)] repo: TestRepo) {
     snapshot_switch("switch_dwim_from_remote", &repo, &["dwim-feature"]);
 }
 
+/// When the branch argument includes the remote prefix (e.g., "origin/feature"),
+/// strip the prefix and switch to the local branch via DWIM.
+/// This happens when the interactive picker returns a remote branch name.
+#[rstest]
+fn test_switch_remote_prefix_stripped(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a branch on the remote only (no local branch)
+    repo.run_git(&["branch", "remote-feature"]);
+    repo.run_git(&["push", "origin", "remote-feature"]);
+    repo.run_git(&["branch", "-D", "remote-feature"]);
+
+    // Passing "origin/remote-feature" should strip the prefix and DWIM to local branch
+    snapshot_switch(
+        "switch_remote_prefix_stripped",
+        &repo,
+        &["origin/remote-feature"],
+    );
+}
+
+/// When the branch name contains slashes (e.g., "username/feature-1") and the picker
+/// returns it with the remote prefix ("origin/username/feature-1"), the remote prefix
+/// should be stripped correctly. Regression test for #1260.
+#[rstest]
+fn test_switch_remote_prefix_stripped_slash_in_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a branch with / in the name on the remote only
+    repo.run_git(&["branch", "username/feature-1"]);
+    repo.run_git(&["push", "origin", "username/feature-1"]);
+    repo.run_git(&["branch", "-D", "username/feature-1"]);
+
+    // Passing "origin/username/feature-1" should strip "origin/" and DWIM correctly
+    snapshot_switch(
+        "switch_remote_prefix_slash_branch",
+        &repo,
+        &["origin/username/feature-1"],
+    );
+}
+
 /// When a branch exists on multiple remotes, DWIM should fail with an error
 /// since git can't determine which remote to track.
 #[rstest]

@@ -30,8 +30,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -50,8 +54,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -70,16 +78,16 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Run in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
-
-        /// Deprecated: use --foreground instead
-        #[arg(long = "no-background", hide = true)]
-        no_background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -98,16 +106,16 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Run in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
-
-        /// Deprecated: use --foreground instead
-        #[arg(long = "no-background", hide = true)]
-        no_background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -124,8 +132,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -142,8 +154,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -160,8 +176,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -178,8 +198,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -198,8 +222,12 @@ pub enum HookCommand {
         name: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
 
         /// Run in foreground (block until complete)
         #[arg(long)]

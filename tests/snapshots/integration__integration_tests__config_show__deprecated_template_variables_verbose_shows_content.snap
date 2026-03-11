@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -50,8 +51,14 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [2m○[22m Expanding [1mworktree-path[22m
-[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-a
+[107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m main_worktree [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m[2m
+[107m [0m [2m→[22m
+[107m [0m [2m[0m[2m[34m../repo.feature-a[0m[2m
 [2m○[22m Expanding [1mworktree-path[22m
-[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-b
+[107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m main_worktree [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m[2m
+[107m [0m [2m→[22m
+[107m [0m [2m[0m[2m[34m../repo.feature-b[0m[2m
 [2m○[22m Expanding [1mworktree-path[22m
-[107m [0m ../{{ main_worktree }}.{{ branch }} [2m→[22m ../repo.feature-c
+[107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m main_worktree [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[32m}}[0m[2m
+[107m [0m [2m→[22m
+[107m [0m [2m[0m[2m[34m../repo.feature-c[0m[2m

@@ -155,6 +155,18 @@ Configuration for `wt switch` interactive picker.
 # timeout-ms = 200
 ```
 
+### Aliases
+
+Command templates that run with `wt step <name>`. See [`wt step` aliases](https://worktrunk.dev/step/#aliases) for usage and flags.
+
+```toml
+[aliases]
+greet = "echo Hello from {{ branch }}"
+url = "echo http://localhost:{{ branch | hash_port }}"
+```
+
+Aliases defined here apply to all projects. For project-specific aliases, use the [project config](https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.
+
 ### User project-specific settings
 
 For context:
@@ -167,7 +179,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides (Experimental)
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -175,6 +187,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 post-create.env = "cp .env.example .env"
+aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
 ### Custom prompt templates
@@ -290,6 +303,11 @@ url = "http://localhost:{{ branch | hash_port }}"
 # Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
+
+# Command aliases (run with wt step <name>)
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+test = "cargo test"
 ```
 
 # Shell Integration

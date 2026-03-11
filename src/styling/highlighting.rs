@@ -94,6 +94,7 @@ pub fn format_toml(content: &str) -> String {
     // synoptic has built-in TOML support, so this always succeeds
     let mut highlighter = from_extension("toml", 4).expect("synoptic supports TOML");
     let gutter = super::GUTTER;
+    let dim = Style::new().dimmed();
     let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
     // Process all lines through the highlighter
@@ -116,7 +117,8 @@ pub fn format_toml(content: &str) -> String {
                 if let Some(s) = style {
                     line_output.push_str(&format!("{s}{text}{s:#}"));
                 } else {
-                    line_output.push_str(&text);
+                    // Unstyled tokens (keys, operators, whitespace) rendered dim
+                    line_output.push_str(&format!("{dim}{text}{dim:#}"));
                 }
             }
 
@@ -136,178 +138,122 @@ pub fn format_toml(content: &str) -> String {
 /// - "table": table headers [...]
 /// - "digit": numeric values
 fn toml_token_style(kind: &str) -> Option<Style> {
+    // All styles include .dimmed() so highlighted tokens match the dim base text,
+    // consistent with bash_token_style(). We do NOT use .bold() because bold (SGR 1)
+    // and dim (SGR 2) are mutually exclusive in some terminals like Alacritty.
     match kind {
-        // Strings (quoted values)
-        "string" => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)))),
+        // Strings (quoted values) - dim green
+        "string" => Some(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Green)))
+                .dimmed(),
+        ),
 
-        // Comments (hash-prefixed)
+        // Comments (hash-prefixed) - dim (no color, just subdued)
         "comment" => Some(Style::new().dimmed()),
 
-        // Table headers [table] and [[array]]
+        // Table headers [table] and [[array]] - dim cyan
         "table" => Some(
             Style::new()
                 .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
-                .bold(),
+                .dimmed(),
         ),
 
-        // Booleans and numbers
-        "boolean" | "digit" => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)))),
+        // Booleans and numbers - dim yellow
+        "boolean" | "digit" => Some(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Yellow)))
+                .dimmed(),
+        ),
 
-        // Everything else (operators, punctuation, keys)
+        // Everything else (operators, punctuation, keys) - no styling (will use base dim)
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
+    /// Each bash token type maps to the expected color.
     #[test]
     #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_function() {
-        // Commands should be blue dimmed
-        let style = bash_token_style("function");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Blue)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_keyword() {
-        // Keywords should be magenta dimmed
-        let style = bash_token_style("keyword");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Magenta)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_string() {
-        // Strings should be green dimmed
-        let style = bash_token_style("string");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Green)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_operator() {
-        // Operators should be cyan dimmed
-        let style = bash_token_style("operator");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Cyan)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_property() {
-        // Variables (property) should be yellow dimmed
-        let style = bash_token_style("property");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Yellow)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_number() {
-        // Numbers should be yellow dimmed
-        let style = bash_token_style("number");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Yellow)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_constant() {
-        // Constants/flags should be cyan dimmed
-        let style = bash_token_style("constant");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Cyan)));
-    }
-
-    #[test]
-    #[cfg(feature = "syntax-highlighting")]
-    fn test_bash_token_style_unknown() {
-        // Unknown tokens should return None
+    fn test_bash_token_styles() {
+        let cases = [
+            ("function", AnsiColor::Blue),
+            ("keyword", AnsiColor::Magenta),
+            ("string", AnsiColor::Green),
+            ("operator", AnsiColor::Cyan),
+            ("constant", AnsiColor::Cyan),
+            ("property", AnsiColor::Yellow),
+            ("number", AnsiColor::Yellow),
+        ];
+        for (name, expected_color) in cases {
+            let style =
+                bash_token_style(name).unwrap_or_else(|| panic!("{name} should have a style"));
+            assert_eq!(
+                style.get_fg_color(),
+                Some(Color::Ansi(expected_color)),
+                "{name} should be {expected_color:?}"
+            );
+        }
+        // Unknown/unstyled tokens return None
         assert!(bash_token_style("unknown").is_none());
         assert!(bash_token_style("comment").is_none());
         assert!(bash_token_style("embedded").is_none());
     }
 
+    /// Each TOML token type maps to the expected color.
     #[test]
-    fn test_toml_token_style_string() {
-        // Strings should be green
-        let style = toml_token_style("string");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Green)));
-    }
-
-    #[test]
-    fn test_toml_token_style_comment() {
-        // Comments should be dimmed
-        let style = toml_token_style("comment");
-        assert!(style.is_some());
-    }
-
-    #[test]
-    fn test_toml_token_style_table() {
-        // Table headers should be cyan bold
-        let style = toml_token_style("table");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Cyan)));
-    }
-
-    #[test]
-    fn test_toml_token_style_boolean() {
-        // Booleans should be yellow
-        let style = toml_token_style("boolean");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Yellow)));
-    }
-
-    #[test]
-    fn test_toml_token_style_digit() {
-        // Digits should be yellow
-        let style = toml_token_style("digit");
-        assert!(style.is_some());
-        let s = style.unwrap();
-        assert_eq!(s.get_fg_color(), Some(Color::Ansi(AnsiColor::Yellow)));
-    }
-
-    #[test]
-    fn test_toml_token_style_unknown() {
-        // Unknown tokens should return None
+    fn test_toml_token_styles() {
+        let cases = [
+            ("string", AnsiColor::Green),
+            ("table", AnsiColor::Cyan),
+            ("boolean", AnsiColor::Yellow),
+            ("digit", AnsiColor::Yellow),
+        ];
+        for (name, expected_color) in cases {
+            let style =
+                toml_token_style(name).unwrap_or_else(|| panic!("{name} should have a style"));
+            assert_eq!(
+                style.get_fg_color(),
+                Some(Color::Ansi(expected_color)),
+                "{name} should be {expected_color:?}"
+            );
+        }
+        // Comments have a style but no specific color (dimmed)
+        assert!(toml_token_style("comment").is_some());
+        // Unknown tokens return None
         assert!(toml_token_style("unknown").is_none());
         assert!(toml_token_style("key").is_none());
         assert!(toml_token_style("operator").is_none());
     }
 
+    /// format_toml produces highlighted, guttered output for various inputs.
     #[test]
-    fn test_format_toml_basic() {
-        let content = "[section]\nkey = \"value\"";
-        let result = format_toml(content);
-        // Should contain the original content (highlighted or not)
-        assert!(result.contains("section"));
-        assert!(result.contains("key"));
-        assert!(result.contains("value"));
-        // Should have multiple lines (one per input line)
-        assert!(result.lines().count() >= 2);
+    fn test_format_toml() {
+        assert_snapshot!(format_toml("[section]\nkey = \"value\""), @r#"
+        [107m [0m [2m[36m[section][0m
+        [107m [0m [2mkey = [0m[2m[32m"value"[0m
+        "#);
+        assert_snapshot!(
+            format_toml("[table]\nkey1 = \"value1\"\nkey2 = 42\n# comment\nkey3 = false"),
+            @r#"
+        [107m [0m [2m[36m[table][0m
+        [107m [0m [2mkey1 = [0m[2m[32m"value1"[0m
+        [107m [0m [2mkey2 = [0m[2m[33m42[0m
+        [107m [0m [2m# comment[0m
+        [107m [0m [2mkey3 = [0m[2m[33mfalse[0m
+        "#
+        );
+        assert_snapshot!(format_toml(""), @"");
     }
 
+    /// format_toml handles both styled tokens (string, table) and unstyled text.
     #[test]
     fn test_format_toml_has_styled_and_unstyled_text() {
-        // This test verifies that format_toml handles both styled tokens (string, table)
-        // and unstyled text (TokOpt::None for whitespace, punctuation)
         use synoptic::{TokOpt, from_extension};
 
         let content = "key = \"value\"";
@@ -315,7 +261,6 @@ mod tests {
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         highlighter.run(&lines);
 
-        // Collect token types
         let mut has_styled = false;
         let mut has_unstyled = false;
         for (y, line) in lines.iter().enumerate() {
@@ -333,32 +278,10 @@ mod tests {
             }
         }
 
-        // Should have styled token (the string "value")
         assert!(has_styled, "Should have at least one styled token");
-        // Should have unstyled text (whitespace, "=", "key")
         assert!(
             has_unstyled,
             "Should have at least one unstyled text segment"
         );
-    }
-
-    #[test]
-    fn test_format_toml_multiline() {
-        let content = "[table]\nkey1 = \"value1\"\nkey2 = 42\n# comment\nkey3 = false";
-        let result = format_toml(content);
-        // Each line should be present
-        assert!(result.contains("table"));
-        assert!(result.contains("key1"));
-        assert!(result.contains("key2"));
-        assert!(result.contains("key3"));
-        assert!(result.contains("comment"));
-    }
-
-    #[test]
-    fn test_format_toml_empty() {
-        let content = "";
-        let result = format_toml(content);
-        // Empty content should produce empty output (or just newlines)
-        assert!(result.is_empty() || result.trim().is_empty() || result == "\n");
     }
 }
