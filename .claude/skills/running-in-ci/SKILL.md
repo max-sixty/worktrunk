@@ -109,6 +109,21 @@ again.
 Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
 instead, which has a natural bound on CI completion time.
 
+### Verifying local test failures before pushing
+
+When running local tests before pushing and some tests fail, do **not**
+characterize them as "pre-existing" or "environment-dependent" without
+evidence. The same grounded-analysis rule from the Thoroughness section applies
+here — check main branch CI history before dismissing failures:
+
+```bash
+gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=3" \
+  --jq '.workflow_runs[] | {conclusion, created_at: .created_at}'
+```
+
+If you cannot verify, say "I haven't confirmed whether these failures are
+pre-existing" rather than asserting they are.
+
 ## Replying to Comments
 
 Prefer replying in context rather than creating a new top-level comment:
@@ -131,10 +146,15 @@ Prefer replying in context rather than creating a new top-level comment:
 
 ## Comment Formatting
 
-Keep comments concise. Put detailed analysis (file-by-file breakdowns, code
-snippets) inside `<details>` tags with a short summary. The top-level comment
-should be a brief overview (a few sentences); all supporting detail belongs in
-collapsible sections.
+Keep comments concise. Put detailed analysis inside `<details>` tags with a
+short summary. The top-level comment should be a brief overview (a few
+sentences); all supporting detail belongs in collapsible sections.
+
+**When to use `<details>` tags:** Any comment with multiple headers, tables,
+step-by-step analysis, or that exceeds ~15 lines of markdown. Technical
+breakdowns, surveys, and multi-section analyses always need collapsible
+sections — even if every section feels essential. The reader should be able to
+get the gist from the summary line without expanding.
 
 ### Use Links
 
