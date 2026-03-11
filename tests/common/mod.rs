@@ -2685,8 +2685,14 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // macOS nix-shell: /private/tmp/nix-shell.XXX/.tmpYYY/path -> [PROJECT_ID]
+    settings.add_filter(
+        r"/private/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
-    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
+    // Also handles nix-shell: /tmp/nix-shell.XXX/.tmpYYY/path
+    settings.add_filter(r"/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
     // Windows: C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/path -> [PROJECT_ID]
     // Handles Windows temp paths with drive letters (after backslash normalization)
     settings.add_filter(
@@ -2756,7 +2762,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // - Linux (dash): "sh: 1: nonexistent-command: not found"
     // Normalize to a consistent format
     settings.add_filter(
-        r"(?:/usr/bin/bash: line \d+|sh|bash)(?:: \d+)?: ([^:]+): (?:command )?not found",
+        r"(?:/usr/bin/bash: line \d+|sh(?:: line \d+)?|bash)(?:: \d+)?: ([^:]+): (?:command )?not found",
         "sh: $1: command not found",
     );
 
