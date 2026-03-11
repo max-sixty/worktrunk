@@ -86,7 +86,7 @@ mod switch;
 mod types;
 
 // Re-export public types and functions
-pub use push::handle_push;
+pub use push::{handle_no_ff_merge, handle_push};
 pub use remove::{handle_remove, handle_remove_current};
 pub(crate) use resolve::paths_match;
 pub use resolve::{
