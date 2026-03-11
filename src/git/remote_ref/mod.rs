@@ -40,7 +40,7 @@ pub use info::{PlatformData, RemoteRefInfo};
 
 use std::path::Path;
 
-use crate::git::RefType;
+use crate::git::{RefType, Repository};
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
@@ -58,7 +58,7 @@ pub trait RemoteRefProvider {
     /// - The CLI tool is not installed or not authenticated
     /// - The ref doesn't exist
     /// - The JSON response is malformed
-    fn fetch_info(&self, number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo>;
+    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo>;
 
     /// Get the git ref path for this ref (e.g., "pull/123/head" or "merge-requests/42/head").
     fn ref_path(&self, number: u32) -> String;
