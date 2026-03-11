@@ -392,26 +392,4 @@ impl Repository {
             })
             .cloned()
     }
-
-    /// Load project configuration from a specific worktree path.
-    ///
-    /// Use this instead of [`Self::load_project_config`] when the process cwd may not
-    /// match the intended worktree (e.g., after removing the current worktree,
-    /// hooks need to load config from the primary worktree).
-    ///
-    /// Result is cached — subsequent calls to [`Self::load_project_config`] will
-    /// return the same cached value.
-    pub fn load_project_config_at(
-        &self,
-        worktree_path: &std::path::Path,
-    ) -> anyhow::Result<Option<ProjectConfig>> {
-        self.cache
-            .project_config
-            .get_or_try_init(|| match self.worktree_at(worktree_path).root() {
-                Ok(root) => ProjectConfig::load_at(&root, self, true)
-                    .context("Failed to load project config"),
-                Err(_) => Ok(None),
-            })
-            .cloned()
-    }
 }

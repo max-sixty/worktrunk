@@ -138,19 +138,7 @@ impl ProjectConfig {
             .current_worktree()
             .root()
             .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
-        Self::load_at(&repo_root, repo, write_hints)
-    }
-
-    /// Load project configuration from .config/wt.toml at the given worktree root.
-    ///
-    /// Use this instead of [`Self::load`] when the process cwd may not match the
-    /// intended worktree (e.g., after removing the current worktree).
-    pub fn load_at(
-        worktree_root: &std::path::Path,
-        repo: &crate::git::Repository,
-        write_hints: bool,
-    ) -> Result<Option<Self>, ConfigError> {
-        let config_path = worktree_root.join(".config").join("wt.toml");
+        let config_path = repo_root.join(".config").join("wt.toml");
 
         if !config_path.exists() {
             return Ok(None);
@@ -163,7 +151,7 @@ impl ProjectConfig {
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees
         // Use show_brief_warning=true to emit a brief pointer to `wt config show`
-        let is_main_worktree = !repo.worktree_at(worktree_root).is_linked().unwrap_or(true);
+        let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
             &config_path,
