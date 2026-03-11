@@ -1,8 +1,8 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, merge_scenario,
+    make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings,
+    repo_with_multi_commit_feature, setup_snapshot_settings, TestRepo,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -2088,4 +2088,281 @@ fn test_merge_squash_ignored_with_no_commit(repo_with_multi_commit_feature: Test
         &["main", "--squash", "--no-commit", "--no-remove"],
         Some(feature_wt)
     ));
+}
+
+// =============================================================================
+// --no-ff merge (creates merge commit via commit-tree)
+// =============================================================================
+
+/// Basic --no-ff merge: single commit on feature, creates a merge commit on target.
+#[rstest]
+fn test_merge_no_ff_basic(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Merge with --no-ff and --no-remove so we can inspect the result
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--no-ff", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify a merge commit was created (HEAD on main should have 2 parents)
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Merge commit should have exactly 2 parents"
+    );
+
+    // Verify the merge commit message
+    let commit_msg = repo.git_output(&["log", "-1", "--format=%s", "main"]);
+    assert_eq!(commit_msg, "Merge branch 'feature' into main");
+}
+
+/// --no-ff merge with multiple commits (no squash): all commits preserved plus merge commit.
+#[rstest]
+fn test_merge_no_ff_multi_commit(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-squash", "--no-remove"],
+        Some(feature_wt)
+    ));
+
+    // Verify merge commit has 2 parents
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Merge commit should have exactly 2 parents"
+    );
+
+    // Verify individual commits are preserved (3 commits on main: initial + merge,
+    // with 2 feature commits reachable via second parent)
+    let log = repo.git_output(&["log", "--oneline", "--graph", "main"]);
+    assert!(log.contains("Merge branch"), "Should contain merge commit");
+}
+
+/// --no-ff merge with squash: squash first, then merge commit wrapping single squashed commit.
+#[rstest]
+fn test_merge_no_ff_with_squash(repo_with_multi_commit_feature: TestRepo) {
+    let repo = &repo_with_multi_commit_feature;
+    let feature_wt = &repo.worktrees["feature"];
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-remove"],
+        Some(feature_wt)
+    ));
+
+    // Verify merge commit has 2 parents
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Merge commit should have exactly 2 parents"
+    );
+}
+
+/// --no-ff via user config (no CLI flag needed).
+#[rstest]
+fn test_merge_no_ff_from_config(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Write user config with no-ff = true
+    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify merge commit was created
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Config-driven --no-ff should create merge commit"
+    );
+}
+
+/// --ff CLI flag overrides config no-ff = true.
+#[rstest]
+fn test_merge_ff_flag_overrides_config(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Write user config with no-ff = true
+    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+
+    // --ff should override config and do a fast-forward
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--ff", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify NO merge commit (fast-forward: HEAD on main should have 1 parent)
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        1,
+        "--ff should override config and fast-forward"
+    );
+}
+
+/// --no-ff with diverged branches: rebase first, then merge commit.
+#[rstest]
+fn test_merge_no_ff_with_rebase(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+
+    // Make a commit on feature
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
+
+    // Make a commit on main (diverge)
+    repo.commit_in_worktree(&main_wt, "main.txt", "main content", "Advance main");
+
+    // Merge with --no-ff: should rebase first, then create merge commit
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-squash", "--no-remove"],
+        Some(&feature_wt)
+    ));
+
+    // Verify merge commit has 2 parents
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(parents.len(), 2, "Should create merge commit after rebase");
+}
+
+/// --no-ff when already up to date (no commits to merge).
+#[rstest]
+fn test_merge_no_ff_already_up_to_date(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let feature_wt = repo.add_worktree("feature");
+
+    // Don't make any commits on feature - it's at the same point as main
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-remove"],
+        Some(&feature_wt)
+    ));
+}
+
+/// --no-ff with diverged branches and --no-rebase: fails because rebase is required.
+///
+/// When branches have diverged and --no-rebase is set, the merge cannot proceed
+/// because --no-ff still requires a fast-forward relationship (rebase first, then
+/// merge commit). This verifies the error path.
+#[rstest]
+fn test_merge_no_ff_diverged_no_rebase(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+
+    // Make a commit on feature
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
+
+    // Make a commit on main (diverge)
+    repo.commit_in_worktree(&main_wt, "main.txt", "main content", "Advance main");
+
+    // With --no-rebase, the merge fails because branches have diverged
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-ff", "--no-rebase", "--no-remove"],
+        Some(&feature_wt)
+    ));
+}
+
+/// --no-ff merge succeeds and syncs target worktree via reset --hard.
+///
+/// Verifies that after a --no-ff merge, the target worktree's working tree
+/// reflects the merge commit (not the old HEAD).
+#[rstest]
+fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+
+    // Make a commit on feature that adds a new file
+    repo.commit_in_worktree(
+        &feature_wt,
+        "feature.txt",
+        "feature content",
+        "Add feature file",
+    );
+
+    // Merge with --no-ff
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-ff", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "merge should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify the feature file exists in the main worktree (reset --hard synced it)
+    assert!(
+        main_wt.join("feature.txt").exists(),
+        "Target worktree should contain the merged file after reset --hard"
+    );
+
+    // Verify the merge commit is on main
+    let commit_msg = repo.git_output(&["log", "-1", "--format=%s", "main"]);
+    assert_eq!(commit_msg, "Merge branch 'feature' into main");
+
+    // Verify the target worktree HEAD matches the main branch tip
+    let main_tip = repo.git_output(&["rev-parse", "main"]);
+    let wt_head_output = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&main_wt)
+        .output()
+        .unwrap();
+    let wt_head = String::from_utf8_lossy(&wt_head_output.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(
+        main_tip, wt_head,
+        "Target worktree HEAD should match main after reset --hard"
+    );
 }
