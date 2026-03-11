@@ -395,11 +395,11 @@ impl Repository {
 
     /// Load project configuration from a specific worktree path.
     ///
-    /// Use this instead of [`load_project_config`] when the process cwd may not
+    /// Use this instead of [`Self::load_project_config`] when the process cwd may not
     /// match the intended worktree (e.g., after removing the current worktree,
     /// hooks need to load config from the primary worktree).
     ///
-    /// Result is cached — subsequent calls to [`load_project_config`] will
+    /// Result is cached — subsequent calls to [`Self::load_project_config`] will
     /// return the same cached value.
     pub fn load_project_config_at(
         &self,

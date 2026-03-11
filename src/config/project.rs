@@ -143,7 +143,7 @@ impl ProjectConfig {
 
     /// Load project configuration from .config/wt.toml at the given worktree root.
     ///
-    /// Use this instead of [`load`] when the process cwd may not match the
+    /// Use this instead of [`Self::load`] when the process cwd may not match the
     /// intended worktree (e.g., after removing the current worktree).
     pub fn load_at(
         worktree_root: &std::path::Path,
