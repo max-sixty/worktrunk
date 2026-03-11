@@ -745,7 +745,8 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
     /// Remove worktree; delete branch if merged
     ///
-    /// Defaults to the current worktree.
+    /// Defaults to the current worktree. Also works on branches without a
+    /// worktree — useful for cleaning up stale local branches.
     #[command(after_long_help = r#"## Examples
 
 Remove current worktree:
@@ -759,6 +760,12 @@ Remove specific worktrees:
 ```console
 wt remove feature-branch
 wt remove old-feature another-branch
+```
+
+Remove a local branch (no worktree needed):
+
+```console
+wt remove stale-branch
 ```
 
 Keep the branch:

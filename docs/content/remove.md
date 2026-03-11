@@ -1,6 +1,6 @@
 +++
 title = "wt remove"
-description = "Remove worktree; delete branch if merged. Defaults to the current worktree."
+description = "Remove worktree; delete branch if merged. Defaults to the current worktree. Also works on branches without a worktree — useful for cleaning up stale local branches."
 weight = 12
 
 [extra]
@@ -9,7 +9,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 
-Remove worktree; delete branch if merged. Defaults to the current worktree.
+Remove worktree; delete branch if merged. Defaults to the current worktree. Also works on branches without a worktree — useful for cleaning up stale local branches.
 
 ## Examples
 
@@ -24,6 +24,12 @@ Remove specific worktrees:
 ```bash
 wt remove feature-branch
 wt remove old-feature another-branch
+```
+
+Remove a local branch (no worktree needed):
+
+```bash
+wt remove stale-branch
 ```
 
 Keep the branch:
@@ -89,7 +95,8 @@ Removal runs in the background by default (returns immediately). Logs are writte
 {% terminal() %}
 wt remove - Remove worktree; delete branch if merged
 
-Defaults to the current worktree.
+Defaults to the current worktree. Also works on branches without a worktree —
+useful for cleaning up stale local branches.
 
 Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
 
