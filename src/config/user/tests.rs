@@ -456,6 +456,7 @@ fn test_merge_config_serde() {
         rebase: Some(false),
         remove: Some(true),
         verify: Some(true),
+        no_ff: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
@@ -634,6 +635,7 @@ fn test_merge_merge_config() {
         rebase: Some(true),
         remove: Some(true),
         verify: Some(true),
+        no_ff: Some(false),
     };
     let override_config = MergeConfig {
         squash: Some(false), // Override
@@ -641,6 +643,7 @@ fn test_merge_merge_config() {
         rebase: None,        // Fall back to base
         remove: Some(false), // Override
         verify: None,        // Fall back to base
+        no_ff: Some(true),   // Override
     };
 
     let merged = base.merge_with(&override_config);
@@ -649,6 +652,7 @@ fn test_merge_merge_config() {
     assert_eq!(merged.rebase, Some(true));
     assert_eq!(merged.remove, Some(false));
     assert_eq!(merged.verify, Some(true));
+    assert_eq!(merged.no_ff, Some(true));
 }
 
 #[test]
@@ -832,6 +836,7 @@ fn test_effective_merge_with_partial_override() {
                 rebase: Some(true),
                 remove: Some(true),
                 verify: Some(true),
+                no_ff: Some(false),
             }),
             ..Default::default()
         },
@@ -848,6 +853,7 @@ fn test_effective_merge_with_partial_override() {
                     rebase: None,
                     remove: None,
                     verify: None,
+                    no_ff: None,
                 }),
                 ..Default::default()
             },
@@ -978,12 +984,13 @@ fn test_list_config_accessor_methods_with_values() {
 #[test]
 fn test_merge_config_accessor_methods_defaults() {
     let config = MergeConfig::default();
-    // MergeConfig defaults are all true
+    // MergeConfig defaults are all true except no_ff (false)
     assert!(config.squash());
     assert!(config.commit());
     assert!(config.rebase());
     assert!(config.remove());
     assert!(config.verify());
+    assert!(!config.no_ff());
 }
 
 #[test]
@@ -994,12 +1001,14 @@ fn test_merge_config_accessor_methods_with_values() {
         rebase: Some(false),
         remove: Some(false),
         verify: Some(false),
+        no_ff: Some(true),
     };
     assert!(!config.squash());
     assert!(!config.commit());
     assert!(!config.rebase());
     assert!(!config.remove());
     assert!(!config.verify());
+    assert!(config.no_ff());
 }
 
 #[test]
