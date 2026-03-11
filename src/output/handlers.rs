@@ -788,6 +788,14 @@ fn spawn_hooks_after_remove(
         return Ok(());
     };
     let repo = Repository::at(main_path)?;
+
+    // Pre-warm the project config cache from main_path. When removing the
+    // current worktree, the process cwd no longer exists, so the default
+    // load_project_config() (which uses current_worktree()) would fail to
+    // find .config/wt.toml. Loading from main_path ensures both post-remove
+    // and post-switch hooks can read the project config.
+    let _ = repo.load_project_config_at(main_path);
+
     // When removing the current worktree, user cd's to main_path → use post_hook logic
     // (suppresses path if shell integration will cd there).
     // When removing a different worktree, user stays at cwd → use pre_hook logic

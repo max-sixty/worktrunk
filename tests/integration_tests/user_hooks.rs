@@ -1912,3 +1912,32 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
         "Manual pre-switch hook should have created marker"
     );
 }
+
+/// When removing the current worktree, post-switch hooks should fire
+/// because the user is implicitly switched back to the primary worktree.
+/// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
+#[rstest]
+fn test_remove_current_worktree_fires_post_switch_hook(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Write project config with a post-switch hook that creates a marker file
+    repo.write_project_config(
+        r#"post-switch = "echo 'POST_SWITCH_AFTER_REMOVE' > post_switch_marker.txt""#,
+    );
+
+    // Remove from WITHIN the feature worktree (current worktree removal)
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Post-switch hook should fire in the primary worktree
+    let marker = repo.root_path().join("post_switch_marker.txt");
+    wait_for_file_content(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(
+        content.contains("POST_SWITCH_AFTER_REMOVE"),
+        "Post-switch hook should run when removing current worktree, got: {content}"
+    );
+}
