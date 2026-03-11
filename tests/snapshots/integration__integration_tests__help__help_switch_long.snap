@@ -78,6 +78,8 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Skip directory change after switching[0m
           
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation.[0m
+          
+          In picker mode (no branch argument), prints the selected branch name and exits without switching. Useful for scripting.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

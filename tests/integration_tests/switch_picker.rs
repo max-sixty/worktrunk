@@ -1087,3 +1087,54 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         directives
     );
 }
+
+#[rstest]
+fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to select
+    repo.add_worktree("target-branch");
+
+    let (directive_path, _guard) = directive_file_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
+        directive_path.display().to_string(),
+    ));
+
+    // Run `wt switch --no-cd`, filter to "target", press Enter to select
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to select
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for --no-cd selection"
+    );
+
+    let screen = result.screen();
+
+    // --no-cd should output the branch name
+    assert!(
+        screen.contains("target-branch"),
+        "Expected branch name in output with --no-cd.\nScreen:\n{}",
+        screen
+    );
+
+    // --no-cd should NOT emit a cd directive (read-only operation)
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        !directives.contains("cd '"),
+        "Directive file should NOT contain cd command with --no-cd, got: {}",
+        directives
+    );
+}
