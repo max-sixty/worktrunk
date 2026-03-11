@@ -320,7 +320,11 @@ fn complete_branches(
     // possibilities?" which makes completion unusable in repos with many remotes.
     // Threshold of 100 aligns with bash's default `completion-query-items`.
     let exclude_remote_only = exclude_remote_only
-        || (!worktree_only && branches.len() > 100 && branches.iter().any(|b| matches!(b.category, BranchCategory::Remote(_))));
+        || (!worktree_only
+            && branches.len() > 100
+            && branches
+                .iter()
+                .any(|b| matches!(b.category, BranchCategory::Remote(_))));
 
     branches
         .into_iter()
