@@ -69,7 +69,8 @@ use worktrunk::styling::{
 };
 
 use crate::commands::configure_shell::{
-    ConfigAction, handle_configure_shell, prompt_for_install, scan_shell_configs,
+    ConfigAction, UninstallScanResult, handle_configure_shell, prompt_for_install,
+    scan_shell_configs,
 };
 
 /// Shell integration install hint message.
@@ -77,7 +78,7 @@ use crate::commands::configure_shell::{
 // This requires changing the hints infrastructure to track counts rather than booleans.
 // See `Repository::mark_hint_shown()` and `list_shown_hints()` in src/git/repository/mod.rs.
 pub(crate) fn shell_integration_hint() -> String {
-    cformat!("To enable automatic cd, run <bright-black>wt config shell install</>")
+    cformat!("To enable automatic cd, run <underline>wt config shell install</>")
 }
 
 /// Hint when shell integration is installed but shell needs restart.
@@ -97,16 +98,14 @@ fn shell_integration_unsupported_shell(shell_path: &str) -> String {
 
 /// Warning message when running as git subcommand (cd cannot work).
 pub(crate) fn git_subcommand_warning() -> String {
-    cformat!(
-        "For automatic cd, invoke directly (with the <bright-black>-</>): <bright-black>git-wt</>"
-    )
+    cformat!("For automatic cd, invoke directly (with the <underline>-</>): <underline>git-wt</>")
 }
 
 /// Hint when shell integration IS configured but user ran an explicit path.
 /// Suggests using the shell-wrapped command for automatic cd.
 pub(crate) fn explicit_path_hint(branch: &str) -> String {
     let wraps = crate::binary_name();
-    cformat!("To change directory, run <bright-black>{wraps} switch {branch}</>")
+    cformat!("To change directory, run <underline>{wraps} switch {branch}</>")
 }
 
 /// Check if we should show the explicit path hint.
@@ -193,11 +192,34 @@ pub fn print_skipped_shells(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "Skipped <bright-black>{shell}</>; <bright-black>{path}</> not found"
+                "Skipped <underline>{shell}</>; <underline>{path}</> not found"
             ))
         );
     }
     Ok(())
+}
+
+fn shell_extension_label(shell: Shell) -> &'static str {
+    // For bash/zsh, completions are inline in the init script.
+    if matches!(shell, Shell::Bash | Shell::Zsh) {
+        "shell extension & completions"
+    } else {
+        "shell extension"
+    }
+}
+
+fn print_config_action_result(action: &ConfigAction, message: String) {
+    match action {
+        ConfigAction::Added | ConfigAction::Created => {
+            eprintln!("{}", success_message(message));
+        }
+        ConfigAction::AlreadyExists => {
+            eprintln!("{}", info_message(message));
+        }
+        ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
+            unreachable!("Preview actions handled by confirmation prompt")
+        }
+    }
 }
 
 /// Print the result of shell integration installation.
@@ -233,28 +255,12 @@ pub fn print_shell_install_result(
     for result in &scan_result.configured {
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // For bash/zsh, completions are inline in the init script
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
-            "shell extension"
-        };
+        let what = shell_extension_label(shell);
         let message = cformat!(
             "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
             result.action.description()
         );
-
-        match result.action {
-            ConfigAction::Added | ConfigAction::Created => {
-                eprintln!("{}", success_message(message));
-            }
-            ConfigAction::AlreadyExists => {
-                eprintln!("{}", info_message(message));
-            }
-            ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                unreachable!("Preview actions handled by confirmation prompt")
-            }
-        }
+        print_config_action_result(&result.action, message);
 
         if matches!(shell, Shell::Nushell) && !matches!(result.action, ConfigAction::AlreadyExists)
         {
@@ -272,17 +278,7 @@ pub fn print_shell_install_result(
                 "{} completions for <bold>{shell}</> @ <bold>{comp_path}</>",
                 comp_result.action.description()
             );
-            match comp_result.action {
-                ConfigAction::Added | ConfigAction::Created => {
-                    eprintln!("{}", success_message(comp_message));
-                }
-                ConfigAction::AlreadyExists => {
-                    eprintln!("{}", info_message(comp_message));
-                }
-                ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                    unreachable!("Preview actions handled by confirmation prompt")
-                }
-            }
+            print_config_action_result(&comp_result.action, comp_message);
         }
     }
 
@@ -453,50 +449,159 @@ pub fn prompt_shell_integration(
     Ok(true)
 }
 
+/// Print the result of shell integration uninstallation.
+///
+/// Shows removed extensions/completions, not-found warnings, summary, and restart hint.
+pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_shell: bool) {
+    // Count unique shells, not file results (fish may have 2 files: functions/ and legacy conf.d/)
+    let mut shells: Vec<_> = scan_result.results.iter().map(|r| r.shell).collect();
+    shells.sort_by_key(|s| s.to_string());
+    shells.dedup();
+    let shell_count = shells.len();
+    let completion_count = scan_result.completion_results.len();
+    let total_changes = shell_count + completion_count;
+
+    // Show shell extension results
+    for result in &scan_result.results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+        let what = shell_extension_label(shell);
+
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
+                result.action.description(),
+            ))
+        );
+    }
+
+    // Show completion results
+    for result in &scan_result.completion_results {
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "{} completions for <bold>{shell}</> @ <bold>{path}</>",
+                result.action.description(),
+            ))
+        );
+    }
+
+    // Show not found - warning if explicit shell, hint if auto-scan
+    for (shell, path) in &scan_result.not_found {
+        let path = format_path_for_display(path);
+        let what = shell_extension_label(*shell);
+        if explicit_shell {
+            eprintln!("{}", warning_message(format!("No {what} found in {path}")));
+        } else {
+            eprintln!(
+                "{}",
+                hint_message(cformat!("No <underline>{shell}</> {what} in {path}"))
+            );
+        }
+    }
+
+    // Show completion files not found (only fish has separate completion files)
+    // Only show this if the shell extension was ALSO not found - if we removed
+    // the shell extension, no need to warn about missing completions
+    for (shell, path) in &scan_result.completion_not_found {
+        let shell_was_removed = scan_result.results.iter().any(|r| r.shell == *shell);
+        if shell_was_removed {
+            continue; // Shell extension was removed, don't warn about completions
+        }
+        let path = format_path_for_display(path);
+        if explicit_shell {
+            eprintln!(
+                "{}",
+                warning_message(format!("No completions found in {path}"))
+            );
+        } else {
+            eprintln!(
+                "{}",
+                hint_message(cformat!("No <underline>{shell}</> completions in {path}"))
+            );
+        }
+    }
+
+    // Exit with info if nothing was found
+    let all_not_found = scan_result.not_found.len() + scan_result.completion_not_found.len();
+    if total_changes == 0 {
+        if all_not_found == 0 {
+            eprintln!();
+            eprintln!("{}", hint_message("No shell integration found to remove"));
+        }
+        return;
+    }
+
+    // Summary
+    eprintln!();
+    let plural = if shell_count == 1 { "" } else { "s" };
+    eprintln!(
+        "{}",
+        success_message(format!(
+            "Removed integration from {shell_count} shell{plural}"
+        ))
+    );
+
+    // Hint about restarting shell (only if current shell was affected)
+    let current_shell = std::env::var("SHELL")
+        .ok()
+        .and_then(|s| extract_filename_from_path(&s).map(String::from));
+
+    let current_shell_affected = current_shell.as_ref().is_some_and(|shell_name| {
+        scan_result
+            .results
+            .iter()
+            .any(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
+    });
+
+    if current_shell_affected {
+        eprintln!("{}", hint_message("Restart shell to complete uninstall"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
-        assert!(hint.contains("wt config shell install"));
+        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
     }
 
     #[test]
     fn test_git_subcommand_warning() {
         let warning = git_subcommand_warning();
-        assert!(warning.contains("git-wt"));
-        assert!(warning.contains("with the"));
+        assert_snapshot!(warning, @"For automatic cd, invoke directly (with the [4m-[24m): [4mgit-wt[24m");
     }
 
     #[test]
-    fn test_compute_shell_warning_reason_not_installed() {
+    fn test_compute_shell_warning_reason() {
         // Shell integration not configured -> "not installed"
         let reason = compute_shell_warning_reason_inner(false, false, "wt", "wt");
         assert_eq!(reason, "shell integration not installed");
-    }
 
-    #[test]
-    fn test_compute_shell_warning_reason_explicit_path_same_name() {
         // When filename matches wraps, show full path (the path IS the useful info)
         let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
-        assert!(reason.contains("./target/debug/wt"));
-        assert!(reason.contains("wraps"));
-    }
+        assert_snapshot!(reason, @"ran [1m./target/debug/wt[22m; shell integration wraps [1mwt[22m");
 
-    #[test]
-    fn test_compute_shell_warning_reason_explicit_path_different_binary() {
         // When invoked binary differs from wrapped binary, show both
         let reason = compute_shell_warning_reason_inner(true, true, "/usr/local/bin/git-wt", "wt");
-        assert!(reason.contains("git-wt"));
-        assert!(reason.contains("wt"));
-        assert!(reason.contains("wraps"));
+        assert_snapshot!(reason, @"ran [1mgit-wt[22m; shell integration wraps [1mwt[22m");
+
+        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
+        assert_eq!(reason, "shell requires restart");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_compute_shell_warning_reason_windows_exe_suffix() {
+    fn test_compute_shell_warning_reason_windows() {
         // Windows: invoked as git-wt.exe, wraps git-wt -> targeted .exe message
         let reason = compute_shell_warning_reason_inner(
             true,
@@ -505,32 +610,26 @@ mod tests {
             "git-wt",
         );
         // Should extract filename and give targeted advice
-        assert!(reason.contains("git-wt.exe"));
-        assert!(reason.contains("without .exe"));
         assert!(!reason.contains(r"C:\Users")); // No full path
-    }
+        assert!(reason.contains("git-wt.exe"), "{reason}");
+        assert!(reason.contains("without .exe"), "{reason}");
 
-    #[test]
-    #[cfg(windows)]
-    fn test_compute_shell_warning_reason_windows_exe_case_insensitive() {
         // Windows paths are case-insensitive
         let reason = compute_shell_warning_reason_inner(true, true, r"C:\path\to\WT.EXE", "wt");
-        assert!(reason.contains("without .exe"));
-    }
-
-    #[test]
-    fn test_compute_shell_warning_reason_needs_restart() {
-        // Shell integration configured + NOT explicit path -> "shell requires restart"
-        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
-        assert_eq!(reason, "shell requires restart");
+        assert!(
+            reason.contains("WT.EXE") || reason.contains(".exe"),
+            "{reason}"
+        );
     }
 
     #[test]
     fn test_explicit_path_hint_format() {
-        // Verify hint contains the branch name and "switch" command
         let hint = explicit_path_hint("feature-branch");
-        assert!(hint.contains("switch"));
-        assert!(hint.contains("feature-branch"));
-        assert!(hint.contains("To change directory"));
+        // binary_name() returns the test binary hash in test context; normalize it
+        let mut settings = insta::Settings::clone_current();
+        settings.add_filter(r"wt-[0-9a-f]+", "wt");
+        settings.bind(|| {
+            assert_snapshot!(hint, @"To change directory, run [4mwt switch feature-branch[24m");
+        });
     }
 }

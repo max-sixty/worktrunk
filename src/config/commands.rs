@@ -161,42 +161,12 @@ impl Serialize for CommandConfig {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     // ============================================================================
     // Command Tests
-    // ============================================================================
-
-    #[test]
-    fn test_command_new() {
-        let cmd = Command::new(Some("build".to_string()), "cargo build".to_string());
-        assert_eq!(cmd.name, Some("build".to_string()));
-        assert_eq!(cmd.template, "cargo build");
-        assert_eq!(cmd.expanded, "cargo build"); // Same as template when not expanded
-    }
-
-    #[test]
-    fn test_command_new_unnamed() {
-        let cmd = Command::new(None, "npm install".to_string());
-        assert_eq!(cmd.name, None);
-        assert_eq!(cmd.template, "npm install");
-        assert_eq!(cmd.expanded, "npm install");
-    }
-
-    #[test]
-    fn test_command_with_expansion() {
-        let cmd = Command::with_expansion(
-            Some("test".to_string()),
-            "cargo test --package {{ repo }}".to_string(),
-            "cargo test --package myrepo".to_string(),
-        );
-        assert_eq!(cmd.name, Some("test".to_string()));
-        assert_eq!(cmd.template, "cargo test --package {{ repo }}");
-        assert_eq!(cmd.expanded, "cargo test --package myrepo");
-    }
-
-    // ============================================================================
-    // CommandConfig Deserialization Tests
     // ============================================================================
 
     #[test]
@@ -301,8 +271,7 @@ third = "echo 3"
             },
         };
 
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("cmd = \"npm install\""));
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"cmd = "npm install""#);
     }
 
     #[test]
@@ -322,11 +291,11 @@ third = "echo 3"
             },
         };
 
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("build"));
-        assert!(serialized.contains("cargo build"));
-        assert!(serialized.contains("test"));
-        assert!(serialized.contains("cargo test"));
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
+        [cmd]
+        build = "cargo build"
+        test = "cargo test"
+        "#);
     }
 
     #[test]
@@ -474,8 +443,10 @@ third = "echo 3"
 
         // Should not panic - generates "_1" for unnamed command
         let wrapper = Wrapper { cmd: merged };
-        let serialized = toml::to_string(&wrapper).unwrap();
-        assert!(serialized.contains("npm install"), "{serialized}");
-        assert!(serialized.contains("echo setup"), "{serialized}");
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
+        [cmd]
+        _1 = "npm install"
+        setup = "echo setup"
+        "#);
     }
 }

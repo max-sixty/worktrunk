@@ -695,10 +695,10 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mHINTS[39m
         [107m [0m (none)
 
-        [36mCOMMAND LOG[39m  @ <PATH>
+        [36mCOMMAND LOG[39m @ <PATH>
         [107m [0m (none)
 
-        [36mHOOK OUTPUT[39m  @ <PATH>
+        [36mHOOK OUTPUT[39m @ <PATH>
         [107m [0m (none)
         ");
     });

@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -35,15 +36,15 @@ exit_code: 0
 [32m✓[39m [32mCreated worktree for [1mfeature[22m @ [1m/path/to/worktree[22m[39m
 [31m✗[39m [31mBranch [1mfeature[22m not found[39m
 [33m▲[39m [33mBranch [1mfeature[22m has uncommitted changes[39m
-[2m↳[22m [2mTo rebase onto main, run [90mwt merge[39m[22m
+[2m↳[22m [2mTo rebase onto main, run [4mwt merge[24m[22m
 [2m○[22m Showing [1m5[22m worktrees
 
 [2m○[22m Gutter formatting (error details):
 [107m [0m expected `=`, found newline at line 3 column 1
 
 [2m○[22m Gutter formatting (config):
-[107m [0m [1m[36m[commit.generation][0m
-[107m [0m command = [32m"llm --model claude"[0m
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mcommand = [0m[2m[32m"llm --model claude"[0m
 
 [2m○[22m Gutter formatting (shell code):
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m

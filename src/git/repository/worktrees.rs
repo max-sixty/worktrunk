@@ -46,7 +46,7 @@ impl Repository {
         if let Some(first) = worktrees.first_mut()
             && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
         {
-            first.path = self.repo_path().to_path_buf();
+            first.path = self.repo_path()?.to_path_buf();
         }
 
         Ok(worktrees)
@@ -94,7 +94,7 @@ impl Repository {
             };
             self.worktree_for_branch(&branch)
         } else {
-            Ok(Some(self.repo_path().to_path_buf()))
+            Ok(Some(self.repo_path()?.to_path_buf()))
         }
     }
 
@@ -133,25 +133,26 @@ impl Repository {
     /// (like build artifacts such as `.vite/` or `node_modules/`).
     ///
     /// When the worktree contains initialized submodules, git refuses removal
-    /// even for clean worktrees. This method detects that case and automatically
-    /// retries with `--force`, which is safe because the caller has already
-    /// validated worktree cleanliness via `ensure_clean()`.
+    /// even for clean worktrees. This method detects that case up front and
+    /// adds `--force`, which is safe because the caller has already validated
+    /// worktree cleanliness via `ensure_clean()`.
     ///
     /// # Why git requires `--force` for submodules
     ///
     /// Git's `--force` flag on `worktree remove` bypasses two unrelated
     /// protections under one flag: dirty working tree checks AND the
     /// submodule structural check. We separate these concerns — our
-    /// `ensure_clean()` handles dirty state, and the `--force` retry
+    /// `ensure_clean()` handles dirty state, and `--force`
     /// handles the submodule restriction.
     ///
     /// # TOCTOU note
     ///
     /// Git checks for submodules *before* checking for dirty files. If a
     /// file is modified between our `ensure_clean()` and the git command,
-    /// git reports the submodule error (not the dirty error), so the
-    /// `--force` retry fires and bypasses git's dirty check. This is the
-    /// same TOCTOU window that exists for all removal (between
+    /// git reports the submodule error (not the dirty error), so our
+    /// submodule pre-check still leads to `--force` and bypasses git's
+    /// dirty check. This is the same TOCTOU window that exists for all
+    /// removal (between
     /// `ensure_clean()` and the actual delete), but for non-submodule
     /// worktrees git's own dirty check acts as an accidental backstop
     /// that we lose here. The window is milliseconds.
@@ -164,26 +165,22 @@ impl Repository {
                 ),
             })
         })?;
+        let use_force = if force {
+            true
+        } else {
+            self.worktree_at(path).has_initialized_submodules()?
+        };
+        if use_force && !force {
+            log::debug!("Using --force for worktree removal due to initialized submodules");
+        }
         let mut args = vec!["worktree", "remove"];
-        if force {
+        if use_force {
             args.push("--force");
         }
         args.push(path_str);
 
-        match self.run_command(&args) {
-            Ok(_) => Ok(()),
-            Err(e)
-                if !force
-                    && e.to_string()
-                        .contains("submodules cannot be moved or removed") =>
-            {
-                // Submodule retry — see doc comment above for safety analysis.
-                log::debug!("Retrying worktree removal with --force due to submodules");
-                self.run_command(&["worktree", "remove", "--force", path_str])?;
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
+        self.run_command(&args)?;
+        Ok(())
     }
 
     /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
@@ -206,7 +203,7 @@ impl Repository {
         match name {
             "@" => self.current_worktree().branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
-                    action: Some("resolve '@' to current branch".into()),
+                    action: Some("resolve @ to current branch".into()),
                 }
                 .into()
             }),
@@ -215,7 +212,7 @@ impl Repository {
                 self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
-                            "No previous branch found in history. Run <bright-black>wt list</> to see available worktrees."
+                            "No previous branch found in history. Run <underline>wt list</> to see available worktrees."
                         ),
                     }
                     .into()
@@ -224,7 +221,7 @@ impl Repository {
             "^" => self.default_branch().ok_or_else(|| {
                 GitError::Other {
                     message: cformat!(
-                        "Cannot determine default branch. Specify target explicitly or run <bright-black>wt config state default-branch set <bold>BRANCH</></>"
+                        "Cannot determine default branch. Specify target explicitly or run <underline>wt config state default-branch set <bold>BRANCH</></>"
                     ),
                 }
                 .into()
@@ -259,7 +256,7 @@ impl Repository {
                     .current_worktree()
                     .root()
                     .map_err(|_| GitError::NotInWorktree {
-                        action: Some("resolve '@'".into()),
+                        action: Some("resolve @".into()),
                     })?;
                 // root() returns canonicalized path, so canonicalize worktree paths
                 // for comparison to handle symlinks (e.g., macOS /var -> /private/var)
@@ -290,8 +287,7 @@ impl Repository {
     /// - Normal repos: the main worktree (repo root)
     /// - Bare repos: the default branch's worktree, or the bare repo directory
     pub fn home_path(&self) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .primary_worktree()?
-            .unwrap_or_else(|| self.repo_path().to_path_buf()))
+        self.primary_worktree()?
+            .map_or_else(|| self.repo_path().map(|p| p.to_path_buf()), Ok)
     }
 }

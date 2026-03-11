@@ -212,10 +212,10 @@ pub fn handle_switch(
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
     // If user declines, skip hooks but continue with worktree operation
-    let skip_hooks = !approve_switch_hooks(&repo, config, &plan, yes, verify)?;
+    let hooks_approved = approve_switch_hooks(&repo, config, &plan, yes, verify)?;
 
     // Execute the validated plan
-    let (result, branch_info) = execute_switch(&repo, plan, config, yes, skip_hooks)?;
+    let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
@@ -240,7 +240,7 @@ pub fn handle_switch(
     //
     // When recovered from a deleted worktree, current_dir() and current_worktree().root()
     // both fail — fall back to repo_path() (the main worktree root).
-    let fallback_path = repo.repo_path().to_path_buf();
+    let fallback_path = repo.repo_path()?.to_path_buf();
     let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
     let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
     let hooks_display_path =
@@ -264,7 +264,7 @@ pub fn handle_switch(
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
     // - post-start: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
-    if !skip_hooks {
+    if hooks_approved {
         spawn_switch_background_hooks(
             &repo,
             config,
@@ -281,7 +281,7 @@ pub fn handle_switch(
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
         let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
-        let template_vars = build_hook_context(&ctx, &extra_vars);
+        let template_vars = build_hook_context(&ctx, &extra_vars)?;
         let vars: HashMap<&str, &str> = template_vars
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))

@@ -947,6 +947,56 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     );
 }
 
+/// Test that VCS metadata directories are excluded from copy-ignored (GitHub issue #1249)
+///
+/// VCS metadata directories like `.jj` (Jujutsu), `.hg` (Mercurial) contain internal
+/// state tied to a specific working directory. Copying them between worktrees breaks
+/// the colocated VCS.
+#[rstest]
+fn test_copy_ignored_skips_vcs_metadata_dirs(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create VCS metadata directories that are gitignored
+    let jj_dir = repo.root_path().join(".jj");
+    fs::create_dir_all(jj_dir.join("repo")).unwrap();
+    fs::write(jj_dir.join("repo/store"), "jj internal state").unwrap();
+
+    let hg_dir = repo.root_path().join(".hg");
+    fs::create_dir_all(&hg_dir).unwrap();
+    fs::write(hg_dir.join("dirstate"), "hg internal state").unwrap();
+
+    // Also create a regular ignored file that SHOULD be copied
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+
+    fs::write(repo.root_path().join(".gitignore"), ".jj/\n.hg/\n.env\n").unwrap();
+
+    // Run copy-ignored
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
+
+    // Verify: .env was copied (regular ignored file)
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should be copied to destination"
+    );
+
+    // Verify: .jj was NOT copied (VCS metadata)
+    assert!(
+        !feature_path.join(".jj").exists(),
+        ".jj directory should NOT be copied (VCS metadata)"
+    );
+
+    // Verify: .hg was NOT copied (VCS metadata)
+    assert!(
+        !feature_path.join(".hg").exists(),
+        ".hg directory should NOT be copied (VCS metadata)"
+    );
+}
+
 /// Test that worktrees nested inside the source are not copied (GitHub issue #641)
 ///
 /// When worktree-path is configured to place worktrees inside the primary worktree

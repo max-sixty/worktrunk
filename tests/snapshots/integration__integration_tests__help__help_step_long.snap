@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -66,14 +67,14 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 Commit with LLM-generated message:
 
-  [2mwt step commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
 
 Manual merge workflow with review between steps:
 
-  [2mwt step commit[0m
-  [2mwt step squash[0m
-  [2mwt step rebase[0m
-  [2mwt step push[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step squash[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step rebase[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step push[0m
 
 [1m[32mOperations[0m
 
@@ -87,6 +88,25 @@ Manual merge workflow with review between steps:
 - [2mpromote[0m — [experimental] Put a branch into the main worktree
 - [2mprune[0m — Remove worktrees and branches merged into the default branch
 - [2mrelocate[0m — [experimental] Move worktrees to expected paths
+- [2m<alias>[0m — [experimental] Run a configured command alias
+
+[1m[32mAliases[0m
+
+Custom command templates configured in user config ([2m~/.config/worktrunk/config.toml[0m) or project config ([2m.config/wt.toml[0m). Aliases support the same template variables as hooks.
+
+[107m [0m [2m# .config/wt.toml[0m
+[107m [0m [2m[36m[aliases][0m
+[107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
+[107m [0m [2mport = [0m[2m[32m"echo http://localhost:{{ branch | hash_port }}"[0m
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy                            # run the alias[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--dry-run[0m[2m                  # show expanded command[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # pass extra template variables[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
+
+When defined in both user and project config, user aliases take precedence. Project-config aliases require command approval on first run (same as project hooks). User-config aliases are trusted.
+
+Alias names that match a built-in step command ([2mcommit[0m, [2msquash[0m, etc.) are shadowed by the built-in and will never run.
 
 [1m[32mSee also[0m
 

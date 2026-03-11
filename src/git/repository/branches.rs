@@ -24,12 +24,13 @@ impl Repository {
             .is_ok())
     }
 
-    /// Get all branch names (local branches only).
+    /// List all local branch names, sorted by most recent commit first.
     pub fn all_branches(&self) -> anyhow::Result<Vec<String>> {
         let stdout = self.run_command(&[
-            "branch",
+            "for-each-ref",
             "--sort=-committerdate",
             "--format=%(refname:lstrip=2)",
+            "refs/heads/",
         ])?;
         Ok(stdout
             .lines()
@@ -37,14 +38,6 @@ impl Repository {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect())
-    }
-
-    /// List all local branches.
-    pub(super) fn local_branches(&self) -> anyhow::Result<Vec<String>> {
-        // Use lstrip=2 instead of refname:short - git adds "heads/" prefix to short
-        // names when disambiguation is needed (e.g., branch "foo" + remote "foo").
-        let stdout = self.run_command(&["branch", "--format=%(refname:lstrip=2)"])?;
-        Ok(stdout.lines().map(|s| s.trim().to_string()).collect())
     }
 
     /// List all local branches with their HEAD commit SHA.

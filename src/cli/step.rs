@@ -2,6 +2,7 @@ use clap::Subcommand;
 
 /// Run individual operations
 #[derive(Subcommand)]
+#[command(allow_external_subcommands = true)]
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
@@ -45,11 +46,11 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     )]
     Commit {
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -109,11 +110,11 @@ wt step squash --show-prompt | less
         target: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -260,7 +261,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries and other worktrees
+- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
 
 ## Performance
 
@@ -461,7 +462,7 @@ wt step prune
         dry_run: bool,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip worktrees younger than this
@@ -551,4 +552,8 @@ Note: This command is experimental and may change in future versions.
         #[arg(long)]
         clobber: bool,
     },
+
+    /// Catch-all for alias lookup
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }

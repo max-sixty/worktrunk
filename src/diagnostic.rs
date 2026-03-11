@@ -196,7 +196,7 @@ impl DiagnosticReport {
 /// during command execution, since runtime warnings often indicate unexpected
 /// conditions that could be bugs worth reporting.
 pub(crate) fn issue_hint() -> String {
-    cformat!("To create a diagnostic file, run with <bright-black>-vv</>")
+    cformat!("To create a diagnostic file, run with <underline>-vv</>")
 }
 
 /// Write diagnostic file when -vv is used.
@@ -248,7 +248,7 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "To report a bug, create a secret gist with <bright-black>gh gist create --web {path_str}</> and reference it from an issue at <bright-black>{issue_url}</>"
+                        "To report a bug, create a secret gist with <underline>gh gist create --web {path_str}</> and reference it from an issue at <underline>{issue_url}</>"
                     ))
                 );
             }
@@ -372,8 +372,10 @@ mod tests {
     #[test]
     fn test_format_config_section_file_not_found() {
         let result = format_config_section(std::path::Path::new("/nonexistent/path.toml"), "Test");
-        assert!(result.contains("Test: /nonexistent/path.toml"));
-        assert!(result.contains("(file not found)"));
+        insta::assert_snapshot!(result, @"
+        Test: /nonexistent/path.toml
+        (file not found)
+        ");
     }
 
     #[test]

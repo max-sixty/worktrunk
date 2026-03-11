@@ -488,69 +488,28 @@ mod tests {
     }
 
     #[test]
-    fn test_format_indicator_with_url() {
-        let pr_with_url = PrStatus {
+    fn test_format_indicator() {
+        use insta::assert_snapshot;
+
+        let with_url = PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
         };
-
-        // Call format_indicator(true) directly
-        let formatted = pr_with_url.format_indicator(true);
-        // Should contain OSC 8 hyperlink escape sequences
-        assert!(formatted.contains("\x1b]8;;"));
-        assert!(formatted.contains("https://github.com/owner/repo/pull/123"));
-        assert!(formatted.contains("●"));
-    }
-
-    #[test]
-    fn test_format_indicator_without_url() {
-        let pr_no_url = PrStatus {
+        let no_url = PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
         };
 
-        // Call format_indicator(true) directly
-        let formatted = pr_no_url.format_indicator(true);
-        // Should NOT contain OSC 8 hyperlink
-        assert!(
-            !formatted.contains("\x1b]8;;"),
-            "Should not contain OSC 8 sequences"
-        );
-        assert!(formatted.contains("●"));
-    }
-
-    #[test]
-    fn test_format_indicator_skips_link() {
-        // When include_link=false, should not include OSC 8 even when URL is present
-        let pr_with_url = PrStatus {
-            ci_status: CiStatus::Passed,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            url: Some("https://github.com/owner/repo/pull/123".to_string()),
-        };
-
-        let with_link = pr_with_url.format_indicator(true);
-        let without_link = pr_with_url.format_indicator(false);
-
-        // With link should contain OSC 8
-        assert!(
-            with_link.contains("\x1b]8;;"),
-            "include_link=true should contain OSC 8"
-        );
-
-        // Without link should NOT contain OSC 8
-        assert!(
-            !without_link.contains("\x1b]8;;"),
-            "include_link=false should not contain OSC 8"
-        );
-
-        // Both should contain the indicator
-        assert!(with_link.contains("●"), "Should contain indicator");
-        assert!(without_link.contains("●"), "Should contain indicator");
+        // With URL + include_link=true → has OSC 8 hyperlink
+        assert_snapshot!(with_url.format_indicator(true), @r"[4m[32m]8;;https://github.com/owner/repo/pull/123\●]8;;\[0m");
+        // With URL + include_link=false → no OSC 8
+        assert_snapshot!(with_url.format_indicator(false), @"[32m●[0m");
+        // No URL + include_link=true → no OSC 8
+        assert_snapshot!(no_url.format_indicator(true), @"[32m●[0m");
     }
 
     #[test]
@@ -563,17 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pr_status_style_and_format() {
-        let status = PrStatus {
-            ci_status: CiStatus::Passed,
-            source: CiSource::PullRequest,
-            is_stale: false,
-            url: None,
-        };
-        // Call format_indicator directly
-        let formatted = status.format_indicator(false);
-        assert!(formatted.contains("●"));
-
+    fn test_pr_status_style() {
         // Stale status gets dimmed
         let stale = PrStatus {
             ci_status: CiStatus::Running,

@@ -13,6 +13,6 @@ expression: "&output"
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command'[0m[2m
 test command
 [32m✓[39m [32mCreated branch [1mtest-permission[22m from [1mmain[22m and worktree @ [1m_REPO_.test-permission[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [90mwt config create[39m[22m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m
-[2m↳[22m [2mTo change directory, run [90mwt switch test-permission[39m[22m
+[2m↳[22m [2mTo change directory, run [4mwt switch test-permission[24m[22m

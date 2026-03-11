@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -44,4 +45,4 @@ exit_code: 0
 [36m◎[39m [36mRunning pre-switch [1muser:check[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_PRE_SWITCH_RAN'[0m[2m [0m[2m[36m>[0m[2m pre_switch_marker.txt
 [0m[33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

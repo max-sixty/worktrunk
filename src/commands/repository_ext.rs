@@ -174,6 +174,9 @@ impl RepositoryCliExt for Repository {
         }
 
         // Check working tree cleanliness (unless --force, which passes through to git)
+        // NOTE: background removal fallback may still add --force later when
+        // .gitmodules is detected at execution time (see output::handlers),
+        // so this remains a best-effort check with a small TOCTOU window.
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
         }
@@ -310,12 +313,12 @@ impl RepositoryCliExt for Repository {
         // Stash entry not found. Verify the worktree is now clean — if it's still
         // dirty, stashing may have failed silently or our lookup missed the entry.
         if wt.is_dirty()? {
-            bail!(
+            bail!(cformat!(
                 "Failed to stash changes in {}; worktree still has uncommitted changes. \
-                 Expected stash entry: '{}'. Check 'git stash list'.",
+                 Expected stash entry: <bold>{}</>. Check <bold>git stash list</>.",
                 format_path_for_display(wt_path),
                 stash_name
-            );
+            ));
         }
 
         // Worktree is clean and no stash entry — nothing needed to be stashed

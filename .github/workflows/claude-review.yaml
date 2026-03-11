@@ -10,13 +10,8 @@ on:
   pull_request_review:
     types: [submitted]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
-  CLICOLOR_FORCE: 1
   RUSTFLAGS: "-C debuginfo=0"
   RUSTDOCFLAGS: "-Dwarnings"
 
@@ -29,6 +24,13 @@ jobs:
         github.event.pull_request.user.login == 'worktrunk-bot' &&
         github.event.review.user.login != 'worktrunk-bot' &&
         (github.event.review.state != 'approved' || github.event.review.body))
+    # Job-level concurrency (not workflow-level) so that runs skipped by the
+    # `if:` above don't enter the concurrency group. Workflow-level concurrency
+    # is evaluated before job-level `if:`, so a bot review that will be filtered
+    # out still cancels the in-progress run handling that review. See #1305.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -54,10 +56,11 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🔧 Configure git for Claude
-        run: |
-          git config --global user.name "Claude Code"
-          git config --global user.email "claude@anthropic.com"
+      # Setup build tools BEFORE checking out PR branch — the composite action
+      # lives on main and won't exist on PR branches created before #1273.
+      - name: 🔧 Setup build tools
+        if: github.event_name == 'pull_request_review'
+        uses: ./.github/actions/claude-setup
 
       - name: 📌 Check out PR branch
         if: github.event_name == 'pull_request_review'
@@ -65,46 +68,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: Install cargo-insta
-        if: github.event_name == 'pull_request_review'
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-insta
-          version: "=1.46.3"
-
-      - name: Install cargo-nextest
-        if: github.event_name == 'pull_request_review'
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-nextest
-          # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
-          version: "=0.9.128"
-
-      - name: 💰 Cache
-        if: github.event_name == 'pull_request_review'
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ${{ hashFiles('Cargo.lock') }}
-          save-if: false
-
-      - name: Install shells (zsh, fish)
-        if: github.event_name == 'pull_request_review'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zsh fish
-
       - name: 🤖 Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          bot_id: "254187624"
+          bot_name: "worktrunk-bot"
           allowed_bots: "*"
           allowed_non_write_users: "*"
           additional_permissions: |
             actions: read
           use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
-          prompt: ${{ github.event_name == 'pull_request_target' && format('Use /pr-review {0}', github.event.pull_request.number) || '' }}
+          prompt: ${{ github.event_name == 'pull_request_target' && format('review-pr {0}', github.event.pull_request.number) || '' }}
           claude_args: |
             --model opus
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill

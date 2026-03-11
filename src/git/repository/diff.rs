@@ -52,23 +52,17 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamp in seconds since epoch.
-    pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
-        let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
-        stdout.trim().parse().context("Failed to parse timestamp")
-    }
-
     /// Get commit timestamps for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to timestamp. More efficient than calling
-    /// `commit_timestamp` multiple times when you have many commits.
+    /// Returns a map from commit SHA to timestamp.
     pub fn commit_timestamps(&self, commits: &[&str]) -> anyhow::Result<HashMap<String, i64>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        // Build command: git show -s --format='%H %ct' sha1 sha2 sha3 ...
-        let mut args = vec!["show", "-s", "--format=%H %ct"];
+        // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
+        // --no-walk shows exactly the named commits without DAG walking
+        let mut args = vec!["log", "--no-walk", "--format=%H %ct"];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
@@ -85,26 +79,17 @@ impl Repository {
         Ok(result)
     }
 
-    /// Get commit message (subject line) for a commit.
-    pub fn commit_message(&self, commit: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["show", "-s", "--format=%s", commit])?;
-        Ok(stdout.trim().to_owned())
-    }
-
     /// Get commit timestamp and message in a single git command.
-    ///
-    /// More efficient than calling `commit_timestamp` and `commit_message` separately.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
-        let stdout = self.run_command(&["show", "-s", "--format=%ct %s", commit])?;
+        let stdout = self.run_command(&["log", "-1", "--format=%ct %s", commit])?;
         // Only strip trailing newline, not spaces (empty subject = "timestamp ")
         let line = stdout.trim_end_matches('\n');
         let (timestamp_str, message) = line
             .split_once(' ')
             .context("Failed to parse commit details")?;
         let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        // Trim the message to match commit_message() behavior
         Ok((timestamp, message.trim().to_owned()))
     }
 

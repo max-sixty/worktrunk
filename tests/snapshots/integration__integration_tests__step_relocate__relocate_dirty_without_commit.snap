@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -42,6 +43,6 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mSkipping [1mfeature[22m (uncommitted changes)[39m
-[2m↳[22m [2mTo auto-commit changes before relocating, use [90m--commit[39m[22m
+[2m↳[22m [2mTo auto-commit changes before relocating, use [4m--commit[24m[22m
 
 [2m○[22m Skipped 1 worktree

@@ -3,6 +3,8 @@
 //! These structs represent individual configuration sections that can be set
 //! globally or per-project. Each implements the `Merge` trait for layering.
 
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -427,6 +429,19 @@ pub struct OverridableConfig {
     /// **DEPRECATED**: Use `[switch.picker]` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
+
+    /// \[experimental\] Command aliases for `wt step <name>`.
+    ///
+    /// Each alias maps a name to a command template. All hook template variables
+    /// are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    ///
+    /// ```toml
+    /// [aliases]
+    /// deploy = "cd {{ worktree_path }} && make deploy"
+    /// lint = "npm run lint"
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<BTreeMap<String, String>>,
 }
 
 impl OverridableConfig {
@@ -441,6 +456,7 @@ impl OverridableConfig {
             && self.merge.is_none()
             && self.switch.is_none()
             && self.select.is_none()
+            && self.aliases.is_none()
     }
 }
 
@@ -459,6 +475,24 @@ impl Merge for OverridableConfig {
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
             switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
             select: merge_optional(self.select.as_ref(), other.select.as_ref()),
+            aliases: merge_alias_maps(&self.aliases, &other.aliases),
+        }
+    }
+}
+
+/// Merge two optional alias maps. Other's entries override base on collision.
+fn merge_alias_maps(
+    base: &Option<BTreeMap<String, String>>,
+    other: &Option<BTreeMap<String, String>>,
+) -> Option<BTreeMap<String, String>> {
+    match (base, other) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(o)) => Some(o.clone()),
+        (Some(b), Some(o)) => {
+            let mut merged = b.clone();
+            merged.extend(o.iter().map(|(k, v)| (k.clone(), v.clone())));
+            Some(merged)
         }
     }
 }
@@ -516,5 +550,39 @@ impl UserProjectOverrides {
     /// kept here for backward-compatible parsing and migration — not checked.
     pub fn is_empty(&self) -> bool {
         self.commit_generation.is_none() && self.overrides.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_alias_maps_both_none() {
+        assert_eq!(merge_alias_maps(&None, &None), None);
+    }
+
+    #[test]
+    fn test_merge_alias_maps_base_only() {
+        let base = BTreeMap::from([("a".into(), "1".into())]);
+        let result = merge_alias_maps(&Some(base.clone()), &None);
+        assert_eq!(result, Some(base));
+    }
+
+    #[test]
+    fn test_merge_alias_maps_other_only() {
+        let other = BTreeMap::from([("b".into(), "2".into())]);
+        let result = merge_alias_maps(&None, &Some(other.clone()));
+        assert_eq!(result, Some(other));
+    }
+
+    #[test]
+    fn test_merge_alias_maps_other_overrides_base() {
+        let base = BTreeMap::from([("a".into(), "1".into()), ("shared".into(), "base".into())]);
+        let other = BTreeMap::from([("b".into(), "2".into()), ("shared".into(), "other".into())]);
+        let result = merge_alias_maps(&Some(base), &Some(other)).unwrap();
+        assert_eq!(result["a"], "1");
+        assert_eq!(result["b"], "2");
+        assert_eq!(result["shared"], "other");
     }
 }

@@ -177,6 +177,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `ci` | object | CI status (see below, absent when no CI) |
 | `url` | string | Dev server URL from project config (absent when not configured) |
 | `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
+| `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 
@@ -279,7 +280,8 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Show fast info immediately, update with slow info
 
           Displays local data (branches, paths, status) first, then updates with
-          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          remote data (CI, upstream) as it arrives. Use --no-progressive to
+          force buffered rendering. Auto-enabled for TTY.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

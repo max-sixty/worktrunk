@@ -188,8 +188,10 @@ fn test_user_project_config_with_worktree_path_serde() {
         ..Default::default()
     };
     let toml = toml::to_string(&config).unwrap();
-    assert!(toml.contains("worktree-path"));
-    assert!(toml.contains(".worktrees/{{ branch | sanitize }}"));
+    insta::assert_snapshot!(toml, @r#"
+    approved-commands = ["npm install"]
+    worktree-path = ".worktrees/{{ branch | sanitize }}"
+    "#);
 
     let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
     assert_eq!(
@@ -361,7 +363,7 @@ fn test_worktrunk_config_format_path() {
         "Expected path containing parent navigation, got: {path}"
     );
     // The path should start with the repo path (absolute)
-    let repo_path = test.repo.repo_path().to_string_lossy();
+    let repo_path = test.repo.repo_path().unwrap().to_string_lossy();
     assert!(
         path.starts_with(repo_path.as_ref()),
         "Expected path starting with repo path '{repo_path}', got: {path}"
@@ -404,7 +406,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
         "Expected path containing 'worktrees' and 'feature-branch', got: {path}"
     );
     // The path should start with the repo path
-    let repo_path = test.repo.repo_path().to_string_lossy();
+    let repo_path = test.repo.repo_path().unwrap().to_string_lossy();
     assert!(
         path.starts_with(repo_path.as_ref()),
         "Expected path starting with repo path '{repo_path}', got: {path}"
@@ -1514,9 +1516,8 @@ args = ["-m", "claude-haiku-4.5"]
 fn test_validation_empty_worktree_path() {
     let content = r#"worktree-path = """#;
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    insta::assert_snapshot!(err, @"worktree-path cannot be empty");
 }
 
 #[test]
@@ -1542,9 +1543,8 @@ fn test_validation_project_empty_worktree_path() {
 worktree-path = ""
 "#;
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    insta::assert_snapshot!(err, @"projects.github.com/user/repo.worktree-path cannot be empty");
 }
 
 #[test]
@@ -1571,108 +1571,23 @@ worktree-path = "/worktrees/{{ branch | sanitize }}"
 
 #[test]
 fn test_validation_template_mutual_exclusivity() {
-    let content = r#"
-[commit-generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_squash_template_mutual_exclusivity() {
-    let content = r#"
-[commit-generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_project_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit-generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_project_squash_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit-generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-// New format [commit.generation] validation tests
-
-#[test]
-fn test_validation_new_format_template_mutual_exclusivity() {
-    let content = r#"
-[commit.generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_squash_template_mutual_exclusivity() {
-    let content = r#"
-[commit.generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_project_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit.generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_project_squash_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit.generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
+    let cases = [
+        ("[commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+    ];
+    for content in cases {
+        let err = UserConfig::load_from_str(content).unwrap_err().to_string();
+        assert!(
+            err.contains("mutually exclusive"),
+            "{content}: expected 'mutually exclusive', got: {err}"
+        );
+    }
 }
 
 // =========================================================================
@@ -2020,7 +1935,7 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" => {
+            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

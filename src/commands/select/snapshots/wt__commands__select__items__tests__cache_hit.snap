@@ -1,0 +1,7 @@
+---
+source: src/commands/select/items.rs
+expression: "cache_hit.preview_for_mode(PreviewMode::Summary, 80, 40)"
+---
+[1mAdd auth module[0m
+
+Implements JWT-based authentication.

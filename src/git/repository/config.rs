@@ -282,7 +282,7 @@ impl Repository {
     /// 5. Fail if none of the above work
     fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
         // 1. If there's only one local branch, use it
-        let branches = self.local_branches()?;
+        let branches = self.all_branches()?;
         if branches.len() == 1 {
             return Ok(branches[0].clone());
         }
@@ -336,7 +336,7 @@ impl Repository {
             .ok()
             .and_then(|s| s.trim().strip_prefix("refs/heads/").map(String::from))
             .is_some_and(|head_branch| head_branch == branch)
-            && self.local_branches().is_ok_and(|b| b.is_empty())
+            && self.all_branches().is_ok_and(|b| b.is_empty())
     }
 
     fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
