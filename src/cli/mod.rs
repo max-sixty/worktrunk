@@ -1702,7 +1702,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -1711,6 +1711,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
 ### Switch
