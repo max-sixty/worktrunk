@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -8,7 +9,6 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -43,6 +43,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
       [1m[36m--no-commit[0m      Skip commit and squash
       [1m[36m--no-rebase[0m      Skip rebase (fail if not already rebased)
       [1m[36m--no-remove[0m      Keep worktree after merge
+      [1m[36m--no-ff[0m          Create a merge commit (no fast-forward)
       [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m  What to stage before committing [default: all] [possible values: all, tracked, none]
   [1m[36m-h[0m, [1m[36m--help[0m           Print help (see more with '--help')
 
