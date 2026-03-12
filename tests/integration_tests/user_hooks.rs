@@ -1913,22 +1913,22 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     );
 }
 
-/// Demonstrates that project-level post-switch hooks do NOT fire when removing
-/// the current worktree, even though the user is implicitly switched back to
-/// the primary worktree. This is the bug described in #1450.
+/// When removing the current worktree, post-switch hooks should fire
+/// because the user is implicitly switched back to the primary worktree.
+/// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
 ///
-/// The root cause: `spawn_hooks_after_remove` creates a fresh `Repository::at(main_path)`,
-/// but `load_project_config()` internally calls `current_worktree()` which uses the
-/// process cwd — the now-deleted worktree. The config lookup fails silently and no
-/// project hooks are found.
+/// Config is committed before creating the worktree, so both worktrees
+/// have .config/wt.toml — isolating the bug to the deleted-cwd problem.
 #[rstest]
-fn test_remove_current_worktree_does_not_fire_project_post_switch_hook(mut repo: TestRepo) {
-    let feature_path = repo.add_worktree("feature");
-
-    // Write project config with a post-switch hook that creates a marker file
+fn test_remove_current_worktree_fires_post_switch_hook(mut repo: TestRepo) {
+    // Write and commit project config BEFORE creating the worktree,
+    // so the feature worktree also has .config/wt.toml
     repo.write_project_config(
         r#"post-switch = "echo 'POST_SWITCH_AFTER_REMOVE' > post_switch_marker.txt""#,
     );
+    repo.commit("Add project config with post-switch hook");
+
+    let feature_path = repo.add_worktree("feature");
 
     // Remove from WITHIN the feature worktree (current worktree removal)
     repo.wt_command()
@@ -1937,12 +1937,12 @@ fn test_remove_current_worktree_does_not_fire_project_post_switch_hook(mut repo:
         .output()
         .unwrap();
 
-    // BUG: Post-switch hook does NOT fire because project config can't be loaded
-    // when the cwd is a deleted worktree. This should be fixed to fire the hook.
+    // Post-switch hook should fire in the primary worktree
     let marker = repo.root_path().join("post_switch_marker.txt");
-    thread::sleep(Duration::from_millis(500));
+    wait_for_file_content(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
     assert!(
-        !marker.exists(),
-        "Project post-switch hook should NOT fire (bug #1450) — marker file should not exist"
+        content.contains("POST_SWITCH_AFTER_REMOVE"),
+        "Post-switch hook should run when removing current worktree, got: {content}"
     );
 }
