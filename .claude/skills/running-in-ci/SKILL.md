@@ -27,20 +27,6 @@ gh issue view <number> --json title,body,comments,state
 Read the triggering comment, the PR/issue description, the diff (for PRs), and
 recent comments to understand the full conversation before taking action.
 
-### Fork PR detection (do this BEFORE any git push)
-
-If the system prompt says "This is a FORK PR", the workflow already detected it.
-Otherwise, for any PR, check before your first push:
-
-```bash
-gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
-```
-
-If the owner is **not** `max-sixty`, it's a fork PR. **STOP — do not run
-`git push origin`**. See the [Fork PRs](#fork-prs) section for the correct
-push procedure. Pushing to `origin` on a fork PR creates a stray branch on the
-upstream repository and does NOT update the PR.
-
 ## Security
 
 NEVER run commands that could expose secrets (`env`, `printenv`, `set`,
@@ -70,28 +56,14 @@ git branch -r --list 'origin/fix/*'
 If an existing PR addresses the same problem, work on that PR instead of
 creating a duplicate. Comment on the existing PR or the issue linking to it.
 
-## Fork PRs
+## Pushing to PR Branches
 
-**CRITICAL: Always check for fork PRs before ANY `git push` command.** This is
-the #1 recurring bot failure — pushing to `origin` on a fork PR creates a stray
-branch on the upstream repo and does NOT update the PR. This has happened three
-times (#1411, #1434, and run 22985929574).
+**Always use `git push` without specifying a remote.** The workflow uses
+`gh pr checkout` which configures branch tracking to the correct remote —
+including for fork PRs. Specifying `origin` explicitly bypasses this and can
+push to the wrong place.
 
-The workflow sets a flag in the system prompt ("This is a FORK PR") when it
-detects a fork. If you see this flag, or if you checked in
-[First Steps](#fork-pr-detection-do-this-before-any-git-push) and found a fork
-owner, follow this procedure:
-
-```bash
-# The workflow already ran `gh pr checkout` — the fork remote is set up.
-# Just push to wherever the branch tracks (the fork remote):
-git push
-
-# NEVER do this on a fork PR:
-# git push origin <branch>     ← pushes to upstream, not the fork!
-```
-
-If pushing to the fork fails (e.g., "Allow edits from maintainers" is disabled),
+If pushing fails (e.g., fork PR with "Allow edits from maintainers" disabled),
 fall back to posting suggested changes as code snippets in a comment.
 
 When posting code from work you did locally, do not reference commit SHAs from
