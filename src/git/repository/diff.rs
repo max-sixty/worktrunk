@@ -85,8 +85,13 @@ impl Repository {
         // is the first line only (no embedded newlines). Split on first space.
         // --no-show-signature suppresses GPG verification output that otherwise
         // contaminates stdout when log.showSignature is set.
-        let stdout =
-            self.run_command(&["log", "-1", "--no-show-signature", "--format=%ct %s", commit])?;
+        let stdout = self.run_command(&[
+            "log",
+            "-1",
+            "--no-show-signature",
+            "--format=%ct %s",
+            commit,
+        ])?;
         // Only strip trailing newline, not spaces (empty subject = "timestamp ")
         let line = stdout.trim_end_matches('\n');
         let (timestamp_str, message) = line
