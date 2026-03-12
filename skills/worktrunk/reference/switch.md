@@ -187,6 +187,9 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
           tmux workflows) or for CI/automation.
 
+          In picker mode (no branch argument), prints the selected branch name
+          and exits without switching. Useful for scripting.
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 

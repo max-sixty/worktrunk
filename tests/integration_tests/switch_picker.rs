@@ -18,7 +18,7 @@
 //! Instead of fixed delays (which are either too short on slow CI or wastefully
 //! long on fast machines), we poll for screen stabilization:
 //!
-//! - **Long timeouts** (10s) ensure reliability on slow CI
+//! - **Long timeouts** (30s) ensure reliability on slow CI
 //! - **Fast polling** (10ms) means tests complete quickly when things work
 //! - **Content-based readiness** detects when skim has rendered ("> " prompt)
 //! - **Stabilization detection** waits for screen to stop changing
@@ -39,13 +39,14 @@ const TERM_COLS: u16 = 120;
 
 /// Maximum time to wait for skim to become ready (show "> " prompt).
 /// Long timeout ensures reliability on slow CI.
-const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time to wait for screen to stabilize after input.
-/// Long timeout ensures reliability on slow CI.
-/// Increased from 5s to 10s to handle macOS CI under heavy load where branch
-/// loading can be slow (particularly when waiting for async branch lists to populate).
-const STABILIZE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Long timeout ensures reliability on slow CI where skim's async item loading
+/// and preview commands can be very slow under heavy load. Fast polling (10ms)
+/// means tests complete quickly when things work — the long timeout only matters
+/// in worst-case scenarios.
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -397,6 +398,13 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
 ///
+/// Handles a subtle race condition: skim may continuously redraw (cursor repositioning,
+/// border repaints) even after all meaningful content is rendered. These minor redraws
+/// reset the stability timer, preventing the "no changes for 500ms" condition from
+/// being met. To handle this, once expected content is found, we track how long it
+/// has been continuously present and accept stability after STABLE_DURATION even if
+/// the screen keeps changing cosmetically.
+///
 /// Tip: include the panel border character (`│`) in `expected_content` to ensure
 /// the full TUI frame has rendered, not just the preview text content.
 fn wait_for_stable_with_content(
@@ -407,6 +415,9 @@ fn wait_for_stable_with_content(
     let start = Instant::now();
     let mut last_change = Instant::now();
     let mut last_content = parser.screen().contents();
+    // Tracks when expected content first appeared continuously on screen.
+    // Used as a fallback stability signal when skim keeps redrawing cosmetically.
+    let mut content_found_at: Option<Instant> = None;
 
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
@@ -422,19 +433,51 @@ fn wait_for_stable_with_content(
 
         // Check if expected content is present (if required)
         let content_ready = match expected_content {
-            Some(expected) => current_content.contains(expected),
+            Some(expected) => {
+                let found = current_content.contains(expected);
+                if found {
+                    content_found_at.get_or_insert(Instant::now());
+                } else {
+                    // Content disappeared (e.g., skim full redraw) — reset
+                    content_found_at = None;
+                }
+                found
+            }
             None => true,
         };
 
-        // Screen hasn't changed for STABLE_DURATION and content is ready
+        // Primary: screen hasn't changed for STABLE_DURATION and content is ready
         if last_change.elapsed() >= STABLE_DURATION && content_ready {
+            return;
+        }
+
+        // Fallback for content-expected case: if expected content has been continuously
+        // present for STABLE_DURATION, consider the screen stable even if skim keeps
+        // doing cosmetic redraws (cursor repositioning, border repaints). These minor
+        // changes don't affect snapshot correctness.
+        if let Some(found_time) = content_found_at
+            && found_time.elapsed() >= STABLE_DURATION
+        {
             return;
         }
 
         std::thread::sleep(POLL_INTERVAL);
     }
 
-    // Timeout - proceed anyway (test may still pass with partial render)
+    // Timeout: if expected content was specified but not found, fail with diagnostics
+    // instead of proceeding to a guaranteed snapshot mismatch.
+    if let Some(expected) = expected_content
+        && !last_content.contains(expected)
+    {
+        panic!(
+            "Timed out after {:?} waiting for expected content {:?} to appear on screen.\n\
+             Screen content:\n{}",
+            STABILIZE_TIMEOUT, expected, last_content
+        );
+    }
+
+    // Stability-only timeout (no content expectation, or content present but unstable) —
+    // warn but proceed (test may still pass with current screen state)
     eprintln!(
         "Warning: Screen did not fully stabilize within {:?}",
         STABILIZE_TIMEOUT
@@ -862,7 +905,7 @@ branches = true
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        &[("", Some("│orphan-branch"))], // Wait for orphan-branch to appear before abort
+        &[("", Some("orphan-branch"))], // Wait for orphan-branch to appear in list before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -1084,6 +1127,57 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     assert!(
         directives.contains("cd '"),
         "Directive file should contain cd command without --no-cd, got: {}",
+        directives
+    );
+}
+
+#[rstest]
+fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to select
+    repo.add_worktree("target-branch");
+
+    let (directive_path, _guard) = directive_file_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
+        directive_path.display().to_string(),
+    ));
+
+    // Run `wt switch --no-cd`, filter to "target", press Enter to select
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to select
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for --no-cd selection"
+    );
+
+    let screen = result.screen();
+
+    // --no-cd should output the branch name
+    assert!(
+        screen.contains("target-branch"),
+        "Expected branch name in output with --no-cd.\nScreen:\n{}",
+        screen
+    );
+
+    // --no-cd should NOT emit a cd directive (read-only operation)
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        !directives.contains("cd '"),
+        "Directive file should NOT contain cd command with --no-cd, got: {}",
         directives
     );
 }

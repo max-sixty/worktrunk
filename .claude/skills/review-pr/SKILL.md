@@ -241,10 +241,13 @@ Decide how confident you are in the change:
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 ```
 
-**Self-authored PRs:** If `PR_AUTHOR == BOT_LOGIN`, you cannot approve — GitHub
-rejects self-approvals. Submit as COMMENT when there are concerns, or stay
-silent if there are none. **If staying silent, skip steps 4 (posting) and 6
-(resolve threads) — proceed directly to step 5 (CI monitoring).**
+**Self-authored PRs:** Bot-authored PRs should always be reviewed with full
+scrutiny — they are more likely to duplicate existing APIs, miss design intent,
+or introduce patterns that diverge from project conventions. If `PR_AUTHOR ==
+BOT_LOGIN`, you cannot approve — GitHub rejects self-approvals. Submit as
+COMMENT when there are concerns, or stay silent if there are none. **If staying
+silent, skip steps 4 (posting) and 6 (resolve threads) — proceed directly to
+step 5 (CI monitoring).**
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.

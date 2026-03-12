@@ -56,29 +56,14 @@ git branch -r --list 'origin/fix/*'
 If an existing PR addresses the same problem, work on that PR instead of
 creating a duplicate. Comment on the existing PR or the issue linking to it.
 
-## Fork PRs
+## Pushing to PR Branches
 
-Before pushing commits to a PR branch, check whether it's a fork PR:
+**Always use `git push` without specifying a remote.** The workflow uses
+`gh pr checkout` which configures branch tracking to the correct remote —
+including for fork PRs. Specifying `origin` explicitly bypasses this and can
+push to the wrong place.
 
-```bash
-gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
-```
-
-If the owner is **not** `max-sixty`, it's a fork PR. The key rule: **never
-create new branches on `origin`** — that pushes to the upstream repo, not the
-fork.
-
-Instead, push directly to the fork's PR branch:
-
-```bash
-# Checks out the PR branch and sets up the fork remote automatically
-gh pr checkout <number>
-
-# After making changes, push back to the fork
-git push
-```
-
-If pushing to the fork fails (e.g., "Allow edits from maintainers" is disabled),
+If pushing fails (e.g., fork PR with "Allow edits from maintainers" disabled),
 fall back to posting suggested changes as code snippets in a comment.
 
 When posting code from work you did locally, do not reference commit SHAs from
