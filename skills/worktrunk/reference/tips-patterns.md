@@ -110,16 +110,16 @@ The `commit.generation.command` receives the rendered prompt on stdin and return
 ```toml
 # ~/.config/worktrunk/config.toml
 [commit.generation]
-command = "f=$(mktemp); sed 's/^/# /' > \"$f\"; printf '\\n' >> \"$f\"; ${EDITOR:-vi} \"$f\" < /dev/tty > /dev/tty; grep -v '^#' \"$f\""
+command = '''f=$(mktemp); printf '\n\n' > "$f"; sed 's/^/# /' >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v '^#' "$f"'''
 ```
 
-This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. Type your commit message at the top; the prompt context is visible below for reference.
+This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. A couple of blank lines at the top give you space to type; the prompt context is visible below for reference.
 
 For a per-command override, use the environment variable in an alias:
 
 ```bash
-# Quick commit with a manual message — no LLM usage
-alias wtcm='WORKTRUNK_COMMIT__GENERATION__COMMAND="f=\$(mktemp); sed \"s/^/# /\" > \"\$f\"; printf \"\\\\n\" >> \"\$f\"; \${EDITOR:-vi} \"\$f\" < /dev/tty > /dev/tty; grep -v \"^#\" \"\$f\"" wt step commit'
+# Quick merge with a manual message — no LLM usage
+alias wtcm='WORKTRUNK_COMMIT__GENERATION__COMMAND="f=\$(mktemp); printf \"\\\\n\\\\n\" > \"\$f\"; sed \"s/^/# /\" >> \"\$f\"; \${EDITOR:-vi} \"\$f\" < /dev/tty > /dev/tty; grep -v \"^#\" \"\$f\"" wt merge'
 ```
 
 The env var override leaves the default LLM config untouched — useful when manual messages are only needed occasionally.
