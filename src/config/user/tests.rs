@@ -1118,18 +1118,18 @@ fn test_switch_config_merge() {
 
     // Both have picker
     let base = SwitchConfig {
-        no_cd: None,
         picker: Some(SwitchPickerConfig {
             pager: Some("delta".to_string()),
             timeout_ms: None,
         }),
+        ..Default::default()
     };
     let other = SwitchConfig {
-        no_cd: None,
         picker: Some(SwitchPickerConfig {
             pager: None,
             timeout_ms: Some(300),
         }),
+        ..Default::default()
     };
     let merged = base.merge_with(&other);
     assert_eq!(
@@ -1139,10 +1139,7 @@ fn test_switch_config_merge() {
     assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
 
     // Base has picker, other doesn't
-    let other_none = SwitchConfig {
-        no_cd: None,
-        picker: None,
-    };
+    let other_none = SwitchConfig::default();
     let merged = base.merge_with(&other_none);
     assert_eq!(
         merged.picker.as_ref().unwrap().pager.as_deref(),
@@ -1150,11 +1147,7 @@ fn test_switch_config_merge() {
     );
 
     // Neither has picker
-    let base_none = SwitchConfig {
-        picker: None,
-        no_cd: None,
-    };
-    let merged = base_none.merge_with(&other_none);
+    let merged = SwitchConfig::default().merge_with(&other_none);
     assert!(merged.picker.is_none());
 }
 
@@ -1169,14 +1162,14 @@ fn test_switch_config_no_cd_accessor() {
     // Explicit false
     let config = SwitchConfig {
         no_cd: Some(false),
-        picker: None,
+        ..Default::default()
     };
     assert!(!config.no_cd());
 
     // Explicit true
     let config = SwitchConfig {
         no_cd: Some(true),
-        picker: None,
+        ..Default::default()
     };
     assert!(config.no_cd());
 }
@@ -1188,11 +1181,11 @@ fn test_switch_config_no_cd_merge() {
     // Other overrides base
     let base = SwitchConfig {
         no_cd: Some(false),
-        picker: None,
+        ..Default::default()
     };
     let other = SwitchConfig {
         no_cd: Some(true),
-        picker: None,
+        ..Default::default()
     };
     let merged = base.merge_with(&other);
     assert!(merged.no_cd());
@@ -1200,25 +1193,13 @@ fn test_switch_config_no_cd_merge() {
     // Base preserved when other is None
     let base = SwitchConfig {
         no_cd: Some(true),
-        picker: None,
+        ..Default::default()
     };
-    let other = SwitchConfig {
-        no_cd: None,
-        picker: None,
-    };
-    let merged = base.merge_with(&other);
+    let merged = base.merge_with(&SwitchConfig::default());
     assert!(merged.no_cd());
 
     // Neither set
-    let base = SwitchConfig {
-        no_cd: None,
-        picker: None,
-    };
-    let other = SwitchConfig {
-        no_cd: None,
-        picker: None,
-    };
-    let merged = base.merge_with(&other);
+    let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
     assert!(!merged.no_cd()); // default false
 }
 

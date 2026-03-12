@@ -141,11 +141,12 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Switch picker
-
-Configuration for `wt switch` interactive picker.
+### Switch
 
 ```toml
+[switch]
+no-cd = true       # Skip directory change after switching (--cd to override)
+
 [switch.picker]
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"

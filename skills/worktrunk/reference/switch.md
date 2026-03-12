@@ -185,8 +185,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
-          tmux workflows) or for CI/automation. Can be set as default via
-          [switch] no-cd = true in config. Use --cd to override.
+          tmux workflows) or for CI/automation. Use --cd to override.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

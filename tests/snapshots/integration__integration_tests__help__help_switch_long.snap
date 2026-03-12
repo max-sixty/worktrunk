@@ -77,7 +77,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--no-cd[0m
           Skip directory change after switching[0m
           
-          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. Can be set as default via [1m[switch] no-cd = true[0m in config. Use --cd to override.[0m
+          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. Use --cd to override.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

@@ -492,16 +492,13 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
+            let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
+
             let Some(branch) = spec.branch else {
                 // For the picker path, resolve change_dir here since we don't have
                 // a repo yet. Project-specific config is not available in this path.
-                let change_dir = if spec.cd {
-                    true
-                } else if spec.no_cd {
-                    false
-                } else {
-                    !config.resolved(None).switch.no_cd()
-                };
+                let change_dir =
+                    change_dir_flag.unwrap_or_else(|| !config.resolved(None).switch.no_cd());
 
                 #[cfg(unix)]
                 {
@@ -518,8 +515,6 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                 }
             };
 
-            // For direct branch switch, pass raw flags and let handle_switch
-            // resolve change_dir with project-specific config
             handle_switch(
                 SwitchOptions {
                     branch: &branch,
@@ -529,8 +524,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                     execute_args: &spec.execute_args,
                     yes: spec.yes,
                     clobber: spec.clobber,
-                    cd: spec.cd,
-                    no_cd: spec.no_cd,
+                    change_dir: change_dir_flag,
                     verify: spec.verify,
                 },
                 &mut config,
