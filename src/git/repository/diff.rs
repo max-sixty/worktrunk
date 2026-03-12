@@ -6,6 +6,23 @@ use anyhow::{Context, bail};
 
 use super::{DiffStats, LineDiff, Repository};
 
+/// Parse `git log -1 --format=%ct %s` output into (timestamp, message).
+///
+/// GPG-signed commits emit gpg verification lines to stdout before the format
+/// line. We find the first line starting with a digit since Unix timestamps
+/// always start with one.
+pub(super) fn parse_commit_details(stdout: &str) -> anyhow::Result<(i64, String)> {
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+        .context("Failed to parse commit details")?;
+    let (timestamp_str, message) = line
+        .split_once(' ')
+        .context("Failed to parse commit details")?;
+    let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+    Ok((timestamp, message.trim().to_owned()))
+}
+
 impl Repository {
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> anyhow::Result<usize> {
@@ -84,13 +101,7 @@ impl Repository {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
         let stdout = self.run_command(&["log", "-1", "--format=%ct %s", commit])?;
-        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
-        let line = stdout.trim_end_matches('\n');
-        let (timestamp_str, message) = line
-            .split_once(' ')
-            .context("Failed to parse commit details")?;
-        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        Ok((timestamp, message.trim().to_owned()))
+        parse_commit_details(&stdout)
     }
 
     /// Get commit subjects (first line of commit message) from a range.

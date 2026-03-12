@@ -268,6 +268,49 @@ fn test_parse_remote_default_branch_branch_with_slash() {
     assert_eq!(branch, "feature/new-ui");
 }
 
+use super::diff::parse_commit_details;
+
+#[test]
+fn test_parse_commit_details_normal() {
+    let output = "1741737600 fix: resolve flaky timing issue\n";
+    let (ts, msg) = parse_commit_details(output).unwrap();
+    assert_eq!(ts, 1741737600);
+    assert_eq!(msg, "fix: resolve flaky timing issue");
+}
+
+#[test]
+fn test_parse_commit_details_gpg_prefix() {
+    // GPG-signed commits emit 3 verification lines to stdout before the format line.
+    // Real output observed from a repo with commit.gpgsign=true.
+    let output = "gpg: Signature made Wed Mar 11 18:18:28 2026 CET\n\
+                  gpg:                using EDDSA key 0000000000000000000000000000000000000000\n\
+                  gpg: Good signature from \"A U Thor <author@example.com>\" [ultimate]\n\
+                  1741737600 feat: add new feature\n";
+    let (ts, msg) = parse_commit_details(output).unwrap();
+    assert_eq!(ts, 1741737600);
+    assert_eq!(msg, "feat: add new feature");
+}
+
+#[test]
+fn test_parse_commit_details_empty_subject() {
+    // Empty subject produces "timestamp " — trailing space, empty message
+    let output = "1741737600 \n";
+    let (ts, msg) = parse_commit_details(output).unwrap();
+    assert_eq!(ts, 1741737600);
+    assert_eq!(msg, "");
+}
+
+#[test]
+fn test_parse_commit_details_no_digit_line_errors() {
+    let output = "gpg: Signature made\ngpg: no timestamp line here\n";
+    assert!(parse_commit_details(output).is_err());
+}
+
+#[test]
+fn test_parse_commit_details_empty_errors() {
+    assert!(parse_commit_details("").is_err());
+}
+
 use super::ResolvedWorktree;
 
 #[test]
