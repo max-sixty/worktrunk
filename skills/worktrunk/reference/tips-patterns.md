@@ -103,6 +103,33 @@ EOF
 
 This catches issues locally before pushing — like running CI locally.
 
+## Manual commit messages
+
+The `commit.generation.command` receives the rendered prompt on stdin and returns the commit message on stdout. Pointing it at `cat` opens an editor (via `git commit`'s normal flow), while a simple `echo` can inject a fixed message.
+
+To always write commit messages manually, set the command to open `$EDITOR`:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[commit.generation]
+command = "cat > /dev/null && exec < /dev/tty && IFS= read -rp 'Commit message: ' msg && printf '%s' \"$msg\""
+```
+
+This discards the LLM prompt, reopens the terminal for input, and reads a one-line message.
+
+For a per-command override, use the environment variable in an alias:
+
+```bash
+# Quick commit with a manual message — no LLM usage
+alias wtcm='WORKTRUNK_COMMIT__GENERATION__COMMAND="cat > /dev/null && exec < /dev/tty && IFS= read -rp \"Commit message: \" msg && printf \"%s\" \"\$msg\"" wt step commit'
+
+# Or even simpler — pass a fixed message via env var
+wtcm() { WORKTRUNK_COMMIT__GENERATION__COMMAND="echo $1" wt step commit; }
+# Usage: wtcm "fix: resolve auth timeout"
+```
+
+The env var override leaves the default LLM config untouched — useful when manual messages are only needed occasionally.
+
 ## Track agent status
 
 Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets these automatically:
