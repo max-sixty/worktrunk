@@ -1048,6 +1048,30 @@ fn test_remove_default_branch_refused() {
     });
 }
 
+/// BranchOnly path: when the default branch has no worktree (directory deleted),
+/// delete_branch_if_safe should still refuse to delete it without -D.
+#[test]
+fn test_remove_default_branch_branch_only_refused() {
+    let test = BareRepoTest::new();
+
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
+
+    // Delete main worktree directory so it becomes a BranchOnly removal
+    std::fs::remove_dir_all(&main_worktree).unwrap();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+
+    // Without -D: branch should be retained (not deleted via tautological integration)
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "main"]).current_dir(&feature_worktree);
+
+        assert_cmd_snapshot!("remove_default_branch_branch_only_refused", cmd);
+    });
+}
+
 ///
 /// This tests the scenario:
 /// 1. Create feature branch from main and make changes (file A)
