@@ -8,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -43,7 +44,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m        Base branch
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m  Command to run after switch
       [1m[36m--clobber[0m            Remove stale paths at target
-      [1m[36m--cd[0m                 Change directory after switching
       [1m[36m--no-cd[0m              Skip directory change after switching
   [1m[36m-h[0m, [1m[36m--help[0m               Print help (see more with '--help')
 

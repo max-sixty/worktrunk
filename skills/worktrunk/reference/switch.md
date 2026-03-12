@@ -181,17 +181,12 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
 
-      <b><span class=c>--cd</span></b>
-          Change directory after switching
-
-          Overrides <b>[switch] no-cd = true</b> in config.
-
       <b><span class=c>--no-cd</span></b>
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
           tmux workflows) or for CI/automation. Can be set as default via
-          [switch] no-cd = true in config.
+          [switch] no-cd = true in config. Use --cd to override.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

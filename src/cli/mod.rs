@@ -446,19 +446,17 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         #[arg(long, requires = "branch")]
         clobber: bool,
 
-        /// Change directory after switching
-        ///
-        /// Overrides `[switch] no-cd = true` in config.
-        #[arg(long, conflicts_with = "no_cd")]
-        cd: bool,
-
         /// Skip directory change after switching
         ///
         /// Hooks still run normally. Useful when hooks handle navigation
         /// (e.g., tmux workflows) or for CI/automation. Can be set as default
-        /// via `[switch] no-cd = true` in config.
-        #[arg(long, conflicts_with = "cd")]
+        /// via `[switch] no-cd = true` in config. Use --cd to override.
+        #[arg(long, overrides_with = "cd")]
         no_cd: bool,
+
+        /// Change directory after switching
+        #[arg(long, overrides_with = "no_cd", hide = true)]
+        cd: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
