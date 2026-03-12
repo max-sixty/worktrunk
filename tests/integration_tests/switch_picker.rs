@@ -405,8 +405,8 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// has been continuously present and accept stability after STABLE_DURATION even if
 /// the screen keeps changing cosmetically.
 ///
-/// Tip: include the panel border character (`│`) in `expected_content` to ensure
-/// the full TUI frame has rendered, not just the preview text content.
+/// Tip: avoid including the panel border character (`│`) in `expected_content` —
+/// its rendering varies by platform and terminal, causing flaky assertions.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
