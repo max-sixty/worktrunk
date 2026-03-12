@@ -150,16 +150,12 @@ Keep comments concise. Put detailed analysis inside `<details>` tags with a
 short summary. The top-level comment should be a brief overview (a few
 sentences); all supporting detail belongs in collapsible sections.
 
-**When to use `<details>` tags:** Any comment with multiple headers, tables,
-step-by-step analysis, or that exceeds ~15 lines of markdown. Technical
-breakdowns, surveys, and multi-section analyses always need collapsible
-sections — even if every section feels essential. The reader should be able to
-get the gist from the summary line without expanding.
-
-**When NOT to use `<details>` tags:** When the full response *is* the answer —
-e.g., someone asked for a survey or detailed analysis, and the content is the
-primary response, not supporting detail. Long replies are fine when the length
-is the substance, not boilerplate around a short conclusion.
+Use `<details>` tags when a comment has supporting detail that isn't the main
+point — multi-section analyses, diagnostic breakdowns, or supplementary context
+around a short conclusion. The reader should get the gist without expanding.
+Don't collapse content that *is* the answer: if someone asked for a survey or
+detailed analysis, the full response is the substance, not boilerplate, and
+should stay inline.
 
 ### Use Links
 
