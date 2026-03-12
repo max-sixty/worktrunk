@@ -385,22 +385,22 @@ GitHub rejects.
 
 ### 5. Monitor CI
 
-After approving or staying silent, monitor CI using the poll approach from `/running-in-ci`.
-Exclude the current workflow's own check to avoid a circular wait:
+After approving or staying silent, monitor CI using a **single bounded bash
+loop** (see `/running-in-ci` for the full pattern). Use the loop — never
+individual `sleep && check` calls:
 
 ```bash
+for i in $(seq 1 10); do
+  sleep 60
+  if gh pr checks <number> --required 2>&1 | grep -qv 'pending\|queued\|in_progress'; then
+    break
+  fi
+done
 gh pr checks <number> --required
 ```
 
-Poll with `gh pr checks <number> --required` every 60 seconds until all
-required checks complete. Non-required checks (e.g., benchmarks) are ignored —
-do not wait for them.
-
-Then verify final status:
-
-```bash
-gh pr checks <number> --required
-```
+**Hard cap: 10 iterations (≈10 minutes).** If checks haven't completed, report
+status and exit. Non-required checks (e.g., benchmarks) are ignored.
 
 - **All required checks passed** → done, no further action.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
