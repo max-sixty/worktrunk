@@ -1013,14 +1013,13 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 }
 
-///
-/// When removing a worktree for "main" branch, we should NOT show "(ancestor of main)"
-/// because that would be tautological. The message should just be "Removed main worktree & branch".
+/// Removing the default branch worktree should be refused — the default branch
+/// is the integration target, not something to remove.
 ///
 /// This requires a bare repo setup since you can't have a linked worktree for the default
 /// branch in a normal repo (the main worktree already has it checked out).
 #[test]
-fn test_remove_default_branch_no_tautology() {
+fn test_remove_default_branch_refused() {
     let test = BareRepoTest::new();
 
     // Create worktrees for main and feature branches
@@ -1028,15 +1027,24 @@ fn test_remove_default_branch_no_tautology() {
     test.commit_in(&main_worktree, "Initial commit on main");
     let feature_worktree = test.create_worktree("feature", "feature");
 
-    // Remove main worktree by name from feature worktree (foreground for snapshot)
-    // Should NOT show "(ancestor of main)" - that would be tautological
     let settings = setup_temp_snapshot_settings(test.temp_path());
+
+    // Without -D: should fail
     settings.bind(|| {
         let mut cmd = test.wt_command();
         cmd.args(["remove", "--foreground", "main"])
             .current_dir(&feature_worktree);
 
-        assert_cmd_snapshot!("remove_default_branch_no_tautology", cmd);
+        assert_cmd_snapshot!("remove_default_branch_refused", cmd);
+    });
+
+    // With -D: should succeed (user explicitly force-deletes)
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "--foreground", "-D", "main"])
+            .current_dir(&feature_worktree);
+
+        assert_cmd_snapshot!("remove_default_branch_force_delete", cmd);
     });
 }
 

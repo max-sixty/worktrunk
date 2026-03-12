@@ -173,6 +173,19 @@ impl RepositoryCliExt for Repository {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
+        // Cannot remove the default branch worktree — it's the integration target,
+        // not something that integrates into itself (same logic as wt list's is_main guard).
+        // With -D, the user explicitly wants to force-delete — allow it.
+        if !deletion_mode.is_force()
+            && let Some(ref branch) = branch_name
+            && self.default_branch().as_deref() == Some(branch.as_str())
+        {
+            return Err(GitError::CannotRemoveDefaultBranch {
+                branch: branch.clone(),
+            }
+            .into());
+        }
+
         // Check working tree cleanliness (unless --force, which passes through to git)
         // NOTE: background removal fallback may still add --force later when
         // .gitmodules is detected at execution time (see output::handlers),
@@ -188,8 +201,9 @@ impl RepositoryCliExt for Repository {
             (current_path, false)
         };
 
-        // Resolve target branch for integration reason display
-        // Skip if removing the default branch itself (avoids tautological "main (ancestor of main)")
+        // Resolve target branch for integration reason display.
+        // The default branch is rejected above, but this guard remains as defense-in-depth
+        // to avoid tautological "main (ancestor of main)" if the early return is ever bypassed.
         let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,

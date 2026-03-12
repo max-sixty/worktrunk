@@ -153,6 +153,15 @@ fn display_cannot_remove_main_worktree() {
     assert_snapshot!("cannot_remove_main_worktree", err.to_string());
 }
 
+#[test]
+fn display_cannot_remove_default_branch() {
+    let err = GitError::CannotRemoveDefaultBranch {
+        branch: "main".into(),
+    };
+
+    assert_snapshot!("cannot_remove_default_branch", err.to_string());
+}
+
 // ============================================================================
 // Git state errors
 // ============================================================================
