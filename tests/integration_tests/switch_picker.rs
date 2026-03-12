@@ -713,7 +713,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
+            ("2", Some("* ")), // Wait for git log output
         ],
     );
 
@@ -858,7 +858,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+            ("5", Some("Configure")), // Wait for config hint
         ],
     );
 
