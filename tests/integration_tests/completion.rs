@@ -1259,3 +1259,79 @@ fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRep
         "Should show both remotes for ambiguous branch: {stdout}"
     );
 }
+
+#[rstest]
+fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create 50 local branches
+    for i in 0..50 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create 60 remote-only branches (push then delete locally)
+    for i in 0..60 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main worktree) + 50 local + 60 remote = 111 > 100
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Local branches should still appear
+    assert!(
+        suggestions.iter().any(|s| s.contains("local/branch-0")),
+        "Local branches should appear in completions: {stdout}"
+    );
+
+    // Remote-only branches should be excluded (threshold exceeded)
+    assert!(
+        !suggestions.iter().any(|s| s.contains("remote/branch-")),
+        "Remote-only branches should be excluded when total > 100: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_includes_remote_branches_when_under_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create a few local branches
+    for i in 0..5 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create a few remote-only branches
+    for i in 0..3 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main) + 5 local + 3 remote = 9 < 100
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Both local and remote branches should appear (under threshold)
+    assert!(
+        stdout.contains("local/branch-0"),
+        "Local branches should appear: {stdout}"
+    );
+    assert!(
+        stdout.contains("remote/branch-0"),
+        "Remote branches should appear when total <= 100: {stdout}"
+    );
+}

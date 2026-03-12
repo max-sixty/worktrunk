@@ -315,6 +315,17 @@ fn complete_branches(
         return Vec::new();
     }
 
+    // If remote-only branches aren't already excluded, drop them when the total
+    // count is large. Shells like bash/zsh prompt "do you wish to see all N
+    // possibilities?" which makes completion unusable in repos with many remotes.
+    // Threshold of 100 aligns with bash's default `completion-query-items`.
+    let exclude_remote_only = exclude_remote_only
+        || (!worktree_only
+            && branches.len() > 100
+            && branches
+                .iter()
+                .any(|b| matches!(b.category, BranchCategory::Remote(_))));
+
     branches
         .into_iter()
         .filter(|branch| {

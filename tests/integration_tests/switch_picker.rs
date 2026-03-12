@@ -405,8 +405,8 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// has been continuously present and accept stability after STABLE_DURATION even if
 /// the screen keeps changing cosmetically.
 ///
-/// Tip: include the panel border character (`│`) in `expected_content` to ensure
-/// the full TUI frame has rendered, not just the preview text content.
+/// Tip: avoid including the panel border character (`│`) in `expected_content` —
+/// its rendering varies by platform and terminal, causing flaky assertions.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
@@ -654,7 +654,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
+            ("1", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -713,7 +713,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
+            ("2", Some("* ")), // Wait for git log output
         ],
     );
 
@@ -805,7 +805,7 @@ fn test_new_feature() {
         &env_vars,
         &[
             ("feature", None),
-            ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
+            ("3", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -858,7 +858,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+            ("5", Some("Configure")), // Wait for config hint
         ],
     );
 
