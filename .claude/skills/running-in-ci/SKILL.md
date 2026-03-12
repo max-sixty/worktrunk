@@ -27,6 +27,20 @@ gh issue view <number> --json title,body,comments,state
 Read the triggering comment, the PR/issue description, the diff (for PRs), and
 recent comments to understand the full conversation before taking action.
 
+### Fork PR detection (do this BEFORE any git push)
+
+If the system prompt says "This is a FORK PR", the workflow already detected it.
+Otherwise, for any PR, check before your first push:
+
+```bash
+gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
+```
+
+If the owner is **not** `max-sixty`, it's a fork PR. **STOP — do not run
+`git push origin`**. See the [Fork PRs](#fork-prs) section for the correct
+push procedure. Pushing to `origin` on a fork PR creates a stray branch on the
+upstream repository and does NOT update the PR.
+
 ## Security
 
 NEVER run commands that could expose secrets (`env`, `printenv`, `set`,
@@ -58,24 +72,23 @@ creating a duplicate. Comment on the existing PR or the issue linking to it.
 
 ## Fork PRs
 
-Before pushing commits to a PR branch, check whether it's a fork PR:
+**CRITICAL: Always check for fork PRs before ANY `git push` command.** This is
+the #1 recurring bot failure — pushing to `origin` on a fork PR creates a stray
+branch on the upstream repo and does NOT update the PR. This has happened three
+times (#1411, #1434, and run 22985929574).
+
+The workflow sets a flag in the system prompt ("This is a FORK PR") when it
+detects a fork. If you see this flag, or if you checked in
+[First Steps](#fork-pr-detection-do-this-before-any-git-push) and found a fork
+owner, follow this procedure:
 
 ```bash
-gh pr view <number> --json headRepositoryOwner --jq '.headRepositoryOwner.login'
-```
-
-If the owner is **not** `max-sixty`, it's a fork PR. The key rule: **never
-create new branches on `origin`** — that pushes to the upstream repo, not the
-fork.
-
-Instead, push directly to the fork's PR branch:
-
-```bash
-# Checks out the PR branch and sets up the fork remote automatically
-gh pr checkout <number>
-
-# After making changes, push back to the fork
+# The workflow already ran `gh pr checkout` — the fork remote is set up.
+# Just push to wherever the branch tracks (the fork remote):
 git push
+
+# NEVER do this on a fork PR:
+# git push origin <branch>     ← pushes to upstream, not the fork!
 ```
 
 If pushing to the fork fails (e.g., "Allow edits from maintainers" is disabled),

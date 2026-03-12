@@ -165,6 +165,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
+      - name: 🔀 Detect fork PR
+        id: fork-check
+        if: steps.verify.outcome != 'failure'
+        run: |
+          # Determine PR number from either event type
+          if [ "$GITHUB_EVENT_NAME" = "pull_request_review_comment" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          elif [ -n "${{ github.event.issue.pull_request.url }}" ]; then
+            PR_NUMBER="${{ github.event.issue.number }}"
+          else
+            echo "Not a PR context"
+            exit 0
+          fi
+
+          OWNER=$(gh pr view "$PR_NUMBER" --json headRepositoryOwner --jq '.headRepositoryOwner.login')
+          REPO_OWNER=$(gh repo view --json owner --jq '.owner.login')
+          if [ "$OWNER" != "$REPO_OWNER" ]; then
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR #$PR_NUMBER is from fork ($OWNER) — setting IS_FORK_PR=true"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - name: 🤖 Run Claude Code
         if: steps.verify.outcome != 'failure'
         id: claude
@@ -223,7 +246,7 @@ jobs:
           claude_args: |
             --model opus
             --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
-            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work.${{ steps.fork-check.outputs.is_fork == 'true' && ' IMPORTANT: This is a FORK PR. Never run `git push origin` — use `git push` (to the fork remote set up by `gh pr checkout`) or post code inline if pushing fails.' || '' }}"
 
       - name: 📋 Upload Claude Code session logs
         if: always()
