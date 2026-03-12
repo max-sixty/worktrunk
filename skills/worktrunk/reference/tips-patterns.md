@@ -115,15 +115,6 @@ command = '''f=$(mktemp); printf '\n\n' > "$f"; sed 's/^/# /' >> "$f"; ${EDITOR:
 
 This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. A couple of blank lines at the top give you space to type; the prompt context is visible below for reference.
 
-For a per-command override, use the environment variable in an alias:
-
-```bash
-# Quick merge with a manual message — no LLM usage
-alias wtcm='WORKTRUNK_COMMIT__GENERATION__COMMAND="f=\$(mktemp); printf \"\\\\n\\\\n\" > \"\$f\"; sed \"s/^/# /\" >> \"\$f\"; \${EDITOR:-vi} \"\$f\" < /dev/tty > /dev/tty; grep -v \"^#\" \"\$f\"" wt merge'
-```
-
-The env var override leaves the default LLM config untouched — useful when manual messages are only needed occasionally.
-
 ## Track agent status
 
 Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets these automatically:
