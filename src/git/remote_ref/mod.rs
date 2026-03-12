@@ -14,7 +14,7 @@
 //! use worktrunk::git::remote_ref::{GitHubProvider, RemoteRefProvider};
 //!
 //! let provider = GitHubProvider;
-//! let info = provider.fetch_info(123, repo_root)?;
+//! let info = provider.fetch_info(123, &repo)?;
 //! println!("PR #{}: {}", info.number, info.title);
 //! ```
 //!
