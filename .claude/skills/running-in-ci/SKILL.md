@@ -93,24 +93,12 @@ After pushing changes to a PR branch, you **must** wait for CI before saying
 1. Push your changes
 2. Run `gh pr checks <number> --required` once
 3. If all required checks passed, report completion
-4. If checks are still running, poll using a **single bash loop** — never use
-   individual `sleep && check` calls:
-   ```bash
-   for i in $(seq 1 10); do
-     sleep 60
-     if ! gh pr checks <number> --required 2>&1 | grep -q 'pending\|queued\|in_progress'; then
-       break
-     fi
-   done
-   gh pr checks <number> --required
-   ```
-   **Hard cap: 10 iterations (≈10 minutes).** If checks haven't completed after
-   10 polls, report the current status and exit — do not continue polling.
-   Non-required checks (e.g., benchmarks) are ignored — do not wait for them.
-5. If a required check fails, diagnose with `gh run view <run-id> --log-failed`.
-   You may fix and push once, then poll again (one more loop). **Do not re-run
-   and re-poll more than once per session** — if CI still fails after one fix
-   attempt, report the status and exit.
+4. If checks are still running, poll with `gh pr checks <number> --required`
+   every 60 seconds until all required checks complete (this may take up to
+   10 minutes). Non-required checks (e.g., benchmarks) are ignored — do not
+   wait for them.
+5. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
+   fix issues, commit, push, and repeat from step 2
 6. Only after all required checks pass, report completion
 
 **Never** post a "done" or "fixed" comment before CI passes. Local tests alone
@@ -118,7 +106,8 @@ are not sufficient — CI runs on Linux, Windows, and macOS. If you report
 completion and CI later fails, the user has to come back and ask you to fix it
 again.
 
-Avoid `gh run watch` — it can hang indefinitely. Use the bounded loop above.
+Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
+instead, which has a natural bound on CI completion time.
 
 ## Replying to Comments
 
