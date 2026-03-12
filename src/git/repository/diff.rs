@@ -6,23 +6,6 @@ use anyhow::{Context, bail};
 
 use super::{DiffStats, LineDiff, Repository};
 
-/// Parse `git log -1 --format=%ct %s` output into (timestamp, message).
-///
-/// GPG-signed commits emit gpg verification lines to stdout before the format
-/// line. We find the first line starting with a digit since Unix timestamps
-/// always start with one.
-pub(super) fn parse_commit_details(stdout: &str) -> anyhow::Result<(i64, String)> {
-    let line = stdout
-        .lines()
-        .find(|l| l.starts_with(|c: char| c.is_ascii_digit()))
-        .context("Failed to parse commit details")?;
-    let (timestamp_str, message) = line
-        .split_once(' ')
-        .context("Failed to parse commit details")?;
-    let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-    Ok((timestamp, message.trim().to_owned()))
-}
-
 impl Repository {
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> anyhow::Result<usize> {
@@ -79,7 +62,7 @@ impl Repository {
 
         // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
         // --no-walk shows exactly the named commits without DAG walking
-        let mut args = vec!["log", "--no-walk", "--format=%H %ct"];
+        let mut args = vec!["log", "--no-walk", "--no-show-signature", "--format=%H %ct"];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
@@ -100,13 +83,22 @@ impl Repository {
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
-        let stdout = self.run_command(&["log", "-1", "--format=%ct %s", commit])?;
-        parse_commit_details(&stdout)
+        // --no-show-signature suppresses GPG verification output that otherwise
+        // contaminates stdout when log.showSignature is set.
+        let stdout =
+            self.run_command(&["log", "-1", "--no-show-signature", "--format=%ct %s", commit])?;
+        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
+        let line = stdout.trim_end_matches('\n');
+        let (timestamp_str, message) = line
+            .split_once(' ')
+            .context("Failed to parse commit details")?;
+        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+        Ok((timestamp, message.trim().to_owned()))
     }
 
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
-        let output = self.run_command(&["log", "--format=%s", range])?;
+        let output = self.run_command(&["log", "--no-show-signature", "--format=%s", range])?;
         Ok(output.lines().map(String::from).collect())
     }
 
@@ -121,7 +113,14 @@ impl Repository {
         count: usize,
     ) -> Option<Vec<String>> {
         let count_str = count.to_string();
-        let mut args = vec!["log", "--pretty=format:%s", "-n", &count_str, "--no-merges"];
+        let mut args = vec![
+            "log",
+            "--pretty=format:%s",
+            "--no-show-signature",
+            "-n",
+            &count_str,
+            "--no-merges",
+        ];
         if let Some(ref_name) = start_ref {
             args.push(ref_name);
         }
