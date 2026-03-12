@@ -279,12 +279,16 @@ pub enum GitError {
     /// --create flag used with pr:/mr: syntax (conflict - branch already exists)
     RefCreateConflict {
         ref_type: RefType,
+        /// CLI syntax used (e.g., "pr:", "gpr:", "mr:")
+        syntax: &'static str,
         number: u32,
         branch: String,
     },
     /// --base flag used with pr:/mr: syntax (conflict - base is predetermined)
     RefBaseConflict {
         ref_type: RefType,
+        /// CLI syntax used (e.g., "pr:", "gpr:", "mr:")
+        syntax: &'static str,
         number: u32,
     },
     /// Branch exists but is tracking a different PR/MR
@@ -811,11 +815,11 @@ impl GitError {
 
             GitError::RefCreateConflict {
                 ref_type,
+                syntax,
                 number,
                 branch,
             } => {
                 let name = ref_type.name();
-                let syntax = ref_type.syntax();
                 write!(
                     f,
                     "{}\n{}",
@@ -828,8 +832,11 @@ impl GitError {
                 )
             }
 
-            GitError::RefBaseConflict { ref_type, number } => {
-                let syntax = ref_type.syntax();
+            GitError::RefBaseConflict {
+                ref_type,
+                syntax,
+                number,
+            } => {
                 let name_plural = ref_type.name_plural();
                 write!(
                     f,
