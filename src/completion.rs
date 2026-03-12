@@ -142,16 +142,19 @@ pub(crate) fn branch_value_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
+        include_remote_with_flag: false,
         worktree_only: false,
     })
 }
 
 /// Branch completion for positional arguments (switch, select).
 /// Suppresses completions when --create flag is present.
+/// Excludes remote-only branches unless --remotes flag is present.
 pub(crate) fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: true,
-        exclude_remote_only: false,
+        exclude_remote_only: true,
+        include_remote_with_flag: true,
         worktree_only: false,
     })
 }
@@ -161,6 +164,7 @@ pub(crate) fn local_branches_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: true,
+        include_remote_with_flag: false,
         worktree_only: false,
     })
 }
@@ -170,6 +174,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
+        include_remote_with_flag: false,
         worktree_only: true,
     })
 }
@@ -269,6 +274,8 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
 struct BranchCompleter {
     suppress_with_create: bool,
     exclude_remote_only: bool,
+    /// When true, `--remotes` on the command line overrides `exclude_remote_only`.
+    include_remote_with_flag: bool,
     worktree_only: bool,
 }
 
@@ -281,9 +288,14 @@ impl ValueCompleter for BranchCompleter {
 
         // Filter branches by prefix - clap doesn't filter ArgValueCompleter results
         let prefix = current.to_string_lossy();
+        let exclude_remote = if self.include_remote_with_flag && remotes_flag_present() {
+            false
+        } else {
+            self.exclude_remote_only
+        };
         complete_branches(
             self.suppress_with_create,
-            self.exclude_remote_only,
+            exclude_remote,
             self.worktree_only,
         )
         .into_iter()
@@ -336,6 +348,14 @@ fn complete_branches(
             CompletionCandidate::new(branch.name).help(Some(help.into()))
         })
         .collect()
+}
+
+fn remotes_flag_present() -> bool {
+    CONTEXT.with(|ctx| {
+        ctx.borrow()
+            .as_ref()
+            .is_some_and(|ctx| ctx.contains("--remotes"))
+    })
 }
 
 fn suppress_switch_branch_completion() -> bool {

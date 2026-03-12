@@ -1222,7 +1222,7 @@ fn test_static_completions_for_all_shells() {
 }
 
 #[rstest]
-fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRepo) {
+fn test_complete_switch_excludes_remote_only_by_default(mut repo: TestRepo) {
     repo.commit("initial");
 
     // Set up two remotes: origin and upstream
@@ -1239,19 +1239,28 @@ fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRep
     repo.run_git(&["checkout", "main"]);
     repo.run_git(&["branch", "-D", "shared-feature"]);
 
-    // Test completion with fish shell to see help text (bash doesn't show descriptions)
+    // Without --remotes, remote-only branches should be excluded
     let output = repo
         .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("shared-feature"),
+        "Should not show remote-only branch without --remotes: {stdout}"
+    );
 
-    // The branch should appear with both remotes listed
-    // Format: "shared-feature\t⇣ <time> origin, upstream" (sorted alphabetically)
+    // With --remotes, remote-only branches should appear with all remotes listed
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "--remotes", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("shared-feature"),
-        "Should show shared-feature branch: {stdout}"
+        "Should show shared-feature branch with --remotes: {stdout}"
     );
     // Check that both remotes are shown (order is alphabetical: origin, upstream)
     assert!(
