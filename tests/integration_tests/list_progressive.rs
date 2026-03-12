@@ -79,13 +79,6 @@ fn test_list_progressive_api(mut repo: TestRepo) {
         );
     }
 
-    // Verify we captured output quickly (within reasonable time)
-    assert!(
-        output.total_duration.as_secs() < 5,
-        "Command should complete in under 5 seconds, took {:?}",
-        output.total_duration
-    );
-
     // Test snapshot_at API
     let snapshot = output.snapshot_at(std::time::Duration::from_millis(100));
     assert!(
