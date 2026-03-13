@@ -77,10 +77,11 @@ pub fn handle_select(
     // Wall-clock budget for the entire collect phase. Tasks that complete within
     // the budget contribute data; tasks still running when it expires are abandoned.
     // This caps total latency regardless of worktree count or filesystem speed.
+    const DEFAULT_COLLECT_BUDGET_MS: u64 = 500;
     let budget_ms: u64 = std::env::var("WORKTRUNK_PICKER_BUDGET_MS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(500);
+        .unwrap_or(DEFAULT_COLLECT_BUDGET_MS);
     let collect_deadline = Some(Instant::now() + Duration::from_millis(budget_ms));
 
     let Some(list_data) = collect::collect(

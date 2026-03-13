@@ -228,6 +228,10 @@ pub enum ShowConfig {
 /// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
 /// skipping expensive merge-base operations for branches far behind the default branch.
 /// This dramatically improves performance for repos with many stale branches.
+///
+/// When `collect_deadline` is `Some`, drain stops at the deadline and returns partial data
+/// silently (budget-based truncation is expected). When `None`, uses the default
+/// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a user-facing warning on timeout.
 pub fn collect(
     repo: &Repository,
     show_config: ShowConfig,
