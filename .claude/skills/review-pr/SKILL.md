@@ -408,6 +408,11 @@ After approving or staying silent, monitor CI using the approach from
      The GitHub API rejects empty dismiss messages, so always provide one.
      Skip if already dismissed — redundant dismissals create timeline noise.
 
+  **Do NOT push fixes during CI monitoring on human-authored PRs.** The
+  step 7 consent rule still applies — post the analysis and offer to fix,
+  then wait for the author to accept. The `/running-in-ci` "fix and push"
+  pattern is for PRs you authored, not PRs you are reviewing.
+
 ### 6. Resolve handled suggestions
 
 After submitting the review, check if any unresolved review threads from the bot
