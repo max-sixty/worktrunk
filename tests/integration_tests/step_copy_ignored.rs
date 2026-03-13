@@ -885,6 +885,26 @@ fn test_copy_ignored_preserves_top_level_symlinks(mut repo: TestRepo) {
 
     // The regular file should also be copied
     assert!(feature_path.join("test_file").exists());
+
+    // Run again to exercise the idempotent skip path (symlink already exists)
+    let output2 = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output2.status.success());
+
+    // Symlink should still be intact
+    assert!(
+        dest_symlink
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink should survive idempotent re-run"
+    );
 }
 
 /// Test that symlinks inside directories are copied correctly
