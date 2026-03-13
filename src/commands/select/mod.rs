@@ -137,6 +137,9 @@ pub fn handle_select(
             // Use stale rendering (·) for items where data didn't arrive within budget,
             // normal rendering (⋯) otherwise. status_symbols is always set by completed
             // tasks, so None means worker results didn't arrive for this item.
+            // Note: prunable worktrees also start with status_symbols: None, but collect()
+            // sets status_symbols for them in the post-drain loop. If that changes, this
+            // heuristic would false-positive on prunable items.
             let rendered_line = if item.status_symbols.is_none() {
                 layout.render_list_item_stale(&item)
             } else {
