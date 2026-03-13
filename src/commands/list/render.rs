@@ -1337,8 +1337,14 @@ mod tests {
         // render_list_item_stale uses · (middle dot)
         let stale = layout.render_list_item_stale(&item);
         let stale_rendered = stale.render();
-        assert!(stale_rendered.contains('·'), "expected · in: {stale_rendered}");
-        assert!(!stale_rendered.contains('⋯'), "should not contain ⋯ in: {stale_rendered}");
+        assert!(
+            stale_rendered.contains('·'),
+            "expected · in: {stale_rendered}"
+        );
+        assert!(
+            !stale_rendered.contains('⋯'),
+            "should not contain ⋯ in: {stale_rendered}"
+        );
     }
 
     #[test]
