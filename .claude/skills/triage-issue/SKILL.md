@@ -121,9 +121,6 @@ missing code. Before adding guidance to a skill:
    issue is behavioral compliance, not missing instructions.
 2. **Don't duplicate guidance across skills** — Adding the same rule to multiple
    co-loaded skills creates maintenance burden and doesn't fix compliance gaps.
-3. **If guidance already exists elsewhere**, note it in the issue comment and
-   skip the fix. Use the "Could not reproduce" template, explaining that the
-   guidance exists but the model didn't follow it.
 
 ### If fixing
 
