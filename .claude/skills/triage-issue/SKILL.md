@@ -2,6 +2,8 @@
 name: triage-issue
 description: Triages new GitHub issues — classifies, reproduces bugs, attempts conservative fixes, and comments. Use when a new issue is opened and needs automated triage.
 argument-hint: "[issue number]"
+metadata:
+  internal: true
 ---
 
 # Issue Triage

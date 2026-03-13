@@ -1,6 +1,8 @@
 ---
 name: running-in-ci
 description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, comment formatting, and investigating session logs from other runs.
+metadata:
+  internal: true
 ---
 
 # Running in CI
