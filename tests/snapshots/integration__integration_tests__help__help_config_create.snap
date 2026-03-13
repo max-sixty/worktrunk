@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -9,7 +10,6 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -122,7 +122,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Merge[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# All flags are on by default. Set to false to change default behavior.[0m
+[107m [0m [2m# Most flags are on by default. Set to false to change default behavior.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [merge][0m
 [107m [0m [2m# squash = true      # Squash commits into one (--no-squash to preserve history)[0m
@@ -130,6 +130,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
+[107m [0m [2m# no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch picker[0m
 [107m [0m [2m#[0m
