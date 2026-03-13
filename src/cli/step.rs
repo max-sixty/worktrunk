@@ -174,7 +174,7 @@ wt step rebase develop    # Rebase onto develop
     ///
     /// Includes committed, staged, unstaged, and untracked files.
     #[command(
-        after_long_help = r#"Shows all changes that `wt merge` would include: committed, staged, unstaged, and untracked files — in a single diff against the merge base.
+        after_long_help = r#"This is what `wt merge` would include — a single diff against the merge base.
 
 ## Extra git diff arguments
 

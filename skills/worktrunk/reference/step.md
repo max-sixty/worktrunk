@@ -21,17 +21,17 @@ wt step push
 
 ## Operations
 
-- `commit` — Stage and commit with [LLM-generated message](https://worktrunk.dev/llm-commits/)
-- `squash` — Squash all branch commits into one with [LLM-generated message](https://worktrunk.dev/llm-commits/)
+- [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](https://worktrunk.dev/llm-commits/)
+- [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](https://worktrunk.dev/llm-commits/)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
-- `copy-ignored` — Copy gitignored files between worktrees
-- `for-each` — [experimental] Run a command in every worktree
+- [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
+- [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
+- [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
 - `promote` — [experimental] Put a branch into the main worktree
-- `prune` — Remove worktrees and branches merged into the default branch
-- `relocate` — [experimental] Move worktrees to expected paths
-- `<alias>` — [experimental] Run a configured command alias
+- [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
+- [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`<alias>`](#aliases) — [experimental] Run a configured command alias
 
 ## Aliases
 
@@ -249,6 +249,71 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
       <b><span class=c>--no-verify</span></b>
           Skip hooks
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+## wt step diff
+
+Show all changes since branching. Includes committed, staged, unstaged, and untracked files.
+
+This is what `wt merge` would include — a single diff against the merge base.
+
+### Extra git diff arguments
+
+Arguments after `--` are forwarded to `git diff`:
+
+```bash
+wt step diff -- --stat
+wt step diff -- --name-only
+wt step diff -- -- '*.rs'
+```
+
+The diff is pipeable to tools like `delta`:
+
+```bash
+wt step diff | delta
+```
+
+### How it works
+
+Equivalent to:
+
+```bash
+cp "$(git rev-parse --git-dir)/index" /tmp/idx
+GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+```
+
+`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
+
+### Command reference
+
+wt step diff - Show all changes since branching
+
+Includes committed, staged, unstaged, and untracked files.
+
+Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXTRA_ARGS&gt;...</span><b><span class=c>]</span></b>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[TARGET]</span>
+          Target branch
+
+          Defaults to default branch.
+
+  <span class=c>[EXTRA_ARGS]...</span>
+          Extra arguments forwarded to <b>git diff</b>
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
