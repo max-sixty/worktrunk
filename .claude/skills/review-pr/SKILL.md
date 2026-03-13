@@ -249,7 +249,9 @@ or introduce patterns that diverge from project conventions. If `PR_AUTHOR ==
 BOT_LOGIN`, you cannot approve — GitHub rejects self-approvals. Submit as
 COMMENT when there are concerns, or stay silent if there are none. **If staying
 silent, skip steps 4 (posting) and 6 (resolve threads) — proceed directly to
-step 5 (CI monitoring).**
+step 5 (CI monitoring).** When there are fixable issues, proceed to step 7
+(push mechanical fixes) — since this is a bot PR, push fixes directly instead
+of posting suggestions.
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
@@ -476,9 +478,11 @@ can't be located.
 
 ### 7. Push mechanical fixes
 
-**Bot PRs** (Dependabot, renovate, etc.): If the review found concrete, fixable
-issues and there's no human author to act on feedback, commit and push the fix
-directly to the PR branch.
+**Bot PRs** (Dependabot, renovate, worktrunk-bot, etc.): If the review found
+concrete, fixable issues and there's no human author to act on feedback, commit
+and push the fix directly to the PR branch — don't just post suggestions that
+nobody will click "Apply" on. This includes self-authored PRs (`PR_AUTHOR ==
+BOT_LOGIN`).
 
 **Human PRs**: Post inline suggestions first (one-click apply is fastest for the
 author). Additionally, **offer to push a commit** when the fixes are mechanical
