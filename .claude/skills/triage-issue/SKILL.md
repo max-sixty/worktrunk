@@ -109,6 +109,22 @@ FONTES principle established in Step 1.
 - Fix is localized (1-3 files changed)
 - Confident the fix is correct
 
+### Skill text fixes
+
+When the bug is about bot behavior (e.g., "bot didn't use links", "bot posted
+wrong format"), the root cause is often a skill/prompt compliance issue, not
+missing code. Before adding guidance to a skill:
+
+1. **Check ALL co-loaded skills** — Skills loaded together in the same workflow
+   share context. If the guidance already exists in a co-loaded skill (e.g.,
+   `running-in-ci` is loaded alongside `review-pr` and `triage-issue`), the
+   issue is behavioral compliance, not missing instructions.
+2. **Don't duplicate guidance across skills** — Adding the same rule to multiple
+   co-loaded skills creates maintenance burden and doesn't fix compliance gaps.
+3. **If guidance already exists elsewhere**, note it in the issue comment and
+   skip the fix. Use the "Could not reproduce" template, explaining that the
+   guidance exists but the model didn't follow it.
+
 ### If fixing
 
 1. Fix the root cause (not just the symptom)
