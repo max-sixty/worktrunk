@@ -34,7 +34,7 @@ runs:
         save-if: false
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7.4.0
+      uses: astral-sh/setup-uv@v7.5.0
 
     - name: Install pre-commit
       shell: bash
