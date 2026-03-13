@@ -462,7 +462,7 @@ fn handle_list_command(
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_select
     warn_select_deprecated();
-    handle_select(branches, remotes, true)
+    handle_select(branches, remotes, None)
 }
 
 #[cfg(not(unix))]
@@ -496,21 +496,16 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
 
             let Some(branch) = spec.branch else {
-                // For the picker path, resolve change_dir here since we don't have
-                // a repo yet. Project-specific config is not available in this path.
-                let change_dir =
-                    change_dir_flag.unwrap_or_else(|| !config.resolved(None).switch.no_cd());
-
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, change_dir);
+                    return handle_select(spec.branches, spec.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes, change_dir);
+                    let _ = (spec.branches, spec.remotes, change_dir_flag);
 
                     print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
