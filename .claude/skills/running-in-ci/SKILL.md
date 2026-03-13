@@ -100,6 +100,21 @@ again.
 Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
 instead, which has a natural bound on CI completion time.
 
+### Verifying local test failures before pushing
+
+When running local tests before pushing and some tests fail, do **not**
+characterize them as "pre-existing" or "environment-dependent" without
+evidence. The same grounded-analysis rule from the Thoroughness section applies
+here — check main branch CI history before dismissing failures:
+
+```bash
+gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=3" \
+  --jq '.workflow_runs[] | {conclusion, created_at: .created_at}'
+```
+
+If you cannot verify, say "I haven't confirmed whether these failures are
+pre-existing" rather than asserting they are.
+
 ## Replying to Comments
 
 Prefer replying in context rather than creating a new top-level comment:
@@ -122,10 +137,16 @@ Prefer replying in context rather than creating a new top-level comment:
 
 ## Comment Formatting
 
-Keep comments concise. Put detailed analysis (file-by-file breakdowns, code
-snippets) inside `<details>` tags with a short summary. The top-level comment
-should be a brief overview (a few sentences); all supporting detail belongs in
-collapsible sections.
+Keep comments concise. Put detailed analysis inside `<details>` tags with a
+short summary. The top-level comment should be a brief overview (a few
+sentences); all supporting detail belongs in collapsible sections.
+
+Use `<details>` tags when a comment has supporting detail that isn't the main
+point — multi-section analyses, diagnostic breakdowns, or supplementary context
+around a short conclusion. The reader should get the gist without expanding.
+Don't collapse content that *is* the answer: if someone asked for a survey or
+detailed analysis, the full response is the substance, not boilerplate, and
+should stay inline.
 
 ### Use Links
 
