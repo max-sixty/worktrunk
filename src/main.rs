@@ -462,7 +462,7 @@ fn handle_list_command(
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_select
     warn_select_deprecated();
-    handle_select(branches, remotes, true)
+    handle_select(branches, remotes, None)
 }
 
 #[cfg(not(unix))]
@@ -483,6 +483,7 @@ struct SwitchCommandArgs {
     execute_args: Vec<String>,
     yes: bool,
     clobber: bool,
+    cd: bool,
     no_cd: bool,
     verify: bool,
 }
@@ -492,17 +493,19 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
+            let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
+
             let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, !spec.no_cd);
+                    return handle_select(spec.branches, spec.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes);
+                    let _ = (spec.branches, spec.remotes, change_dir_flag);
 
                     print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
@@ -518,7 +521,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                     execute_args: &spec.execute_args,
                     yes: spec.yes,
                     clobber: spec.clobber,
-                    change_dir: !spec.no_cd,
+                    change_dir: change_dir_flag,
                     verify: spec.verify,
                 },
                 &mut config,
@@ -906,6 +909,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            cd,
             no_cd,
             verify,
         } => handle_switch_command(SwitchCommandArgs {
@@ -918,6 +922,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            cd,
             no_cd,
             verify,
         }),

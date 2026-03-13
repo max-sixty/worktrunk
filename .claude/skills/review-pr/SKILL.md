@@ -29,6 +29,8 @@ HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 # Find the bot's most recent substantive review (any state).
 # Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
 # Uses "| length > 0" instead of "!= \"\"" to avoid bash ! history expansion.
+# IMPORTANT: `gh pr view --json reviews` returns `.commit.oid` (NOT `.commit_id`).
+# The REST API (`gh api .../reviews`) uses `.commit_id` — don't confuse the two.
 LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
   --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and (.body | length > 0 or .state == \"APPROVED\"))] | last | .commit.oid // empty")
 ```
@@ -307,6 +309,7 @@ approach:
 Post exactly one review per run. API calls can succeed server-side while
 appearing to hang, so always verify before calling `gh pr review`:
 ```bash
+# NOTE: REST API uses .commit_id (not .commit.oid which is the gh pr view --json field)
 gh api "repos/$REPO/pulls/<number>/reviews" \
   --jq "[.[] | select(.user.login == \"$BOT_LOGIN\" and .commit_id == \"$HEAD_SHA\")] | last | .submitted_at // empty"
 ```
@@ -385,22 +388,8 @@ GitHub rejects.
 
 ### 5. Monitor CI
 
-After approving or staying silent, monitor CI using the poll approach from `/running-in-ci`.
-Exclude the current workflow's own check to avoid a circular wait:
-
-```bash
-gh pr checks <number> --required
-```
-
-Poll with `gh pr checks <number> --required` every 60 seconds until all
-required checks complete. Non-required checks (e.g., benchmarks) are ignored —
-do not wait for them.
-
-Then verify final status:
-
-```bash
-gh pr checks <number> --required
-```
+After approving or staying silent, monitor CI using the approach from
+`/running-in-ci`.
 
 - **All required checks passed** → done, no further action.
 - **A check failed** → if it's a flaky test or unrelated infrastructure
@@ -418,6 +407,11 @@ gh pr checks <number> --required
      ```
      The GitHub API rejects empty dismiss messages, so always provide one.
      Skip if already dismissed — redundant dismissals create timeline noise.
+
+  **Do NOT push fixes during CI monitoring on human-authored PRs.** The
+  step 7 consent rule still applies — post the analysis and offer to fix,
+  then wait for the author to accept. The `/running-in-ci` "fix and push"
+  pattern is for PRs you authored, not PRs you are reviewing.
 
 ### 6. Resolve handled suggestions
 

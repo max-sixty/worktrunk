@@ -289,7 +289,7 @@ fn test_init_fish_no_inline_completions() {
 }
 
 #[rstest]
-fn test_complete_with_partial_prefix(repo: TestRepo) {
+fn test_complete_with_partial_prefix_returns_all_branches(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches with common prefix
@@ -297,19 +297,60 @@ fn test_complete_with_partial_prefix(repo: TestRepo) {
     repo.run_git(&["branch", "feature/two"]);
     repo.run_git(&["branch", "hotfix/bug"]);
 
-    // Complete with partial prefix - shell does prefix filtering, we return all branches
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.bind(|| {
-        let output = repo
-            .completion_cmd(&["wt", "switch", "feat"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("feature/one"));
-        assert!(stdout.contains("feature/two"));
-    });
+    // Complete with partial prefix — binary returns ALL branches, shell does its own
+    // matching (substring in fish, fuzzy in zsh, prefix in bash). This enables
+    // fish/zsh substring matching for e.g. `wt switch auth<TAB>` → feature/user-auth.
+    let output = repo
+        .completion_cmd(&["wt", "switch", "feat"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    // All branches returned, not just prefix matches
+    assert!(values.iter().any(|v| v.contains("feature/one")));
+    assert!(values.iter().any(|v| v.contains("feature/two")));
+    assert!(values.iter().any(|v| v.contains("hotfix/bug")));
+    assert!(values.iter().any(|v| v.contains("main")));
+}
+
+/// Typing a substring that appears mid-branch (e.g. "auth") should still return
+/// branches containing that substring, because the binary no longer prefix-filters.
+/// This is the core use case from #1468: `wt switch auth<TAB>` should let fish/zsh
+/// match `feature/user-auth`.
+#[rstest]
+fn test_complete_switch_returns_candidates_for_substring_matching(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "bugfix/user-auth-timeout"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Type "auth" — not a prefix of any branch, but the binary returns all candidates
+    // so the shell can apply substring matching
+    let output = repo
+        .completion_cmd(&["wt", "switch", "auth"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "should return feature/user-auth for shell substring matching\n{stdout}"
+    );
+    assert!(
+        values
+            .iter()
+            .any(|v| v.contains("bugfix/user-auth-timeout")),
+        "should return bugfix/user-auth-timeout for shell substring matching\n{stdout}"
+    );
+    assert!(
+        values.iter().any(|v| v.contains("release/2024-q1")),
+        "should return all branches regardless of typed prefix\n{stdout}"
+    );
 }
 
 #[rstest]
@@ -1257,5 +1298,81 @@ fn test_complete_switch_shows_all_remotes_for_ambiguous_branch(mut repo: TestRep
     assert!(
         stdout.contains("origin") && stdout.contains("upstream"),
         "Should show both remotes for ambiguous branch: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_excludes_remote_branches_when_over_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create 50 local branches
+    for i in 0..50 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create 60 remote-only branches (push then delete locally)
+    for i in 0..60 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main worktree) + 50 local + 60 remote = 111 > 100
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Local branches should still appear
+    assert!(
+        suggestions.iter().any(|s| s.contains("local/branch-0")),
+        "Local branches should appear in completions: {stdout}"
+    );
+
+    // Remote-only branches should be excluded (threshold exceeded)
+    assert!(
+        !suggestions.iter().any(|s| s.contains("remote/branch-")),
+        "Remote-only branches should be excluded when total > 100: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_switch_includes_remote_branches_when_under_threshold(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.setup_remote("main");
+
+    // Create a few local branches
+    for i in 0..5 {
+        repo.run_git(&["branch", &format!("local/branch-{i}")]);
+    }
+
+    // Create a few remote-only branches
+    for i in 0..3 {
+        let name = format!("remote/branch-{i}");
+        repo.run_git(&["branch", &name]);
+        repo.run_git(&["push", "origin", &name]);
+        repo.run_git(&["branch", "-D", &name]);
+    }
+    repo.run_git(&["fetch", "origin"]);
+
+    // Total branches: 1 (main) + 5 local + 3 remote = 9 < 100
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Both local and remote branches should appear (under threshold)
+    assert!(
+        stdout.contains("local/branch-0"),
+        "Local branches should appear: {stdout}"
+    );
+    assert!(
+        stdout.contains("remote/branch-0"),
+        "Remote branches should appear when total <= 100: {stdout}"
     );
 }

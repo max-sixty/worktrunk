@@ -54,7 +54,7 @@ in
 
       nushell = lib.mkIf cfg.enableNushellIntegration {
         extraConfig = ''
-          use ${
+          source ${
             pkgs.runCommand "worktrunk-nushell-config.nu" { } ''
               ${lib.getExe cfg.package} config shell init nu > $out
             ''

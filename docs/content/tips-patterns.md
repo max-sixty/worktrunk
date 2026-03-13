@@ -114,6 +114,28 @@ EOF
 
 This catches issues locally before pushing — like running CI locally.
 
+## Manual commit messages
+
+The `commit.generation.command` receives the rendered prompt on stdin and returns the commit message on stdout. To write commit messages by hand instead of using an LLM, point it at `$EDITOR`:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[commit.generation]
+command = '''f=$(mktemp); printf '\n\n' > "$f"; sed 's/^/# /' >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v '^#' "$f"'''
+```
+
+This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. A couple of blank lines at the top give you space to type; the prompt context is visible below for reference.
+
+To keep the LLM as default but use the editor for a specific merge, add a [worktrunk alias](@/step.md#aliases):
+
+```toml
+# ~/.config/worktrunk/config.toml
+[aliases]
+mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"; sed "s/^/# /" >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v "^#" "$f"' wt merge'''
+```
+
+Then `wt step mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
+
 ## Track agent status
 
 Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets these automatically:

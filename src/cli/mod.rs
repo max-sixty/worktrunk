@@ -449,12 +449,16 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Skip directory change after switching
         ///
         /// Hooks still run normally. Useful when hooks handle navigation
-        /// (e.g., tmux workflows) or for CI/automation.
+        /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
         ///
         /// In picker mode (no branch argument), prints the selected branch
         /// name and exits without switching. Useful for scripting.
-        #[arg(long)]
+        #[arg(long, overrides_with = "cd")]
         no_cd: bool,
+
+        /// Change directory after switching
+        #[arg(long, overrides_with = "no_cd", hide = true)]
+        cd: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -1656,11 +1660,12 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Switch picker
-
-Configuration for `wt switch` interactive picker.
+### Switch
 
 ```toml
+[switch]
+no-cd = true       # Skip directory change after switching (--cd to override)
+
 [switch.picker]
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"

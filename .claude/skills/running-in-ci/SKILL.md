@@ -77,14 +77,20 @@ After pushing changes to a PR branch, you **must** wait for CI before saying
 
 1. Push your changes
 2. Run `gh pr checks <number> --required` once
-3. If all required checks passed, report completion
-4. If checks are still running, poll with `gh pr checks <number> --required`
+3. If checks are still running, poll with `gh pr checks <number> --required`
    every 60 seconds until all required checks complete (this may take up to
    10 minutes). Non-required checks (e.g., benchmarks) are ignored — do not
    wait for them.
-5. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
+4. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
    fix issues, commit, push, and repeat from step 2
-6. Only after all required checks pass, report completion
+5. After all required checks pass, also check `codecov/patch`. Although it is
+   marked non-required in GitHub, this repo treats it as mandatory (see
+   CLAUDE.md). Run `gh pr checks <number>` (without `--required`) and look for
+   the `codecov/patch` row. If it hasn't completed yet, continue polling every
+   60 seconds. If it fails, investigate and fix the coverage gap before
+   reporting completion.
+6. Only after all required checks **and** `codecov/patch` pass, report
+   completion
 
 **Never** post a "done" or "fixed" comment before CI passes. Local tests alone
 are not sufficient — CI runs on Linux, Windows, and macOS. If you report
@@ -93,6 +99,21 @@ again.
 
 Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
 instead, which has a natural bound on CI completion time.
+
+### Verifying local test failures before pushing
+
+When running local tests before pushing and some tests fail, do **not**
+characterize them as "pre-existing" or "environment-dependent" without
+evidence. The same grounded-analysis rule from the Thoroughness section applies
+here — check main branch CI history before dismissing failures:
+
+```bash
+gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=3" \
+  --jq '.workflow_runs[] | {conclusion, created_at: .created_at}'
+```
+
+If you cannot verify, say "I haven't confirmed whether these failures are
+pre-existing" rather than asserting they are.
 
 ## Replying to Comments
 
@@ -116,10 +137,16 @@ Prefer replying in context rather than creating a new top-level comment:
 
 ## Comment Formatting
 
-Keep comments concise. Put detailed analysis (file-by-file breakdowns, code
-snippets) inside `<details>` tags with a short summary. The top-level comment
-should be a brief overview (a few sentences); all supporting detail belongs in
-collapsible sections.
+Keep comments concise. Put detailed analysis inside `<details>` tags with a
+short summary. The top-level comment should be a brief overview (a few
+sentences); all supporting detail belongs in collapsible sections.
+
+Use `<details>` tags when a comment has supporting detail that isn't the main
+point — multi-section analyses, diagnostic breakdowns, or supplementary context
+around a short conclusion. The reader should get the gist without expanding.
+Don't collapse content that *is* the answer: if someone asked for a survey or
+detailed analysis, the full response is the substance, not boilerplate, and
+should stay inline.
 
 ### Use Links
 

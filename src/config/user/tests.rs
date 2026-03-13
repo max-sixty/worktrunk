@@ -1122,12 +1122,14 @@ fn test_switch_config_merge() {
             pager: Some("delta".to_string()),
             timeout_ms: None,
         }),
+        ..Default::default()
     };
     let other = SwitchConfig {
         picker: Some(SwitchPickerConfig {
             pager: None,
             timeout_ms: Some(300),
         }),
+        ..Default::default()
     };
     let merged = base.merge_with(&other);
     assert_eq!(
@@ -1137,7 +1139,7 @@ fn test_switch_config_merge() {
     assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
 
     // Base has picker, other doesn't
-    let other_none = SwitchConfig { picker: None };
+    let other_none = SwitchConfig::default();
     let merged = base.merge_with(&other_none);
     assert_eq!(
         merged.picker.as_ref().unwrap().pager.as_deref(),
@@ -1145,9 +1147,82 @@ fn test_switch_config_merge() {
     );
 
     // Neither has picker
-    let base_none = SwitchConfig { picker: None };
-    let merged = base_none.merge_with(&other_none);
+    let merged = SwitchConfig::default().merge_with(&other_none);
     assert!(merged.picker.is_none());
+}
+
+#[test]
+fn test_switch_config_no_cd_accessor() {
+    use crate::config::user::SwitchConfig;
+
+    // Default is false
+    let config = SwitchConfig::default();
+    assert!(!config.no_cd());
+
+    // Explicit false
+    let config = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    assert!(!config.no_cd());
+
+    // Explicit true
+    let config = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    assert!(config.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_merge() {
+    use crate::config::user::{Merge, SwitchConfig};
+
+    // Other overrides base
+    let base = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    let other = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&other);
+    assert!(merged.no_cd());
+
+    // Base preserved when other is None
+    let base = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&SwitchConfig::default());
+    assert!(merged.no_cd());
+
+    // Neither set
+    let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
+    assert!(!merged.no_cd()); // default false
+}
+
+#[test]
+fn test_switch_config_no_cd_from_toml() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let switch = config.switch(None).unwrap();
+    assert!(switch.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_resolved() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let resolved = config.resolved(None);
+    assert!(resolved.switch.no_cd());
 }
 
 #[test]
@@ -1185,6 +1260,7 @@ fn test_switch_picker_prefers_new_over_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(100),
                 }),
+                ..Default::default()
             }),
             select: Some(SelectConfig {
                 pager: Some("bat".to_string()),
@@ -1210,6 +1286,7 @@ fn test_switch_picker_project_override() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(200),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1225,6 +1302,7 @@ fn test_switch_picker_project_override() {
                         pager: Some("bat".to_string()),
                         timeout_ms: None, // Fall back to global
                     }),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1250,6 +1328,7 @@ fn test_switch_picker_project_fallback_from_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1298,6 +1377,7 @@ fn test_resolved_config_for_project() {
                     pager: Some("less".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1314,6 +1394,7 @@ fn test_resolved_config_for_project() {
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
     assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
+    assert!(!resolved.switch.no_cd()); // Default false
 }
 
 // =========================================================================

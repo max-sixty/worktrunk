@@ -215,7 +215,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
-          tmux workflows) or for CI/automation.
+          tmux workflows) or for CI/automation. Use --cd to override.
 
           In picker mode (no branch argument), prints the selected branch name
           and exits without switching. Useful for scripting.

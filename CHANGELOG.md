@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.29.1
+
+### Improved
+
+- **GitHub Enterprise support for `wt switch`**: `wt switch pr:<number>` now works with GitHub Enterprise instances by extracting the hostname from the remote URL and passing `--hostname` to `gh`. ([#1408](https://github.com/max-sixty/worktrunk/pull/1408), thanks @TomRomeo)
+
+- **`wt switch --no-cd` print mode**: When `wt switch --no-cd` opens the interactive picker (no branch argument), selecting a branch prints its name to stdout and exits — useful for scripting. ([#1445](https://github.com/max-sixty/worktrunk/pull/1445), thanks @ruudk for the feature request in [#1404](https://github.com/max-sixty/worktrunk/pull/1404))
+
+- **Shadow warning for step aliases**: `wt step` now warns when a user-defined alias has the same name as a built-in step command (e.g., `commit`, `rebase`), since clap intercepts the built-in before the alias runs. ([#1389](https://github.com/max-sixty/worktrunk/pull/1389))
+
+### Fixed
+
+- **Post-switch hooks on `wt remove`**: When removing the current worktree, post-switch hooks now fire correctly as the user is implicitly switched to the primary worktree. Previously, project hooks were silently skipped because config lookup failed from the removed CWD. ([#1452](https://github.com/max-sixty/worktrunk/pull/1452), thanks @mjakl for reporting [#1450](https://github.com/max-sixty/worktrunk/issues/1450))
+
+- **LLM commit session isolation**: The recommended Claude command for commit generation now includes `--no-session-persistence`, preventing commit conversations from polluting `claude --continue`. ([#1454](https://github.com/max-sixty/worktrunk/pull/1454))
+
+- **Color formatting in error messages**: `DetachedHead` and `NotInWorktree` error messages now support color-print styling, matching other error variants. ([#1387](https://github.com/max-sixty/worktrunk/pull/1387))
+
+- **Windows error handling**: Replaced `std::process::exit()` with proper error returns in Windows-specific code paths, so destructors and cleanup run correctly. ([#1456](https://github.com/max-sixty/worktrunk/pull/1456))
+
+### Documentation
+
+- **Hook JSON context section**: Fixed documentation that incorrectly described `hook_type` and `hook_name` as extras; added the TOML hook definition showing how JSON stdin is wired. ([#1360](https://github.com/max-sixty/worktrunk/pull/1360))
+
+- **`wt remove` help text**: Updated example heading to clarify that `wt remove` works on both worktrees and branches. ([#1449](https://github.com/max-sixty/worktrunk/pull/1449))
+
+- **Xcode DerivedData cleanup recipe**: Added recipe for cleaning Xcode build artifacts across worktrees. ([#1423](https://github.com/max-sixty/worktrunk/pull/1423), thanks @RickeyBoy)
+
+### Internal
+
+- **Refactoring**: Extracted handler functions from `main()` dispatch, replaced negated boolean variables with positive-polarity names (`no_verify` → `verify`, `no_delete_branch` → `keep_branch`). ([#1394](https://github.com/max-sixty/worktrunk/pull/1394), [#1388](https://github.com/max-sixty/worktrunk/pull/1388), [#1393](https://github.com/max-sixty/worktrunk/pull/1393))
+
+- **Test reliability**: Resolved flaky PTY/timing issues in integration tests, consolidated trivial tests into inline snapshots. ([#1459](https://github.com/max-sixty/worktrunk/pull/1459), [#1392](https://github.com/max-sixty/worktrunk/pull/1392), [#1382](https://github.com/max-sixty/worktrunk/pull/1382), [#1390](https://github.com/max-sixty/worktrunk/pull/1390))
+
+- **CI**: Added Zola docs validation to PR checks, catching broken internal anchor links before merge. ([#1396](https://github.com/max-sixty/worktrunk/pull/1396))
+
 ## 0.29.0
 
 ### Improved

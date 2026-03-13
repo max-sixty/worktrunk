@@ -365,14 +365,26 @@ impl Merge for SwitchPickerConfig {
 /// Configuration for the `wt switch` command
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SwitchConfig {
+    /// Skip directory change after switch (equivalent to --no-cd)
+    #[serde(rename = "no-cd", default, skip_serializing_if = "Option::is_none")]
+    pub no_cd: Option<bool>,
+
     /// Picker settings for the interactive selector
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picker: Option<SwitchPickerConfig>,
 }
 
+impl SwitchConfig {
+    /// Skip directory change (default: false)
+    pub fn no_cd(&self) -> bool {
+        self.no_cd.unwrap_or(false)
+    }
+}
+
 impl Merge for SwitchConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
+            no_cd: other.no_cd.or(self.no_cd),
             picker: match (&self.picker, &other.picker) {
                 (None, None) => None,
                 (Some(s), None) => Some(s.clone()),

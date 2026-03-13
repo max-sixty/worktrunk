@@ -377,6 +377,7 @@ impl WorktreeSkimItem {
         let args = vec![
             "log",
             "--graph",
+            "--no-show-signature",
             format,
             "--color=always",
             "-n",

@@ -42,7 +42,7 @@ enum PickerAction {
 pub fn handle_select(
     cli_branches: bool,
     cli_remotes: bool,
-    change_dir: bool,
+    change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
@@ -51,8 +51,9 @@ pub fn handle_select(
 
     let (repo, is_recovered) = current_or_recover()?;
 
-    // Merge CLI flags with resolved config
+    // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
+    let change_dir = change_dir_flag.unwrap_or_else(|| !config.switch.no_cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
 

@@ -29,8 +29,8 @@ pub struct SwitchOptions<'a> {
     pub execute_args: &'a [String],
     pub yes: bool,
     pub clobber: bool,
-    /// Whether to change directory after switching (default: true)
-    pub change_dir: bool,
+    /// Resolved from --cd/--no-cd flags: Some(true) = cd, Some(false) = no cd, None = use config
+    pub change_dir: Option<bool>,
     pub verify: bool,
 }
 
@@ -171,11 +171,18 @@ pub fn handle_switch(
         execute_args,
         yes,
         clobber,
-        change_dir,
+        change_dir: change_dir_flag,
         verify,
     } = opts;
 
     let (repo, is_recovered) = current_or_recover().context("Failed to switch worktree")?;
+
+    // Resolve change_dir: explicit CLI flags > project config > global config > default (true)
+    // Now that we have the repo, we can resolve project-specific config.
+    let change_dir = change_dir_flag.unwrap_or_else(|| {
+        let project_id = repo.project_identifier().ok();
+        !config.resolved(project_id.as_deref()).switch.no_cd()
+    });
 
     // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
     // Skip when recovered — the source worktree is gone, nothing to run hooks against.
@@ -249,8 +256,9 @@ pub fn handle_switch(
     // Offer shell integration if not already installed/active
     // (only shows prompt/hint when shell integration isn't working)
     // With --execute: show hints only (don't interrupt with prompt)
+    // Skip when change_dir is false — user opted out of cd, so shell integration is irrelevant
     // Best-effort: don't fail switch if offer fails
-    if !is_shell_integration_active() {
+    if change_dir && !is_shell_integration_active() {
         let skip_prompt = execute.is_some();
         let _ = prompt_shell_integration(config, binary_name, skip_prompt);
     }
