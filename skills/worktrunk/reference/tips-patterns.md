@@ -123,7 +123,7 @@ To keep the LLM as default but use the editor for a specific merge, add a [workt
 mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"; sed "s/^/# /" >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v "^#" "$f"' wt merge'''
 ```
 
-Then `wt mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
+Then `wt step mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
 
 ## Track agent status
 
