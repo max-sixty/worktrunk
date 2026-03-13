@@ -10,6 +10,7 @@ mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use dashmap::DashMap;
@@ -72,6 +73,15 @@ pub fn handle_select(
     // Operations that timeout fail silently (data not shown), but TUI stays responsive.
     let command_timeout = config.switch_picker.picker_command_timeout();
 
+    // Wall-clock budget for the entire collect phase. Tasks that complete within
+    // the budget contribute data; tasks still running when it expires are abandoned.
+    // This caps total latency regardless of worktree count or filesystem speed.
+    let budget_ms: u64 = std::env::var("WORKTRUNK_PICKER_BUDGET_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+    let collect_deadline = Some(Instant::now() + Duration::from_millis(budget_ms));
+
     let Some(list_data) = collect::collect(
         &repo,
         collect::ShowConfig::Resolved {
@@ -83,6 +93,7 @@ pub fn handle_select(
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
         true,  // skip_expensive_for_stale (faster for repos with many stale branches)
+        collect_deadline,
     )?
     else {
         return Ok(());
@@ -122,8 +133,14 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // Use layout system to render the line - this handles all column alignment
-            let rendered_line = layout.render_list_item_line(&item);
+            // Use stale rendering (·) for items where data didn't arrive within budget,
+            // normal rendering (⋯) otherwise. status_symbols is always set by completed
+            // tasks, so None means worker results didn't arrive for this item.
+            let rendered_line = if item.status_symbols.is_none() {
+                layout.render_list_item_stale(&item)
+            } else {
+                layout.render_list_item_line(&item)
+            };
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 

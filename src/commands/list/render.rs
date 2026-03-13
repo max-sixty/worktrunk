@@ -237,6 +237,16 @@ impl LayoutConfig {
 
     /// Render list item line as StyledLine (for extracting both plain and styled text)
     pub fn render_list_item_line(&self, item: &ListItem) -> StyledLine {
+        self.render_item_with_placeholder(item, "⋯")
+    }
+
+    /// Render with stale placeholders for items where data collection was truncated.
+    /// Uses `·` instead of `⋯` to indicate data won't arrive.
+    pub fn render_list_item_stale(&self, item: &ListItem) -> StyledLine {
+        self.render_item_with_placeholder(item, "·")
+    }
+
+    fn render_item_with_placeholder(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         self.render_line(|column| {
             column.render_cell(
                 item,
@@ -244,6 +254,7 @@ impl LayoutConfig {
                 &self.main_worktree_path,
                 self.max_message_len,
                 self.max_summary_len,
+                placeholder,
             )
         })
     }
@@ -270,6 +281,8 @@ impl LayoutConfig {
                 ColumnKind::Gutter => {
                     // Skeleton shows placeholder gutter - actual symbols (including is_previous)
                     // appear when WorktreeData is populated post-skeleton.
+                    // TODO: is this ever visible? The skeleton renders for ~50ms before data
+                    // arrives. If not, consider removing the middle dot.
                     let symbol = if wt_data.is_some() {
                         "· " // Placeholder for worktrees
                     } else {
@@ -347,6 +360,7 @@ impl ColumnLayout {
         main_worktree_path: &Path,
         max_message_len: usize,
         max_summary_len: usize,
+        placeholder: &str,
     ) -> StyledLine {
         // Compute derived values inline (avoids separate context struct)
         let worktree_data = item.worktree_data();
@@ -376,7 +390,7 @@ impl ColumnLayout {
             }
             ColumnKind::Status => {
                 let Some(ref status_symbols) = item.status_symbols else {
-                    return self.placeholder_cell("⋯");
+                    return self.placeholder_cell(placeholder);
                 };
                 let mut cell = StyledLine::new();
                 cell.push_raw(status_symbols.render_with_mask(status_mask));
@@ -385,6 +399,8 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::WorkingDiff => {
+                // TODO: show placeholder when data is missing (currently blank,
+                // inconsistent with other columns that show ⋯/· for unloaded data)
                 let Some(diff) = worktree_data.and_then(|data| data.working_tree_diff.as_ref())
                 else {
                     return StyledLine::new();
@@ -398,7 +414,7 @@ impl ColumnLayout {
                 match item.counts {
                     Some(counts) if counts.ahead == 0 && counts.behind == 0 => StyledLine::new(),
                     Some(counts) => self.render_diff_cell(counts.ahead, counts.behind),
-                    None => self.placeholder_cell("⋯"), // Not loaded yet
+                    None => self.placeholder_cell(placeholder), // Not loaded yet
                 }
             }
             ColumnKind::BranchDiff => {
@@ -418,6 +434,8 @@ impl ColumnLayout {
                 self.render_text_cell(&path_str, text_style)
             }
             ColumnKind::Upstream => {
+                // TODO: show placeholder when data is missing (currently blank,
+                // inconsistent with other columns that show ⋯/· for unloaded data)
                 let upstream = item.upstream();
                 let Some(active) = upstream.active() else {
                     return StyledLine::new();
@@ -437,7 +455,7 @@ impl ColumnLayout {
             }
             ColumnKind::Time => {
                 let Some(ref commit) = item.commit else {
-                    return self.placeholder_cell("⋯");
+                    return self.placeholder_cell(placeholder);
                 };
                 let mut cell = StyledLine::new();
                 cell.push_styled(
@@ -479,8 +497,8 @@ impl ColumnLayout {
                 // - Some(None) = loaded, no CI (show nothing)
                 // - Some(Some(status)) = loaded with CI (show status)
                 match &item.pr_status {
-                    None => self.placeholder_cell("⋯"), // Not loaded yet
-                    Some(None) => StyledLine::new(),    // Loaded, no CI
+                    None => self.placeholder_cell(placeholder), // Not loaded yet
+                    Some(None) => StyledLine::new(),            // Loaded, no CI
                     Some(Some(pr_status)) => {
                         let mut cell = StyledLine::new();
                         cell.push_raw(
@@ -505,7 +523,7 @@ impl ColumnLayout {
                 // - Some(None) = no summary (blank)
                 // - Some(Some(text)) = has summary
                 match &item.summary {
-                    None => self.placeholder_cell("⋯"),
+                    None => self.placeholder_cell(placeholder),
                     Some(None) => StyledLine::new(),
                     Some(Some(summary)) => {
                         let mut cell = StyledLine::new();
@@ -517,7 +535,7 @@ impl ColumnLayout {
             }
             ColumnKind::Message => {
                 let Some(ref commit) = item.commit else {
-                    return self.placeholder_cell("⋯");
+                    return self.placeholder_cell(placeholder);
                 };
                 let mut cell = StyledLine::new();
                 let msg = truncate_to_width(&commit.commit_message, max_message_len);
@@ -1304,17 +1322,17 @@ mod tests {
         // Case 1: summary = None (not loaded yet → placeholder)
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.summary = None;
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
         insta::assert_snapshot!(cell.render(), @"[2m⋯[0m");
 
         // Case 2: summary = Some(None) (loaded, no summary → blank)
         item.summary = Some(None);
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
         assert!(cell.render().is_empty());
 
         // Case 3: summary = Some(Some(text)) (has summary)
         item.summary = Some(Some("Add user authentication".into()));
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40);
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
     }
 }

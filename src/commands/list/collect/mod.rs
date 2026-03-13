@@ -234,6 +234,7 @@ pub fn collect(
     show_progress: bool,
     render_table: bool,
     skip_expensive_for_stale: bool,
+    collect_deadline: Option<std::time::Instant>,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
@@ -808,11 +809,14 @@ pub fn collect(
     let mut first_result_traced = false;
 
     // Drain task results with conditional progressive rendering
+    let drain_deadline =
+        collect_deadline.unwrap_or_else(|| std::time::Instant::now() + results::DRAIN_TIMEOUT);
     let drain_outcome = drain_results(
         rx,
         &mut all_items,
         &mut errors,
         &expected_results,
+        drain_deadline,
         |item_idx, item, ctx| {
             // Trace first result arrival
             if !first_result_traced {
@@ -867,11 +871,14 @@ pub fn collect(
     );
     worktrunk::shell_exec::trace_instant("All results drained");
 
-    // Handle timeout if it occurred
-    if let DrainOutcome::TimedOut {
-        received_count,
-        items_with_missing,
-    } = drain_outcome
+    // Handle timeout if it occurred.
+    // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
+    // Only warn for the default DRAIN_TIMEOUT (120s), which indicates a hung command.
+    if collect_deadline.is_none()
+        && let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = drain_outcome
     {
         // Warning: what happened + gutter showing which results are missing
         let mut diag = format!(
@@ -1201,6 +1208,7 @@ pub fn populate_item(
         std::slice::from_mut(item),
         &mut errors,
         &expected_results,
+        std::time::Instant::now() + results::DRAIN_TIMEOUT,
         |_item_idx, item, ctx| {
             if let Some(ref t) = target {
                 ctx.apply_to(item, t);

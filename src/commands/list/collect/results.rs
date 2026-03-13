@@ -104,8 +104,8 @@ pub(super) fn apply_default(
 /// item index and a reference to the updated item, allowing progressive mode
 /// to update the live table while buffered mode does nothing.
 ///
-/// Uses [`DRAIN_TIMEOUT`] to prevent infinite hangs if git commands stall.
-/// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
+/// Uses a caller-provided `deadline` to cap wall-clock time. When the deadline
+/// is reached, returns `DrainOutcome::TimedOut` with diagnostic info.
 ///
 /// Errors are collected in the `errors` vec for display after rendering.
 /// Default values are applied for failed tasks so the UI can still render.
@@ -118,10 +118,9 @@ pub(super) fn drain_results(
     items: &mut [ListItem],
     errors: &mut Vec<TaskError>,
     expected_results: &ExpectedResults,
+    deadline: Instant,
     mut on_result: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) -> DrainOutcome {
-    let deadline = Instant::now() + DRAIN_TIMEOUT;
-
     // Track which result kinds we've received per item (for timeout diagnostics)
     let mut received_by_item: Vec<Vec<TaskKind>> = vec![Vec::new(); items.len()];
 
@@ -345,7 +344,14 @@ mod tests {
         .unwrap();
         drop(tx);
 
-        let outcome = drain_results(rx, &mut items, &mut errors, &expected, |_, _, _| {});
+        let outcome = drain_results(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now() + DRAIN_TIMEOUT,
+            |_, _, _| {},
+        );
         assert!(matches!(outcome, DrainOutcome::Complete));
         assert_eq!(items[0].summary, Some(Some("Add feature".into())));
     }
