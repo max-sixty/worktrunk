@@ -115,15 +115,15 @@ command = '''f=$(mktemp); printf '\n\n' > "$f"; sed 's/^/# /' >> "$f"; ${EDITOR:
 
 This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. A couple of blank lines at the top give you space to type; the prompt context is visible below for reference.
 
-To keep the LLM as default but use the editor for specific commits, add a [worktrunk alias](https://worktrunk.dev/step/#aliases):
+To keep the LLM as default but use the editor for a specific merge, add a [worktrunk alias](https://worktrunk.dev/step/#aliases):
 
 ```toml
 # ~/.config/worktrunk/config.toml
 [aliases]
-mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"; sed "s/^/# /" >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v "^#" "$f"' wt step commit'''
+mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"; sed "s/^/# /" >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v "^#" "$f"' wt merge'''
 ```
 
-Then `wt step mc` opens an editor for the commit message while `wt merge` continues to use the LLM.
+Then `wt mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
 
 ## Track agent status
 
