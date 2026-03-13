@@ -75,8 +75,14 @@ gh api "repos/$REPO/issues/<number>/comments" --paginate \
 noted an issue, don't raise it again.
 
 If a conversation comment asks the bot a question (mentions `$BOT_LOGIN`,
-replies to a bot comment, or is clearly directed at the reviewer), address it in
-the review body.
+replies to a bot comment, or is clearly directed at the reviewer), check whether
+the bot already answered it — look for a bot comment posted **after** the
+question's timestamp. When a new push triggers a second review run while the
+first is still responding, both runs see the same unanswered question. Skip
+questions that already have a bot reply to avoid duplicate responses.
+
+Address unanswered questions in the review body (not as standalone conversation
+comments via `gh pr comment`).
 
 ### 2. Read and understand the change
 
