@@ -1304,6 +1304,44 @@ mod tests {
     }
 
     #[test]
+    fn test_render_list_item_stale_uses_middle_dot() {
+        use super::super::layout::{ColumnLayout, LayoutConfig};
+        use super::super::model::{ListItem, PositionMask};
+        use std::path::PathBuf;
+
+        // Minimal layout with just a Status column
+        let layout = LayoutConfig {
+            columns: vec![ColumnLayout {
+                kind: ColumnKind::Status,
+                header: "Status",
+                start: 0,
+                width: 10,
+                format: ColumnFormat::Text,
+            }],
+            main_worktree_path: PathBuf::from("/tmp"),
+            max_message_len: 0,
+            max_summary_len: 0,
+            hidden_column_count: 0,
+            status_position_mask: PositionMask::FULL,
+        };
+
+        // Item with no status_symbols (simulates budget timeout)
+        let item = ListItem::new_branch("abc123".into(), "feat".into());
+        assert!(item.status_symbols.is_none());
+
+        // render_list_item_line uses ⋯
+        let line = layout.render_list_item_line(&item);
+        let rendered = line.render();
+        assert!(rendered.contains('⋯'), "expected ⋯ in: {rendered}");
+
+        // render_list_item_stale uses · (middle dot)
+        let stale = layout.render_list_item_stale(&item);
+        let stale_rendered = stale.render();
+        assert!(stale_rendered.contains('·'), "expected · in: {stale_rendered}");
+        assert!(!stale_rendered.contains('⋯'), "should not contain ⋯ in: {stale_rendered}");
+    }
+
+    #[test]
     fn test_summary_column_rendering() {
         use super::super::layout::ColumnLayout;
         use super::super::model::{ListItem, PositionMask};
