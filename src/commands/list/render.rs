@@ -424,7 +424,7 @@ impl ColumnLayout {
                 }
                 match item.branch_diff() {
                     Some(bd) => self.render_diff_cell(bd.diff.added, bd.diff.deleted),
-                    None => self.placeholder_cell("…"), // Task was skipped
+                    None => self.placeholder_cell(placeholder),
                 }
             }
             ColumnKind::Path => {
