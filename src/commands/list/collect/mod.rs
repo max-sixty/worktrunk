@@ -830,9 +830,7 @@ pub fn collect(
 
             // Compute/recompute status symbols as data arrives (both modes).
             // This is idempotent and updates status as new data (like upstream) arrives.
-            if let Some(ref target) = integration_target {
-                ctx.apply_to(item, target.as_str());
-            }
+            ctx.apply_to(item, integration_target.as_deref());
 
             // Progressive mode only: update UI
             if let Some(ref mut table) = progressive_table {
@@ -924,9 +922,7 @@ pub fn collect(
         {
             // Use default context - no tasks ran, so no conflict/status info
             let ctx = StatusContext::default();
-            if let Some(ref target) = integration_target {
-                ctx.apply_to(item, target.as_str());
-            }
+            ctx.apply_to(item, integration_target.as_deref());
         }
     }
 
@@ -1214,9 +1210,7 @@ pub fn populate_item(
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
         |_item_idx, item, ctx| {
-            if let Some(ref t) = target {
-                ctx.apply_to(item, t);
-            }
+            ctx.apply_to(item, target.as_deref());
         },
     );
 

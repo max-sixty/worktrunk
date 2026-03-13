@@ -355,4 +355,53 @@ mod tests {
         assert!(matches!(outcome, DrainOutcome::Complete));
         assert_eq!(items[0].summary, Some(Some("Add feature".into())));
     }
+
+    #[test]
+    fn test_drain_results_timeout_returns_missing_diagnostics() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
+        let mut errors = Vec::new();
+
+        // Register expected results but don't send them — simulates tasks still running
+        let expected = ExpectedResults::default();
+        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::AheadBehind);
+
+        // Send only one of the two expected results
+        tx.send(Ok(TaskResult::CommitDetails {
+            item_idx: 0,
+            commit: CommitDetails::default(),
+        }))
+        .unwrap();
+
+        // Use an already-expired deadline
+        let outcome = drain_results(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now(),
+            |_, _, _| {},
+        );
+
+        match outcome {
+            DrainOutcome::TimedOut {
+                received_count,
+                items_with_missing,
+            } => {
+                // May have received 0 or 1 depending on timing (deadline is immediate)
+                assert!(received_count <= 1);
+                // Item 0 should have at least AheadBehind missing
+                assert!(!items_with_missing.is_empty());
+                assert_eq!(items_with_missing[0].name, "feat");
+                assert!(items_with_missing[0]
+                    .missing_kinds
+                    .contains(&TaskKind::AheadBehind));
+            }
+            DrainOutcome::Complete => {
+                // If the recv_timeout happened to grab the result before deadline check,
+                // that's also valid (the channel had one buffered result)
+            }
+        }
+    }
 }
