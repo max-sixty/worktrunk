@@ -394,9 +394,11 @@ mod tests {
                 // Item 0 should have at least AheadBehind missing
                 assert!(!items_with_missing.is_empty());
                 assert_eq!(items_with_missing[0].name, "feat");
-                assert!(items_with_missing[0]
-                    .missing_kinds
-                    .contains(&TaskKind::AheadBehind));
+                assert!(
+                    items_with_missing[0]
+                        .missing_kinds
+                        .contains(&TaskKind::AheadBehind)
+                );
             }
             DrainOutcome::Complete => {
                 // If the recv_timeout happened to grab the result before deadline check,
