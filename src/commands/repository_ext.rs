@@ -84,8 +84,21 @@ impl RepositoryCliExt for Repository {
         // then repo base for bare repos with no worktrees.
         let home_worktree_path = self.home_path()?;
 
-        // Resolve target to worktree path and branch
-        let (worktree_path, branch_name, is_current) = match target {
+        // Phase 1: Resolve target to branch name and worktree disposition.
+        // BranchOnly variants don't early-return — they go through shared validation below.
+        enum Resolved {
+            Worktree {
+                path: PathBuf,
+                branch: Option<String>,
+                is_current: bool,
+            },
+            BranchOnly {
+                branch: String,
+                pruned: bool,
+            },
+        }
+
+        let resolved = match target {
             RemoveTarget::Branch(branch) => {
                 match worktrees
                     .iter()
@@ -95,47 +108,50 @@ impl RepositoryCliExt for Repository {
                         if !wt.path.exists() {
                             // Directory missing - prune and continue
                             self.prune_worktrees()?;
-                            return Ok(RemoveResult::BranchOnly {
-                                branch_name: branch.to_string(),
-                                deletion_mode,
+                            Resolved::BranchOnly {
+                                branch: branch.to_string(),
                                 pruned: true,
-                            });
-                        }
-                        if wt.locked.is_some() {
+                            }
+                        } else if wt.locked.is_some() {
                             return Err(GitError::WorktreeLocked {
                                 branch: branch.into(),
                                 path: wt.path.clone(),
                                 reason: wt.locked.clone(),
                             }
                             .into());
+                        } else {
+                            let is_current = current_path == wt.path;
+                            Resolved::Worktree {
+                                path: wt.path.clone(),
+                                branch: Some(branch.to_string()),
+                                is_current,
+                            }
                         }
-                        let is_current = current_path == wt.path;
-                        (wt.path.clone(), Some(branch.to_string()), is_current)
                     }
                     None => {
                         // No worktree found - check if the branch exists locally
                         let branch_handle = self.branch(branch);
                         if branch_handle.exists_locally()? {
-                            return Ok(RemoveResult::BranchOnly {
-                                branch_name: branch.to_string(),
-                                deletion_mode,
+                            Resolved::BranchOnly {
+                                branch: branch.to_string(),
                                 pruned: false,
-                            });
-                        }
-                        // Check if branch exists on a remote
-                        let remotes = branch_handle.remotes()?;
-                        if !remotes.is_empty() {
-                            return Err(GitError::RemoteOnlyBranch {
+                            }
+                        } else {
+                            // Check if branch exists on a remote
+                            let remotes = branch_handle.remotes()?;
+                            if !remotes.is_empty() {
+                                return Err(GitError::RemoteOnlyBranch {
+                                    branch: branch.into(),
+                                    remote: remotes[0].clone(),
+                                }
+                                .into());
+                            }
+                            return Err(GitError::BranchNotFound {
                                 branch: branch.into(),
-                                remote: remotes[0].clone(),
+                                show_create_hint: false,
                             }
                             .into());
                         }
-                        return Err(GitError::BranchNotFound {
-                            branch: branch.into(),
-                            show_create_hint: false,
-                        }
-                        .into());
                     }
                 }
             }
@@ -163,33 +179,51 @@ impl RepositoryCliExt for Repository {
                     .into());
                 }
                 let is_current = wt.path == current_path;
-                (wt.path.clone(), wt.branch.clone(), is_current)
+                Resolved::Worktree {
+                    path: wt.path.clone(),
+                    branch: wt.branch.clone(),
+                    is_current,
+                }
             }
         };
 
-        // Cannot remove the main working tree (only linked worktrees can be removed)
-        let target_wt = self.worktree_at(&worktree_path);
-        if !target_wt.is_linked()? {
+        // Phase 2: Main-worktree guard (before default-branch check, since
+        // -D can't override the main worktree restriction).
+        if let Resolved::Worktree { ref path, .. } = resolved
+            && !self.worktree_at(path).is_linked()?
+        {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
-        // Cannot remove the default branch worktree — it's the integration target,
-        // not something that integrates into itself (same logic as wt list's is_main guard).
-        // With -D, the user explicitly wants to force-delete — allow it.
-        if !deletion_mode.is_force()
-            && let Some(ref branch) = branch_name
-            && self.default_branch().as_deref() == Some(branch.as_str())
-        {
-            return Err(GitError::CannotRemoveDefaultBranch {
-                branch: branch.clone(),
-            }
-            .into());
+        // Phase 3: Branch-level validation (applies to ALL paths).
+        let branch_name = match &resolved {
+            Resolved::Worktree { branch, .. } => branch.as_deref(),
+            Resolved::BranchOnly { branch, .. } => Some(branch.as_str()),
+        };
+        if let Some(branch) = branch_name {
+            check_not_default_branch(self, branch, &deletion_mode)?;
         }
 
-        // Check working tree cleanliness (unless --force, which passes through to git)
-        // NOTE: background removal fallback may still add --force later when
-        // .gitmodules is detected at execution time (see output::handlers),
-        // so this remains a best-effort check with a small TOCTOU window.
+        // Phase 4: Return BranchOnly early (after validation), or continue to
+        // worktree-level checks.
+        let (worktree_path, branch_name, is_current) = match resolved {
+            Resolved::BranchOnly { branch, pruned } => {
+                return Ok(RemoveResult::BranchOnly {
+                    branch_name: branch,
+                    deletion_mode,
+                    pruned,
+                });
+            }
+            Resolved::Worktree {
+                path,
+                branch,
+                is_current,
+            } => (path, branch, is_current),
+        };
+
+        // Phase 5: Remaining worktree-level validation.
+        let target_wt = self.worktree_at(&worktree_path);
+
         if !force_worktree {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
         }
@@ -201,9 +235,7 @@ impl RepositoryCliExt for Repository {
             (current_path, false)
         };
 
-        // Resolve target branch for integration reason display.
-        // The default branch is rejected above, but this guard remains as defense-in-depth
-        // to avoid tautological "main (ancestor of main)" if the early return is ever bypassed.
+        // Resolve target branch for integration reason display
         let default_branch = self.default_branch();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,
@@ -385,6 +417,24 @@ fn compute_integration_reason(
     // On error, return None (informational only)
     let (_, reason) = repo.integration_reason(branch, target).ok()?;
     reason
+}
+
+/// Reject removing the default branch unless force-delete is set.
+///
+/// The default branch is the integration target — checking it against itself is
+/// tautological (same logic as `wt list`'s `is_main` guard in `check_integration_state`).
+fn check_not_default_branch(
+    repo: &Repository,
+    branch: &str,
+    deletion_mode: &BranchDeletionMode,
+) -> anyhow::Result<()> {
+    if !deletion_mode.is_force() && repo.default_branch().as_deref() == Some(branch) {
+        return Err(GitError::CannotRemoveDefaultBranch {
+            branch: branch.to_string(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// Warn about untracked files that will be auto-staged.

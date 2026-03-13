@@ -31,11 +31,10 @@ info:
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-○ Worktree directory missing for main; pruned
-○ Branch main retained; has unmerged changes
-↳ To delete the unmerged branch, run wt remove -D main
+✗ Cannot remove the default branch main
+↳ To force-delete, run wt remove -D main

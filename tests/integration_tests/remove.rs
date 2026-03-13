@@ -1049,9 +1049,9 @@ fn test_remove_default_branch_refused() {
 }
 
 /// BranchOnly path: when the default branch has no worktree (directory deleted),
-/// delete_branch_if_safe should still refuse to delete it without -D.
+/// removal should be refused without -D, and allowed with -D.
 #[test]
-fn test_remove_default_branch_branch_only_refused() {
+fn test_remove_default_branch_branch_only() {
     let test = BareRepoTest::new();
 
     let main_worktree = test.create_worktree("main", "main");
@@ -1063,12 +1063,21 @@ fn test_remove_default_branch_branch_only_refused() {
 
     let settings = setup_temp_snapshot_settings(test.temp_path());
 
-    // Without -D: branch should be retained (not deleted via tautological integration)
+    // Without -D: should be refused
     settings.bind(|| {
         let mut cmd = test.wt_command();
         cmd.args(["remove", "main"]).current_dir(&feature_worktree);
 
         assert_cmd_snapshot!("remove_default_branch_branch_only_refused", cmd);
+    });
+
+    // With -D: should succeed (force-delete the default branch)
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["remove", "-D", "main"])
+            .current_dir(&feature_worktree);
+
+        assert_cmd_snapshot!("remove_default_branch_branch_only_force_delete", cmd);
     });
 }
 

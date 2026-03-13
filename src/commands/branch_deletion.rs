@@ -34,33 +34,24 @@ pub fn delete_branch_if_safe(
     target: &str,
     force_delete: bool,
 ) -> anyhow::Result<BranchDeletionResult> {
-    // The default branch is never "integrated" in a meaningful sense — it's the
-    // integration target itself. Checking it against itself is tautological
-    // (same logic as wt list's is_main guard in check_integration_state).
-    // With -D, the user explicitly wants to delete it — skip the guard.
-    if !force_delete
-        && let Some(default_branch) = repo.default_branch()
-        && branch_name == default_branch
-    {
+    // Force-delete: skip integration check entirely (matches compute_integration_reason
+    // behavior for the Worktree path). The user explicitly chose -D.
+    if force_delete {
+        repo.run_command(&["branch", "-D", branch_name])?;
         return Ok(BranchDeletionResult {
-            outcome: BranchDeletionOutcome::NotDeleted,
+            outcome: BranchDeletionOutcome::ForceDeleted,
             integration_target: target.to_string(),
         });
     }
 
     let (effective_target, reason) = repo.integration_reason(branch_name, target)?;
 
-    // Determine outcome based on integration and force flag
-    let outcome = match (reason, force_delete) {
-        (Some(r), _) => {
+    let outcome = match reason {
+        Some(r) => {
             repo.run_command(&["branch", "-D", branch_name])?;
             BranchDeletionOutcome::Integrated(r)
         }
-        (None, true) => {
-            repo.run_command(&["branch", "-D", branch_name])?;
-            BranchDeletionOutcome::ForceDeleted
-        }
-        (None, false) => BranchDeletionOutcome::NotDeleted,
+        None => BranchDeletionOutcome::NotDeleted,
     };
 
     Ok(BranchDeletionResult {

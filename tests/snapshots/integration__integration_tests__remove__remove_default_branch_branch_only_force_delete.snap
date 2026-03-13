@@ -4,7 +4,6 @@ info:
   program: wt
   args:
     - remove
-    - "--foreground"
     - "-D"
     - main
   env:
@@ -38,5 +37,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-◎ Removing main worktree...
-✓ Removed main worktree & branch (--force-delete)
+○ No worktree found for branch main
+✓ Removed branch main (--force-delete)

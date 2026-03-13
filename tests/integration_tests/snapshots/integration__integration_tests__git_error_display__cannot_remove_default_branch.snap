@@ -1,6 +1,0 @@
----
-source: tests/integration_tests/git_error_display.rs
-expression: err.to_string()
----
-[31m✗[39m [31mCannot remove the default branch [1mmain[22m[39m
-[2m↳[22m [2mTo force-delete, run [4mwt remove -D main[24m[22m
