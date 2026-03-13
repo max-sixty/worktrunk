@@ -1,6 +1,8 @@
 //! Integration tests for `wt step prune`
 
-use crate::common::{BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings};
+use crate::common::{
+    BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
