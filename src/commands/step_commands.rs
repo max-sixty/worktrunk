@@ -737,15 +737,16 @@ pub fn step_copy_ignored(
                 remove_if_exists(&dest_entry)?;
             }
             // Check if source is a symlink — preserve it instead of following it
-            let metadata = fs::symlink_metadata(src_entry).with_context(|| {
-                format!("reading metadata for {}", format_path_for_display(relative))
-            })?;
-            if metadata.file_type().is_symlink() {
+            let display_path = format_path_for_display(relative);
+            let source_is_symlink = fs::symlink_metadata(src_entry)
+                .context(format!("reading metadata for {display_path}"))?
+                .file_type()
+                .is_symlink();
+            if source_is_symlink {
                 // Skip existing symlinks for idempotent hook usage
                 if dest_entry.symlink_metadata().is_err() {
-                    let target = fs::read_link(src_entry).with_context(|| {
-                        format!("reading symlink {}", format_path_for_display(relative))
-                    })?;
+                    let target = fs::read_link(src_entry)
+                        .context(format!("reading symlink {display_path}"))?;
                     create_symlink(&target, src_entry, &dest_entry)?;
                     copied_count += 1;
                 }
@@ -755,8 +756,9 @@ pub fn step_copy_ignored(
                     Ok(_) => copied_count += 1,
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => {
-                        return Err(anyhow::Error::from(e)
-                            .context(format!("copying {}", format_path_for_display(relative))));
+                        return Err(
+                            anyhow::Error::from(e).context(format!("copying {display_path}"))
+                        );
                     }
                 }
             }
