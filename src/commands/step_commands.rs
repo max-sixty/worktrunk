@@ -747,8 +747,8 @@ pub fn step_copy_ignored(
                         format!("reading symlink {}", format_path_for_display(relative))
                     })?;
                     create_symlink(&target, src_entry, &dest_entry)?;
+                    copied_count += 1;
                 }
-                copied_count += 1;
             } else {
                 // Skip existing files for idempotent hook usage
                 match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
