@@ -1405,11 +1405,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
     let mut deferred_current: Option<Candidate> = None; // current worktree removed last
     let mut skipped_young: Vec<String> = Vec::new();
-    // Track branches seen via worktree entries so we don't double-count.
-    // Pre-seed with the default branch to prevent it from being pruned
-    // (it's trivially "integrated" into itself).
-    let mut seen_branches: std::collections::HashSet<String> =
-        default_branch.iter().cloned().collect();
+    // Track branches seen via worktree entries so we don't double-count
+    // in the orphan branch scan below.
+    let mut seen_branches: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     /// Try to remove a candidate immediately. Returns Ok(true) if removed,
     /// Ok(false) if skipped (preparation error), Err on execution error.
@@ -1582,6 +1580,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // Also scan local branches that don't have a worktree entry
     for branch in repo.all_branches()? {
         if seen_branches.contains(&branch) {
+            continue;
+        }
+        // Never prune the default branch — it's trivially "integrated" into
+        // itself, which would cause a tautological deletion.
+        if default_branch.as_deref() == Some(branch.as_str()) {
             continue;
         }
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
