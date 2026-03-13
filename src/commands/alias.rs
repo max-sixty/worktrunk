@@ -28,6 +28,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "commit",
     "copy-ignored",
     "diff",
+    "eval",
     "for-each",
     "promote",
     "prune",
