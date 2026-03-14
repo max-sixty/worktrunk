@@ -366,14 +366,15 @@ Commands with pages: merge, switch, remove, list"
     std::println!();
     std::println!("```");
 
-    // Subdocs follow, each with their own command reference at the end
+    // Subdocs follow, each with their own command reference at the end.
+    // colorize_ci_status_for_html is already applied inside format_subcommand_section,
+    // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
-        let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
         std::println!();
         std::println!("# Subcommands");
         std::println!();
-        std::println!("{}", subdocs_processed.trim());
+        std::println!("{}", subdocs_expanded.trim());
     }
 
     std::println!();
@@ -382,11 +383,15 @@ Commands with pages: merge, switch, remove, list"
 
 /// Add HTML color spans for CI status dots in help page output.
 ///
-/// Transforms plain text like "`●` green" into colored HTML spans for web rendering.
+/// Post-process CLI help content for web docs rendering.
+///
+/// Transforms plain text markers into styled HTML for the docs site:
+/// - CI status dots (`●` green → colored spans)
+/// - Experimental badges (`[experimental]` → styled pill labels)
+/// - Plain URLs → markdown links
+///
 /// This is the web-docs counterpart to md_help::colorize_status_symbols() which
 /// produces ANSI codes for terminal output.
-///
-/// Also converts plain URL references to markdown links for web docs.
 fn colorize_ci_status_for_html(text: &str) -> String {
     text
         // CI status colors (in table cells)
@@ -396,6 +401,15 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
+        // Experimental badges — styled pill labels for web docs
+        .replace(
+            "[experimental]",
+            "<span class=\"badge-experimental\">experimental</span>",
+        )
+        .replace(
+            "(experimental)",
+            "<span class=\"badge-experimental\">experimental</span>",
+        )
         // Convert plain URL references to markdown links for web docs
         // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."
         // Web shows: "[Open an issue](https://github.com/max-sixty/worktrunk/issues)."
@@ -403,6 +417,19 @@ fn colorize_ci_status_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
+}
+
+const BADGE_HTML: &str = " <span class=\"badge-experimental\">experimental</span>";
+
+/// Strip a leading `[experimental]` prefix from content and return a heading badge.
+///
+/// Used by subdoc sections to move the experimental marker from the lead paragraph
+/// into the section heading (e.g., `## wt step relocate EXPERIMENTAL`).
+fn strip_experimental_prefix(content: &str) -> (&str, String) {
+    if let Some(rest) = content.strip_prefix("[experimental] ") {
+        return (BADGE_HTML, rest.to_string());
+    }
+    ("", content.to_string())
 }
 
 /// Increase markdown heading levels by one (## -> ###, ### -> ####, etc.)
@@ -529,6 +556,9 @@ fn format_subcommand_section(
         (raw_help.as_str(), None)
     };
 
+    // If the definition starts with [experimental], move the badge to the heading
+    let (heading_badge, main_content) = strip_experimental_prefix(main_content);
+
     // Process main content (before any nested subdocs)
     let main_help = {
         let text = main_content.replace("```console\n", "```bash\n");
@@ -548,7 +578,7 @@ fn format_subcommand_section(
     let reference_block = get_help_reference(&command_path, Some(80));
 
     // Format the section: heading, main content, command reference, then nested subdocs
-    let mut section = format!("## {}\n\n", full_command);
+    let mut section = format!("## {}{}\n\n", full_command, heading_badge);
 
     if !main_help.is_empty() {
         section.push_str(main_help.trim());
@@ -560,12 +590,13 @@ fn format_subcommand_section(
     section.push_str(reference_block.trim());
     section.push_str("\n```\n");
 
-    // Expand nested subdocs after the command reference
+    // Expand nested subdocs after the command reference.
+    // colorize_ci_status_for_html is already applied inside format_subcommand_section,
+    // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &full_command);
-        let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
         section.push('\n');
-        section.push_str(subdocs_processed.trim());
+        section.push_str(subdocs_expanded.trim());
         section.push('\n');
     }
 

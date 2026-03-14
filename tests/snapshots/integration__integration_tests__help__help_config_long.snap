@@ -209,7 +209,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
-[1mSetting overrides (Experimental)[0m
+[1mSetting overrides (experimental)[0m
 
 Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 

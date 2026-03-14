@@ -1538,6 +1538,10 @@ static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
 static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
 
+/// Regex to replace Zola experimental shortcode with plain text for skill files
+static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
+
 /// Regex to strip AUTO-GENERATED marker comments (just the comments, not content)
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
@@ -1554,6 +1558,7 @@ static HTML_FIGURE_PATTERN: LazyLock<Regex> =
 /// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
+/// - Replaces Zola shortcodes with plain text equivalents
 /// - Converts Zola internal links (@/page.md) -> full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
@@ -1576,6 +1581,9 @@ fn transform_docs_for_skill(content: &str) -> String {
 
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
+
+    // Replace Zola shortcodes with plain text
+    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "(experimental)");
 
     // Transform Zola internal links to full URLs
     let content = ZOLA_LINK_PATTERN

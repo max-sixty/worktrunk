@@ -36,11 +36,11 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
 - `copy-ignored` — Copy gitignored files between worktrees
-- `for-each` — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
+- `for-each` — <span class="badge-experimental">experimental</span> Run a command in every worktree
+- `promote` — <span class="badge-experimental">experimental</span> Put a branch into the main worktree
 - `prune` — Remove worktrees and branches merged into the default branch
-- `relocate` — [experimental] Move worktrees to expected paths
-- `<alias>` — [experimental] Run a configured command alias
+- `relocate` — <span class="badge-experimental">experimental</span> Move worktrees to expected paths
+- `<alias>` — <span class="badge-experimental">experimental</span> Run a configured command alias
 
 ## Aliases
 
@@ -406,9 +406,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step for-each
+## wt step for-each <span class="badge-experimental">experimental</span>
 
-[experimental] Run command in each worktree. Executes sequentially with real-time output; continues on failure.
+Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -474,9 +474,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step prune
+## wt step prune <span class="badge-experimental">experimental</span>
 
-[experimental] Remove worktrees merged into the default branch.
+Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -544,9 +544,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step relocate
+## wt step relocate <span class="badge-experimental">experimental</span>
 
-[experimental] Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
 Moves worktrees to match the configured `worktree-path` template.
 

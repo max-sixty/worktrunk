@@ -990,6 +990,32 @@ ul > li::marker {
 }
 
 // ============================================================================
+// Badges — status labels (experimental, deprecated, etc.)
+// ============================================================================
+
+// Experimental badge — quiet label, reads as metadata not emphasis
+.badge-experimental {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--wt-color-text-soft);
+    border: 1px solid var(--wt-color-border-subtle);
+    border-radius: var(--wt-radius-pill);
+    padding: 0.05rem 0.5rem;
+    vertical-align: middle;
+    white-space: nowrap;
+    line-height: 1.4;
+
+    // Inside headings: match vertical position to heading text
+    h2 &, h3 & {
+        vertical-align: text-bottom;
+        margin-left: 0.3rem;
+    }
+}
+
+// ============================================================================
 // Figures
 // ============================================================================
 

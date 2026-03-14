@@ -75,7 +75,7 @@ $ wt step squash
 
 See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
 
-## Branch summaries (experimental)
+## Branch summaries <span class="badge-experimental">experimental</span>
 
 With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
 
