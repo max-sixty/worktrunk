@@ -535,7 +535,7 @@ Without an argument, promotes the current branch — or restores the default bra
 
 Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
 
-The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If `.git/` is on a different filesystem, it falls back to reflink copy.
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from `.git/`, it falls back to reflink copy.
 
 ### Command reference
 

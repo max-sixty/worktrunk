@@ -90,4 +90,4 @@ Without an argument, promotes the current branch — or restores the default bra
 
 Gitignored files (build artifacts, [2mnode_modules/[0m, [2m.env[0m) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [2mcopy-ignored[0m and can be filtered with [2m.worktreeinclude[0m.
 
-The swap uses [2mrename()[0m for each entry — fast regardless of entry size, since only filesystem metadata changes. If [2m.git/[0m is on a different filesystem, it falls back to reflink copy.
+The swap uses [2mrename()[0m for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from [2m.git/[0m, it falls back to reflink copy.
