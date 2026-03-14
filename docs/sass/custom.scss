@@ -1008,11 +1008,6 @@ ul > li::marker {
     white-space: nowrap;
     line-height: 1.4;
 
-    // Inside headings: match vertical position to heading text
-    h2 &, h3 & {
-        vertical-align: text-bottom;
-        margin-left: 0.3rem;
-    }
 }
 
 // ============================================================================

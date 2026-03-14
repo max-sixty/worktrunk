@@ -18,9 +18,6 @@
 //! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
 //!         │
 //!         ▼
-//! strip_experimental_prefix()    — for subdoc sections: moves leading [experimental]
-//!         │                        from paragraph into the ## heading
-//!         ▼
 //! post_process_for_html()        — text replacements on after_long_help markdown:
 //!         │                        [experimental] → badge <span>
 //!         │                        `●` green → colored <span>
@@ -458,19 +455,6 @@ fn post_process_for_html(text: &str) -> String {
         )
 }
 
-const BADGE_HTML: &str = " <span class=\"badge-experimental\">experimental</span>";
-
-/// Strip a leading `[experimental]` prefix from content and return a heading badge.
-///
-/// Used by subdoc sections to move the experimental marker from the lead paragraph
-/// into the section heading (e.g., `## wt step relocate EXPERIMENTAL`).
-fn strip_experimental_prefix(content: &str) -> (&str, String) {
-    if let Some(rest) = content.strip_prefix("[experimental] ") {
-        return (BADGE_HTML, rest.to_string());
-    }
-    ("", content.to_string())
-}
-
 /// Increase markdown heading levels by one (## -> ###, ### -> ####, etc.)
 ///
 /// This makes subdoc headings children of the subdoc's main heading.
@@ -595,9 +579,6 @@ fn format_subcommand_section(
         (raw_help.as_str(), None)
     };
 
-    // If the definition starts with [experimental], move the badge to the heading
-    let (heading_badge, main_content) = strip_experimental_prefix(main_content);
-
     // Process main content (before any nested subdocs)
     let main_help = {
         let text = main_content.replace("```console\n", "```bash\n");
@@ -617,7 +598,7 @@ fn format_subcommand_section(
     let reference_block = get_help_reference(&command_path, Some(80));
 
     // Format the section: heading, main content, command reference, then nested subdocs
-    let mut section = format!("## {}{}\n\n", full_command, heading_badge);
+    let mut section = format!("## {}\n\n", full_command);
 
     if !main_help.is_empty() {
         section.push_str(main_help.trim());

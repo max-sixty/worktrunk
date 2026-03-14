@@ -473,9 +473,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step for-each <span class="badge-experimental">experimental</span>
+## wt step for-each
 
-Run command in each worktree. Executes sequentially with real-time output; continues on failure.
+<span class="badge-experimental">experimental</span> Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -541,9 +541,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step prune <span class="badge-experimental">experimental</span>
+## wt step prune
 
-Remove worktrees merged into the default branch.
+<span class="badge-experimental">experimental</span> Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -611,9 +611,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step relocate <span class="badge-experimental">experimental</span>
+## wt step relocate
 
-Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+<span class="badge-experimental">experimental</span> Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
 Moves worktrees to match the configured `worktree-path` template.
 
