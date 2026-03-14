@@ -252,13 +252,15 @@ Decide how confident you are in the change:
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 ```
 
-**Self-authored PRs:** Bot-authored PRs should always be reviewed with full
-scrutiny — they are more likely to duplicate existing APIs, miss design intent,
-or introduce patterns that diverge from project conventions. If `PR_AUTHOR ==
-BOT_LOGIN`, you cannot approve — GitHub rejects self-approvals. Submit as
-COMMENT when there are concerns, or stay silent if there are none. **If staying
-silent, skip steps 4 (posting) and 6 (resolve threads) — proceed directly to
-step 5 (CI monitoring).**
+**Self-authored PRs (PR_AUTHOR == BOT_LOGIN):** Bot-authored PRs should always
+be reviewed with full scrutiny — they are more likely to duplicate existing
+APIs, miss design intent, or introduce patterns that diverge from project
+conventions. **Never attempt `gh pr review --approve` on self-authored PRs —
+GitHub rejects self-approvals.** Submit as COMMENT when there are concerns, or
+stay silent if there are none. **If staying silent, skip steps 4 (posting) and
+6 (resolve threads) — proceed directly to step 5 (CI monitoring).**
+
+**For non-self-authored PRs**, decide how confident you are:
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
@@ -424,9 +426,10 @@ After approving or staying silent, monitor CI using the approach from
 
 ### 6. Resolve handled suggestions
 
-After submitting the review, check if any unresolved review threads from the bot
-have been addressed. You've already read the changed files during review — if a
-suggestion was applied or the issue was otherwise fixed, resolve the thread.
+**Only after CI passes in step 5.** Check if any unresolved review threads from
+the bot have been addressed. You've already read the changed files during
+review — if a suggestion was applied or the issue was otherwise fixed, resolve
+the thread. Do not resolve threads before CI confirms the fix is green.
 
 Use the file-based GraphQL pattern from `/running-in-ci` to avoid quoting
 issues with `$` variables:
