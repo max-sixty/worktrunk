@@ -86,8 +86,8 @@ jobs:
             git log --since='24 hours ago' --oneline main
             ```
 
-            If no commits were merged in the past 24 hours, skip Steps 2–3 (but still continue to
-            Steps 4–6 for issue management and the rolling survey).
+            If no commits were merged in the past 24 hours, skip Steps 2–3 and continue with the
+            remaining steps (issue management, rolling survey, reporting).
 
             ## Step 2: Review the aggregate diff
 
