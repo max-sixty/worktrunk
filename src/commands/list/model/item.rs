@@ -139,10 +139,10 @@ pub enum ItemKind {
 
 /// Unified item for displaying worktrees and branches in the same table.
 ///
-/// Column-rendered `Option<T>` fields use `None` = not loaded (render shows placeholder),
-/// `Some(T)` = loaded (render the value, which may itself be "empty/zero").
-/// `Option<Option<T>>` is used when the inner type has no "empty" state (`pr_status`, `summary`).
-/// Render code must check `is_none()` → placeholder before checking for empty data.
+/// Column-rendered fields are `Option<U>` where the outer `Option` encodes whether data
+/// was collected (`None` = not loaded, render shows placeholder). The inner type `U` is
+/// whatever the data naturally is — e.g., `AheadBehind` (always has a value, even if zero)
+/// or `Option<PrStatus>` (CI may not exist).
 #[derive(serde::Serialize)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
