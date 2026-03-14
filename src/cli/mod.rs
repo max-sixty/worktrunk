@@ -1042,9 +1042,20 @@ wt step push
 - `relocate` — [experimental] Move worktrees to expected paths
 - `<alias>` — [experimental] Run a configured command alias
 
+## See also
+
+- [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [`wt hook`](@/hook.md) — Run configured hooks
+
+<!-- subdoc: commit -->
+<!-- subdoc: squash -->
+<!-- subdoc: copy-ignored -->
+<!-- subdoc: for-each -->
+<!-- subdoc: prune -->
+<!-- subdoc: relocate -->
 ## Aliases
 
-Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml
@@ -1062,18 +1073,7 @@ wt step deploy --yes                      # skip approval prompt
 
 When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
 
-Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
-
-## See also
-
-- [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [`wt hook`](@/hook.md) — Run configured hooks
-<!-- subdoc: commit -->
-<!-- subdoc: squash -->
-<!-- subdoc: copy-ignored -->
-<!-- subdoc: for-each -->
-<!-- subdoc: prune -->
-<!-- subdoc: relocate -->"#
+Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run."#
     )]
     Step {
         #[command(subcommand)]
