@@ -1913,7 +1913,7 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     );
 }
 
-/// Test that `{{ branch }}` in pre-switch hooks reflects the destination branch, not the source.
+/// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
 #[rstest]
 fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature-dest");

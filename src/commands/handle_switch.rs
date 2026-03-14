@@ -34,10 +34,10 @@ pub struct SwitchOptions<'a> {
     pub verify: bool,
 }
 
-/// Run pre-switch hooks after branch resolution but before worktree creation.
+/// Run pre-switch hooks before branch resolution or worktree creation.
 ///
-/// The hook context uses the **destination** branch as `{{ branch }}`, so hooks
-/// can inspect or validate the target before the switch proceeds.
+/// The hook context uses the **destination** branch argument as `{{ branch }}`,
+/// so hooks receive the user's raw input before resolution.
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -193,7 +193,14 @@ pub fn handle_switch(
         }
     });
 
-    // Resolve the target branch first so pre-switch hooks can inspect it via {{ branch }}.
+    // Run pre-switch hooks before branch resolution or worktree creation.
+    // {{ branch }} receives the raw user input (before resolution).
+    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+    if verify && !is_recovered {
+        run_pre_switch_hooks(&repo, config, branch, yes)?;
+    }
+
+    // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
             Some(ref ctx) => match err.downcast::<GitError>() {
@@ -207,12 +214,6 @@ pub fn handle_switch(
             None => err,
         }
     })?;
-
-    // Run pre-switch hooks after branch resolution so {{ branch }} is the destination.
-    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-    if verify && !is_recovered {
-        run_pre_switch_hooks(&repo, config, plan.branch(), yes)?;
-    }
 
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point

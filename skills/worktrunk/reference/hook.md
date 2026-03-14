@@ -27,7 +27,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ## pre-switch
 
-Runs before every `wt switch` — after branch resolution but before worktree creation. `{{ branch }}` reflects the destination branch, so hooks can inspect or validate the target. Failure aborts the switch.
+Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
 
 ```toml
 [pre-switch]
