@@ -425,7 +425,7 @@ Commands with pages: merge, switch, remove, list"
 /// | CLI source | Web docs |
 /// |------------|----------|
 /// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
-/// | `[experimental]` | `<span class="badge-experimental">experimental</span>` |
+/// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
 /// | plain URL | markdown link |
 ///
 /// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
