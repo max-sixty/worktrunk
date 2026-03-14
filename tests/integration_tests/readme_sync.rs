@@ -1582,8 +1582,12 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
 
-    // Replace Zola shortcodes with plain text
+    // Replace experimental markers (shortcode and HTML badge) with plain text
     let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
+    let content = content.replace(
+        "<span class=\"badge-experimental\">experimental</span>",
+        "[experimental]",
+    );
 
     // Transform Zola internal links to full URLs
     let content = ZOLA_LINK_PATTERN
