@@ -425,7 +425,7 @@ Commands with pages: merge, switch, remove, list"
 /// | CLI source | Web docs |
 /// |------------|----------|
 /// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
-/// | `[experimental]` | `<span class="badge-experimental">experimental</span>` |
+/// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
 /// | plain URL | markdown link |
 ///
 /// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
@@ -441,10 +441,11 @@ fn post_process_for_html(text: &str) -> String {
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
-        // Experimental badges — styled pill labels for web docs
+        // Experimental badges — empty span, text added via CSS ::after.
+        // Empty so the span doesn't affect Zola's heading slug generation.
         .replace(
             "[experimental]",
-            "<span class=\"badge-experimental\">experimental</span>",
+            "<span class=\"badge-experimental\"></span>",
         )
         // Convert plain URL references to markdown links for web docs
         // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."
@@ -572,6 +573,18 @@ fn format_subcommand_section(
     let raw_help = combine_command_docs(sub);
     let raw_help = raw_help.replace("```console\n", "```bash\n");
 
+    // Extract [experimental] marker from content start → badge on heading instead.
+    // The badge span is empty — text comes from CSS ::after — so it doesn't affect
+    // Zola's heading slug generation or page TOC entries.
+    let (heading_badge, raw_help) = if let Some(rest) = raw_help.strip_prefix("[experimental] ") {
+        (
+            " <span class=\"badge-experimental\"></span>",
+            rest.to_string(),
+        )
+    } else {
+        ("", raw_help)
+    };
+
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
     let subdoc_marker = "<!-- subdoc:";
     let (main_content, subdoc_content) = if let Some(pos) = raw_help.find(subdoc_marker) {
@@ -598,7 +611,7 @@ fn format_subcommand_section(
     let reference_block = get_help_reference(&command_path, Some(80));
 
     // Format the section: heading, main content, command reference, then nested subdocs
-    let mut section = format!("## {}\n\n", full_command);
+    let mut section = format!("## {full_command}{heading_badge}\n\n");
 
     if !main_help.is_empty() {
         section.push_str(main_help.trim());

@@ -167,7 +167,7 @@ build = "cargo build --release"
 
 ## User hooks
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides-experimental).
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
 
 ```toml
 # ~/.config/worktrunk/config.toml
