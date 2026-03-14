@@ -63,6 +63,22 @@ pub(crate) fn run_pre_switch_hooks(
     Ok(())
 }
 
+/// Hook types that apply after a switch operation.
+///
+/// Creates trigger post-create + post-start + post-switch hooks;
+/// existing worktrees trigger only post-switch.
+fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
+    if is_create {
+        &[
+            HookType::PostCreate,
+            HookType::PostStart,
+            HookType::PostSwitch,
+        ]
+    } else {
+        &[HookType::PostSwitch]
+    }
+}
+
 /// Approve switch hooks upfront and show "Commands declined" if needed.
 ///
 /// Returns `true` if hooks are approved to run.
@@ -79,18 +95,7 @@ pub(crate) fn approve_switch_hooks(
     }
 
     let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
-    let approved = if plan.is_create() {
-        approve_hooks(
-            &ctx,
-            &[
-                HookType::PostCreate,
-                HookType::PostStart,
-                HookType::PostSwitch,
-            ],
-        )?
-    } else {
-        approve_hooks(&ctx, &[HookType::PostSwitch])?
-    };
+    let approved = approve_hooks(&ctx, switch_post_hook_types(plan.is_create()))?;
 
     if !approved {
         eprintln!(
@@ -363,25 +368,10 @@ fn validate_switch_templates(
     let project_config = repo.load_project_config()?;
     let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
 
-    let hook_types: &[HookType] = if plan.is_create() {
-        &[
-            HookType::PostCreate,
-            HookType::PostStart,
-            HookType::PostSwitch,
-        ]
-    } else {
-        &[HookType::PostSwitch]
-    };
-
-    for &hook_type in hook_types {
-        let configs = [
-            ("user", user_hooks.get(hook_type)),
-            (
-                "project",
-                project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
-            ),
-        ];
-        for (source, cfg) in configs {
+    for &hook_type in switch_post_hook_types(plan.is_create()) {
+        let (user_cfg, proj_cfg) =
+            super::hooks::lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
+        for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
                     let name = match &cmd.name {

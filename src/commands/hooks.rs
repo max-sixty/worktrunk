@@ -409,7 +409,7 @@ pub fn run_hook_with_filter(
 }
 
 /// Look up user and project configs for a given hook type.
-fn lookup_hook_configs<'a>(
+pub(crate) fn lookup_hook_configs<'a>(
     user_hooks: &'a worktrunk::config::HooksConfig,
     project_config: Option<&'a worktrunk::config::ProjectConfig>,
     hook_type: HookType,
