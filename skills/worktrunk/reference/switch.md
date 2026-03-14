@@ -16,7 +16,7 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 ## Creating a branch
 
-The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch — standard git behavior.
+The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
 ## Creating worktrees
 
@@ -29,7 +29,7 @@ When creating a worktree, worktrunk:
 3. Switches to new directory
 4. Runs [post-create hooks](https://worktrunk.dev/hook/#post-create) (blocking)
 5. Spawns [post-start hooks](https://worktrunk.dev/hook/#post-start) (background)
-6. Runs [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background)
+6. Spawns [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background)
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
