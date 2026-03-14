@@ -190,6 +190,15 @@ symbol is shown (listed in priority order):
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m 
 content integrated).
 
+[32mPlaceholder symbols[0m
+
+These appear across all columns while the table is loading:
+
+ Symbol                      Meaning                       
+ ────── ────────────────────────────────────────────────── 
+ [2m⋯[0m      Data is loading                                    
+ [2m·[0m      Skipped — collection timed out or branch too stale 
+
 [2m────────────────────────────────────────────────────────────────────────────────[0m
 
 [1m[32mJSON output[0m

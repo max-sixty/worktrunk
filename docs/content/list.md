@@ -152,6 +152,15 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 
 Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
 
+### Placeholder symbols
+
+These appear across all columns while the table is loading:
+
+| Symbol | Meaning |
+|--------|---------|
+| `⋯` | Data is loading |
+| `·` | Skipped — collection timed out or branch too stale |
+
 ---
 
 ## JSON output
