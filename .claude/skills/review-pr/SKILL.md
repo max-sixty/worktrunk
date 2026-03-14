@@ -38,8 +38,8 @@ LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
 ```
 
 If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
-silently. The only exception: a conversation comment asks the bot a question
-(checked below).
+silently. The only exception: an unanswered conversation question directed at
+the bot (check below).
 
 If the bot reviewed a previous commit (`LAST_REVIEW_SHA` exists but differs from
 `HEAD_SHA`), check the incremental changes:
@@ -54,8 +54,7 @@ If the incremental changes are trivial, skip the full review (steps 2-3) — the
 existing review stands. Still proceed to step 6 to resolve any bot threads
 addressed by the new changes, then exit. Rough heuristic: changes under ~20
 added+deleted lines that don't introduce new functions, types, or control flow
-are typically trivial (review feedback addressed, CI/formatting fixes, small
-corrections). Only proceed with a full review for non-trivial changes.
+are typically trivial.
 
 Then read all previous bot feedback and conversation:
 
@@ -73,19 +72,12 @@ gh api "repos/$REPO/issues/<number>/comments" --paginate \
   --jq '.[] | {author: .user.login, body: .body}'
 ```
 
-**Do not repeat any point from previous reviews.** If a previous review already
-noted an issue, don't raise it again. Before posting inline comments,
-cross-reference against previous bot comments — skip if same file, same point.
-
-If a conversation comment asks the bot a question (mentions `$BOT_LOGIN`,
-replies to a bot comment, or is clearly directed at the reviewer), check whether
-the bot already answered it — look for a bot comment posted **after** the
-question's timestamp. When a new push triggers a second review run while the
-first is still responding, both runs see the same unanswered question. Skip
-questions that already have a bot reply to avoid duplicate responses.
-
-Address unanswered questions in the review body (not as standalone conversation
-comments via `gh pr comment`).
+**Do not repeat any point from previous reviews** — cross-reference previous bot
+comments before posting inline comments. When concurrent runs race (a new push
+while the first run is still responding), both see the same unanswered
+question — check whether a bot reply exists after the question's timestamp
+before answering. Address unanswered questions in the review body (not via
+`gh pr comment`).
 
 ### 2. Read and understand the change
 
@@ -97,7 +89,9 @@ comments via `gh pr comment`).
 
 ### 3. Review
 
-Review design first, then tactical checklist.
+Scale depth to the change. A docs-only PR or a mechanical rename needs a skim
+for correctness, not the full checklist. A new algorithm or state-management
+change needs trace analysis. Don't over-analyze trivial changes.
 
 **Idiomatic Rust and project conventions:**
 
@@ -120,8 +114,7 @@ Review design first, then tactical checklist.
 - Could the changes break existing functionality?
 - Are error messages helpful and consistent with the project style?
 - Does new code use `.expect()` or `.unwrap()` in functions returning `Result`?
-  These should use `?` or `bail!` instead — panics in fallible code bypass error
-  handling.
+  These should use `?` or `bail!` instead.
 - **Trace failure paths, don't just note error handling exists.** For code that
   modifies state through multiple fallible steps, walk through what happens when
   each `?` fires. What has already been mutated? Is the system left in a
@@ -135,34 +128,20 @@ Review design first, then tactical checklist.
 
 **Documentation accuracy:**
 
-When a PR changes behavior, check that related documentation still matches.
-This is a common source of staleness — new features get added or behavior
-changes, but help text, config comments, and doc pages aren't updated.
+When a PR changes behavior, check that related documentation still matches:
 
 - Does `after_long_help` in `src/cli/mod.rs` and `src/cli/config.rs` still
   describe what the code does? (These are the primary sources for doc pages.)
 - Do inline TOML comments in config examples match the actual behavior?
-- Are references to CLI commands still valid? (e.g., a migration note
-  referencing `wt config show` when the right command is `wt config update`)
 - If a new feature was added, does the relevant help text mention it?
 
 **Same pattern elsewhere:**
 
 When a PR fixes a bug or changes a pattern, search for the same pattern in
-other files. A fix applied to one location often needs to be applied to sibling
-files. For example, if a PR fixes a broken path in one workflow file, grep for
-the same broken path across all workflow files.
+other files. If found in the diff, add inline suggestions; if found outside the
+diff, offer to push a fix commit.
 
-```bash
-# Example: PR fixes `${{ env.HOME }}` in one workflow — check all workflows
-rg 'env\.HOME' .github/workflows/
-```
-
-If the same issue exists in files already in the diff, add inline suggestions
-fixing each occurrence. If the occurrence is in a file **not in the diff**,
-offer to push a fix commit with the correction.
-
-**Duplication check (mandatory for new functions/types):**
+**Duplication check (for new functions/types):**
 
 For every new public or module-level function added in the diff, search the
 codebase for existing functions that do the same thing. LLM-generated code
@@ -181,177 +160,86 @@ Two search strategies, both required:
 
 2. **Overlapping subgoals.** Identify the intermediate steps the new code
    performs (e.g., iterating remotes, parsing URLs, resolving an org name) and
-   search for existing code that does the same sub-tasks. Then read the
-   functions *that code* consumes — shared helpers often already exist one
-   layer down:
+   search for existing code that does the same sub-tasks:
 
    ```bash
    # New code iterates remotes and parses URLs — who else does that?
    rg "all_remote_urls|remote_url|GitRemoteUrl::parse" --type rust
-   # New code shells out to `git remote -v` — is there an existing wrapper?
-   rg "git remote|remote_urls" --type rust
    ```
 
-If an existing function does substantially the same thing, flag it — reuse is
-almost always better than a parallel implementation. If shared helpers exist
-for the sub-steps, suggest using them instead of reimplementing.
+Flag duplicates — reuse is almost always better than a parallel implementation.
 
 ### 4. Submit
 
-#### Staleness check
-
-Before posting, verify the PR hasn't received new commits since you started:
-
-```bash
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-# HEAD_SHA was captured in pre-flight (step 1)
-CURRENT_HEAD=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
-if [ "$CURRENT_HEAD" != "$HEAD_SHA" ]; then
-  echo "HEAD moved — newer commit will trigger a fresh review"
-  exit 0
-fi
-```
-
-If HEAD moved, skip posting. A newer workflow run will review the latest code.
-
-#### What to post
-
-Separate internal analysis from postable feedback. The review exists to help the
-author improve the code — not to demonstrate understanding.
-
-Every comment must be **actionable** — the author can do something with it:
-
-| Don't post (internal analysis) | Post (actionable) |
-|---|---|
-| "The fix correctly delegates to `default_config_path()`" | "The error hints still reference `$XDG_CONFIG_HOME` but the code uses `etcetera` now" |
-| "The threshold logic is correct — spacing reclaim matches allocation" | _(nothing — silence means correct)_ |
-| "Good use of `Iterator::scan` here" | "This `.collect::<Vec<_>>()` is only iterated once — can stay as an iterator" |
-
-**Rules:**
-
-- **Don't explain what the code does.** The author wrote it.
-- **If the code needs explanation for future readers**, suggest a docstring or
-  inline comment — as a code suggestion, not prose.
-- **Always use inline suggestions** for concrete fixes — never put replacement
-  code as a fenced code block in the review body. If you can name the file,
-  line, and new text, it must be a `suggestion` block on that line via the
-  review API. The review body is only for summary text.
-- **Explain *why*** something should change, not just *what*.
-- **Distinguish severity** — "should fix" vs. "nice to have".
-- **Don't nitpick formatting** — that's what linters are for.
-
-**Never post a comment with nothing useful to contribute.** If there are no
-issues, the author doesn't need to hear that. Use the LGTM verdict (approve
-with empty body) or stay silent.
-
-#### Verdict
-
-Decide how confident you are in the change:
-
-```bash
-PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
-```
-
-**Self-authored PRs:** Bot-authored PRs should always be reviewed with full
-scrutiny — they are more likely to duplicate existing APIs, miss design intent,
-or introduce patterns that diverge from project conventions. If `PR_AUTHOR ==
-BOT_LOGIN`, you cannot approve — GitHub rejects self-approvals. Submit as
-COMMENT when there are concerns, or stay silent if there are none. **If staying
-silent, skip steps 4 (posting) and 6 (resolve threads) — proceed directly to
-step 5 (CI monitoring).**
-
-- **Confident** (small, mechanical, well-tested): Approve.
-- **Moderately confident** (non-trivial but looks correct): Approve.
-
-When approving with no issues, approve with an empty body:
+**If there are no issues, approve with an empty body — silence means correct.**
 
 ```bash
 gh pr review <number> --approve -b ""
 ```
 
-- **Looks good but not confident enough to approve** (unfamiliar module, subtle
-  logic, want human eyes): Don't approve. Instead, add a `+1` reaction to
-  signal "I reviewed this and it looks reasonable, but a human should decide":
+If there are actionable findings, submit as a review with inline suggestions
+for concrete fixes. Every comment must give the author something to act on:
+
+| Don't post (internal analysis) | Post (actionable) |
+|---|---|
+| "The fix correctly delegates to `default_config_path()`" | "The error hints still reference `$XDG_CONFIG_HOME` but the code uses `etcetera` now" |
+| "The threshold logic is correct" | _(nothing — silence means correct)_ |
+| "Good use of `Iterator::scan` here" | "This `.collect::<Vec<_>>()` is only iterated once — can stay as an iterator" |
+
+Don't explain what the code does — the author wrote it. Don't nitpick
+formatting — that's what linters are for. Explain *why* something should
+change, not just *what*.
+
+**Form your own opinion independently.** Do not factor in other reviewers'
+comments or approvals when deciding whether to approve — the value of this
+review is as an uncorrelated signal.
+
+**When confidence is low**, go beyond checking the implementation — question the
+approach: "Does this bypass or duplicate an existing API?" "What does this
+change *not* handle?" If the design involves a judgment call, flag it for human
+review as a COMMENT.
+
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): GitHub rejects self-approvals.
+Submit as COMMENT when there are concerns, or stay silent and skip to step 5.
+
+**Not confident enough to approve** (unfamiliar module, subtle logic): Add a
+`+1` reaction instead — no review needed unless there are specific observations.
 
 ```bash
 gh api "repos/$REPO/issues/<number>/reactions" -f content="+1"
 ```
 
-  If there are specific observations (not blocking, just noting), combine the
-  reaction with a COMMENT review. If there's nothing to say beyond "looks fine
-  to me", the reaction alone is sufficient — no review needed.
+#### Posting mechanics
 
-- **Unsure** (complex logic, edge cases, untested paths): Run tests locally
-  (`cargo run -- hook pre-merge --yes`) if the toolchain is available. Otherwise
-  submit as COMMENT noting specific concerns.
+Before posting, verify HEAD hasn't moved and no review was already posted for
+this commit:
 
-**Confidence factors:**
-
-Increases confidence: small diffs, existing test coverage, mechanical changes,
-author has deep familiarity with the affected code.
-
-Decreases confidence: new algorithms, concurrency, error handling changes,
-untested paths, author hasn't contributed to the affected module before,
-LLM-generated code (may duplicate existing APIs or miss design intent).
-
-**Form your own opinion independently.** Do not factor in other reviewers'
-comments or approvals when deciding whether to approve. The value of this review
-is as an uncorrelated signal — reflecting others' opinions back adds no
-information. Evaluate the code on its own merits.
-
-**LLM-generated PRs** have a high rate of
-duplicating existing internal APIs because the author lacks codebase context.
-Always run the duplication check above, and read the existing modules that the
-new code touches (not just the diff) before approving.
-
-**When confidence is low**, go beyond checking the implementation — question the
-approach:
-
-- "Does this bypass or duplicate an existing API?"
-- "What does this change *not* handle?"
-- Check that the fix doesn't introduce a different class of bug (e.g., ignoring
-  config overrides, using fixed sleeps instead of polling).
-- If the design involves a judgment call, flag it for human review as a COMMENT.
-
-#### Posting
-
-Post exactly one review per run. API calls can succeed server-side while
-appearing to hang, so always verify before calling `gh pr review`:
 ```bash
-# NOTE: REST API uses .commit_id (not .commit.oid which is the gh pr view --json field)
-gh api "repos/$REPO/pulls/<number>/reviews" \
-  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\" and .commit_id == \"$HEAD_SHA\")] | last | .submitted_at // empty"
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
+CURRENT_HEAD=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+[ "$CURRENT_HEAD" != "$HEAD_SHA" ] && echo "HEAD moved — skipping" && exit 0
+
+# NOTE: REST API uses .commit_id (not .commit.oid from gh pr view --json)
+ALREADY_POSTED=$(gh api "repos/$REPO/pulls/<number>/reviews" \
+  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\" and .commit_id == \"$HEAD_SHA\")] | last | .submitted_at // empty")
+[ -n "$ALREADY_POSTED" ] && echo "Already reviewed — skipping" && exit 0
 ```
-If this returns a timestamp, the review is already posted — you're done.
-Otherwise, submit via `gh pr review`. Note that `--comment` requires a non-empty
-body (`-b ""` fails) — if there's nothing to say, use the approve-with-empty-body
-pattern instead.
 
-- Always give a verdict: **approve** or **comment**. Don't use "request changes"
-  (that implies authority to block).
-- **Don't use `gh pr comment`** — use review comments (`gh pr review` or
-  `gh api` for inline suggestions) so feedback is threaded with the review.
-- Don't repeat suggestions already made by humans or previous bot runs
-  (checked in step 1).
+Post exactly one review per run. Always give a verdict: **approve** or
+**comment** (never "request changes"). Use `gh pr review` for reviews, not
+`gh pr comment`. Note: `--comment` requires a non-empty body — if there's
+nothing to say, use the approve-with-empty-body pattern.
 
-**Inline suggestions are mandatory for specific fixes.** Whenever there's a
-concrete fix (typos, doc updates, naming, missing imports, minor refactors, any
-change expressible as replacement lines), post it as an inline suggestion on the
-exact line — never as a code block in the review body. Inline suggestions let
-the author apply with one click; code blocks in the body force them to find the
-line and copy-paste manually.
+**Inline suggestions are mandatory for concrete fixes.** Whenever there's a
+concrete fix (typos, doc updates, naming, missing imports, minor refactors),
+post it as an inline suggestion on the exact line — never as a code block in the
+review body. Inline suggestions let the author apply with one click; code blocks
+force them to find the line and copy-paste manually.
 
-**Exception: lines outside the diff.** If a fix targets a file or line not in
-the diff, offer to push a fix commit instead.
+For fixes targeting lines outside the diff, offer to push a fix commit instead.
 
-**Anti-pattern — code block in review body:**
-
-> The description on line 3 should be updated:
-> ```
-> description: new text here
-> ```
-
-**Correct — inline suggestion on the line:**
+Post inline suggestions via the review API:
 
 `````bash
 cat > /tmp/review-body.md << 'EOF'
@@ -371,7 +259,6 @@ cat > /tmp/review-payload.json << 'ENDJSON'
 }
 ENDJSON
 
-# Read body from file to avoid shell expansion issues
 BODY=$(cat /tmp/review-body.md)
 jq --arg body "$BODY" '.body = $body' /tmp/review-payload.json > /tmp/review-final.json
 
@@ -381,55 +268,34 @@ gh api "repos/$REPO/pulls/<number>/reviews" \
 `````
 
 **Do not** use `-f 'comments[0][path]=...'` flag syntax — `gh api` converts
-array indices to object keys (`{"0": {...}}` instead of `[{...}]`), which
-GitHub rejects.
+array indices to object keys, which GitHub rejects.
 
-- Use suggestions for any small fix — no limit on count.
 - If a review has both suggestions and prose observations, put the suggestions
   as inline comments and the prose in the review body.
-- Prose-only comments are for changes too large or uncertain for a direct
-  suggestion.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
   **Minimize the range** — only include lines that actually need changing. A
-  range that's too wide can delete correct code adjacent to the bug. Before
-  posting, verify that every line in [`start_line`, `line`] is either removed
-  or rewritten in the suggestion body.
+  range that's too wide can delete correct code adjacent to the fix.
 
 ### 5. Monitor CI
 
 After approving or staying silent, monitor CI using the approach from
 `/running-in-ci`.
 
-- **All required checks passed** → done, no further action.
-- **A check failed** → if it's a flaky test or unrelated infrastructure
-  failure, no action needed. If the failure is related to the PR changes:
-  1. Investigate the failure and post a follow-up review (COMMENT) with
-     analysis, inline suggestions, and an offer to fix. Same rules as
-     step 4 — no repeated points from previous reviews. **Post the analysis
-     first** — if the session times out before dismissing, a stale approval
-     (contradicted by red CI) is better than a bare dismissal with no context.
-  2. Dismiss the bot's approval if one exists. **Use PUT, not POST** — the
-     dismiss endpoint requires it:
-     ```bash
-     gh api "repos/$REPO/pulls/<number>/reviews/$REVIEW_ID/dismissals" \
-       -X PUT -f message="CI failed — <reason>"
-     ```
-     The GitHub API rejects empty dismiss messages, so always provide one.
-     Skip if already dismissed — redundant dismissals create timeline noise.
-
-  **Do NOT push fixes during CI monitoring on human-authored PRs.** The
-  step 7 consent rule still applies — post the analysis and offer to fix,
-  then wait for the author to accept. The `/running-in-ci` "fix and push"
-  pattern is for PRs you authored, not PRs you are reviewing.
+- **All required checks passed** → done.
+- **A check failed** and it's related to the PR → post a follow-up COMMENT
+  review with analysis and inline suggestions, then dismiss the bot's approval:
+  ```bash
+  # Use PUT, not POST — the dismiss endpoint requires it
+  gh api "repos/$REPO/pulls/<number>/reviews/$REVIEW_ID/dismissals" \
+    -X PUT -f message="CI failed — <reason>"
+  ```
+  Skip if already dismissed. **Do not push fixes on human-authored PRs** — post
+  the analysis and offer to fix, then wait for the author to accept.
 
 ### 6. Resolve handled suggestions
 
-After submitting the review, check if any unresolved review threads from the bot
-have been addressed. You've already read the changed files during review — if a
-suggestion was applied or the issue was otherwise fixed, resolve the thread.
-
-Use the file-based GraphQL pattern from `/running-in-ci` to avoid quoting
-issues with `$` variables:
+After submitting the review, check if any unresolved bot threads have been
+addressed by the new changes. Resolve threads where the suggestion was applied.
 
 ```bash
 cat > /tmp/review-threads.graphql << 'GRAPHQL'
@@ -489,10 +355,9 @@ can't be located.
 issues and there's no human author to act on feedback, commit and push the fix
 directly to the PR branch.
 
-**Human PRs**: Post inline suggestions first (one-click apply is fastest for the
-author). Additionally, **offer to push a commit** when the fixes are mechanical
-and correctness is obvious — e.g., "I can push these changes in a commit if
-you'd like." Only push after the author accepts the offer.
+**Human PRs**: Post inline suggestions first. Additionally, offer to push a
+commit when the fixes are mechanical and correctness is obvious. Only push
+after the author accepts.
 
 ```bash
 gh pr checkout <number>
