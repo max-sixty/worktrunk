@@ -67,9 +67,15 @@ jobs:
             ISSUE_NUMBER="${{ github.event.issue.number }}"
 
             if [ -z "${{ github.event.issue.pull_request.url }}" ]; then
-              # Plain issue — check if bot authored or commented
+              # Plain issue — check if bot authored, mentioned in body, or commented.
+              # The body check catches the case where the initial issues-event run
+              # was cancelled by concurrency before the bot could comment — without
+              # it, follow-up comments silently skip and the issue is never addressed.
               ISSUE_AUTHOR="${{ github.event.issue.user.login }}"
               if [ "$ISSUE_AUTHOR" = "worktrunk-bot" ]; then
+                exit 0
+              fi
+              if echo "$ISSUE_BODY" | grep -qF '@worktrunk-bot'; then
                 exit 0
               fi
               BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
@@ -107,6 +113,7 @@ jobs:
           exit 1
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
 
       - name: 📂 Checkout code
         if: steps.verify.outcome != 'failure'
