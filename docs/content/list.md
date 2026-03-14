@@ -24,7 +24,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries-experimental) of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -90,7 +90,7 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) <span class="badge-experimental">experimental</span> |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) <span class="badge-experimental"></span> |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status (`--full`) |
 | Path | Worktree directory |
@@ -117,7 +117,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries <span class="badge-experimental">experimental</span>
+### LLM summaries <span class="badge-experimental"></span>
 
 Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 

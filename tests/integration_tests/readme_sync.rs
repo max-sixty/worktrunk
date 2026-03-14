@@ -1585,7 +1585,7 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Replace experimental markers (shortcode and HTML badge) with plain text
     let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
     let content = content.replace(
-        "<span class=\"badge-experimental\">experimental</span>",
+        "<span class=\"badge-experimental\"></span>",
         "[experimental]",
     );
 

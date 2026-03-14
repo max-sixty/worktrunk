@@ -427,9 +427,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step for-each
+## wt step for-each [experimental]
 
-[experimental] Run command in each worktree. Executes sequentially with real-time output; continues on failure.
+Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -493,9 +493,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step promote
+## wt step promote [experimental]
 
-[experimental] Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
+Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
 
 **Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
 
@@ -565,9 +565,9 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step prune
+## wt step prune [experimental]
 
-[experimental] Remove worktrees merged into the default branch.
+Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -633,9 +633,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step relocate
+## wt step relocate [experimental]
 
-[experimental] Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
 Moves worktrees to match the configured `worktree-path` template.
 

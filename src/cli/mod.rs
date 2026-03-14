@@ -478,7 +478,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries-experimental) of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -1251,7 +1251,7 @@ build = "cargo build --release"
 
 ## User hooks
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides-experimental).
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
 
 ```toml
 # ~/.config/worktrunk/config.toml

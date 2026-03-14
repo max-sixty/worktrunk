@@ -165,7 +165,7 @@ With `summary = true` and [`commit.generation`](https://worktrunk.dev/config/#co
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](https://worktrunk.dev/llm-commits/#branch-summaries-experimental) for details.
+Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](https://worktrunk.dev/llm-commits/#branch-summaries) for details.
 
 ## JSON API
 
