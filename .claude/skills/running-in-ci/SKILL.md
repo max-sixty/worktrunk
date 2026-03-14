@@ -99,8 +99,9 @@ are not sufficient — CI runs on Linux, Windows, and macOS. If you report
 completion and CI later fails, the user has to come back and ask you to fix it
 again.
 
-Avoid `gh run watch` — it can hang indefinitely. Use the poll loop above
-instead, which has a natural bound on CI completion time.
+Avoid `gh run watch` and `gh pr checks --watch` — both can hang indefinitely.
+Use the poll loop above instead, which has a natural bound on CI completion
+time.
 
 ### Verifying local test failures before pushing
 
