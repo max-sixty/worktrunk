@@ -36,7 +36,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ## pre-switch
 
-Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (the source), not the destination. Failure aborts the switch.
+Runs before every `wt switch` — after branch resolution but before worktree creation. `{{ branch }}` reflects the destination branch, so hooks can inspect or validate the target. Failure aborts the switch.
 
 ```toml
 [pre-switch]

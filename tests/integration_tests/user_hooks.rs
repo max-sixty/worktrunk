@@ -1938,10 +1938,11 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
         "Pre-switch hook should have created marker"
     );
     let contents = fs::read_to_string(&marker_file).unwrap();
-    assert!(
-        contents.trim() == "feature-dest",
-        "{{ branch }} should be the destination branch 'feature-dest', got: '{}'",
-        contents.trim()
+    assert_eq!(
+        contents.trim(),
+        "feature-dest",
+        "{{{{ branch }}}} should be the destination branch 'feature-dest', got: '{}'",
+        contents.trim(),
     );
 }
 
