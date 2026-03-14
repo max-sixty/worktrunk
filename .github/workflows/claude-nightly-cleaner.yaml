@@ -3,7 +3,8 @@ name: claude-nightly-cleaner
 
 # Nightly code quality sweep — resolves merge conflicts on bot PRs, reviews all
 # commits merged to main in the past 24 hours for bugs, inconsistencies, and
-# improvement opportunities, and closes open issues resolved by recent merges.
+# improvement opportunities, closes open issues resolved by recent merges, and
+# performs a rolling survey of existing code/docs (full repo every 28 days).
 on:
   schedule:
     # Run at 6:17 AM UTC daily (off-peak minute)
@@ -50,7 +51,7 @@ jobs:
             actions: read
 
           prompt: |
-            You are running as a nightly code quality sweep. Your job has two phases: first resolve conflicts on bot PRs, then review recent commits.
+            You are running as a nightly code quality sweep. Your job has three phases: resolve conflicts on bot PRs, review recent commits, and survey a slice of existing code/docs.
 
             ## Step 0: Resolve conflicts on bot PRs
 
@@ -85,7 +86,8 @@ jobs:
             git log --since='24 hours ago' --oneline main
             ```
 
-            If no commits were merged in the past 24 hours, report "no changes to review" and exit.
+            If no commits were merged in the past 24 hours, skip Steps 2–3 (but still continue to
+            Steps 4–6 for issue management and the rolling survey).
 
             ## Step 2: Review the aggregate diff
 
@@ -141,13 +143,38 @@ jobs:
 
             Skip issues that are feature requests, discussions, or still partially unresolved.
 
-            ## Step 6: Report findings
+            ## Step 6: Rolling survey of existing code/docs
 
-            For each finding:
+            Every day, a different slice of the repo is surveyed so that all code and docs
+            are reviewed on a 28-day cycle — not just recently changed files.
+
+            Run `.github/scripts/todays-survey-files.sh` to get today's file list (typically ~10 files).
+            If the script outputs no files (shouldn't happen, but possible), skip this step.
+
+            For each file, read it and look for:
+
+            1. **Bugs or latent issues** — logic errors, off-by-ones, race conditions, panics in fallible paths
+            2. **Stale documentation** — comments, docstrings, or docs that no longer match behavior
+            3. **Dead code** — unused functions, unreachable branches, obsolete feature flags
+            4. **Simplification opportunities** — code that can be replaced by a simpler pattern,
+               unnecessary abstractions, duplicated logic that should be shared
+            5. **Missing tests** — public functions or important branches with no test coverage
+            6. **CLAUDE.md / skill drift** — do the project guidelines still match the code?
+
+            This is a survey, not a line-by-line audit. Spend roughly equal time per file —
+            don't rabbit-hole on one file at the expense of others. Note findings and move on.
+
+            Combine findings from this step with findings from the recent-commit review (Steps 1–3)
+            before proceeding to deduplication and reporting.
+
+            ## Step 7: Report findings
+
+            For each finding (from both recent-commit review and rolling survey):
 
             1. **Create a GitHub issue** with label `nightly-cleanup`:
                - Title: Clear, actionable description
-               - Body: Include the relevant commit(s), code location (file:line), description of the problem, and suggested fix
+               - Body: Include the relevant commit(s) or file location (file:line), description of the problem, and suggested fix
+               - For survey findings, note the file path and what was found
                - Use `gh issue create --label "nightly-cleanup"`
 
             2. **For confident fixes** (clear bugs, obvious missing tests, stale docs):
@@ -158,11 +185,12 @@ jobs:
                - Create a PR referencing the issue(s)
                - Poll CI with `gh pr checks <number>` every 60 seconds until all checks complete
 
-            ## Step 7: Summary
+            ## Step 8: Summary
 
-            If the codebase looks clean, report a brief summary:
-            - Number of commits reviewed
-            - Files changed
+            Report a brief summary:
+            - Number of commits reviewed (recent-commit phase)
+            - Number of files surveyed (rolling survey phase)
+            - Findings and actions taken
             - Assessment: clean / minor issues / needs attention
 
           claude_args: |
