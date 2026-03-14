@@ -190,7 +190,7 @@ pub struct ListItem {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamStatus>,
 
-    /// CI/PR status: None = not loaded, Some(None) = no CI, Some(Some(status)) = has CI
+    /// CI/PR status (inner Option: whether CI exists for this branch)
     pub pr_status: Option<Option<PrStatus>>,
 
     /// Dev server URL computed from project config template
@@ -200,7 +200,7 @@ pub struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
-    /// LLM-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
+    /// LLM-generated branch summary (inner Option: whether LLM produced a summary)
     #[serde(skip)]
     pub summary: Option<Option<String>>,
 

@@ -493,13 +493,9 @@ impl ColumnLayout {
                     return cell;
                 }
 
-                // pr_status is Option<Option<PrStatus>>:
-                // - None = not loaded yet (show spinner)
-                // - Some(None) = loaded, no CI (show nothing)
-                // - Some(Some(status)) = loaded with CI (show status)
                 match &item.pr_status {
-                    None => self.placeholder_cell(placeholder), // Not loaded yet
-                    Some(None) => StyledLine::new(),            // Loaded, no CI
+                    None => self.placeholder_cell(placeholder),
+                    Some(None) => StyledLine::new(), // No CI for this branch
                     Some(Some(pr_status)) => {
                         let mut cell = StyledLine::new();
                         cell.push_raw(
@@ -518,22 +514,16 @@ impl ColumnLayout {
                     self.render_text_cell(short_head, Some(Style::new().dimmed()))
                 }
             }
-            ColumnKind::Summary => {
-                // summary is Option<Option<String>>:
-                // - None = not loaded yet (show spinner)
-                // - Some(None) = no summary (blank)
-                // - Some(Some(text)) = has summary
-                match &item.summary {
-                    None => self.placeholder_cell(placeholder),
-                    Some(None) => StyledLine::new(),
-                    Some(Some(summary)) => {
-                        let mut cell = StyledLine::new();
-                        let msg = truncate_to_width(summary, max_summary_len);
-                        cell.push_styled(msg, Style::new());
-                        cell
-                    }
+            ColumnKind::Summary => match &item.summary {
+                None => self.placeholder_cell(placeholder),
+                Some(None) => StyledLine::new(),
+                Some(Some(summary)) => {
+                    let mut cell = StyledLine::new();
+                    let msg = truncate_to_width(summary, max_summary_len);
+                    cell.push_styled(msg, Style::new());
+                    cell
                 }
-            }
+            },
             ColumnKind::Message => {
                 let Some(ref commit) = item.commit else {
                     return self.placeholder_cell(placeholder);
