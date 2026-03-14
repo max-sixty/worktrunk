@@ -88,6 +88,9 @@ git branch -d feat{% end %}</td>
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](@/switch.md#interactive-picker)** — browse worktrees with live diff and log previews
 - **[Copy build caches](@/step.md)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries-experimental) per branch
+- **[PR checkout](@/switch.md#github-pull-requests)** — `wt switch pr:123` to jump straight to a PR's branch
+- **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -214,6 +217,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
   picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
+- Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::{UserConfig, expand_template, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
@@ -221,6 +221,11 @@ pub fn handle_switch(
     // If user declines, skip hooks but continue with worktree operation
     let hooks_approved = approve_switch_hooks(&repo, config, &plan, yes, verify)?;
 
+    // Pre-flight: validate all templates before mutation (worktree creation).
+    // Catches syntax errors and undefined variables early so a broken template
+    // doesn't leave behind a half-created worktree that blocks re-running.
+    validate_switch_templates(&repo, config, &plan, execute, execute_args, hooks_approved)?;
+
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
@@ -314,6 +319,93 @@ pub fn handle_switch(
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };
         execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+    }
+
+    Ok(())
+}
+
+/// Validate all templates that will be expanded after worktree creation.
+///
+/// Catches syntax errors and undefined variable references *before* the
+/// irreversible worktree creation, so a broken template doesn't leave behind
+/// a worktree that blocks re-running the command.
+///
+/// This is a best-effort pre-flight check: it catches definite errors (syntax,
+/// unknown variables) but cannot catch failures from conditional variables that
+/// are absent at expansion time (e.g., `upstream` when no tracking is configured).
+/// Such late failures propagate as normal errors — no panics.
+///
+/// ## Why only switch needs pre-flight validation
+///
+/// Switch is the only command where template failure after mutation creates a
+/// **blocking half-state**: `wt switch -c <branch>` creates a worktree, then if
+/// hook/--execute expansion fails, the worktree exists and the same command
+/// can't be re-run (branch already exists). Other commands don't have this
+/// problem:
+///
+/// - **Pre-operation hooks** (pre-merge, pre-remove, pre-commit) run before the
+///   irreversible operation, so template errors abort cleanly.
+/// - **Post-operation hooks** (post-merge, post-remove) run after the operation
+///   completed successfully — template failure is a missed notification, not a
+///   blocking state. The user can fix the template and run `wt hook` manually.
+///
+/// Validates:
+/// - `--execute` command template (if present)
+/// - `--execute` trailing arg templates (if present)
+/// - Hook templates (post-create, post-start, post-switch) from user and project config
+fn validate_switch_templates(
+    repo: &Repository,
+    config: &UserConfig,
+    plan: &SwitchPlan,
+    execute: Option<&str>,
+    execute_args: &[String],
+    hooks_approved: bool,
+) -> anyhow::Result<()> {
+    // Validate --execute template and trailing args
+    if let Some(cmd) = execute {
+        validate_template(cmd, repo, "--execute command")?;
+        for arg in execute_args {
+            validate_template(arg, repo, "--execute argument")?;
+        }
+    }
+
+    // Validate hook templates only when hooks will actually run
+    if !hooks_approved {
+        return Ok(());
+    }
+
+    let project_config = repo.load_project_config()?;
+    let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
+
+    let hook_types: &[HookType] = if plan.is_create() {
+        &[
+            HookType::PostCreate,
+            HookType::PostStart,
+            HookType::PostSwitch,
+        ]
+    } else {
+        &[HookType::PostSwitch]
+    };
+
+    for &hook_type in hook_types {
+        let configs = [
+            ("user", user_hooks.get(hook_type)),
+            (
+                "project",
+                project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
+            ),
+        ];
+        for (source, cfg) in configs {
+            if let Some(cfg) = cfg {
+                for cmd in cfg.commands() {
+                    let name = match &cmd.name {
+                        Some(n) => format!("{source} {hook_type}:{n}"),
+                        None => format!("{source} {hook_type} hook"),
+                    };
+                    validate_template(&cmd.template, repo, &name)?;
+                }
+            }
+        }
     }
 
     Ok(())

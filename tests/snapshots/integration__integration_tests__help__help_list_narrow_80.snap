@@ -79,9 +79,14 @@ optional CI status and LLM summaries.
 
 The table renders progressively: branch names, paths, and commit hashes appear 
 immediately, then status, divergence, and other columns fill in as background 
-git operations complete. With [2m--full[0m, CI status fetches from the network and LLM
- summaries are generated — the table displays instantly and columns fill in as 
-results arrive.
+git operations complete.
+
+[1m[32mFull mode[0m
+
+[2m--full[0m adds columns that require network access or LLM calls: CI status 
+(GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and 
+LLM-generated summaries of each branch's changes. The table displays instantly 
+and columns fill in as results arrive.
 
 [1m[32mExamples[0m
 
@@ -189,6 +194,15 @@ symbol is shown (listed in priority order):
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m 
 content integrated).
+
+[32mPlaceholder symbols[0m
+
+These appear across all columns while the table is loading:
+
+ Symbol                      Meaning                       
+ ────── ────────────────────────────────────────────────── 
+ [2m⋯[0m      Data is loading                                    
+ [2m·[0m      Skipped — collection timed out or branch too stale 
 
 [2m────────────────────────────────────────────────────────────────────────────────[0m
 
