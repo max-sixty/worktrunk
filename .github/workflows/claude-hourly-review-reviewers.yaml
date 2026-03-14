@@ -97,6 +97,8 @@ jobs:
 
             Compare each session against CLAUDE.md and project conventions. Flag anything where Claude's behavior diverged from the guidelines or produced a poor outcome. Include findings from the cross-check in Step 4.
 
+            **Not a problem:** CI polling time (waiting for checks to complete) is expected and acceptable, even if it takes 10-30 minutes. Do NOT flag sessions for spending time polling CI status. The `running-in-ci` skill instructs Claude to poll — this is working as intended.
+
             ## Step 6: Check for existing issues and PRs (deduplication)
 
             Because this job runs hourly, deduplication is critical. Before creating any new issue or PR, thoroughly check for existing ones that cover the same problem:
