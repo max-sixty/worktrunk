@@ -139,10 +139,12 @@ pub fn handle_squash(
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let any_hooks_exist = user_hooks.pre_commit.is_some()
-        || project_config
-            .as_ref()
-            .is_some_and(|c| c.hooks.pre_commit.is_some());
+    let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+        &user_hooks,
+        project_config.as_ref(),
+        HookType::PreCommit,
+    );
+    let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow verify: if user declines approval, skip hooks but continue squash
@@ -193,10 +195,8 @@ pub fn handle_squash(
         run_hook_with_filter(
             &ctx,
             HookCommandSpec {
-                user_config: user_hooks.pre_commit.as_ref(),
-                project_config: project_config
-                    .as_ref()
-                    .and_then(|c| c.hooks.pre_commit.as_ref()),
+                user_config: user_cfg,
+                project_config: proj_cfg,
                 hook_type: HookType::PreCommit,
                 extra_vars: &extra_vars,
                 name_filter: None,
