@@ -135,12 +135,11 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // Use stale rendering (·) for items where data didn't arrive within budget,
-            // normal rendering (⋯) otherwise. status_symbols is always set by completed
-            // tasks, so None means worker results didn't arrive for this item.
-            // Note: prunable worktrees also start with status_symbols: None, but collect()
-            // sets status_symbols for them in the post-drain loop. If that changes, this
-            // heuristic would false-positive on prunable items.
+            // status_symbols is None only when no task results arrived for this item
+            // (budget truncation). collect() sets it for all other items: via drain
+            // callbacks for items that received results, and the post-drain loop for
+            // prunable worktrees. Each column also shows the placeholder independently
+            // when its own data field is None.
             let rendered_line = if item.status_symbols.is_none() {
                 layout.render_list_item_stale(&item)
             } else {

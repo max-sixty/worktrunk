@@ -137,7 +137,12 @@ pub enum ItemKind {
     Branch,
 }
 
-/// Unified item for displaying worktrees and branches in the same table
+/// Unified item for displaying worktrees and branches in the same table.
+///
+/// Column-rendered `Option<T>` fields use `None` = not loaded (render shows placeholder),
+/// `Some(T)` = loaded (render the value, which may itself be "empty/zero").
+/// `Option<Option<T>>` is used when the inner type has no "empty" state (`pr_status`, `summary`).
+/// Render code must check `is_none()` → placeholder before checking for empty data.
 #[derive(serde::Serialize)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
@@ -265,10 +270,6 @@ impl ListItem {
 
     pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
         self.branch_diff.as_ref()
-    }
-
-    pub fn upstream(&self) -> UpstreamStatus {
-        self.upstream.clone().unwrap_or_default()
     }
 
     pub fn worktree_data(&self) -> Option<&WorktreeData> {
@@ -666,13 +667,6 @@ mod tests {
         let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         // New items have no branch_diff computed yet
         assert!(item.branch_diff().is_none());
-    }
-
-    #[test]
-    fn test_list_item_upstream() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        let upstream = item.upstream();
-        assert!(upstream.remote.is_none());
     }
 
     #[test]

@@ -287,6 +287,14 @@ For environment-dependent tests, use `Command::new()` with `.env()` to set varia
 
 ## Test Style
 
+### Snapshot env drift is cosmetic
+
+`insta_cmd` snapshots record the test's environment variables in an `env:` block.
+When test infrastructure changes add or reorder env vars (e.g., `NO_COLOR: ""`
+appearing in a snapshot that didn't have it before), the snapshot diff includes
+those lines even though the test output is unchanged. This is cosmetic drift —
+accept it without comment during review.
+
 ### Inline snapshots over multi-assert
 
 When a test checks formatted output, use `insta::assert_snapshot!` with an
