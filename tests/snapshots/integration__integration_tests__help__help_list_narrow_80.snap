@@ -152,8 +152,8 @@ get CI status detection. Results are cached for 30-60 seconds; use [2mwt config
 [32mLLM summaries [experimental][0m
 
 Reuses the [2mcommit.generation[0m command — the same LLM that generates commit 
-messages. Enable with [2msummary = true[0m in [2m[list][0m config. Results are cached until 
-the branch's diff changes.
+messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results 
+are cached until the branch's diff changes.
 
 [1m[32mStatus symbols[0m
 

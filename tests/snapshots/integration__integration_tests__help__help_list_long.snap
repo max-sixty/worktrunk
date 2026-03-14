@@ -136,7 +136,7 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 
 [32mLLM summaries [experimental][0m
 
-Reuses the [2mcommit.generation[0m command — the same LLM that generates commit messages. Enable with [2msummary = true[0m in [2m[list][0m config. Results are cached until the branch's diff changes.
+Reuses the [2mcommit.generation[0m command — the same LLM that generates commit messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results are cached until the branch's diff changes.
 
 [1m[32mStatus symbols[0m
 

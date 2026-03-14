@@ -547,7 +547,7 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 
 ### LLM summaries [experimental]
 
-Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config. Results are cached until the branch's diff changes.
+Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
 ## Status symbols
 
