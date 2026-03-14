@@ -74,7 +74,11 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With [2m--full[0m, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
+
+[1m[32mFull mode[0m
+
+[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and LLM-generated summaries of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 [1m[32mExamples[0m
 

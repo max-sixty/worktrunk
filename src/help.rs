@@ -364,6 +364,7 @@ Commands with pages: merge, switch, remove, list"
     // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
     let raw_help = combine_command_docs(sub);
+    let raw_help = raw_help.replace("```console\n", "```bash\n");
 
     // Split content at first subdoc placeholder
     let subdoc_marker = "<!-- subdoc:";
@@ -375,8 +376,7 @@ Commands with pages: merge, switch, remove, list"
 
     // Process main content (before subdocs)
     let main_help = {
-        let text = main_content.replace("```console\n", "```bash\n");
-        let text = expand_demo_placeholders(&text);
+        let text = expand_demo_placeholders(main_content);
         post_process_for_html(&text)
     };
 
@@ -570,6 +570,7 @@ fn format_subcommand_section(
 
     // Get combined docs: about + subtitle + after_long_help
     let raw_help = combine_command_docs(sub);
+    let raw_help = raw_help.replace("```console\n", "```bash\n");
 
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
     let subdoc_marker = "<!-- subdoc:";
@@ -581,8 +582,7 @@ fn format_subcommand_section(
 
     // Process main content (before any nested subdocs)
     let main_help = {
-        let text = main_content.replace("```console\n", "```bash\n");
-        let text = increase_heading_levels(&text);
+        let text = increase_heading_levels(main_content);
         post_process_for_html(&text)
     };
 

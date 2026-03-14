@@ -4,7 +4,11 @@ List worktrees and their status.
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
+
+## Full mode
+
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries-experimental) of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 ## Examples
 

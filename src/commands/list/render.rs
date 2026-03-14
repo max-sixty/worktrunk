@@ -400,11 +400,11 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::WorkingDiff => {
-                // TODO: show placeholder when data is missing (currently blank,
-                // inconsistent with other columns that show ⋯/· for unloaded data)
-                let Some(diff) = worktree_data.and_then(|data| data.working_tree_diff.as_ref())
-                else {
-                    return StyledLine::new();
+                let Some(data) = worktree_data else {
+                    return StyledLine::new(); // Branch item — no working tree
+                };
+                let Some(diff) = data.working_tree_diff.as_ref() else {
+                    return self.placeholder_cell(placeholder); // Not loaded yet
                 };
                 self.render_diff_cell(diff.added, diff.deleted)
             }
@@ -435,11 +435,11 @@ impl ColumnLayout {
                 self.render_text_cell(&path_str, text_style)
             }
             ColumnKind::Upstream => {
-                // TODO: show placeholder when data is missing (currently blank,
-                // inconsistent with other columns that show ⋯/· for unloaded data)
-                let upstream = item.upstream();
+                let Some(ref upstream) = item.upstream else {
+                    return self.placeholder_cell(placeholder); // Not loaded yet
+                };
                 let Some(active) = upstream.active() else {
-                    return StyledLine::new();
+                    return StyledLine::new(); // Loaded, no active upstream
                 };
                 // Show centered | when in sync instead of ⇡0  ⇣0
                 // Note: This duplicates the InSync check from Divergence::Special, but
@@ -493,13 +493,9 @@ impl ColumnLayout {
                     return cell;
                 }
 
-                // pr_status is Option<Option<PrStatus>>:
-                // - None = not loaded yet (show spinner)
-                // - Some(None) = loaded, no CI (show nothing)
-                // - Some(Some(status)) = loaded with CI (show status)
                 match &item.pr_status {
-                    None => self.placeholder_cell(placeholder), // Not loaded yet
-                    Some(None) => StyledLine::new(),            // Loaded, no CI
+                    None => self.placeholder_cell(placeholder),
+                    Some(None) => StyledLine::new(), // No CI for this branch
                     Some(Some(pr_status)) => {
                         let mut cell = StyledLine::new();
                         cell.push_raw(
@@ -518,22 +514,16 @@ impl ColumnLayout {
                     self.render_text_cell(short_head, Some(Style::new().dimmed()))
                 }
             }
-            ColumnKind::Summary => {
-                // summary is Option<Option<String>>:
-                // - None = not loaded yet (show spinner)
-                // - Some(None) = no summary (blank)
-                // - Some(Some(text)) = has summary
-                match &item.summary {
-                    None => self.placeholder_cell(placeholder),
-                    Some(None) => StyledLine::new(),
-                    Some(Some(summary)) => {
-                        let mut cell = StyledLine::new();
-                        let msg = truncate_to_width(summary, max_summary_len);
-                        cell.push_styled(msg, Style::new());
-                        cell
-                    }
+            ColumnKind::Summary => match &item.summary {
+                None => self.placeholder_cell(placeholder),
+                Some(None) => StyledLine::new(),
+                Some(Some(summary)) => {
+                    let mut cell = StyledLine::new();
+                    let msg = truncate_to_width(summary, max_summary_len);
+                    cell.push_styled(msg, Style::new());
+                    cell
                 }
-            }
+            },
             ColumnKind::Message => {
                 let Some(ref commit) = item.commit else {
                     return self.placeholder_cell(placeholder);
@@ -1373,5 +1363,93 @@ mod tests {
         item.summary = Some(Some("Add user authentication".into()));
         let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
+    }
+
+    #[test]
+    fn test_working_diff_placeholder_when_not_loaded() {
+        use super::super::layout::ColumnLayout;
+        use super::super::model::{ItemKind, ListItem, PositionMask};
+        use std::path::PathBuf;
+        use worktrunk::styling::{ADDITION, DELETION};
+
+        let col = ColumnLayout {
+            kind: ColumnKind::WorkingDiff,
+            header: "Working",
+            start: 0,
+            width: 9,
+            format: ColumnFormat::Diff(DiffColumnConfig {
+                positive_digits: 3,
+                negative_digits: 3,
+                total_width: 9,
+                display: DiffDisplayConfig {
+                    variant: super::super::columns::DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
+            }),
+        };
+
+        let mask = PositionMask::FULL;
+        let main_path = PathBuf::from("/tmp");
+
+        // Branch item (no worktree data) → blank, not placeholder
+        let branch_item = ListItem::new_branch("abc123".into(), "feat".into());
+        let cell = col.render_cell(&branch_item, &mask, &main_path, 50, 40, "⋯");
+        assert!(cell.render().is_empty(), "branch item should be blank");
+
+        // Worktree item with working_tree_diff: None → placeholder
+        let mut wt_item = ListItem::new_branch("abc123".into(), "feat".into());
+        wt_item.kind = ItemKind::Worktree(Box::default());
+        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, "⋯");
+        insta::assert_snapshot!(cell.render(), @"        [2m⋯[0m");
+
+        // Stale placeholder
+        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, "·");
+        insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
+    }
+
+    #[test]
+    fn test_upstream_placeholder_when_not_loaded() {
+        use super::super::layout::ColumnLayout;
+        use super::super::model::{ListItem, PositionMask, UpstreamStatus};
+        use std::path::PathBuf;
+        use worktrunk::styling::{ADDITION, DELETION};
+
+        let col = ColumnLayout {
+            kind: ColumnKind::Upstream,
+            header: "Remote⇅",
+            start: 0,
+            width: 7,
+            format: ColumnFormat::Diff(DiffColumnConfig {
+                positive_digits: 2,
+                negative_digits: 2,
+                total_width: 7,
+                display: DiffDisplayConfig {
+                    variant: super::super::columns::DiffVariant::UpstreamArrows,
+                    positive_style: ADDITION,
+                    negative_style: DELETION.dimmed(),
+                    always_show_zeros: false,
+                },
+            }),
+        };
+
+        let mask = PositionMask::FULL;
+        let main_path = PathBuf::from("/tmp");
+
+        // upstream: None (not loaded) → placeholder
+        let item = ListItem::new_branch("abc123".into(), "feat".into());
+        assert!(item.upstream.is_none());
+        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
+        insta::assert_snapshot!(cell.render(), @"      [2m⋯[0m");
+
+        // upstream: Some(default) (loaded, no active upstream) → blank
+        let mut item = ListItem::new_branch("abc123".into(), "feat".into());
+        item.upstream = Some(UpstreamStatus::default());
+        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
+        assert!(
+            cell.render().is_empty(),
+            "no active upstream should be blank"
+        );
     }
 }
