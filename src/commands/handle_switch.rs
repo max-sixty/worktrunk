@@ -34,20 +34,18 @@ pub struct SwitchOptions<'a> {
     pub verify: bool,
 }
 
-/// Run pre-switch hooks before branch validation or worktree creation.
+/// Run pre-switch hooks after branch resolution but before worktree creation.
 ///
-/// Uses current worktree context since the destination is unknown at this point.
+/// The hook context uses the **destination** branch as `{{ branch }}`, so hooks
+/// can inspect or validate the target before the switch proceeds.
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
+    target_branch: &str,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let current_branch = repo
-        .current_worktree()
-        .branch()
-        .context("Failed to determine current branch")?;
     let current_path = repo.current_worktree().path().to_path_buf();
-    let pre_ctx = CommandContext::new(repo, config, current_branch.as_deref(), &current_path, yes);
+    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
@@ -184,12 +182,6 @@ pub fn handle_switch(
         !config.resolved(project_id.as_deref()).switch.no_cd()
     });
 
-    // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
-    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-    if verify && !is_recovered {
-        run_pre_switch_hooks(&repo, config, yes)?;
-    }
-
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
     // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
@@ -201,7 +193,7 @@ pub fn handle_switch(
         }
     });
 
-    // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
+    // Resolve the target branch first so pre-switch hooks can inspect it via {{ branch }}.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
             Some(ref ctx) => match err.downcast::<GitError>() {
@@ -215,6 +207,12 @@ pub fn handle_switch(
             None => err,
         }
     })?;
+
+    // Run pre-switch hooks after branch resolution so {{ branch }} is the destination.
+    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+    if verify && !is_recovered {
+        run_pre_switch_hooks(&repo, config, plan.branch(), yes)?;
+    }
 
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point

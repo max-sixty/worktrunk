@@ -396,14 +396,14 @@ pub fn handle_select(
                 };
                 let config = repo.user_config();
 
-                // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+                // Resolve target branch first so pre-switch hooks can inspect it via {{ branch }}.
+                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
+
+                // Run pre-switch hooks after branch resolution.
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, true)?;
+                    run_pre_switch_hooks(&repo, config, plan.branch(), true)?;
                 }
-
-                // Switch to existing worktree or create new one
-                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
                 let hooks_approved = approve_switch_hooks(&repo, config, &plan, false, true)?;
                 let (result, branch_info) =
                     execute_switch(&repo, plan, config, false, hooks_approved)?;
