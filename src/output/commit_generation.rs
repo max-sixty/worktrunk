@@ -259,6 +259,44 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_recommended_commands() {
+        let config = "\
+# ### MyTool
+#
+# # [commit.generation]
+# # command = \"echo hello\"
+#
+# ### OtherTool
+#
+# # [commit.generation]
+# # command = \"jq -sr '[.[] | select(.type? == \\\"msg\\\")]'\"
+";
+        let commands = parse_recommended_commands(config);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands["MyTool"], "echo hello");
+        assert_eq!(
+            commands["OtherTool"],
+            r#"jq -sr '[.[] | select(.type? == "msg")]'"#
+        );
+    }
+
+    #[test]
+    fn test_parse_recommended_commands_ignores_non_command_lines() {
+        let config = "\
+# ### ToolA
+#
+# # [commit.generation]
+# # template = \"not a command\"
+# ### ToolB
+# # command = \"real command\"
+";
+        let commands = parse_recommended_commands(config);
+        // ToolA has no command line, ToolB does
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands["ToolB"], "real command");
+    }
+
+    #[test]
     fn test_llm_tool_display() {
         assert_eq!(format!("{}", LlmTool::Claude), "claude");
         assert_eq!(format!("{}", LlmTool::Codex), "codex");
