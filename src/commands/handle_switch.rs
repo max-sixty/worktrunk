@@ -335,6 +335,20 @@ pub fn handle_switch(
 /// are absent at expansion time (e.g., `upstream` when no tracking is configured).
 /// Such late failures propagate as normal errors — no panics.
 ///
+/// ## Why only switch needs pre-flight validation
+///
+/// Switch is the only command where template failure after mutation creates a
+/// **blocking half-state**: `wt switch -c <branch>` creates a worktree, then if
+/// hook/--execute expansion fails, the worktree exists and the same command
+/// can't be re-run (branch already exists). Other commands don't have this
+/// problem:
+///
+/// - **Pre-operation hooks** (pre-merge, pre-remove, pre-commit) run before the
+///   irreversible operation, so template errors abort cleanly.
+/// - **Post-operation hooks** (post-merge, post-remove) run after the operation
+///   completed successfully — template failure is a missed notification, not a
+///   blocking state. The user can fix the template and run `wt hook` manually.
+///
 /// Validates:
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
