@@ -80,9 +80,9 @@ fn execute_instant_removal_or_fallback(
             // directory ($env.PWD) remains valid until the wrapper has cd'd away.
             // Without this, shells that validate PWD (notably Nushell) emit errors
             // between binary exit and the cd directive executing.
-            if let Err(e) = std::fs::create_dir(worktree_path) {
-                log::debug!("Failed to create placeholder directory: {}", e);
-            }
+            // Best-effort: if create_dir fails (permissions, race), the only effect
+            // is that Nushell may still emit PWD errors — not a correctness issue.
+            let _ = std::fs::create_dir(worktree_path);
             build_remove_command_staged(&staged_path, worktree_path)
         }
         Err(e) => {
