@@ -580,6 +580,15 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 
 Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
 
+### Placeholder symbols
+
+These appear across all columns while the table is loading:
+
+| Symbol | Meaning |
+|--------|---------|
+| `⋯` | Data is loading |
+| `·` | Skipped — collection timed out or branch too stale |
+
 ---
 
 ## JSON output
@@ -1030,17 +1039,17 @@ wt step push
 
 ## Operations
 
-- `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
-- `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
+- [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](@/llm-commits.md)
+- [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
-- `copy-ignored` — Copy gitignored files between worktrees
-- `for-each` — [experimental] Run a command in every worktree
+- [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
+- [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
+- [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
 - `promote` — [experimental] Put a branch into the main worktree
-- `prune` — Remove worktrees and branches merged into the default branch
-- `relocate` — [experimental] Move worktrees to expected paths
-- `<alias>` — [experimental] Run a configured command alias
+- [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
+- [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`<alias>`](#aliases) — [experimental] Run a configured command alias
 
 ## See also
 
@@ -1049,6 +1058,7 @@ wt step push
 
 <!-- subdoc: commit -->
 <!-- subdoc: squash -->
+<!-- subdoc: diff -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: for-each -->
 <!-- subdoc: prune -->
