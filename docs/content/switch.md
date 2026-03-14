@@ -45,7 +45,7 @@ When creating a worktree, worktrunk:
 3. Switches to new directory
 4. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 5. Spawns [post-start hooks](@/hook.md#post-start) (background)
-6. Runs [post-switch hooks](@/hook.md#post-switch) (background)
+6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
