@@ -390,19 +390,34 @@ pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
 ///
 /// This is used after the worktree has been renamed to a staging path,
 /// git metadata has been pruned, and the branch has been deleted synchronously.
-/// The command just does `rm -rf` on the staged directory.
 ///
-/// No sleep is needed because:
-/// 1. The shell cd happens before the rename (directive file is written first)
-/// 2. The original worktree path no longer exists immediately after rename
-pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
+/// The delay mirrors `build_remove_command`'s `sleep 1`. After the rename,
+/// a placeholder directory is created at `original_path` so the shell's
+/// working directory remains valid until the wrapper has processed the `cd`
+/// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
+/// emit errors between binary exit and the `cd`.
+///
+/// The background command removes both the placeholder and the staged directory.
+pub fn build_remove_command_staged(
+    staged_path: &std::path::Path,
+    original_path: &std::path::Path,
+) -> String {
     use shell_escape::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
 
+    let original_path_str = original_path.to_string_lossy();
+    let original_escaped = escape(original_path_str.as_ref().into());
+
+    // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
+    // rmdir: remove the empty placeholder (safe — only removes empty directories).
+    // rm -rf: remove the staged worktree contents.
     // Use -- to prevent option parsing for paths starting with -
-    format!("rm -rf -- {}", staged_escaped)
+    format!(
+        "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
+        original_escaped, staged_escaped
+    )
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -597,11 +612,13 @@ mod tests {
     #[test]
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/my-project.feature.wt-removing-1234567890");
-        assert_snapshot!(build_remove_command_staged(&staged_path), @"rm -rf -- /tmp/my-project.feature.wt-removing-1234567890");
+        let original_path = PathBuf::from("/tmp/my-project.feature");
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/my-project.feature.wt-removing-1234567890");
 
         // Shell escaping for special characters (space in path)
         let special_path = PathBuf::from("/tmp/test worktree.wt-removing-123");
-        assert_snapshot!(build_remove_command_staged(&special_path), @"rm -rf -- '/tmp/test worktree.wt-removing-123'");
+        let special_original = PathBuf::from("/tmp/test worktree");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/test worktree.wt-removing-123'");
     }
 
     #[test]

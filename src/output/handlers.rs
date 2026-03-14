@@ -76,7 +76,14 @@ fn execute_instant_removal_or_fallback(
             {
                 log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
             }
-            build_remove_command_staged(&staged_path)
+            // Create an empty placeholder at the original path so the shell's working
+            // directory ($env.PWD) remains valid until the wrapper has cd'd away.
+            // Without this, shells that validate PWD (notably Nushell) emit errors
+            // between binary exit and the cd directive executing.
+            if let Err(e) = std::fs::create_dir(worktree_path) {
+                log::debug!("Failed to create placeholder directory: {}", e);
+            }
+            build_remove_command_staged(&staged_path, worktree_path)
         }
         Err(e) => {
             // Fallback: cross-filesystem, permissions, Windows file locking, etc.
