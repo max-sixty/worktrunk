@@ -514,7 +514,7 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) (experimental) |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status (`--full`) |
 | Path | Worktree directory |
@@ -541,7 +541,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries (experimental)
+### LLM summaries [experimental]
 
 With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
 
@@ -1707,7 +1707,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides (experimental)
+#### Setting overrides [experimental]
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 

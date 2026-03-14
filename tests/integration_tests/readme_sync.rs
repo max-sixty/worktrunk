@@ -1583,7 +1583,7 @@ fn transform_docs_for_skill(content: &str) -> String {
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
 
     // Replace Zola shortcodes with plain text
-    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "(experimental)");
+    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
 
     // Transform Zola internal links to full URLs
     let content = ZOLA_LINK_PATTERN

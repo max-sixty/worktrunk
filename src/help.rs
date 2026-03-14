@@ -4,6 +4,45 @@
 //! - Pager support for `--help` output (git-style)
 //! - Markdown rendering for help text
 //! - Web documentation generation via `--help-page` and `--help-md`
+//!
+//! # Web docs generation (`--help-page`)
+//!
+//! Each command page flows through several transforms before becoming web docs:
+//!
+//! ```text
+//! cli.rs (source of truth)
+//!   ├── after_long_help: markdown prose with [experimental] markers, `●` dots, plain URLs
+//!   └── doc comments (/// lines): definition + subtitle for lead paragraph
+//!         │
+//!         ▼
+//! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
+//!         │
+//!         ▼
+//! strip_experimental_prefix()    — for subdoc sections: moves leading [experimental]
+//!         │                        from paragraph into the ## heading
+//!         ▼
+//! post_process_for_html()        — text replacements on after_long_help markdown:
+//!         │                        [experimental] → badge <span>
+//!         │                        `●` green → colored <span>
+//!         │                        plain URLs → markdown links
+//!         ▼
+//! --help-page stdout             — markdown with embedded HTML spans
+//!         │
+//!         ▼  (readme_sync.rs test captures and writes to docs/)
+//!         │
+//! convert_command_reference_to_html()  — backtick-fenced --help blocks → {% terminal() %}
+//! expand_command_placeholders()        — ```bash wt list``` → snapshot terminal blocks
+//!         │
+//!         ▼
+//! docs/content/{command}.md      — final markdown consumed by Zola
+//! ```
+//!
+//! **Manually-written pages** (faq.md, llm-commits.md) bypass this pipeline.
+//! They use `{{ experimental() }}` (Zola shortcode) for badges.
+//!
+//! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
+//! which strips Zola syntax (terminal shortcodes, `{{ experimental() }}` → `[experimental]`)
+//! for plain-markdown consumption.
 
 use std::process;
 
@@ -341,7 +380,7 @@ Commands with pages: merge, switch, remove, list"
     let main_help = {
         let text = main_content.replace("```console\n", "```bash\n");
         let text = expand_demo_placeholders(&text);
-        colorize_ci_status_for_html(&text)
+        post_process_for_html(&text)
     };
 
     // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
@@ -367,7 +406,7 @@ Commands with pages: merge, switch, remove, list"
     std::println!("```");
 
     // Subdocs follow, each with their own command reference at the end.
-    // colorize_ci_status_for_html is already applied inside format_subcommand_section,
+    // post_process_for_html is already applied inside format_subcommand_section,
     // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
@@ -381,18 +420,22 @@ Commands with pages: merge, switch, remove, list"
     std::println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
 }
 
-/// Add HTML color spans for CI status dots in help page output.
-///
 /// Post-process CLI help content for web docs rendering.
 ///
-/// Transforms plain text markers into styled HTML for the docs site:
-/// - CI status dots (`●` green → colored spans)
-/// - Experimental badges (`[experimental]` → styled pill labels)
-/// - Plain URLs → markdown links
+/// Applies text replacements to `after_long_help` content before it becomes markdown
+/// in the docs site. Each replacement converts a CLI-friendly marker into styled HTML:
 ///
-/// This is the web-docs counterpart to md_help::colorize_status_symbols() which
-/// produces ANSI codes for terminal output.
-fn colorize_ci_status_for_html(text: &str) -> String {
+/// | CLI source | Web docs |
+/// |------------|----------|
+/// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
+/// | `[experimental]` | `<span class="badge-experimental">experimental</span>` |
+/// | plain URL | markdown link |
+///
+/// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
+/// through ANSI-to-HTML via `convert_command_reference_to_html` in readme_sync.rs).
+///
+/// The terminal counterpart is `md_help::colorize_status_symbols()`.
+fn post_process_for_html(text: &str) -> String {
     text
         // CI status colors (in table cells)
         .replace("`●` green", "<span style='color:#0a0'>●</span> green")
@@ -404,10 +447,6 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         // Experimental badges — styled pill labels for web docs
         .replace(
             "[experimental]",
-            "<span class=\"badge-experimental\">experimental</span>",
-        )
-        .replace(
-            "(experimental)",
             "<span class=\"badge-experimental\">experimental</span>",
         )
         // Convert plain URL references to markdown links for web docs
@@ -563,7 +602,7 @@ fn format_subcommand_section(
     let main_help = {
         let text = main_content.replace("```console\n", "```bash\n");
         let text = increase_heading_levels(&text);
-        colorize_ci_status_for_html(&text)
+        post_process_for_html(&text)
     };
 
     // Build command path from parent_name: "wt config" -> ["config", "create"]
@@ -591,7 +630,7 @@ fn format_subcommand_section(
     section.push_str("\n```\n");
 
     // Expand nested subdocs after the command reference.
-    // colorize_ci_status_for_html is already applied inside format_subcommand_section,
+    // post_process_for_html is already applied inside format_subcommand_section,
     // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &full_command);

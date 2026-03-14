@@ -27,7 +27,7 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
-Nushell (experimental) — save to vendor autoload directory:
+Nushell [experimental] — save to vendor autoload directory:
 ```console
 wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```"#
