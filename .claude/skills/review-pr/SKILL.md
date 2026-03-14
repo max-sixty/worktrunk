@@ -256,8 +256,10 @@ scrutiny — they are more likely to duplicate existing APIs, miss design intent
 or introduce patterns that diverge from project conventions. If `PR_AUTHOR ==
 BOT_LOGIN`, you cannot approve — GitHub rejects self-approvals. Submit as
 COMMENT when there are concerns, or stay silent if there are none. **If staying
-silent, skip steps 4 (posting) and 6 (resolve threads) — proceed directly to
-step 5 (CI monitoring).**
+silent, skip steps 4–6 entirely and exit.** CI monitoring serves two purposes:
+dismissing approvals on failure and reporting CI-related concerns. Neither
+applies when you can't approve and have nothing to say — polling wastes compute
+(~10 min per run).
 
 - **Confident** (small, mechanical, well-tested): Approve.
 - **Moderately confident** (non-trivial but looks correct): Approve.
