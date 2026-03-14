@@ -52,14 +52,8 @@ impl LlmTool {
     /// Parsed from the double-commented examples in dev/config.example.toml,
     /// which is the single source of truth for these commands.
     pub fn recommended_config(&self) -> &str {
-        RECOMMENDED_COMMANDS
-            .get(self.config_heading())
-            .unwrap_or_else(|| {
-                panic!(
-                    "recommended config for '{}' not found in config.example.toml",
-                    self.config_heading()
-                )
-            })
+        // Indexing is safe: all LlmTool variants have entries in the config example.
+        &RECOMMENDED_COMMANDS[self.config_heading()]
     }
 }
 
@@ -91,13 +85,9 @@ fn parse_recommended_commands(config: &str) -> HashMap<String, String> {
             && toml_part.starts_with("command = ")
             && let Some(heading) = current_heading.take()
         {
-            let table: toml::Table = toml::from_str(toml_part).unwrap_or_else(|e| {
-                panic!("invalid TOML in config example under '{heading}': {e}")
-            });
-            let cmd = table["command"]
-                .as_str()
-                .unwrap_or_else(|| panic!("'command' is not a string under '{heading}'"))
-                .to_string();
+            // Config example is compile-time data; unwrap is safe.
+            let table: toml::Table = toml_part.parse().unwrap();
+            let cmd = table["command"].as_str().unwrap().to_string();
             commands.insert(heading, cmd);
         }
     }
