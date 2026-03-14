@@ -151,12 +151,9 @@ get CI status detection. Results are cached for 30-60 seconds; use [2mwt config
 
 [32mLLM summaries (experimental)[0m
 
-With [2m--full[0m, [2msummary = true[0m, and a [2mcommit.generation[0m command configured, the 
-Summary column shows an LLM-generated one-line description of each branch's 
-changes relative to the default branch.
-
-Disabled by default — when enabled, each branch's diff is sent to the configured
- LLM for summarization. Results are cached until the diff changes.
+Reuses the [2mcommit.generation[0m command — the same LLM that generates commit 
+messages. Enable with [2msummary = true[0m in [2m[list][0m config. Results are cached until 
+the branch's diff changes.
 
 [1m[32mStatus symbols[0m
 

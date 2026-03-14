@@ -547,10 +547,7 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 
 ### LLM summaries (experimental)
 
-With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
-
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
-<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
+Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config. Results are cached until the branch's diff changes.
 
 ## Status symbols
 
