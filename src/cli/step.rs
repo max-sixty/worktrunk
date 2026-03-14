@@ -373,9 +373,9 @@ Note: This command is experimental and may change in future versions.
         args: Vec<String>,
     },
 
-    /// \[experimental\] Put a branch into the main worktree
+    /// \[experimental\] Swap a branch into the main worktree
     ///
-    /// The displaced branch moves to the promoted branch's worktree.
+    /// Exchanges branches and gitignored files between two worktrees.
     #[command(
         after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
 
@@ -413,7 +413,9 @@ Without an argument, promotes the current branch — or restores the default bra
 
 ## Gitignored files
 
-Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
+Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
+
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If `.git/` is on a different filesystem, it falls back to reflink copy.
 "#
     )]
     Promote {

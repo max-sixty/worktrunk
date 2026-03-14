@@ -9,7 +9,7 @@
 //!
 //! Standalone:
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
-//! - `handle_promote` - Put a branch into the main worktree
+//! - `handle_promote` - Swap a branch into the main worktree
 //! - `step_prune` - Remove worktrees merged into the default branch
 
 use std::fs;

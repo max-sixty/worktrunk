@@ -547,10 +547,7 @@ CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
 
 ### LLM summaries [experimental]
 
-With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
-
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
-<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
+Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config. Results are cached until the branch's diff changes.
 
 ## Status symbols
 
@@ -1050,7 +1047,7 @@ wt step push
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
+- [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
 - [`<alias>`](#aliases) — [experimental] Run a configured command alias
@@ -1065,6 +1062,7 @@ wt step push
 <!-- subdoc: diff -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: for-each -->
+<!-- subdoc: promote -->
 <!-- subdoc: prune -->
 <!-- subdoc: relocate -->
 ## Aliases
