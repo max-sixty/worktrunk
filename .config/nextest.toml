@@ -19,6 +19,13 @@ success-output = "never"
 [profile.default.junit]
 path = "junit.xml"
 
+# Shell wrapper tests spawn subprocesses via Command::new(wt_bin) and PTY. On
+# macOS CI runners these occasionally hit transient ENOENT (binary briefly
+# inaccessible under load). Retry once to absorb the flake.
+[[profile.default.overrides]]
+filter = 'test(/shell_wrapper/)'
+retries = 2
+
 # The source_flag test runs `cargo run` inside a PTY, which can take longer than
 # 60s when cargo needs to check/compile dependencies on slow CI runners.
 [[profile.default.overrides]]
