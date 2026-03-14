@@ -1092,6 +1092,51 @@ fn test_config_docs_include_all_sections() {
     }
 }
 
+/// Verify that LLM tool commands in docs/content/llm-commits.md match
+/// the double-commented examples in config.example.toml (the single source of truth).
+#[test]
+fn test_llm_docs_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
+
+    // Extract commands from config example: "# # command = ..." lines
+    let config_commands: Vec<String> = config_example
+        .lines()
+        .filter_map(|line| line.strip_prefix("# # "))
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    // Extract commands from llm-commits.md: "command = ..." lines in TOML code blocks
+    let doc_commands: Vec<String> = llm_docs
+        .lines()
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    assert!(
+        config_commands.len() >= 2,
+        "Expected at least 2 tool commands in config.example.toml, found {}",
+        config_commands.len()
+    );
+
+    for cmd in &config_commands {
+        assert!(
+            doc_commands.contains(cmd),
+            "Command from config.example.toml not found in docs/content/llm-commits.md:\n  {cmd}\n\
+             Update llm-commits.md to match the config example (source of truth: dev/config.example.toml, \
+             generated from src/cli/mod.rs)."
+        );
+    }
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));

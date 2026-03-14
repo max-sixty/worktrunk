@@ -98,6 +98,16 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Generate commit messages automatically during merge. Requires an external CLI tool.[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# ### Claude Code[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # [commit.generation][0m
+[107m [0m [2m# # command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ### Codex[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # [commit.generation][0m
+[107m [0m [2m# # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Command config[0m

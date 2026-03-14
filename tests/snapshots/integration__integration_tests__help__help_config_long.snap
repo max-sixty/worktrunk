@@ -91,7 +91,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -142,6 +142,16 @@ Controls where new worktrees are created.
 [1m[32mLLM commit messages[0m
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
+
+[32mClaude Code[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+
+[32mCodex[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
