@@ -10,7 +10,7 @@ mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Context;
 use dashmap::DashMap;
@@ -70,19 +70,11 @@ pub fn handle_select(
     .into_iter()
     .collect();
 
-    // Configurable timeout for git commands to show TUI faster on large repos.
-    // Operations that timeout fail silently (data not shown), but TUI stays responsive.
-    let command_timeout = config.switch_picker.picker_command_timeout();
+    // Per-task command timeout from shared [list] config.
+    let command_timeout = config.list.task_timeout();
 
-    // Wall-clock budget for the entire collect phase. Tasks that complete within
-    // the budget contribute data; tasks still running when it expires are abandoned.
-    // This caps total latency regardless of worktree count or filesystem speed.
-    const DEFAULT_COLLECT_BUDGET_MS: u64 = 500;
-    let budget_ms: u64 = std::env::var("WORKTRUNK_PICKER_BUDGET_MS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_COLLECT_BUDGET_MS);
-    let collect_deadline = Some(Instant::now() + Duration::from_millis(budget_ms));
+    // Wall-clock budget for the entire collect phase (default: 500ms).
+    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
 
     let Some(list_data) = collect::collect(
         &repo,
@@ -91,11 +83,11 @@ pub fn handle_select(
             show_remotes,
             skip_tasks: skip_tasks.clone(),
             command_timeout,
+            collect_deadline,
         },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
         true,  // skip_expensive_for_stale (faster for repos with many stale branches)
-        collect_deadline,
     )?
     else {
         return Ok(());

@@ -113,6 +113,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# branches = false   # Include branches without worktrees (--branches)[0m
 [107m [0m [2m# remotes = false    # Include remote-only branches (--remotes)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
+[107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Shared by `wt step commit`, `wt step squash`, and `wt merge`.[0m
@@ -140,9 +143,9 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# # Pager command for diff preview (overrides git's core.pager)[0m
 [107m [0m [2m# # pager = "delta --paging=never"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Timeout (ms) for git commands during picker loading (default: 200)[0m
-[107m [0m [2m# # Lower values show the TUI faster; 0 disables timeouts[0m
-[107m [0m [2m# # timeout-ms = 200[0m
+[107m [0m [2m# # Wall-clock budget (ms) for picker data collection (default: 500)[0m
+[107m [0m [2m# # Tasks still running when the budget expires are abandoned; 0 disables[0m
+[107m [0m [2m# # timeout-ms = 500[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m

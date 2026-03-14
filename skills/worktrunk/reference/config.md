@@ -117,6 +117,9 @@ summary = false    # Enable LLM branch summaries (requires [commit.generation])
 full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+
+task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
+timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 ### Commit
@@ -151,9 +154,9 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
 
-# Timeout (ms) for git commands during picker loading (default: 200)
-# Lower values show the TUI faster; 0 disables timeouts
-# timeout-ms = 200
+# Wall-clock budget (ms) for picker data collection (default: 500)
+# Tasks still running when the budget expires are abandoned; 0 disables
+# timeout-ms = 500
 ```
 
 ### Aliases

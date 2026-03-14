@@ -21,7 +21,7 @@ use super::sections::{
 /// let squash = resolved.merge.squash();                     // bool, default applied
 /// let stage = resolved.commit.stage();                      // StageMode, default applied
 /// let pager = resolved.switch_picker.pager();               // Option<&str>
-/// let timeout = resolved.switch_picker.picker_command_timeout(); // Option<Duration>
+/// let timeout = resolved.switch_picker.timeout();               // Option<Duration>
 /// let no_cd = resolved.switch.no_cd();                       // bool, default applied
 /// ```
 #[derive(Debug, Clone, PartialEq)]

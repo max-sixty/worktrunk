@@ -309,7 +309,8 @@ fn test_list_config_serde() {
         branches: Some(false),
         remotes: None,
         summary: None,
-        timeout_ms: Some(500),
+        task_timeout_ms: Some(500),
+        timeout_ms: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ListConfig = serde_json::from_str(&json).unwrap();
@@ -317,7 +318,8 @@ fn test_list_config_serde() {
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
     assert_eq!(parsed.summary, None);
-    assert_eq!(parsed.timeout_ms, Some(500));
+    assert_eq!(parsed.task_timeout_ms, Some(500));
+    assert_eq!(parsed.timeout_ms, None);
 }
 
 #[test]
@@ -522,14 +524,16 @@ fn test_merge_list_config() {
         branches: Some(false),
         remotes: None,
         summary: Some(true),
-        timeout_ms: Some(1000),
+        task_timeout_ms: Some(1000),
+        timeout_ms: Some(2000),
     };
     let override_config = ListConfig {
-        full: None,           // Should fall back to base
-        branches: Some(true), // Should override
-        remotes: Some(true),  // Should override (base was None)
-        summary: None,        // Should fall back to base
-        timeout_ms: None,     // Should fall back to base
+        full: None,            // Should fall back to base
+        branches: Some(true),  // Should override
+        remotes: Some(true),   // Should override (base was None)
+        summary: None,         // Should fall back to base
+        task_timeout_ms: None, // Should fall back to base
+        timeout_ms: None,      // Should fall back to base
     };
 
     let merged = base.merge_with(&override_config);
@@ -537,7 +541,8 @@ fn test_merge_list_config() {
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
     assert_eq!(merged.summary, Some(true)); // From base
-    assert_eq!(merged.timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.timeout_ms, Some(2000)); // From base
 }
 
 #[test]
@@ -956,7 +961,8 @@ fn test_list_config_accessor_methods_defaults() {
     assert!(!config.full());
     assert!(!config.branches());
     assert!(!config.remotes());
-    assert!(config.timeout_ms().is_none());
+    assert!(config.task_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -966,13 +972,21 @@ fn test_list_config_accessor_methods_with_values() {
         branches: Some(true),
         remotes: Some(false),
         summary: Some(true),
-        timeout_ms: Some(5000),
+        task_timeout_ms: Some(5000),
+        timeout_ms: Some(3000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
     assert!(config.summary());
-    assert_eq!(config.timeout_ms(), Some(5000));
+    assert_eq!(
+        config.task_timeout(),
+        Some(std::time::Duration::from_millis(5000))
+    );
+    assert_eq!(
+        config.timeout(),
+        Some(std::time::Duration::from_millis(3000))
+    );
 }
 
 #[test]
@@ -1035,20 +1049,20 @@ fn test_switch_picker_config_accessor_methods() {
 
     let config = SwitchPickerConfig::default();
     assert!(config.pager().is_none());
-    // Default timeout is 200ms
+    // Default wall-clock budget is 500ms
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 
     let config = SwitchPickerConfig {
         pager: Some("delta --paging=never".to_string()),
-        timeout_ms: Some(500),
+        timeout_ms: Some(1000),
     };
     assert_eq!(config.pager(), Some("delta --paging=never"));
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(500))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(1000))
     );
 }
 
@@ -1060,7 +1074,7 @@ fn test_switch_picker_timeout_zero_disables() {
         timeout_ms: Some(0),
         ..Default::default()
     };
-    assert!(config.picker_command_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -1069,8 +1083,8 @@ fn test_switch_picker_timeout_none_uses_default() {
 
     let config = SwitchPickerConfig::default();
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 
@@ -1243,8 +1257,8 @@ fn test_switch_picker_fallback_from_select() {
     // timeout_ms not available from select, so default applies
     assert_eq!(picker.timeout_ms, None);
     assert_eq!(
-        picker.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        picker.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 

@@ -135,10 +135,17 @@ pub struct ListConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<bool>,
 
-    /// (Experimental) Per-task timeout in milliseconds.
-    /// When set to a positive value, git operations that exceed this timeout are terminated.
-    /// Timed-out tasks show defaults in the table. Set to 0 to explicitly disable timeout
+    /// Per-task timeout in milliseconds.
+    /// Kills individual git commands that exceed this duration. Applies to both
+    /// `wt list` and the `wt switch` picker. Set to 0 to explicitly disable
     /// (useful to override a global setting). Disabled when --full is used.
+    #[serde(rename = "task-timeout-ms", skip_serializing_if = "Option::is_none")]
+    pub task_timeout_ms: Option<u64>,
+
+    /// Wall-clock budget for the entire collect phase in milliseconds.
+    /// Tasks that complete within the budget contribute data; tasks still
+    /// running when it expires are abandoned silently. Set to 0 to disable.
+    /// Disabled when --full is used. Default: no budget (wait for all results).
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -164,9 +171,20 @@ impl ListConfig {
         self.summary.unwrap_or(false)
     }
 
-    /// Per-task timeout in milliseconds (default: None)
-    pub fn timeout_ms(&self) -> Option<u64> {
+    /// Per-task command timeout (default: None — no per-command timeout).
+    /// Returns `None` when disabled (task_timeout_ms = 0 or unset).
+    pub fn task_timeout(&self) -> Option<std::time::Duration> {
+        self.task_timeout_ms
+            .filter(|&ms| ms > 0)
+            .map(std::time::Duration::from_millis)
+    }
+
+    /// Wall-clock budget for the collect phase (default: None — no budget).
+    /// Returns `None` when disabled (timeout_ms = 0 or unset).
+    pub fn timeout(&self) -> Option<std::time::Duration> {
         self.timeout_ms
+            .filter(|&ms| ms > 0)
+            .map(std::time::Duration::from_millis)
     }
 }
 
@@ -177,6 +195,7 @@ impl Merge for ListConfig {
             branches: other.branches.or(self.branches),
             remotes: other.remotes.or(self.remotes),
             summary: other.summary.or(self.summary),
+            task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
         }
     }
@@ -320,14 +339,14 @@ pub struct SwitchPickerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
 
-    /// Picker command timeout in milliseconds.
+    /// Wall-clock budget for picker data collection in milliseconds.
     ///
-    /// Controls how long to wait for git commands when populating the picker.
-    /// Commands that exceed this timeout fail silently (data not shown).
+    /// Controls how long the picker waits for git data before displaying.
+    /// Tasks still running when the budget expires are abandoned.
     ///
-    /// - Unset: 200ms default
-    /// - `0`: No timeout
-    /// - Positive value: Custom timeout in milliseconds
+    /// - Unset: 500ms default
+    /// - `0`: No budget (wait for all results)
+    /// - Positive value: Custom budget in milliseconds
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -338,17 +357,13 @@ impl SwitchPickerConfig {
         self.pager.as_deref()
     }
 
-    /// Command timeout for the picker.
-    ///
-    /// Returns `None` when timeout is disabled (timeout_ms = 0),
-    /// the configured timeout, or the 200ms default. The 200ms default
-    /// aggressively cuts tail latency so the TUI appears near-instantly;
-    /// users on large repos can raise it via `timeout-ms`.
-    pub fn picker_command_timeout(&self) -> Option<std::time::Duration> {
+    /// Wall-clock budget for picker data collection (default: 500ms).
+    /// Returns `None` when disabled (timeout_ms = 0).
+    pub fn timeout(&self) -> Option<std::time::Duration> {
         match self.timeout_ms {
             Some(0) => None,
             Some(ms) => Some(std::time::Duration::from_millis(ms)),
-            None => Some(std::time::Duration::from_millis(200)),
+            None => Some(std::time::Duration::from_millis(500)),
         }
     }
 }

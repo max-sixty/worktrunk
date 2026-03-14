@@ -157,6 +157,9 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI, main…± diffstat, and LLM summaries (--full)[0m
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
+[107m [0m 
+[107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
 [32mCommit[0m
 
@@ -185,9 +188,9 @@ All flags are on by default. Set to false to change default behavior.
 [107m [0m [2m# Pager command for diff preview (overrides git's core.pager)[0m
 [107m [0m [2m# pager = "delta --paging=never"[0m
 [107m [0m 
-[107m [0m [2m# Timeout (ms) for git commands during picker loading (default: 200)[0m
-[107m [0m [2m# Lower values show the TUI faster; 0 disables timeouts[0m
-[107m [0m [2m# timeout-ms = 200[0m
+[107m [0m [2m# Wall-clock budget (ms) for picker data collection (default: 500)[0m
+[107m [0m [2m# Tasks still running when the budget expires are abandoned; 0 disables[0m
+[107m [0m [2m# timeout-ms = 500[0m
 
 [32mAliases[0m
 

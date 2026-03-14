@@ -178,7 +178,6 @@ pub fn handle_list(
         show_progress,
         render_table,
         skip_expensive_for_stale,
-        None, // no deadline — wt list waits for all results
     )?;
 
     let Some(ListData { items, .. }) = list_data else {

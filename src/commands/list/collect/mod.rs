@@ -208,9 +208,13 @@ pub enum ShowConfig {
         show_remotes: bool,
         skip_tasks: HashSet<TaskKind>,
         command_timeout: Option<std::time::Duration>,
+        /// Wall-clock deadline for the collect phase. `None` uses the default
+        /// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a warning on timeout.
+        collect_deadline: Option<std::time::Instant>,
     },
     /// Raw CLI flags; config resolution deferred to collect's parallel phase
     /// so project_identifier runs concurrently with other git operations.
+    /// Timeouts are resolved from config internally.
     DeferredToParallel {
         cli_branches: bool,
         cli_remotes: bool,
@@ -229,16 +233,12 @@ pub enum ShowConfig {
 /// skipping expensive merge-base operations for branches far behind the default branch.
 /// This dramatically improves performance for repos with many stale branches.
 ///
-/// When `collect_deadline` is `Some`, drain stops at the deadline and returns partial data
-/// silently (budget-based truncation is expected). When `None`, uses the default
-/// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a user-facing warning on timeout.
 pub fn collect(
     repo: &Repository,
     show_config: ShowConfig,
     show_progress: bool,
     render_table: bool,
     skip_expensive_for_stale: bool,
-    collect_deadline: Option<std::time::Instant>,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
@@ -330,47 +330,59 @@ pub fn collect(
     let url_template = url_template_cell.into_inner().unwrap();
 
     // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
-    let (show_branches, show_remotes, skip_tasks, command_timeout) = match show_config {
-        ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            skip_tasks,
-            command_timeout,
-        } => (show_branches, show_remotes, skip_tasks, command_timeout),
-        ShowConfig::DeferredToParallel {
-            cli_branches,
-            cli_remotes,
-            cli_full,
-        } => {
-            let config = repo.config();
-            let show_branches = cli_branches || config.list.branches();
-            let show_remotes = cli_remotes || config.list.remotes();
-            let show_full = cli_full || config.list.full();
-            let skip_tasks: HashSet<TaskKind> = if show_full {
-                HashSet::new()
-            } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::WorkingTreeConflicts,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
-            };
-            // Resolve timeout from merged config (--full disables timeout)
-            let command_timeout = if show_full {
-                None
-            } else {
-                config
-                    .list
-                    .timeout_ms()
-                    .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
-                    .map(std::time::Duration::from_millis)
-            };
-            (show_branches, show_remotes, skip_tasks, command_timeout)
-        }
-    };
+    let (show_branches, show_remotes, skip_tasks, command_timeout, collect_deadline) =
+        match show_config {
+            ShowConfig::Resolved {
+                show_branches,
+                show_remotes,
+                skip_tasks,
+                command_timeout,
+                collect_deadline,
+            } => (
+                show_branches,
+                show_remotes,
+                skip_tasks,
+                command_timeout,
+                collect_deadline,
+            ),
+            ShowConfig::DeferredToParallel {
+                cli_branches,
+                cli_remotes,
+                cli_full,
+            } => {
+                let config = repo.config();
+                let show_branches = cli_branches || config.list.branches();
+                let show_remotes = cli_remotes || config.list.remotes();
+                let show_full = cli_full || config.list.full();
+                let skip_tasks: HashSet<TaskKind> = if show_full {
+                    HashSet::new()
+                } else {
+                    [
+                        TaskKind::BranchDiff,
+                        TaskKind::CiStatus,
+                        TaskKind::WorkingTreeConflicts,
+                        TaskKind::SummaryGenerate,
+                    ]
+                    .into_iter()
+                    .collect()
+                };
+                // Resolve timeouts from merged config (--full disables both)
+                let (command_timeout, collect_deadline) = if show_full {
+                    (None, None)
+                } else {
+                    let task_timeout = config.list.task_timeout();
+                    let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
+                    (task_timeout, deadline)
+                };
+                (
+                    show_branches,
+                    show_remotes,
+                    skip_tasks,
+                    command_timeout,
+                    collect_deadline,
+                )
+            }
+        };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees = if show_branches {
