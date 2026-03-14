@@ -37,7 +37,7 @@ wt step push
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
+- [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
 - [`<alias>`](#aliases) — [experimental] Run a configured command alias
@@ -87,7 +87,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
-  <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
+  <b><span class=c>promote</span></b>       [experimental] Swap a branch into the main worktree
   <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
@@ -525,6 +525,80 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
 <b><span class=g>Arguments:</span></b>
   <span class=c>&lt;ARGS&gt;...</span>
           Command template (see --help for all variables)
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step promote
+
+[experimental] Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
+
+**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
+
+### Example
+
+```bash
+# from ~/project (main worktree)
+$ wt step promote feature
+```
+
+Before:
+
+```
+  Branch   Path
+@ main     ~/project
++ feature  ~/project.feature
+```
+
+After:
+
+```
+  Branch   Path
+@ feature  ~/project
++ main     ~/project.feature
+```
+
+To restore: `wt step promote main` from anywhere, or just `wt step promote` from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
+
+### Requirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+
+### Gitignored files
+
+Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
+
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If `.git/` is on a different filesystem, it falls back to reflink copy.
+
+### Command reference
+
+{% terminal() %}
+wt step promote - [experimental] Swap a branch into the main worktree
+
+Exchanges branches and gitignored files between two worktrees.
+
+Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[BRANCH]</span>
+          Branch to promote to main worktree
+
+          Defaults to current branch, or default branch from main worktree.
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

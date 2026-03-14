@@ -1037,7 +1037,7 @@ wt step push
 - [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
 - [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
 - [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
+- [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
 - [`<alias>`](#aliases) — [experimental] Run a configured command alias
@@ -1073,6 +1073,7 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
 <!-- subdoc: diff -->
 <!-- subdoc: copy-ignored -->
 <!-- subdoc: for-each -->
+<!-- subdoc: promote -->
 <!-- subdoc: prune -->
 <!-- subdoc: relocate -->"#
     )]
