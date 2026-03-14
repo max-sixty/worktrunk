@@ -1925,7 +1925,11 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
 "#,
     );
 
-    snapshot_switch("user_pre_switch_branch_destination", &repo, &["feature-dest"]);
+    snapshot_switch(
+        "user_pre_switch_branch_destination",
+        &repo,
+        &["feature-dest"],
+    );
 
     // {{ branch }} should be the destination branch, not the source (main)
     let marker_file = repo.root_path().join("pre_switch_branch.txt");
