@@ -321,10 +321,10 @@ For first-time snapshot creation, leave the inline value empty (`@""`), then
 run `cargo insta test --accept` to fill it.
 
 To update existing file-based snapshots (e.g., after editing CLI help text),
-use `INSTA_UPDATE=always`:
+use `cargo insta test --accept`:
 
 ```bash
-INSTA_UPDATE=always cargo test --test integration "test_help"
+cargo insta test --accept -- --test integration "test_help"
 ```
 
 Do not manually edit `.snap` files — they contain ANSI escape sequences that

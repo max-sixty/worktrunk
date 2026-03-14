@@ -149,7 +149,7 @@ cargo test --test integration test_command_pages_and_skill_files_are_in_sync
 After editing `after_long_help` text, also update the help snapshots:
 
 ```bash
-INSTA_UPDATE=always cargo test --test integration "test_help"
+cargo insta test --accept -- --test integration "test_help"
 ```
 
 ## Data Safety
