@@ -28,12 +28,6 @@ BOT_LOGIN=$(gh api user --jq '.login')
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 
-# Detect self-authored PRs early — GitHub rejects self-approvals.
-# If PR_AUTHOR == BOT_LOGIN, this is a self-authored PR.
-# Skip approval in step 4 (submit COMMENT if there are concerns, or stay
-# silent and skip directly to step 5).
-IS_SELF_AUTHORED=$( [ "$PR_AUTHOR" = "$BOT_LOGIN" ] && echo true || echo false )
-
 # Find the bot's most recent substantive review (any state).
 # Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
 # Uses "| length > 0" instead of "!= \"\"" to avoid bash ! history expansion.
@@ -206,7 +200,7 @@ approach: "Does this bypass or duplicate an existing API?" "What does this
 change *not* handle?" If the design involves a judgment call, flag it for human
 review as a COMMENT.
 
-**Self-authored PRs** (`IS_SELF_AUTHORED == true` from step 1): Do NOT attempt
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
 `gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
 when there are concerns, or stay silent and skip to step 5.
 
