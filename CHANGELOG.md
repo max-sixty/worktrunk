@@ -1,5 +1,123 @@
 # Changelog
 
+## 0.29.4
+
+### Improved
+
+- **Destination branch in pre-switch hooks**: `{{ branch }}` in pre-switch hooks now expands to the **destination** branch (as typed by the user) instead of the source worktree's branch. Previously, pre-switch hooks could only see where you were, not where you were going. [Docs](https://worktrunk.dev/hook/) ([#1497](https://github.com/max-sixty/worktrunk/pull/1497), thanks @mayureshwaykole for the discussion in [#1494](https://github.com/max-sixty/worktrunk/issues/1494))
+
+- **LLM tool commands in example config**: `wt config create` now includes double-commented entries for Claude, Codex, opencode, llm, and aichat commands, making them discoverable without reading the docs. [Docs](https://worktrunk.dev/llm-commits/) ([#1531](https://github.com/max-sixty/worktrunk/pull/1531), [#1533](https://github.com/max-sixty/worktrunk/pull/1533))
+
+### Fixed
+
+- **Extra blank line in `config create` output**: The success path printed a blank line between the success message and hint lines, inconsistent with the "already exists" path. ([#1525](https://github.com/max-sixty/worktrunk/pull/1525))
+
+### Documentation
+
+- **Switch docs**: Trimmed upstream tracking paragraph, added missing `pre-switch`/`post-switch` hooks to creation lifecycle, combined GitHub/GitLab sections. ([#1521](https://github.com/max-sixty/worktrunk/pull/1521))
+
+- **List docs**: Restored `--full` prerequisite note for LLM summaries. ([#1517](https://github.com/max-sixty/worktrunk/pull/1517))
+
+- **Experimental badges in headings**: Moved experimental badges from description paragraphs to headings in web docs for cleaner TOC entries. ([#1523](https://github.com/max-sixty/worktrunk/pull/1523))
+
+### Internal
+
+- **CI improvements**: Prevented duplicate inline review comments across cycles, banned blocking `gh pr checks --watch`, fixed verify step for concurrency-cancelled runs, stopped hourly audit from flagging CI polling, added rolling file survey to nightly cleaner. ([#1514](https://github.com/max-sixty/worktrunk/pull/1514), [#1498](https://github.com/max-sixty/worktrunk/pull/1498), [#1519](https://github.com/max-sixty/worktrunk/pull/1519), [#1520](https://github.com/max-sixty/worktrunk/pull/1520), [#1522](https://github.com/max-sixty/worktrunk/pull/1522))
+
+- **Simplified review-pr skill**: Cut metacognitive coaching and collapsed confidence tiers; 504 → 369 lines (−27%). ([#1530](https://github.com/max-sixty/worktrunk/pull/1530))
+
+## 0.29.3
+
+### Improved
+
+- **Unified timeout model for list and picker**: Consolidated the picker's per-command timeout and list's experimental `timeout-ms` into a shared config with `[list] task-timeout-ms` (per-task, shared by both) and per-context wall-clock budgets (`[list] timeout-ms`, `[switch.picker] timeout-ms`). Picker default budget raised from 200ms per-command to 500ms wall-clock. ([#1515](https://github.com/max-sixty/worktrunk/pull/1515), [#1487](https://github.com/max-sixty/worktrunk/pull/1487))
+
+- **Pre-flight template validation for `wt switch`**: Switch templates (`--execute` and hook commands) are now validated before worktree creation, preventing orphan worktrees from syntax errors like `{{ unclosed`. ([#1500](https://github.com/max-sixty/worktrunk/pull/1500))
+
+### Fixed
+
+- **`wt remove` allowed removing default branch worktree**: The default branch worktree (e.g., main) could be removed because it was trivially "integrated" into itself. Now blocked unless `-D` is used. ([#1460](https://github.com/max-sixty/worktrunk/pull/1460), thanks @cperalt for reporting [#1448](https://github.com/max-sixty/worktrunk/issues/1448))
+
+- **Symlinks copied as regular files in `copy-ignored`**: Top-level gitignored symlinks were copied as regular files instead of preserved as symlinks, breaking setups like Yarn monorepos. ([#1489](https://github.com/max-sixty/worktrunk/pull/1489), thanks @karmeleon for reporting [#1488](https://github.com/max-sixty/worktrunk/issues/1488))
+
+- **Missing placeholders in WorkingDiff and Upstream columns**: These columns showed blank instead of `⋯`/`·` placeholders when data wasn't loaded, breaking the visual loading signal. ([#1503](https://github.com/max-sixty/worktrunk/pull/1503))
+
+### Documentation
+
+- **Step command docs**: Added promote subdoc, improved swap description, linked Operations index to subcommand sections, moved aliases section after subcommands, fixed cross-filesystem fallback description. ([#1505](https://github.com/max-sixty/worktrunk/pull/1505), [#1495](https://github.com/max-sixty/worktrunk/pull/1495), [#1502](https://github.com/max-sixty/worktrunk/pull/1502), [#1513](https://github.com/max-sixty/worktrunk/pull/1513))
+
+- **List docs**: Documented placeholder symbols (`⋯`, `·`) in help text, rewrote LLM summaries section. ([#1496](https://github.com/max-sixty/worktrunk/pull/1496), [#1506](https://github.com/max-sixty/worktrunk/pull/1506))
+
+- **Homepage**: Added headline features (CI status, PR checkout, hash_port) and tips link. ([#1501](https://github.com/max-sixty/worktrunk/pull/1501))
+
+- **Experimental badge pills**: Styled `[experimental]` markers as pill badges in web docs. ([#1499](https://github.com/max-sixty/worktrunk/pull/1499))
+
+### Internal
+
+- **Deduplicated hook config resolution**: Extracted shared hook-type list and made `lookup_hook_configs` pub(crate). ([#1512](https://github.com/max-sixty/worktrunk/pull/1512))
+
+- **Agent Skills metadata**: Added `metadata.internal: true` to repo-scoped skills so `npx skills add` only offers user-facing ones. ([#1491](https://github.com/max-sixty/worktrunk/pull/1491))
+
+## 0.29.2
+
+### Improved
+
+- **`[switch] no-cd` config option**: Disable directory change by default with `no-cd = true` in the `[switch]` section. Use `--cd` flag to override when needed. Useful for tmux workflows where sessions handle navigation. [Docs](https://worktrunk.dev/config/) ([#1401](https://github.com/max-sixty/worktrunk/pull/1401), thanks @jradtilbrook)
+
+### Fixed
+
+- **GPG signature output breaks `wt list`**: When `log.showSignature` is set in git config, GPG verification lines contaminated stdout in `git log` calls, causing parse failures. All git log invocations now pass `--no-show-signature`. ([#1465](https://github.com/max-sixty/worktrunk/pull/1465), thanks @apre)
+
+- **Tab completions ignore shell substring matching**: The binary was prefix-filtering branch candidates before returning them to the shell, preventing fish substring matching (`auth<TAB>` → `feature/user-auth`) and zsh fuzzy matching. Completions now return all candidates and let the shell apply its own matching. ([#1471](https://github.com/max-sixty/worktrunk/pull/1471), thanks @benjaminbauer for reporting [#1468](https://github.com/max-sixty/worktrunk/issues/1468))
+
+- **Tab completions unusable in large repos**: Repos with many remote branches triggered the "do you wish to see all N possibilities?" prompt. Remote-only branches are now excluded when the total exceeds 100. ([#1442](https://github.com/max-sixty/worktrunk/pull/1442), thanks @cperalt for reporting [#1415](https://github.com/max-sixty/worktrunk/issues/1415))
+
+- **Nushell shell integration broken in Home Manager module**: The Nix Home Manager module used `use` instead of `source` for the nushell init script, and template definitions were not exported, preventing the `wt` wrapper function from loading. ([#1476](https://github.com/max-sixty/worktrunk/pull/1476), thanks @mystilleef for reporting [#1475](https://github.com/max-sixty/worktrunk/issues/1475))
+
+### Documentation
+
+- **Manual commit message recipes**: Added recipes to Tips & Patterns for using `commit.generation.command` config to write commit messages by hand with `$EDITOR` instead of an LLM. ([#1469](https://github.com/max-sixty/worktrunk/pull/1469), thanks @viicslen for the feature request in [#1467](https://github.com/max-sixty/worktrunk/issues/1467))
+
+### Internal
+
+- **Skill/CI guidance**: Improved Claude bot skills for triage, code review, and CI monitoring. ([#1485](https://github.com/max-sixty/worktrunk/pull/1485), [#1477](https://github.com/max-sixty/worktrunk/pull/1477), [#1474](https://github.com/max-sixty/worktrunk/pull/1474), [#1472](https://github.com/max-sixty/worktrunk/pull/1472), [#1470](https://github.com/max-sixty/worktrunk/pull/1470), [#1458](https://github.com/max-sixty/worktrunk/pull/1458), [#1447](https://github.com/max-sixty/worktrunk/pull/1447))
+
+## 0.29.1
+
+### Improved
+
+- **GitHub Enterprise support for `wt switch`**: `wt switch pr:<number>` now works with GitHub Enterprise instances by extracting the hostname from the remote URL and passing `--hostname` to `gh`. ([#1408](https://github.com/max-sixty/worktrunk/pull/1408), thanks @TomRomeo)
+
+- **`wt switch --no-cd` print mode**: When `wt switch --no-cd` opens the interactive picker (no branch argument), selecting a branch prints its name to stdout and exits — useful for scripting. ([#1445](https://github.com/max-sixty/worktrunk/pull/1445), thanks @ruudk for the feature request in [#1404](https://github.com/max-sixty/worktrunk/pull/1404))
+
+- **Shadow warning for step aliases**: `wt step` now warns when a user-defined alias has the same name as a built-in step command (e.g., `commit`, `rebase`), since clap intercepts the built-in before the alias runs. ([#1389](https://github.com/max-sixty/worktrunk/pull/1389))
+
+### Fixed
+
+- **Post-switch hooks on `wt remove`**: When removing the current worktree, post-switch hooks now fire correctly as the user is implicitly switched to the primary worktree. Previously, project hooks were silently skipped because config lookup failed from the removed CWD. ([#1452](https://github.com/max-sixty/worktrunk/pull/1452), thanks @mjakl for reporting [#1450](https://github.com/max-sixty/worktrunk/issues/1450))
+
+- **LLM commit session isolation**: The recommended Claude command for commit generation now includes `--no-session-persistence`, preventing commit conversations from polluting `claude --continue`. ([#1454](https://github.com/max-sixty/worktrunk/pull/1454))
+
+- **Color formatting in error messages**: `DetachedHead` and `NotInWorktree` error messages now support color-print styling, matching other error variants. ([#1387](https://github.com/max-sixty/worktrunk/pull/1387))
+
+- **Windows error handling**: Replaced `std::process::exit()` with proper error returns in Windows-specific code paths, so destructors and cleanup run correctly. ([#1456](https://github.com/max-sixty/worktrunk/pull/1456))
+
+### Documentation
+
+- **Hook JSON context section**: Fixed documentation that incorrectly described `hook_type` and `hook_name` as extras; added the TOML hook definition showing how JSON stdin is wired. ([#1360](https://github.com/max-sixty/worktrunk/pull/1360))
+
+- **`wt remove` help text**: Updated example heading to clarify that `wt remove` works on both worktrees and branches. ([#1449](https://github.com/max-sixty/worktrunk/pull/1449))
+
+- **Xcode DerivedData cleanup recipe**: Added recipe for cleaning Xcode build artifacts across worktrees. ([#1423](https://github.com/max-sixty/worktrunk/pull/1423), thanks @RickeyBoy)
+
+### Internal
+
+- **Refactoring**: Extracted handler functions from `main()` dispatch, replaced negated boolean variables with positive-polarity names (`no_verify` → `verify`, `no_delete_branch` → `keep_branch`). ([#1394](https://github.com/max-sixty/worktrunk/pull/1394), [#1388](https://github.com/max-sixty/worktrunk/pull/1388), [#1393](https://github.com/max-sixty/worktrunk/pull/1393))
+
+- **Test reliability**: Resolved flaky PTY/timing issues in integration tests, consolidated trivial tests into inline snapshots. ([#1459](https://github.com/max-sixty/worktrunk/pull/1459), [#1392](https://github.com/max-sixty/worktrunk/pull/1392), [#1382](https://github.com/max-sixty/worktrunk/pull/1382), [#1390](https://github.com/max-sixty/worktrunk/pull/1390))
+
+- **CI**: Added Zola docs validation to PR checks, catching broken internal anchor links before merge. ([#1396](https://github.com/max-sixty/worktrunk/pull/1396))
+
 ## 0.29.0
 
 ### Improved

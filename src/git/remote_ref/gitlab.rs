@@ -28,8 +28,8 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{PlatformData, RemoteRefInfo, RemoteRefProvider};
-use crate::git::RefType;
 use crate::git::error::GitError;
+use crate::git::{RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitLab Merge Request provider.
@@ -41,7 +41,8 @@ impl RemoteRefProvider for GitLabProvider {
         RefType::Mr
     }
 
-    fn fetch_info(&self, number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
+    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+        let repo_root = repo.repo_path()?;
         fetch_mr_info(number, repo_root)
     }
 

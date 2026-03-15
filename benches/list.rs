@@ -372,54 +372,12 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark the effect of command timeout on GH #461 scenario.
-///
-/// Compares `wt list --branches` with and without the 500ms timeout.
-/// The timeout kills slow git commands (merge-tree, rev-list) that would
-/// otherwise block the TUI for seconds.
-fn bench_timeout_effect(c: &mut Criterion) {
-    let mut group = c.benchmark_group("timeout_effect");
-    group.measurement_time(std::time::Duration::from_secs(60));
-    group.sample_size(10);
-
-    let binary = get_release_binary();
-
-    // Set up workspace once for both benchmarks
-    let temp = tempfile::tempdir().unwrap();
-    let workspace_main = setup_rust_workspace_with_branches(&temp, 50);
-
-    // Without timeout (baseline)
-    group.bench_function("no_timeout", |b| {
-        b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
-        });
-    });
-
-    // With 500ms timeout (GH #461 fix)
-    group.bench_function("timeout_500ms", |b| {
-        b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .env("WORKTRUNK_COMMAND_TIMEOUT_MS", "500")
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches, bench_timeout_effect
+    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

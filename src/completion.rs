@@ -279,21 +279,16 @@ impl ValueCompleter for BranchCompleter {
             return Vec::new();
         }
 
-        // Filter branches by prefix - clap doesn't filter ArgValueCompleter results
-        let prefix = current.to_string_lossy();
+        // Return all candidates without prefix filtering — let the shell apply its
+        // own matching (substring in fish, fuzzy in zsh, prefix in bash). Pre-filtering
+        // here prevents shells from using their native matching strategies. The >100
+        // remote exclusion in complete_branches() still applies to avoid overwhelming
+        // the shell with thousands of remote-only branches.
         complete_branches(
             self.suppress_with_create,
             self.exclude_remote_only,
             self.worktree_only,
         )
-        .into_iter()
-        .filter(|candidate| {
-            candidate
-                .get_value()
-                .to_string_lossy()
-                .starts_with(&*prefix)
-        })
-        .collect()
     }
 }
 
@@ -314,6 +309,17 @@ fn complete_branches(
     if branches.is_empty() {
         return Vec::new();
     }
+
+    // If remote-only branches aren't already excluded, drop them when the total
+    // count is large. Shells like bash/zsh prompt "do you wish to see all N
+    // possibilities?" which makes completion unusable in repos with many remotes.
+    // Threshold of 100 aligns with bash's default `completion-query-items`.
+    let exclude_remote_only = exclude_remote_only
+        || (!worktree_only
+            && branches.len() > 100
+            && branches
+                .iter()
+                .any(|b| matches!(b.category, BranchCategory::Remote(_))));
 
     branches
         .into_iter()

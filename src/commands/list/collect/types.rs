@@ -30,7 +30,7 @@ pub(super) struct StatusContext {
 }
 
 impl StatusContext {
-    pub fn apply_to(&self, item: &mut ListItem, target: &str) {
+    pub fn apply_to(&self, item: &mut ListItem, target: Option<&str>) {
         // Main worktree case is handled inside check_integration_state()
         //
         // Prefer working tree conflicts (--full) when available.
@@ -40,7 +40,7 @@ impl StatusContext {
             .unwrap_or(self.has_merge_tree_conflicts);
 
         item.compute_status_symbols(
-            Some(target),
+            target,
             has_conflicts,
             self.user_marker.clone(),
             self.working_tree_status,

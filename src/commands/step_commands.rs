@@ -9,7 +9,7 @@
 //!
 //! Standalone:
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
-//! - `handle_promote` - Put a branch into the main worktree
+//! - `handle_promote` - Swap a branch into the main worktree
 //! - `step_prune` - Remove worktrees merged into the default branch
 
 use std::fs;
@@ -139,10 +139,12 @@ pub fn handle_squash(
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let any_hooks_exist = user_hooks.pre_commit.is_some()
-        || project_config
-            .as_ref()
-            .is_some_and(|c| c.hooks.pre_commit.is_some());
+    let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+        &user_hooks,
+        project_config.as_ref(),
+        HookType::PreCommit,
+    );
+    let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow verify: if user declines approval, skip hooks but continue squash
@@ -193,10 +195,8 @@ pub fn handle_squash(
         run_hook_with_filter(
             &ctx,
             HookCommandSpec {
-                user_config: user_hooks.pre_commit.as_ref(),
-                project_config: project_config
-                    .as_ref()
-                    .and_then(|c| c.hooks.pre_commit.as_ref()),
+                user_config: user_cfg,
+                project_config: proj_cfg,
                 hook_type: HookType::PreCommit,
                 extra_vars: &extra_vars,
                 name_filter: None,
@@ -736,13 +736,30 @@ pub fn step_copy_ignored(
             if force {
                 remove_if_exists(&dest_entry)?;
             }
-            // Skip existing files for idempotent hook usage
-            match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                Ok(_) => copied_count += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context(format!("copying {}", format_path_for_display(relative))));
+            // Check if source is a symlink — preserve it instead of following it
+            let display_path = format_path_for_display(relative);
+            let source_is_symlink = fs::symlink_metadata(src_entry)
+                .context(format!("reading metadata for {display_path}"))?
+                .file_type()
+                .is_symlink();
+            if source_is_symlink {
+                // Skip existing symlinks for idempotent hook usage
+                if dest_entry.symlink_metadata().is_err() {
+                    let target = fs::read_link(src_entry)
+                        .context(format!("reading symlink {display_path}"))?;
+                    create_symlink(&target, src_entry, &dest_entry)?;
+                    copied_count += 1;
+                }
+            } else {
+                // Skip existing files for idempotent hook usage
+                match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                    Ok(_) => copied_count += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => {
+                        return Err(
+                            anyhow::Error::from(e).context(format!("copying {display_path}"))
+                        );
+                    }
                 }
             }
         }
@@ -1405,11 +1422,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
     let mut deferred_current: Option<Candidate> = None; // current worktree removed last
     let mut skipped_young: Vec<String> = Vec::new();
-    // Track branches seen via worktree entries so we don't double-count.
-    // Pre-seed with the default branch to prevent it from being pruned
-    // (it's trivially "integrated" into itself).
-    let mut seen_branches: std::collections::HashSet<String> =
-        default_branch.iter().cloned().collect();
+    // Track branches seen via worktree entries so we don't double-count
+    // in the orphan branch scan below.
+    let mut seen_branches: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     /// Try to remove a candidate immediately. Returns Ok(true) if removed,
     /// Ok(false) if skipped (preparation error), Err on execution error.
@@ -1582,6 +1597,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // Also scan local branches that don't have a worktree entry
     for branch in repo.all_branches()? {
         if seen_branches.contains(&branch) {
+            continue;
+        }
+        // Never prune the default branch — it's trivially "integrated" into
+        // itself, which would cause a tautological deletion.
+        if default_branch.as_deref() == Some(branch.as_str()) {
             continue;
         }
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;

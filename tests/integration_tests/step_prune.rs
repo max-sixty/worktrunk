@@ -1,6 +1,8 @@
 //! Integration tests for `wt step prune`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{
+    BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -493,4 +495,48 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
         &["prune", "--dry-run"],
         None
     ));
+}
+
+/// Default branch without a worktree should not be pruned despite being
+/// trivially "integrated" into itself (tautological SameCommit).
+#[test]
+fn test_prune_skips_default_branch_orphan() {
+    use crate::common::TestRepoBase;
+
+    let test = BareRepoTest::new();
+
+    // Create main worktree with a commit, then remove it so main becomes orphan
+    let main_wt = test.create_worktree("main", "main");
+    test.commit_in(&main_wt, "initial commit");
+    std::fs::remove_dir_all(&main_wt).unwrap();
+    test.git_command(test.bare_repo_path())
+        .args(["worktree", "prune"])
+        .output()
+        .unwrap();
+
+    // Create a feature branch (integrated, at same commit as main)
+    let feature_wt = test.create_worktree("feature", "feature");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["step", "prune", "--yes"])
+            .current_dir(&feature_wt)
+            // Far-future epoch: branches appear old enough to pass min-age guard
+            .env("WORKTRUNK_TEST_EPOCH", "1893456000");
+
+        assert_cmd_snapshot!("prune_skips_default_branch_orphan", cmd);
+    });
+
+    // Verify main branch still exists
+    let output = test
+        .git_command(test.bare_repo_path())
+        .args(["branch", "--list", "main"])
+        .output()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        branches.contains("main"),
+        "Default branch 'main' should not have been pruned"
+    );
 }

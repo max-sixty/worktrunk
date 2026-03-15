@@ -146,6 +146,12 @@ After any doc changes, run tests to sync:
 cargo test --test integration test_command_pages_and_skill_files_are_in_sync
 ```
 
+After editing `after_long_help` text, also update the help snapshots:
+
+```bash
+cargo insta test --accept -- --test integration "test_help"
+```
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. A failed command that preserves data is better than a "successful" command that silently destroys work.

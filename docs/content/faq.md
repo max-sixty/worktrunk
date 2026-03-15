@@ -98,7 +98,7 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** (experimental): creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
+- **Nushell** {{ experimental() }}: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -166,7 +166,7 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 
 1. **User hooks** (`~/.config/worktrunk/config.toml`) — Personal automation for all repositories
 2. **Project hooks** (`.config/wt.toml`) — Repository-specific automation
-3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [branch summaries](@/llm-commits.md#branch-summaries-experimental)
+3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [branch summaries](@/llm-commits.md#branch-summaries)
 4. **--execute flag** — Explicitly provided commands
 
 User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.

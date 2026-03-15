@@ -1092,6 +1092,116 @@ fn test_config_docs_include_all_sections() {
     }
 }
 
+/// Verify that LLM tool commands in docs/content/llm-commits.md match
+/// the double-commented examples in config.example.toml (the single source of truth).
+#[test]
+fn test_llm_docs_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
+
+    // Extract commands from config example: "# # command = ..." lines
+    let config_commands: Vec<String> = config_example
+        .lines()
+        .filter_map(|line| line.strip_prefix("# # "))
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    // Extract commands from llm-commits.md: "command = ..." lines in TOML code blocks
+    let doc_commands: Vec<String> = llm_docs
+        .lines()
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    assert!(
+        config_commands.len() >= 2,
+        "Expected at least 2 tool commands in config.example.toml, found {}",
+        config_commands.len()
+    );
+
+    for cmd in &config_commands {
+        assert!(
+            doc_commands.contains(cmd),
+            "Command from config.example.toml not found in docs/content/llm-commits.md:\n  {cmd}\n\
+             Update llm-commits.md to match the config example (source of truth: dev/config.example.toml, \
+             generated from src/cli/mod.rs)."
+        );
+    }
+}
+
+/// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
+/// the double-commented examples in config.example.toml (the single source of truth).
+/// Only compares tools present in both files — either side may have tools the other lacks.
+#[test]
+fn test_taskfile_llm_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
+
+    // Extract tool -> command from config example using h3 headings for tool names
+    // e.g. "# ### Claude Code" heading followed by '# # command = "..."' line
+    let mut config_commands = std::collections::HashMap::new();
+    let mut current_tool: Option<String> = None;
+    for line in config_example.lines() {
+        if let Some(heading) = line.strip_prefix("# ### ") {
+            current_tool = heading.split_whitespace().next().map(|s| s.to_lowercase());
+        } else if let Some(cmd_line) = line.strip_prefix("# # ")
+            && cmd_line.starts_with("command = ")
+            && let Some(ref tool) = current_tool
+            && let Ok(table) = toml::from_str::<toml::Table>(cmd_line)
+            && let Some(cmd) = table.get("command").and_then(|v| v.as_str())
+        {
+            config_commands.insert(tool.clone(), cmd.to_string());
+        }
+    }
+
+    // Extract tool -> command from Taskfile: COMMANDS["tool"]='shell-escaped-value'
+    // Unescape bash's '"'"' idiom (literal single quote) then strip outer quotes
+    let taskfile_re = Regex::new(r#"COMMANDS\["(\w+)"\]=(.*)"#).unwrap();
+    let taskfile_commands: std::collections::HashMap<String, String> = taskfile
+        .lines()
+        .filter_map(|line| {
+            let caps = taskfile_re.captures(line.trim())?;
+            let tool = caps[1].to_string();
+            let raw = &caps[2];
+            let unescaped = raw.replace("'\"'\"'", "'");
+            let cmd = unescaped
+                .strip_prefix('\'')?
+                .strip_suffix('\'')?
+                .to_string();
+            Some((tool, cmd))
+        })
+        .collect();
+
+    // Compare only tools present in both
+    let mut checked = 0;
+    for (tool, taskfile_cmd) in &taskfile_commands {
+        if let Some(config_cmd) = config_commands.get(tool.as_str()) {
+            assert_eq!(
+                config_cmd, taskfile_cmd,
+                "Command mismatch for '{tool}'.\n\
+                 Config example: {config_cmd}\n\
+                 Taskfile:       {taskfile_cmd}\n\
+                 Update Taskfile.yaml to match dev/config.example.toml (source of truth)."
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(
+        checked >= 1,
+        "No overlapping tools between config.example.toml and Taskfile.yaml"
+    );
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1538,6 +1648,10 @@ static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
 static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
 
+/// Regex to replace Zola experimental shortcode with plain text for skill files
+static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
+
 /// Regex to strip AUTO-GENERATED marker comments (just the comments, not content)
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
@@ -1554,6 +1668,7 @@ static HTML_FIGURE_PATTERN: LazyLock<Regex> =
 /// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
+/// - Replaces Zola shortcodes with plain text equivalents
 /// - Converts Zola internal links (@/page.md) -> full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
@@ -1576,6 +1691,13 @@ fn transform_docs_for_skill(content: &str) -> String {
 
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
+
+    // Replace experimental markers (shortcode and HTML badge) with plain text
+    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
+    let content = content.replace(
+        "<span class=\"badge-experimental\"></span>",
+        "[experimental]",
+    );
 
     // Transform Zola internal links to full URLs
     let content = ZOLA_LINK_PATTERN

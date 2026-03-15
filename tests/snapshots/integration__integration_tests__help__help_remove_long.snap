@@ -82,7 +82,7 @@ Remove current worktree:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove[0m
 
-Remove specific worktrees:
+Remove specific worktrees / branches:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature-branch[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove old-feature another-branch[0m

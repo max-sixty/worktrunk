@@ -44,7 +44,7 @@ exit_code: 0
 + feature-a      [2m↑[22m                 [32m↑1[0m               ../repo.feature-a  [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
 + feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
 + feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
-+ feature                               [2m⋯[0m           ../repo.feature              [2m⋯[0m     [2m⋯
++ feature                               [2m⋯[0m        [2m⋯[0m  ../repo.feature              [2m⋯[0m     [2m⋯
 
 [2m○[22m [2mShowing 5 worktrees, 3 ahead. 1 task failed
 

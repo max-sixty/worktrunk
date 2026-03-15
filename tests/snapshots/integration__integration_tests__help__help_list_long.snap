@@ -74,7 +74,11 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With [2m--full[0m, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
+
+[1m[32mFull mode[0m
+
+[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and LLM-generated summaries of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 [1m[32mExamples[0m
 
@@ -103,7 +107,7 @@ Output as JSON for scripting:
  HEAD±   Uncommitted changes: +added -deleted lines                                                        
  main↕   Commits ahead/behind default branch                                                               
  main…±  Line diffs since the merge-base with the default branch ([2m--full[0m)                                  
- Summary LLM-generated branch summary ([2m--full[0m + [2msummary = true[0m, requires [2mcommit.generation[0m) (experimental) 
+ Summary LLM-generated branch summary ([2m--full[0m + [2msummary = true[0m, requires [2mcommit.generation[0m) [experimental] 
  Remote⇅ Commits ahead/behind tracking branch                                                              
  CI      Pipeline status ([2m--full[0m)                                                                          
  Path    Worktree directory                                                                                
@@ -130,11 +134,9 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with [2m--remotes[0m) get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
-[32mLLM summaries (experimental)[0m
+[32mLLM summaries [experimental][0m
 
-With [2m--full[0m, [2msummary = true[0m, and a [2mcommit.generation[0m command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
-
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+Reuses the [2mcommit.generation[0m command — the same LLM that generates commit messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results are cached until the branch's diff changes.
 
 [1m[32mStatus symbols[0m
 
@@ -167,6 +169,15 @@ The Status column has multiple subcolumns. Within each, only the first matching 
                   [2m⇣[0m      Behind remote                                                                              
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
+
+[32mPlaceholder symbols[0m
+
+These appear across all columns while the table is loading:
+
+ Symbol                      Meaning                       
+ ────── ────────────────────────────────────────────────── 
+ [2m⋯[0m      Data is loading                                    
+ [2m·[0m      Skipped — collection timed out or branch too stale 
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 

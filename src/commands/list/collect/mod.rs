@@ -208,9 +208,13 @@ pub enum ShowConfig {
         show_remotes: bool,
         skip_tasks: HashSet<TaskKind>,
         command_timeout: Option<std::time::Duration>,
+        /// Wall-clock deadline for the collect phase. `None` uses the default
+        /// [`DRAIN_TIMEOUT`](results::DRAIN_TIMEOUT) and shows a warning on timeout.
+        collect_deadline: Option<std::time::Instant>,
     },
     /// Raw CLI flags; config resolution deferred to collect's parallel phase
     /// so project_identifier runs concurrently with other git operations.
+    /// Timeouts are resolved from config internally.
     DeferredToParallel {
         cli_branches: bool,
         cli_remotes: bool,
@@ -228,6 +232,7 @@ pub enum ShowConfig {
 /// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
 /// skipping expensive merge-base operations for branches far behind the default branch.
 /// This dramatically improves performance for repos with many stale branches.
+///
 pub fn collect(
     repo: &Repository,
     show_config: ShowConfig,
@@ -325,47 +330,59 @@ pub fn collect(
     let url_template = url_template_cell.into_inner().unwrap();
 
     // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
-    let (show_branches, show_remotes, skip_tasks, command_timeout) = match show_config {
-        ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            skip_tasks,
-            command_timeout,
-        } => (show_branches, show_remotes, skip_tasks, command_timeout),
-        ShowConfig::DeferredToParallel {
-            cli_branches,
-            cli_remotes,
-            cli_full,
-        } => {
-            let config = repo.config();
-            let show_branches = cli_branches || config.list.branches();
-            let show_remotes = cli_remotes || config.list.remotes();
-            let show_full = cli_full || config.list.full();
-            let skip_tasks: HashSet<TaskKind> = if show_full {
-                HashSet::new()
-            } else {
-                [
-                    TaskKind::BranchDiff,
-                    TaskKind::CiStatus,
-                    TaskKind::WorkingTreeConflicts,
-                    TaskKind::SummaryGenerate,
-                ]
-                .into_iter()
-                .collect()
-            };
-            // Resolve timeout from merged config (--full disables timeout)
-            let command_timeout = if show_full {
-                None
-            } else {
-                config
-                    .list
-                    .timeout_ms()
-                    .filter(|&ms| ms > 0) // 0 means "no timeout" (explicit disable)
-                    .map(std::time::Duration::from_millis)
-            };
-            (show_branches, show_remotes, skip_tasks, command_timeout)
-        }
-    };
+    let (show_branches, show_remotes, skip_tasks, command_timeout, collect_deadline) =
+        match show_config {
+            ShowConfig::Resolved {
+                show_branches,
+                show_remotes,
+                skip_tasks,
+                command_timeout,
+                collect_deadline,
+            } => (
+                show_branches,
+                show_remotes,
+                skip_tasks,
+                command_timeout,
+                collect_deadline,
+            ),
+            ShowConfig::DeferredToParallel {
+                cli_branches,
+                cli_remotes,
+                cli_full,
+            } => {
+                let config = repo.config();
+                let show_branches = cli_branches || config.list.branches();
+                let show_remotes = cli_remotes || config.list.remotes();
+                let show_full = cli_full || config.list.full();
+                let skip_tasks: HashSet<TaskKind> = if show_full {
+                    HashSet::new()
+                } else {
+                    [
+                        TaskKind::BranchDiff,
+                        TaskKind::CiStatus,
+                        TaskKind::WorkingTreeConflicts,
+                        TaskKind::SummaryGenerate,
+                    ]
+                    .into_iter()
+                    .collect()
+                };
+                // Resolve timeouts from merged config (--full disables both)
+                let (command_timeout, collect_deadline) = if show_full {
+                    (None, None)
+                } else {
+                    let task_timeout = config.list.task_timeout();
+                    let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
+                    (task_timeout, deadline)
+                };
+                (
+                    show_branches,
+                    show_remotes,
+                    skip_tasks,
+                    command_timeout,
+                    collect_deadline,
+                )
+            }
+        };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees = if show_branches {
@@ -808,11 +825,14 @@ pub fn collect(
     let mut first_result_traced = false;
 
     // Drain task results with conditional progressive rendering
+    let drain_deadline =
+        collect_deadline.unwrap_or_else(|| std::time::Instant::now() + results::DRAIN_TIMEOUT);
     let drain_outcome = drain_results(
         rx,
         &mut all_items,
         &mut errors,
         &expected_results,
+        drain_deadline,
         |item_idx, item, ctx| {
             // Trace first result arrival
             if !first_result_traced {
@@ -822,9 +842,7 @@ pub fn collect(
 
             // Compute/recompute status symbols as data arrives (both modes).
             // This is idempotent and updates status as new data (like upstream) arrives.
-            if let Some(ref target) = integration_target {
-                ctx.apply_to(item, target.as_str());
-            }
+            ctx.apply_to(item, integration_target.as_deref());
 
             // Progressive mode only: update UI
             if let Some(ref mut table) = progressive_table {
@@ -867,11 +885,14 @@ pub fn collect(
     );
     worktrunk::shell_exec::trace_instant("All results drained");
 
-    // Handle timeout if it occurred
-    if let DrainOutcome::TimedOut {
-        received_count,
-        items_with_missing,
-    } = drain_outcome
+    // Handle timeout if it occurred.
+    // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
+    // Only warn for the default DRAIN_TIMEOUT (120s), which indicates a hung command.
+    if collect_deadline.is_none()
+        && let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = drain_outcome
     {
         // Warning: what happened + gutter showing which results are missing
         let mut diag = format!(
@@ -913,9 +934,7 @@ pub fn collect(
         {
             // Use default context - no tasks ran, so no conflict/status info
             let ctx = StatusContext::default();
-            if let Some(ref target) = integration_target {
-                ctx.apply_to(item, target.as_str());
-            }
+            ctx.apply_to(item, integration_target.as_deref());
         }
     }
 
@@ -1201,10 +1220,9 @@ pub fn populate_item(
         std::slice::from_mut(item),
         &mut errors,
         &expected_results,
+        std::time::Instant::now() + results::DRAIN_TIMEOUT,
         |_item_idx, item, ctx| {
-            if let Some(ref t) = target {
-                ctx.apply_to(item, t);
-            }
+            ctx.apply_to(item, target.as_deref());
         },
     );
 

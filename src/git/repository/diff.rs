@@ -62,7 +62,7 @@ impl Repository {
 
         // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
         // --no-walk shows exactly the named commits without DAG walking
-        let mut args = vec!["log", "--no-walk", "--format=%H %ct"];
+        let mut args = vec!["log", "--no-walk", "--no-show-signature", "--format=%H %ct"];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
@@ -83,7 +83,15 @@ impl Repository {
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
-        let stdout = self.run_command(&["log", "-1", "--format=%ct %s", commit])?;
+        // --no-show-signature suppresses GPG verification output that otherwise
+        // contaminates stdout when log.showSignature is set.
+        let stdout = self.run_command(&[
+            "log",
+            "-1",
+            "--no-show-signature",
+            "--format=%ct %s",
+            commit,
+        ])?;
         // Only strip trailing newline, not spaces (empty subject = "timestamp ")
         let line = stdout.trim_end_matches('\n');
         let (timestamp_str, message) = line
@@ -95,7 +103,7 @@ impl Repository {
 
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
-        let output = self.run_command(&["log", "--format=%s", range])?;
+        let output = self.run_command(&["log", "--no-show-signature", "--format=%s", range])?;
         Ok(output.lines().map(String::from).collect())
     }
 
@@ -110,7 +118,14 @@ impl Repository {
         count: usize,
     ) -> Option<Vec<String>> {
         let count_str = count.to_string();
-        let mut args = vec!["log", "--pretty=format:%s", "-n", &count_str, "--no-merges"];
+        let mut args = vec![
+            "log",
+            "--pretty=format:%s",
+            "--no-show-signature",
+            "-n",
+            &count_str,
+            "--no-merges",
+        ];
         if let Some(ref_name) = start_ref {
             args.push(ref_name);
         }

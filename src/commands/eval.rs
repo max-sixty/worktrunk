@@ -15,7 +15,10 @@ use crate::commands::command_executor::{CommandContext, build_hook_context};
 ///
 /// Prints the expanded result to stdout with a trailing newline. All hook
 /// template variables and filters are available.
-pub fn step_eval(template: &str) -> anyhow::Result<()> {
+///
+/// With `dry_run`, prints the template variables and the expanded result
+/// to stderr, then the result to stdout — useful for debugging templates.
+pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
@@ -34,6 +37,16 @@ pub fn step_eval(template: &str) -> anyhow::Result<()> {
     // No shell escaping — output is literal for scripting
     let result = expand_template(template, &vars, false, &repo, "eval")?;
 
-    println!("{result}");
+    if dry_run {
+        let mut keys: Vec<&str> = context_map.keys().map(|k| k.as_str()).collect();
+        keys.sort();
+        for key in keys {
+            eprintln!("{}={}", key, context_map[key]);
+        }
+        eprintln!("---");
+        eprintln!("Result: {result}");
+    } else {
+        println!("{result}");
+    }
     Ok(())
 }

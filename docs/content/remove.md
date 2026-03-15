@@ -19,7 +19,7 @@ Remove current worktree:
 wt remove
 ```
 
-Remove specific worktrees:
+Remove specific worktrees / branches:
 
 ```bash
 wt remove feature-branch

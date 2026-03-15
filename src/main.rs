@@ -286,7 +286,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             dry_run,
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
-        StepCommand::Eval { template } => step_eval(&template),
+        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { args } => step_for_each(args),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
@@ -463,14 +463,15 @@ fn handle_list_command(
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_select
     warn_select_deprecated();
-    handle_select(branches, remotes, true)
+    handle_select(branches, remotes, None)
 }
 
 #[cfg(not(unix))]
 fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> {
+    use worktrunk::git::WorktrunkError;
     warn_select_deprecated();
     print_windows_picker_unavailable();
-    std::process::exit(1);
+    Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
 struct SwitchCommandArgs {
@@ -483,6 +484,7 @@ struct SwitchCommandArgs {
     execute_args: Vec<String>,
     yes: bool,
     clobber: bool,
+    cd: bool,
     no_cd: bool,
     verify: bool,
 }
@@ -492,19 +494,22 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
+            let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
+
             let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, !spec.no_cd);
+                    return handle_select(spec.branches, spec.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
                 {
+                    use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes);
+                    let _ = (spec.branches, spec.remotes, change_dir_flag);
 
                     print_windows_picker_unavailable();
-                    std::process::exit(2);
+                    return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
                 }
             };
 
@@ -517,7 +522,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                     execute_args: &spec.execute_args,
                     yes: spec.yes,
                     clobber: spec.clobber,
-                    change_dir: !spec.no_cd,
+                    change_dir: change_dir_flag,
                     verify: spec.verify,
                 },
                 &mut config,
@@ -534,6 +539,109 @@ struct RemoveCommandArgs {
     verify: bool,
     yes: bool,
     force: bool,
+}
+
+/// Validated removal plans, categorized for ordered execution.
+///
+/// Multi-worktree removal validates all targets upfront, then executes in order:
+/// other worktrees first, branch-only cases next, current worktree last.
+struct RemovePlans {
+    others: Vec<RemoveResult>,
+    branch_only: Vec<RemoveResult>,
+    current: Option<RemoveResult>,
+    errors: Vec<anyhow::Error>,
+}
+
+impl RemovePlans {
+    fn has_valid_plans(&self) -> bool {
+        !self.others.is_empty() || !self.branch_only.is_empty() || self.current.is_some()
+    }
+
+    fn record_error(&mut self, e: anyhow::Error) {
+        eprintln!("{}", e);
+        self.errors.push(e);
+    }
+}
+
+/// Validate all removal targets, returning categorized plans.
+///
+/// Resolves each branch name, determines whether it's the current worktree,
+/// another worktree, or branch-only, and prepares the removal plan.
+/// Errors are collected (not fatal) to support partial success.
+fn validate_remove_targets(
+    repo: &Repository,
+    branches: Vec<String>,
+    config: &UserConfig,
+    keep_branch: bool,
+    force_delete: bool,
+    force: bool,
+) -> RemovePlans {
+    let current_worktree = repo
+        .current_worktree()
+        .root()
+        .ok()
+        .and_then(|p| dunce::canonicalize(&p).ok());
+
+    // Dedupe inputs to avoid redundant planning/execution
+    let branches: Vec<_> = {
+        let mut seen = HashSet::new();
+        branches
+            .into_iter()
+            .filter(|b| seen.insert(b.clone()))
+            .collect()
+    };
+
+    let mut plans = RemovePlans {
+        others: Vec::new(),
+        branch_only: Vec::new(),
+        current: None,
+        errors: Vec::new(),
+    };
+
+    for branch_name in &branches {
+        let resolved = match resolve_worktree_arg(repo, branch_name, config, OperationMode::Remove)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                plans.record_error(e);
+                continue;
+            }
+        };
+
+        match resolved {
+            ResolvedWorktree::Worktree { path, branch } => {
+                // Use canonical paths to avoid symlink/normalization mismatches
+                let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
+                let is_current = current_worktree.as_ref() == Some(&path_canonical);
+
+                if is_current {
+                    match handle_remove_current(keep_branch, force_delete, force, config) {
+                        Ok(result) => plans.current = Some(result),
+                        Err(e) => plans.record_error(e),
+                    }
+                    continue;
+                }
+
+                // Non-current worktree - branch is always Some because:
+                // - "@" resolves to current worktree (handled by is_current branch above)
+                // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
+                let branch_for_remove = branch.as_ref().unwrap();
+
+                match handle_remove(branch_for_remove, keep_branch, force_delete, force, config) {
+                    Ok(result) => plans.others.push(result),
+                    Err(e) => plans.record_error(e),
+                }
+            }
+            ResolvedWorktree::BranchOnly { branch } => {
+                match handle_remove(&branch, keep_branch, force_delete, force, config) {
+                    Ok(result) => plans.branch_only.push(result),
+                    Err(e) => plans.record_error(e),
+                }
+            }
+        }
+    }
+
+    plans
 }
 
 fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
@@ -592,106 +700,16 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 handle_remove_output(&result, spec.foreground, run_hooks, false)
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
-                // This supports partial success - some may fail validation while others succeed.
-                let current_worktree = repo
-                    .current_worktree()
-                    .root()
-                    .ok()
-                    .and_then(|p| dunce::canonicalize(&p).ok());
+                let plans = validate_remove_targets(
+                    &repo,
+                    branches,
+                    &config,
+                    !spec.delete_branch,
+                    spec.force_delete,
+                    spec.force,
+                );
 
-                // Dedupe inputs to avoid redundant planning/execution
-                let branches: Vec<_> = {
-                    let mut seen = HashSet::new();
-                    branches
-                        .into_iter()
-                        .filter(|b| seen.insert(b.clone()))
-                        .collect()
-                };
-
-                // Phase 1: Validate all targets (resolution + preparation)
-                // Store successful plans for execution after approval
-                let mut plans_others: Vec<RemoveResult> = Vec::new();
-                let mut plans_branch_only: Vec<RemoveResult> = Vec::new();
-                let mut plan_current: Option<RemoveResult> = None;
-                let mut all_errors: Vec<anyhow::Error> = Vec::new();
-
-                // Helper: record error and continue
-                let mut record_error = |e: anyhow::Error| {
-                    eprintln!("{}", e);
-                    all_errors.push(e);
-                };
-
-                for branch_name in &branches {
-                    // Resolve the target
-                    let resolved = match resolve_worktree_arg(
-                        &repo,
-                        branch_name,
-                        &config,
-                        OperationMode::Remove,
-                    ) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            record_error(e);
-                            continue;
-                        }
-                    };
-
-                    match resolved {
-                        ResolvedWorktree::Worktree { path, branch } => {
-                            // Use canonical paths to avoid symlink/normalization mismatches
-                            let path_canonical = dunce::canonicalize(&path).unwrap_or(path);
-                            let is_current = current_worktree.as_ref() == Some(&path_canonical);
-
-                            if is_current {
-                                // Current worktree - use handle_remove_current for detached HEAD
-                                match handle_remove_current(
-                                    !spec.delete_branch,
-                                    spec.force_delete,
-                                    spec.force,
-                                    &config,
-                                ) {
-                                    Ok(result) => plan_current = Some(result),
-                                    Err(e) => record_error(e),
-                                }
-                                continue;
-                            }
-
-                            // Non-current worktree - branch is always Some because:
-                            // - "@" resolves to current worktree (handled by is_current branch above)
-                            // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
-                            let branch_for_remove = branch.as_ref().unwrap();
-
-                            match handle_remove(
-                                branch_for_remove,
-                                !spec.delete_branch,
-                                spec.force_delete,
-                                spec.force,
-                                &config,
-                            ) {
-                                Ok(result) => plans_others.push(result),
-                                Err(e) => record_error(e),
-                            }
-                        }
-                        ResolvedWorktree::BranchOnly { branch } => {
-                            match handle_remove(
-                                &branch,
-                                !spec.delete_branch,
-                                spec.force_delete,
-                                spec.force,
-                                &config,
-                            ) {
-                                Ok(result) => plans_branch_only.push(result),
-                                Err(e) => record_error(e),
-                            }
-                        }
-                    }
-                }
-
-                // If no valid plans, bail early (all failed validation)
-                let has_valid_plans = !plans_others.is_empty()
-                    || !plans_branch_only.is_empty()
-                    || plan_current.is_some();
-                if !has_valid_plans {
+                if !plans.has_valid_plans() {
                     anyhow::bail!("");
                 }
 
@@ -700,29 +718,23 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                     return Ok(());
                 }
 
-                // Phase 2: Approve hooks (only if we have valid plans)
+                // Approve hooks (only if we have valid plans)
                 // TODO(pre-remove-context): Approval context uses current worktree,
                 // but hooks execute in each target worktree.
                 let run_hooks = spec.verify && approve_remove(spec.yes)?;
 
-                // Phase 3: Execute all validated plans
-                // Remove other worktrees first
-                for result in plans_others {
+                // Execute all validated plans: others first, branch-only next, current last
+                for result in plans.others {
+                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                }
+                for result in plans.branch_only {
+                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                }
+                if let Some(result) = plans.current {
                     handle_remove_output(&result, spec.foreground, run_hooks, false)?;
                 }
 
-                // Handle branch-only cases
-                for result in plans_branch_only {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
-                }
-
-                // Remove current worktree last (if it was in the list)
-                if let Some(result) = plan_current {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
-                }
-
-                // Exit with failure if any validation errors occurred
-                if !all_errors.is_empty() {
+                if !plans.errors.is_empty() {
                     anyhow::bail!("");
                 }
 
@@ -905,6 +917,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            cd,
             no_cd,
             verify,
         } => handle_switch_command(SwitchCommandArgs {
@@ -917,6 +930,7 @@ fn main() {
             execute_args,
             yes,
             clobber,
+            cd,
             no_cd,
             verify,
         }),
@@ -951,20 +965,16 @@ fn main() {
             no_verify,
             yes,
             stage,
-        } => {
-            // Pass CLI flags as options; handle_merge determines effective defaults
-            // using per-project config merged with global config
-            handle_merge(MergeOptions {
-                target: target.as_deref(),
-                squash: flag_pair(squash, no_squash),
-                commit: flag_pair(commit, no_commit),
-                rebase: flag_pair(rebase, no_rebase),
-                remove: flag_pair(remove, no_remove),
-                verify: flag_pair(verify, no_verify),
-                yes,
-                stage,
-            })
-        }
+        } => handle_merge(MergeOptions {
+            target: target.as_deref(),
+            squash: flag_pair(squash, no_squash),
+            commit: flag_pair(commit, no_commit),
+            rebase: flag_pair(rebase, no_rebase),
+            remove: flag_pair(remove, no_remove),
+            verify: flag_pair(verify, no_verify),
+            yes,
+            stage,
+        }),
     };
 
     if let Err(e) = result {
@@ -1018,7 +1028,11 @@ fn main() {
         // for cases not covered by the flag (e.g., external worktree removal).
         let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
         if cwd_gone {
-            eprintln!("{}", hint_message(cwd_removed_hint()));
+            if let Some(hint) = cwd_removed_hint() {
+                eprintln!("{}", hint_message(hint));
+            } else {
+                eprintln!("{}", info_message("Current directory was removed"));
+            }
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)

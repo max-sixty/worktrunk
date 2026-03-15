@@ -137,7 +137,12 @@ pub enum ItemKind {
     Branch,
 }
 
-/// Unified item for displaying worktrees and branches in the same table
+/// Unified item for displaying worktrees and branches in the same table.
+///
+/// Column-rendered fields are `Option<U>` where the outer `Option` encodes whether data
+/// was collected (`None` = not loaded, render shows placeholder). The inner type `U` is
+/// whatever the data naturally is — e.g., `AheadBehind` (always has a value, even if zero)
+/// or `Option<PrStatus>` (CI may not exist).
 #[derive(serde::Serialize)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
@@ -185,7 +190,7 @@ pub struct ListItem {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamStatus>,
 
-    /// CI/PR status: None = not loaded, Some(None) = no CI, Some(Some(status)) = has CI
+    /// CI/PR status (inner Option: whether CI exists for this branch)
     pub pr_status: Option<Option<PrStatus>>,
 
     /// Dev server URL computed from project config template
@@ -195,7 +200,7 @@ pub struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_active: Option<bool>,
 
-    /// LLM-generated branch summary: None = not loaded, Some(None) = no summary, Some(Some) = has summary
+    /// LLM-generated branch summary (inner Option: whether LLM produced a summary)
     #[serde(skip)]
     pub summary: Option<Option<String>>,
 
@@ -265,10 +270,6 @@ impl ListItem {
 
     pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
         self.branch_diff.as_ref()
-    }
-
-    pub fn upstream(&self) -> UpstreamStatus {
-        self.upstream.clone().unwrap_or_default()
     }
 
     pub fn worktree_data(&self) -> Option<&WorktreeData> {
@@ -666,13 +667,6 @@ mod tests {
         let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
         // New items have no branch_diff computed yet
         assert!(item.branch_diff().is_none());
-    }
-
-    #[test]
-    fn test_list_item_upstream() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        let upstream = item.upstream();
-        assert!(upstream.remote.is_none());
     }
 
     #[test]

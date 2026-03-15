@@ -223,6 +223,9 @@ pub enum GitError {
         remaining_entries: Option<Vec<String>>,
     },
     CannotRemoveMainWorktree,
+    CannotRemoveDefaultBranch {
+        branch: String,
+    },
     WorktreeLocked {
         branch: String,
         path: PathBuf,
@@ -587,6 +590,22 @@ impl GitError {
                     f,
                     "{}",
                     error_message("The main worktree cannot be removed")
+                )
+            }
+
+            GitError::CannotRemoveDefaultBranch { branch } => {
+                let cmd = suggest_command("remove", &[branch], &["-D"]);
+                write!(
+                    f,
+                    "{}",
+                    error_message(cformat!(
+                        "Cannot remove the default branch <bold>{branch}</>"
+                    ))
+                )?;
+                write!(
+                    f,
+                    "\n{}",
+                    hint_message(cformat!("To force-delete, run <underline>{cmd}</>"))
                 )
             }
 
