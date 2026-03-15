@@ -49,6 +49,21 @@
 # # [commit.generation]
 # # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 #
+# ### opencode
+#
+# # [commit.generation]
+# # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+#
+# ### llm
+#
+# # [commit.generation]
+# # command = "llm -m claude-haiku-4.5"
+#
+# ### aichat
+#
+# # [commit.generation]
+# # command = "aichat -m claude:claude-haiku-4.5"
+#
 # See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
 # ## Command config

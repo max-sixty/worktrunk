@@ -125,6 +125,27 @@ Generate commit messages automatically during merge. Requires an external CLI to
 # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
+### opencode
+
+```toml
+# [commit.generation]
+# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+```
+
+### llm
+
+```toml
+# [commit.generation]
+# command = "llm -m claude-haiku-4.5"
+```
+
+### aichat
+
+```toml
+# [commit.generation]
+# command = "aichat -m claude:claude-haiku-4.5"
+```
+
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Command config

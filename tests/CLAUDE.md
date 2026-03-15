@@ -320,6 +320,16 @@ using the qualified `insta::assert_snapshot!` form.
 For first-time snapshot creation, leave the inline value empty (`@""`), then
 run `cargo insta test --accept` to fill it.
 
+To update existing file-based snapshots (e.g., after editing CLI help text),
+use `cargo insta test --accept`:
+
+```bash
+cargo insta test --accept -- --test integration "test_help"
+```
+
+Do not manually edit `.snap` files — they contain ANSI escape sequences that
+are difficult to reproduce by hand.
+
 ### One test per belief
 
 Group related inputs into a single test when they verify the same belief about

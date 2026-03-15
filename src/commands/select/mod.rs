@@ -387,10 +387,11 @@ pub fn handle_select(
                 };
                 let config = repo.user_config();
 
-                // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+                // Run pre-switch hooks before branch resolution or worktree creation.
+                // {{ branch }} receives the raw user input (before resolution).
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, true)?;
+                    run_pre_switch_hooks(&repo, config, &identifier, true)?;
                 }
 
                 // Switch to existing worktree or create new one

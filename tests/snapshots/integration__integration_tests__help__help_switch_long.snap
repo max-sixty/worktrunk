@@ -120,11 +120,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 [1m[32mCreating a branch[0m
 
-The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
-
-[1mUpstream tracking:[0m Branches created with [2m--create[0m have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, [2m--base origin/main[0m would otherwise make [2mgit push[0m target [2mmain[0m. Use [2mgit push -u origin <branch>[0m to set up tracking as needed.
-
-Without [2m--create[0m, switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
+The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
 
 [1m[32mCreating worktrees[0m
 
@@ -132,10 +128,12 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
-2. Switches to new directory
-3. Runs post-create hooks (blocking)
-4. Spawns post-start hooks (background)
+1. Runs pre-switch hooks (blocking, fail-fast)
+2. Creates worktree at configured path
+3. Switches to new directory
+4. Runs post-create hooks (blocking)
+5. Spawns post-start hooks (background)
+6. Spawns post-switch hooks (background)
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
@@ -191,25 +189,16 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
 
 Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt switch <branch>[0m directly.
 
-[1m[32mGitHub pull requests[0m
+[1m[32mPull requests and merge requests[0m
 
-The [2mpr:<number>[0m syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches [2mrefs/pull/N/head[0m and configures [2mpushRemote[0m to the fork URL.
+The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # Checkout PR #101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # GitHub PR #101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # GitLab MR !101[0m[2m[0m
 
-Requires [2mgh[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m syntax since the branch already exists.
+Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
 
-[1mFork PRs:[0m The local branch uses the PR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-[1m[32mGitLab merge requests[0m
-
-The [2mmr:<number>[0m syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches [2mrefs/merge-requests/N/head[0m and configures [2mpushRemote[0m to the fork URL.
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # Checkout MR !101[0m[2m[0m
-
-Requires [2mglab[0m CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mmr:[0m syntax since the branch already exists.
-
-[1mFork MRs:[0m The local branch uses the MR's branch name directly, so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+[1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 [1m[32mWhen wt switch fails[0m
 

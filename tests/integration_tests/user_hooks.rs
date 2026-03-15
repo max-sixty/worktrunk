@@ -1913,6 +1913,39 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     );
 }
 
+/// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
+#[rstest]
+fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature-dest");
+
+    // Write pre-switch hook that records {{ branch }} into a marker file
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_branch.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_branch_destination",
+        &repo,
+        &["feature-dest"],
+    );
+
+    // {{ branch }} should be the destination branch, not the source (main)
+    let marker_file = repo.root_path().join("pre_switch_branch.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "feature-dest",
+        "{{{{ branch }}}} should be the destination branch 'feature-dest', got: '{}'",
+        contents.trim(),
+    );
+}
+
 /// When removing the current worktree, post-switch hooks should fire
 /// because the user is implicitly switched back to the primary worktree.
 /// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
