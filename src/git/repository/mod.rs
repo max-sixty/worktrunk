@@ -99,6 +99,8 @@ pub(super) struct RepoCache {
     pub(super) is_bare: OnceCell<bool>,
     /// Repository root path (main worktree for normal repos, bare directory for bare repos)
     pub(super) repo_path: OnceCell<PathBuf>,
+    /// Human-readable repository name, derived from repo_path
+    pub(super) repo_name: OnceCell<String>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
     /// Invalid default branch config (user configured a branch that doesn't exist).
@@ -446,6 +448,39 @@ impl Repository {
                 }
             })
             .map(|p| p.as_path())
+    }
+
+    /// Human-readable repository name, derived from `repo_path()`.
+    ///
+    /// Handles bare repo layouts where `repo_path()` ends in `.git` or `.bare`:
+    /// - `project/.git` → `"project"` (parent directory name)
+    /// - `project/.bare` → `"project"` (parent directory name)
+    /// - `project.git` → `"project"` (strip `.git` suffix)
+    /// - `project` → `"project"` (normal repos unchanged)
+    pub fn repo_name(&self) -> anyhow::Result<&str> {
+        self.cache
+            .repo_name
+            .get_or_try_init(|| {
+                let path = self.repo_path()?;
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+
+                // Bare repos at project/.git or project/.bare — use parent directory name
+                if name == ".git" || name == ".bare" {
+                    return Ok(path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string());
+                }
+
+                // Strip .git suffix (e.g., project.git → project)
+                Ok(name.strip_suffix(".git").unwrap_or(name).to_string())
+            })
+            .map(|s| s.as_str())
     }
 
     /// Check if this is a bare repository (no working tree).

@@ -797,6 +797,50 @@ fn test_nested_bare_repo_list_snapshot() {
     });
 }
 
+/// GitHub issue #1543 / #1279: {{ repo }} should resolve to "project", not ".git"
+#[test]
+fn test_nested_bare_repo_template_var_repo_name() {
+    let test = NestedBareRepoTest::new();
+
+    // Create main worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+    cmd.output().unwrap();
+
+    let main_worktree = test.project_path().join("main");
+    test.commit_in(&main_worktree, "Initial");
+
+    // Add a pre-merge hook to the user config that echoes {{ repo }}
+    let config_content =
+        "worktree-path = \"../{{ branch }}\"\npre-merge = \"echo repo={{ repo }}\"\n";
+    fs::write(&test.test_config_path, config_content).unwrap();
+
+    // Run the hook with --yes --dry-run to see what {{ repo }} expands to
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.args(["hook", "pre-merge", "--yes", "--dry-run"])
+        .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // The repo name should be "project" (the parent of .git), NOT ".git"
+    assert!(
+        combined.contains("repo=project"),
+        "Expected {{{{ repo }}}} to resolve to 'project', but got:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !combined.contains("repo=.git"),
+        "{{{{ repo }}}} should NOT resolve to '.git', but got:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 #[test]
 fn test_bare_repo_bootstrap_first_worktree() {
     // Test that we can create the first worktree in a bare repo using wt switch --create
