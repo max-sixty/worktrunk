@@ -1137,6 +1137,59 @@ fn test_llm_docs_commands_match_config_example() {
     }
 }
 
+/// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
+/// the double-commented examples in config.example.toml (the single source of truth).
+#[test]
+fn test_taskfile_llm_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
+
+    // Extract commands from config example: "# # command = ..." lines (same as docs test above)
+    let config_commands: Vec<String> = config_example
+        .lines()
+        .filter_map(|line| line.strip_prefix("# # "))
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    // Extract commands from Taskfile: COMMANDS["tool"]='shell-escaped-value'
+    // Unescape bash's '"'"' idiom (literal single quote) then strip outer quotes
+    let taskfile_re = Regex::new(r#"COMMANDS\["\w+"\]=(.*)"#).unwrap();
+    let taskfile_commands: Vec<String> = taskfile
+        .lines()
+        .filter_map(|line| {
+            let raw = &taskfile_re.captures(line.trim())?[1];
+            let unescaped = raw.replace("'\"'\"'", "'");
+            Some(
+                unescaped
+                    .strip_prefix('\'')?
+                    .strip_suffix('\'')?
+                    .to_string(),
+            )
+        })
+        .collect();
+
+    assert!(
+        config_commands.len() >= 2,
+        "Expected at least 2 tool commands in config.example.toml, found {}",
+        config_commands.len()
+    );
+
+    for cmd in &config_commands {
+        assert!(
+            taskfile_commands.contains(cmd),
+            "Command from config.example.toml not found in Taskfile.yaml bench-llm-commits:\n  \
+             {cmd}\n\
+             Update Taskfile.yaml to match the config example \
+             (source of truth: dev/config.example.toml)."
+        );
+    }
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
