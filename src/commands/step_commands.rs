@@ -296,11 +296,7 @@ pub fn handle_squash(
     generator.emit_hint_if_needed();
 
     // Get current branch and repo name for template variables
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let repo_name = repo.repo_name()?;
 
     let commit_message = crate::llm::generate_squash_message(
         &integration_target,
@@ -380,12 +376,7 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
     let range = format!("{}..HEAD", merge_base);
     let subjects = repo.commit_subjects(&range)?;
 
-    // Get repo name from directory
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let repo_name = repo.repo_name()?;
 
     let prompt = crate::llm::build_squash_prompt(
         &integration_target,
