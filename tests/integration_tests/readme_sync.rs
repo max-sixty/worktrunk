@@ -1137,6 +1137,71 @@ fn test_llm_docs_commands_match_config_example() {
     }
 }
 
+/// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
+/// the double-commented examples in config.example.toml (the single source of truth).
+/// Only compares tools present in both files — either side may have tools the other lacks.
+#[test]
+fn test_taskfile_llm_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
+
+    // Extract tool -> command from config example using h3 headings for tool names
+    // e.g. "# ### Claude Code" heading followed by '# # command = "..."' line
+    let mut config_commands = std::collections::HashMap::new();
+    let mut current_tool: Option<String> = None;
+    for line in config_example.lines() {
+        if let Some(heading) = line.strip_prefix("# ### ") {
+            current_tool = heading.split_whitespace().next().map(|s| s.to_lowercase());
+        } else if let Some(cmd_line) = line.strip_prefix("# # ")
+            && cmd_line.starts_with("command = ")
+            && let Some(ref tool) = current_tool
+            && let Ok(table) = toml::from_str::<toml::Table>(cmd_line)
+            && let Some(cmd) = table.get("command").and_then(|v| v.as_str())
+        {
+            config_commands.insert(tool.clone(), cmd.to_string());
+        }
+    }
+
+    // Extract tool -> command from Taskfile: COMMANDS["tool"]='shell-escaped-value'
+    // Unescape bash's '"'"' idiom (literal single quote) then strip outer quotes
+    let taskfile_re = Regex::new(r#"COMMANDS\["(\w+)"\]=(.*)"#).unwrap();
+    let taskfile_commands: std::collections::HashMap<String, String> = taskfile
+        .lines()
+        .filter_map(|line| {
+            let caps = taskfile_re.captures(line.trim())?;
+            let tool = caps[1].to_string();
+            let raw = &caps[2];
+            let unescaped = raw.replace("'\"'\"'", "'");
+            let cmd = unescaped
+                .strip_prefix('\'')?
+                .strip_suffix('\'')?
+                .to_string();
+            Some((tool, cmd))
+        })
+        .collect();
+
+    // Compare only tools present in both
+    let mut checked = 0;
+    for (tool, taskfile_cmd) in &taskfile_commands {
+        if let Some(config_cmd) = config_commands.get(tool.as_str()) {
+            assert_eq!(
+                config_cmd, taskfile_cmd,
+                "Command mismatch for '{tool}'.\n\
+                 Config example: {config_cmd}\n\
+                 Taskfile:       {taskfile_cmd}\n\
+                 Update Taskfile.yaml to match dev/config.example.toml (source of truth)."
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(
+        checked >= 1,
+        "No overlapping tools between config.example.toml and Taskfile.yaml"
+    );
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
