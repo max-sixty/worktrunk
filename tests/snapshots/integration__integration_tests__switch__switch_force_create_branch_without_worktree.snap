@@ -4,9 +4,8 @@ info:
   program: wt
   args:
     - switch
-    - "--base"
-    - main
-    - main
+    - "--force-create"
+    - local-branch
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -15,6 +14,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -43,6 +43,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33m--base flag is only used when creating a branch, ignoring[39m
-[2m○[22m Already on worktree for [1mmain[22m @ [1m_REPO_[22m
+[32m✓[39m [32mCreated worktree for [1mlocal-branch[22m @ [1m_REPO_.local-branch[22m[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

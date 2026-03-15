@@ -3403,3 +3403,70 @@ no-cd = true
     // Without any cd flags, config should be respected (no cd directive)
     snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
 }
+
+/// --force-create creates a new worktree when the branch doesn't exist yet.
+#[rstest]
+fn test_switch_force_create_new_branch(repo: TestRepo) {
+    snapshot_switch(
+        "switch_force_create_new",
+        &repo,
+        &["--force-create", "feature-new"],
+    );
+}
+
+/// --force-create switches to an existing worktree instead of erroring.
+#[rstest]
+fn test_switch_force_create_existing_branch(mut repo: TestRepo) {
+    repo.add_worktree("feature-existing");
+
+    snapshot_switch(
+        "switch_force_create_existing",
+        &repo,
+        &["--force-create", "feature-existing"],
+    );
+}
+
+/// --force-create switches to an existing branch that has no worktree yet (acts like plain switch).
+#[rstest]
+fn test_switch_force_create_branch_without_worktree(repo: TestRepo) {
+    repo.run_git(&["branch", "local-branch"]);
+
+    snapshot_switch(
+        "switch_force_create_branch_without_worktree",
+        &repo,
+        &["--force-create", "local-branch"],
+    );
+}
+
+/// `[switch] force-create = true` config creates a new worktree when branch doesn't exist.
+#[rstest]
+fn test_switch_force_create_config_new_branch(repo: TestRepo) {
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+force-create = true
+"#,
+    );
+
+    snapshot_switch("switch_force_create_config_new", &repo, &["fc-config-new"]);
+}
+
+/// `[switch] force-create = true` config switches to an existing worktree without erroring.
+#[rstest]
+fn test_switch_force_create_config_existing_branch(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+force-create = true
+"#,
+    );
+    repo.add_worktree("fc-config-existing");
+
+    snapshot_switch(
+        "switch_force_create_config_existing",
+        &repo,
+        &["fc-config-existing"],
+    );
+}
