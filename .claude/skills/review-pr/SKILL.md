@@ -293,6 +293,14 @@ After approving or staying silent, monitor CI using the approach from
   ```
   Skip if already dismissed. **Do not push fixes on human-authored PRs** — post
   the analysis and offer to fix, then wait for the author to accept.
+- **A check failed** and it's a transient flake (unrelated to the PR changes) →
+  trigger a re-run of the failed jobs:
+  ```bash
+  gh run rerun <run-id> --failed
+  ```
+  For **bot-authored PRs**, always re-run flakes — there's no human author
+  waiting to do it. For human-authored PRs, mention the flake in a COMMENT
+  review and suggest a re-run.
 
 ### 6. Resolve handled suggestions
 
