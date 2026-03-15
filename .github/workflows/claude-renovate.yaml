@@ -112,6 +112,12 @@ jobs:
             🤖 Automated weekly renovation
             ```
 
+            ## Clean up superseded PRs
+
+            After creating the renovation PR, close any dependabot or other automated PRs that are fully superseded by your changes. For each:
+            1. Leave a comment explaining the PR is superseded (e.g., "Superseded by #NNN which includes this update along with other renovations.")
+            2. Close the PR with `gh pr close <number>`
+
             ## If no updates are needed
 
             Simply report that all dependencies are up to date. Don't create a PR.

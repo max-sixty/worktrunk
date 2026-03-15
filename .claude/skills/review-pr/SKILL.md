@@ -202,7 +202,9 @@ review as a COMMENT.
 
 **Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
 `gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
-when there are concerns, or stay silent and skip to step 5.
+when there are concerns, or stay silent and skip to step 5. Still monitor CI
+and post a COMMENT review if a check fails — "stay silent" only applies to the
+initial review verdict, not to CI failure analysis.
 
 **Not confident enough to approve** (unfamiliar module, subtle logic): Add a
 `+1` reaction instead — no review needed unless there are specific observations.
