@@ -26,7 +26,13 @@ combine commands.
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
+PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 
+# Detect self-authored PRs early — GitHub rejects self-approvals.
+# If PR_AUTHOR == BOT_LOGIN, this is a self-authored PR.
+# Skip approval in step 4 (submit COMMENT if there are concerns, or stay
+# silent and skip directly to step 5).
+IS_SELF_AUTHORED=$( [ "$PR_AUTHOR" = "$BOT_LOGIN" ] && echo true || echo false )
 
 # Find the bot's most recent substantive review (any state).
 # Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
@@ -50,11 +56,12 @@ gh api "repos/$REPO/compare/$LAST_REVIEW_SHA...$HEAD_SHA" \
   --jq '{total: ([.files[] | .additions + .deletions] | add), files: [.files[] | "\(.filename)\t+\(.additions)/-\(.deletions)"]}'
 ```
 
-If the incremental changes are trivial, skip the full review (steps 2-3) — the
-existing review stands. Still proceed to step 6 to resolve any bot threads
-addressed by the new changes, then exit. Rough heuristic: changes under ~20
-added+deleted lines that don't introduce new functions, types, or control flow
-are typically trivial.
+If the incremental changes are trivial, skip the full review **and do not
+submit a new approval** — the existing review stands. Go directly to step 6 to
+resolve any bot threads addressed by the new changes, then exit. Do NOT proceed
+to steps 2, 3, or 4. Rough heuristic: changes under ~20 added+deleted lines
+that don't introduce new functions, types, or control flow are typically
+trivial.
 
 Then read all previous bot feedback and conversation:
 
@@ -199,8 +206,9 @@ approach: "Does this bypass or duplicate an existing API?" "What does this
 change *not* handle?" If the design involves a judgment call, flag it for human
 review as a COMMENT.
 
-**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): GitHub rejects self-approvals.
-Submit as COMMENT when there are concerns, or stay silent and skip to step 5.
+**Self-authored PRs** (`IS_SELF_AUTHORED == true` from step 1): Do NOT attempt
+`gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
+when there are concerns, or stay silent and skip to step 5.
 
 **Not confident enough to approve** (unfamiliar module, subtle logic): Add a
 `+1` reaction instead — no review needed unless there are specific observations.
