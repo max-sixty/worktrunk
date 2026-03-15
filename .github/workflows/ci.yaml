@@ -68,9 +68,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
-        # The claude-renovate workflow checks weekly for compatible updates.
-        version: "=0.9.128"
+        version: "=0.9.130"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -104,7 +102,7 @@ jobs:
       shell: pwsh
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7.4.0
+      uses: astral-sh/setup-uv@v7.5.0
       with:
         # Silence "no file matched" warning; uv is only used to install pre-commit
         cache-dependency-glob: ".pre-commit-config.yaml"
@@ -124,7 +122,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.28.2"
+        version: "=0.29.4"
 
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes
@@ -182,7 +180,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-msrv
-        version: "=0.18.4"
+        version: "=0.19.2"
 
     - name: Verify minimum rust version
       run: cargo msrv verify
@@ -220,7 +218,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.68.26
+      uses: taiki-e/install-action@v2.68.31
       with:
         tool: zola@0.22.1
 
