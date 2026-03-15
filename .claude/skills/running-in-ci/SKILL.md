@@ -72,7 +72,7 @@ point.
 # Run with Bash tool's run_in_background: true
 for i in $(seq 1 10); do
   sleep 60
-  if gh pr checks <number> --required 2>&1 | grep -qv 'pending\|queued\|in_progress'; then
+  if ! gh pr checks <number> --required 2>&1 | grep -q 'pending\|queued\|in_progress'; then
     gh pr checks <number> --required
     exit 0
   fi
