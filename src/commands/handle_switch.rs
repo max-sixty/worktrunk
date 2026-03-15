@@ -20,10 +20,19 @@ use crate::output::{
     prompt_shell_integration,
 };
 
+/// How to handle the target branch when switching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CreateMode {
+    #[default]
+    Switch, // no flag: switch to existing; error if not found
+    Create,      // --create: new branch; error if already exists
+    ForceCreate, // --force-create: switch if exists, create if not
+}
+
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
     pub branch: &'a str,
-    pub create: bool,
+    pub create_mode: CreateMode,
     pub base: Option<&'a str>,
     pub execute: Option<&'a str>,
     pub execute_args: &'a [String],
@@ -168,7 +177,7 @@ pub fn handle_switch(
 ) -> anyhow::Result<()> {
     let SwitchOptions {
         branch,
-        create,
+        create_mode,
         base,
         execute,
         execute_args,
@@ -186,6 +195,19 @@ pub fn handle_switch(
         let project_id = repo.project_identifier().ok();
         !config.resolved(project_id.as_deref()).switch.no_cd()
     });
+
+    // Resolve create_mode: config can upgrade Switch → ForceCreate; explicit flags are never overridden
+    let create_mode = match create_mode {
+        CreateMode::Switch => {
+            let project_id = repo.project_identifier().ok();
+            if config.resolved(project_id.as_deref()).switch.force_create() {
+                CreateMode::ForceCreate
+            } else {
+                CreateMode::Switch
+            }
+        }
+        other => other,
+    };
 
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
@@ -206,7 +228,7 @@ pub fn handle_switch(
     }
 
     // Validate and resolve the target branch.
-    let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
+    let plan = plan_switch(&repo, branch, create_mode, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
             Some(ref ctx) => match err.downcast::<GitError>() {
                 Ok(git_err) => GitError::WithSwitchSuggestion {

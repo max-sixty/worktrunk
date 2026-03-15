@@ -384,6 +384,14 @@ pub struct SwitchConfig {
     #[serde(rename = "no-cd", default, skip_serializing_if = "Option::is_none")]
     pub no_cd: Option<bool>,
 
+    /// Switch if branch exists, create if it doesn't (equivalent to --force-create)
+    #[serde(
+        rename = "force-create",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub force_create: Option<bool>,
+
     /// Picker settings for the interactive selector
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picker: Option<SwitchPickerConfig>,
@@ -394,12 +402,18 @@ impl SwitchConfig {
     pub fn no_cd(&self) -> bool {
         self.no_cd.unwrap_or(false)
     }
+
+    /// Switch if branch exists, create if it doesn't (default: false)
+    pub fn force_create(&self) -> bool {
+        self.force_create.unwrap_or(false)
+    }
 }
 
 impl Merge for SwitchConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             no_cd: other.no_cd.or(self.no_cd),
+            force_create: other.force_create.or(self.force_create),
             picker: match (&self.picker, &other.picker) {
                 (None, None) => None,
                 (Some(s), None) => Some(s.clone()),

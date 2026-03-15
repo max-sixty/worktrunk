@@ -45,8 +45,8 @@ pub(crate) use crate::cli::OutputFormat;
 use commands::handle_select;
 use commands::worktree::handle_push;
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
-    clear_approvals, handle_completions, handle_config_create, handle_config_show,
+    CreateMode, MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions,
+    add_approvals, clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
     handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
     handle_rebase, handle_remove, handle_remove_current, handle_show_theme, handle_squash,
@@ -478,6 +478,7 @@ struct SwitchCommandArgs {
     branches: bool,
     remotes: bool,
     create: bool,
+    force_create: bool,
     base: Option<String>,
     execute: Option<String>,
     execute_args: Vec<String>,
@@ -512,10 +513,16 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                 }
             };
 
+            let create_mode = match (spec.create, spec.force_create) {
+                (true, _) => CreateMode::Create,
+                (_, true) => CreateMode::ForceCreate,
+                _ => CreateMode::Switch,
+            };
+
             handle_switch(
                 SwitchOptions {
                     branch: &branch,
-                    create: spec.create,
+                    create_mode,
                     base: spec.base.as_deref(),
                     execute: spec.execute.as_deref(),
                     execute_args: &spec.execute_args,
@@ -911,6 +918,7 @@ fn main() {
             branches,
             remotes,
             create,
+            force_create,
             base,
             execute,
             execute_args,
@@ -924,6 +932,7 @@ fn main() {
             branches,
             remotes,
             create,
+            force_create,
             base,
             execute,
             execute_args,

@@ -18,6 +18,12 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
+The `--force-create` flag switches if the branch exists, or creates it if it doesn't — useful when you don't know whether a branch exists yet. It cannot be combined with `--create`. Set `force-create = true` in `[switch]` config to make this the default.
+
+```bash
+wt switch feature --force-create    # switches if exists, creates if not
+```
+
 ## Creating worktrees
 
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](https://worktrunk.dev/hook/).
@@ -135,6 +141,9 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 <b><span class=g>Options:</span></b>
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
           Create a new branch
+
+      <b><span class=c>--force-create</span></b>
+          Switch if branch exists, create if it doesn&#39;t
 
   <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
           Base branch

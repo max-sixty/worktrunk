@@ -20,6 +20,7 @@ use worktrunk::styling::{
 use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
+use crate::commands::handle_switch::CreateMode;
 
 /// Result of resolving the switch target.
 struct ResolvedTarget {
@@ -334,9 +335,12 @@ fn resolve_same_repo_ref(
 fn resolve_switch_target(
     repo: &Repository,
     branch: &str,
-    create: bool,
+    create_mode: CreateMode,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
+    let create = matches!(create_mode, CreateMode::Create);
+    let force_create = matches!(create_mode, CreateMode::ForceCreate);
+
     // Handle pr:<number> syntax
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
@@ -362,9 +366,17 @@ fn resolve_switch_target(
         resolved_branch = local_name;
     }
 
-    // Resolve and validate base (only when --create is set)
+    // For --force-create: auto-detect whether to create based on local branch existence.
+    // This must happen after remote-prefix stripping so the branch name is resolved.
+    let effective_create = if force_create {
+        !repo.branch(&resolved_branch).exists_locally()?
+    } else {
+        create
+    };
+
+    // Resolve and validate base (only when creating)
     let resolved_base = if let Some(base_str) = base {
-        if !create {
+        if !effective_create {
             eprintln!(
                 "{}",
                 warning_message("--base flag is only used with --create, ignoring")
@@ -384,17 +396,19 @@ fn resolve_switch_target(
         None
     };
 
-    // Validate --create constraints
-    if create {
+    // Validate create constraints
+    if effective_create {
         let branch_handle = repo.branch(&resolved_branch);
-        if branch_handle.exists_locally()? {
+        // For explicit --create (not --force-create): error if branch already exists.
+        // For --force-create: we already know the branch doesn't exist (effective_create = !exists).
+        if !force_create && branch_handle.exists_locally()? {
             return Err(GitError::BranchAlreadyExists {
                 branch: resolved_branch,
             }
             .into());
         }
 
-        // Warn if --create would shadow a remote branch
+        // Warn if creating would shadow a remote branch
         let remotes = branch_handle.remotes()?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
@@ -416,7 +430,7 @@ fn resolve_switch_target(
     }
 
     // Compute base branch for creation
-    let base_branch = if create {
+    let base_branch = if effective_create {
         resolved_base.or_else(|| {
             // Check for invalid configured default branch
             if let Some(configured) = repo.invalid_default_branch_config() {
@@ -444,7 +458,7 @@ fn resolve_switch_target(
     Ok(ResolvedTarget {
         branch: resolved_branch,
         method: CreationMethod::Regular {
-            create_branch: create,
+            create_branch: effective_create,
             base_branch,
         },
     })
@@ -583,7 +597,7 @@ fn setup_fork_branch(
 pub fn plan_switch(
     repo: &Repository,
     branch: &str,
-    create: bool,
+    create_mode: CreateMode,
     base: Option<&str>,
     clobber: bool,
     config: &UserConfig,
@@ -592,7 +606,7 @@ pub fn plan_switch(
     let new_previous = repo.current_worktree().branch().ok().flatten();
 
     // Phase 1: Resolve target (handles pr:, validates --create/--base, may do network)
-    let target = resolve_switch_target(repo, branch, create, base)?;
+    let target = resolve_switch_target(repo, branch, create_mode, base)?;
 
     // Phase 2: Check if worktree already exists for this branch (fast path)
     // This avoids computing the worktree path template (~7 git commands) for existing switches.

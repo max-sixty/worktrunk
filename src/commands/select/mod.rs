@@ -18,7 +18,8 @@ use skim::prelude::*;
 use worktrunk::git::{Repository, current_or_recover};
 
 use super::handle_switch::{
-    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+    CreateMode, approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
+    switch_extra_vars,
 };
 use super::list::collect;
 use super::worktree::{
@@ -395,7 +396,12 @@ pub fn handle_select(
                 }
 
                 // Switch to existing worktree or create new one
-                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
+                let create_mode = if should_create {
+                    CreateMode::Create
+                } else {
+                    CreateMode::Switch
+                };
+                let plan = plan_switch(&repo, &identifier, create_mode, None, false, config)?;
                 let hooks_approved = approve_switch_hooks(&repo, config, &plan, false, true)?;
                 let (result, branch_info) =
                     execute_switch(&repo, plan, config, false, hooks_approved)?;

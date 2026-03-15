@@ -50,6 +50,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-c[0m, [1m[36m--create[0m
           Create a new branch
 
+      [1m[36m--force-create[0m
+          Switch if branch exists, create if it doesn't
+
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
           Base branch[0m
           
@@ -121,6 +124,10 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 [1m[32mCreating a branch[0m
 
 The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
+
+The [2m--force-create[0m flag switches if the branch exists, or creates it if it doesn't — useful when you don't know whether a branch exists yet. It cannot be combined with [2m--create[0m. Set [2mforce-create = true[0m in [2m[switch][0m config to make this the default.
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature [0m[2m[36m--force-create[0m[2m    # switches if exists, creates if not[0m[2m[0m
 
 [1m[32mCreating worktrees[0m
 

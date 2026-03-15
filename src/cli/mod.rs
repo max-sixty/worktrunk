@@ -266,6 +266,12 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
+The `--force-create` flag switches if the branch exists, or creates it if it doesn't — useful when you don't know whether a branch exists yet. It cannot be combined with `--create`. Set `force-create = true` in `[switch]` config to make this the default.
+
+```console
+wt switch feature --force-create    # switches if exists, creates if not
+```
+
 ## Creating worktrees
 
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](@/hook.md).
@@ -387,6 +393,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Create a new branch
         #[arg(short = 'c', long, requires = "branch")]
         create: bool,
+
+        /// Switch if branch exists, create if it doesn't
+        #[arg(long, requires = "branch", conflicts_with = "create")]
+        force_create: bool,
 
         /// Base branch
         ///
