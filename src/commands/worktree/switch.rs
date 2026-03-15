@@ -379,7 +379,7 @@ fn resolve_switch_target(
         if !effective_create {
             eprintln!(
                 "{}",
-                warning_message("--base flag is only used with --create, ignoring")
+                warning_message("--base flag is only used when creating a branch, ignoring")
             );
             None
         } else {
