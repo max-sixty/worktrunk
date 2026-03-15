@@ -300,14 +300,17 @@ After approving or staying silent, monitor CI using the approach from
      ```
   2. **Report the flake to the tracking issue.** Search for an open issue about
      the specific flaky test (`gh issue list --search "<test name>" --state open`).
-     If found, add a comment with the context (PR number, platform, error
-     snippet, run link). If no issue exists, open one. Rate-limit to roughly one
-     comment per day per test — check recent comments before posting:
+     If found, check for a recent bot comment. Edit the existing comment to
+     append the new instance (PR number, platform, error snippet, run link)
+     rather than posting a new one — this keeps the issue tidy. If no recent bot
+     comment exists, add one. If no issue exists, open one.
      ```bash
-     gh issue view <issue-number> --json comments \
-       --jq '[.comments[] | select(.author.login == "worktrunk-bot")] | last | .createdAt'
+     # Find the bot's last comment on the issue
+     LAST_COMMENT=$(gh issue view <issue-number> --json comments \
+       --jq '[.comments[] | select(.author.login == "worktrunk-bot")] | last | {id: .url, createdAt: .createdAt}')
+     # If the bot commented recently, edit that comment; otherwise post a new one
      ```
-     Skip the comment if the bot already commented today.
+     Skip if the bot already commented today and the comment includes this PR.
 
 ### 6. Resolve handled suggestions
 
