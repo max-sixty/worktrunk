@@ -50,7 +50,7 @@ jobs:
             actions: read
 
           prompt: |
-            fix-ci ${{ github.event.workflow_run.id }}
+            /fix-ci ${{ github.event.workflow_run.id }}
             - Run URL: ${{ github.event.workflow_run.html_url }}
             - Commit: ${{ github.event.workflow_run.head_sha }}
             - Commit message: ${{ github.event.workflow_run.head_commit.message }}

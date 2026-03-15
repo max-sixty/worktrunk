@@ -48,7 +48,7 @@ jobs:
           additional_permissions: |
             actions: read
 
-          prompt: review-reviewers
+          prompt: /review-reviewers
 
           claude_args: |
             --model opus
