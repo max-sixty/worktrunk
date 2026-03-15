@@ -108,6 +108,21 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# # [commit.generation][0m
 [107m [0m [2m# # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# ### opencode[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # [commit.generation][0m
+[107m [0m [2m# # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ### llm[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # [commit.generation][0m
+[107m [0m [2m# # command = "llm -m claude-haiku-4.5"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ### aichat[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # [commit.generation][0m
+[107m [0m [2m# # command = "aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Command config[0m
