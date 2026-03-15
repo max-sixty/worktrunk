@@ -38,77 +38,44 @@ comments.
 
 ## PR Creation
 
-When the triggering comment asks for a PR (e.g., "make a new PR", "open a PR",
-"create a PR"), create it directly with `gh pr create`. The comment is the
-user's explicit request — don't downgrade it to a compare link.
+When asked to create a PR, use `gh pr create` directly.
 
-### Before creating a PR
-
-**Check for existing work.** Before creating a new branch or PR, check whether
-someone (including the bot) has already opened a PR for the same issue or topic:
+Before creating a branch or PR, check for existing work:
 
 ```bash
-# Check open PRs — look for related titles and branches
 gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)]: \(.title)"'
-
-# Check for fix branches
 git branch -r --list 'origin/fix/*'
 ```
 
-If an existing PR addresses the same problem, work on that PR instead of
-creating a duplicate. Comment on the existing PR or the issue linking to it.
+If an existing PR addresses the same problem, work on that PR instead.
 
 ## Pushing to PR Branches
 
-**Always use `git push` without specifying a remote.** The workflow uses
-`gh pr checkout` which configures branch tracking to the correct remote —
-including for fork PRs. Specifying `origin` explicitly bypasses this and can
-push to the wrong place.
+Always use `git push` without specifying a remote — `gh pr checkout` configures
+tracking to the correct remote, including for fork PRs. Specifying `origin`
+explicitly can push to the wrong place.
 
-If pushing fails (e.g., fork PR with "Allow edits from maintainers" disabled),
-fall back to posting suggested changes as code snippets in a comment.
-
-When posting code from work you did locally, do not reference commit SHAs from
-temporary or deleted branches — those links will 404. Post the code inline
-instead.
+If pushing fails (fork PR with edits disabled), fall back to posting code
+snippets in a comment. Don't reference commit SHAs from temporary branches —
+post code inline.
 
 ## CI Monitoring
 
-After pushing changes to a PR branch, you **must** wait for CI before saying
-"done" or reporting completion. A push without green CI is not finished work.
+After pushing, wait for CI before reporting completion.
 
-1. Push your changes
-2. Run `gh pr checks <number> --required` once
-3. If checks are still running, poll with `gh pr checks <number> --required`
-   every 60 seconds until all required checks complete (this may take up to
-   10 minutes). Non-required checks (e.g., benchmarks) are ignored — do not
-   wait for them.
-4. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
-   fix issues, commit, push, and repeat from step 2
-5. After all required checks pass, also check `codecov/patch`. Although it is
-   marked non-required in GitHub, this repo treats it as mandatory (see
-   CLAUDE.md). Run `gh pr checks <number>` (without `--required`) and look for
-   the `codecov/patch` row. If it hasn't completed yet, continue polling every
-   60 seconds. If it fails, investigate and fix the coverage gap before
-   reporting completion.
-6. Only after all required checks **and** `codecov/patch` pass, report
-   completion
+1. Poll `gh pr checks <number> --required` every 60 seconds until all required
+   checks complete (up to ~10 minutes). Ignore non-required checks (benchmarks).
+2. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
+   fix, commit, push, repeat.
+3. After required checks pass, also poll `codecov/patch` via
+   `gh pr checks <number>` (without `--required`) — this repo treats it as
+   mandatory despite being marked non-required. Fix coverage gaps if it fails.
+4. Report completion only after all required checks **and** `codecov/patch` pass.
 
-**Never** post a "done" or "fixed" comment before CI passes. Local tests alone
-are not sufficient — CI runs on Linux, Windows, and macOS. If you report
-completion and CI later fails, the user has to come back and ask you to fix it
-again.
-
+Never report "done" before CI passes — CI runs on Linux, Windows, and macOS.
 Avoid `gh run watch` and `gh pr checks --watch` — both can hang indefinitely.
-Use the poll loop above instead, which has a natural bound on CI completion
-time.
 
-### Verifying local test failures before pushing
-
-When running local tests before pushing and some tests fail, do **not**
-characterize them as "pre-existing" or "environment-dependent" without
-evidence. The same grounded-analysis rule from the Thoroughness section applies
-here — check main branch CI history before dismissing failures:
+Before dismissing local test failures as "pre-existing", check main branch CI:
 
 ```bash
 gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=3" \
@@ -116,15 +83,13 @@ gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=
 ```
 
 If you cannot verify, say "I haven't confirmed whether these failures are
-pre-existing" rather than asserting they are.
+pre-existing."
 
 ## Replying to Comments
 
-Prefer replying in context rather than creating a new top-level comment:
+Reply in context rather than creating new top-level comments:
 
-- **Inline review comments** (URLs containing `#discussion_r`): Reply in the
-  review thread using `gh api`, not as a top-level conversation comment. Use the
-  review comment ID from the prompt:
+- **Inline review comments** (`#discussion_r`): Reply in the review thread:
   ```bash
   cat > /tmp/reply.md << 'EOF'
   Your response here
@@ -132,50 +97,15 @@ Prefer replying in context rather than creating a new top-level comment:
   gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
     -F body=@/tmp/reply.md
   ```
-  This keeps the discussion co-located with the code it references.
 
-- **Conversation comments** (URLs containing `#issuecomment-`): Post a regular
-  comment — GitHub doesn't support threading for these, so a new comment is
-  correct.
+- **Conversation comments** (`#issuecomment-`): Post a regular comment (GitHub
+  doesn't support threading).
 
 ## Comment Formatting
 
-Keep comments concise. Put detailed analysis inside `<details>` tags with a
-short summary. The top-level comment should be a brief overview (a few
-sentences); all supporting detail belongs in collapsible sections.
-
-Use `<details>` tags when a comment has supporting detail that isn't the main
-point — multi-section analyses, diagnostic breakdowns, or supplementary context
-around a short conclusion. The reader should get the gist without expanding.
-Don't collapse content that *is* the answer: if someone asked for a survey or
-detailed analysis, the full response is the substance, not boilerplate, and
-should stay inline.
-
-### Use Links
-
-When referencing files, issues, PRs, or docs, always use markdown links so
-readers can click through — never leave them as plain text.
-
-Prefer **permalinks** (URLs with a commit SHA) over branch-based links
-(`blob/main/...`). Permalinks stay valid even when files move or lines shift.
-This is especially important for line references — a `blob/main/...#L42` link
-breaks as soon as the line numbers change. On GitHub, pressing `y` on any file
-view copies the permalink.
-
-- **Repository files** — link to the file on GitHub:
-  [`docs/content/hook.md`](https://github.com/max-sixty/worktrunk/blob/main/docs/content/hook.md),
-  not just `docs/content/hook.md`
-- **Issues and PRs** — use `#123` shorthand (GitHub auto-links these)
-- **Specific lines** — link with a line fragment:
-  [`src/cli/mod.rs#L42`](https://github.com/max-sixty/worktrunk/blob/main/src/cli/mod.rs#L42)
-- **External resources** — always use `[text](url)` format
-
-For file-level links, `blob/main/...` is acceptable since file paths are stable.
-For **line references**, always use a permalink with a commit SHA
-(`blob/<sha>/...#L42`) — line numbers shift frequently and branch-based line
-links go stale fast.
-
-Example:
+Keep comments concise. Put supporting detail inside `<details>` tags — the
+reader should get the gist without expanding. Don't collapse content that *is*
+the answer (e.g., a requested analysis).
 
 ```
 <details><summary>Detailed findings (6 files)</summary>
@@ -185,37 +115,38 @@ Example:
 </details>
 ```
 
-Do not add job links, branch links, or other footers at the bottom of your
-comment. `claude-code-action` automatically adds these to the comment header.
-Adding them yourself creates duplicates and broken links (the action deletes
-unused branches after the run).
+Always use markdown links for files, issues, PRs, and docs. Prefer permalinks
+(commit SHA URLs) over branch-based links for line references — line numbers
+shift and `blob/main/...#L42` links go stale.
 
-## Shell Quoting in `gh` Commands
+- **Files**: link to GitHub (`blob/main/...` for file-level,
+  `blob/<sha>/...#L42` for lines)
+- **Issues/PRs**: `#123` shorthand
+- **External**: `[text](url)` format
 
-Shell expansion corrupts `$` and `!` in command arguments. **This is a Claude
-Code bug** — bash history expansion mangles `!` in double-quoted strings (e.g.,
-`format!` becomes `format\!`) and it's the most common source
-of broken bot comments.
+Don't add job links or footers — `claude-code-action` adds these automatically.
 
-**Rule: always use a temp file for comment/reply bodies and other shell-sensitive
-arguments.** Never pass the body directly as a `-f body="..."` argument.
+## Shell Quoting
+
+Shell expansion corrupts `$` and `!` in arguments (bash history expansion
+mangles `!` in double-quoted strings). Always use a temp file for comment bodies
+and shell-sensitive arguments:
 
 ```bash
-# Posting a comment — ALWAYS use a file
+# Comments — ALWAYS use a file
 cat > /tmp/comment.md << 'EOF'
 Fixed — the `format!` macro needed its arguments on separate lines.
-CI is now green across all platforms.
 EOF
 gh pr comment 1286 -F /tmp/comment.md
 
-# Replying to a review comment — ALWAYS use a file
+# Review replies — ALWAYS use a file
 cat > /tmp/reply.md << 'EOF'
 Good catch! Updated to use `assert_eq!` instead.
 EOF
 gh api repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies \
   -F body=@/tmp/reply.md
 
-# GraphQL with $ — write query to a file, pass with -F
+# GraphQL — write query to a file
 cat > /tmp/query.graphql << 'GRAPHQL'
 query($owner: String!, $repo: String!) { ... }
 GRAPHQL
@@ -228,21 +159,14 @@ EOF
 gh api ... --jq "$(cat /tmp/jq_filter)"
 ```
 
-**Key details:**
-- Use `<< 'EOF'` (single-quoted delimiter) to prevent all shell expansion
-- Use `-F body=@/tmp/reply.md` (capital `-F` with `@` prefix) to read from file
-- For `gh pr comment` and `gh issue comment`, use `-F /tmp/comment.md` (the
-  `-F` flag reads body from file)
+Use `<< 'EOF'` (single-quoted delimiter) to prevent expansion. For file-based
+bodies: `gh pr comment` uses `-F /tmp/file` (path directly), while `gh api`
+uses `-F body=@/tmp/file` (field assignment with `@` prefix).
 
 ## Keeping PR Titles and Descriptions Current
 
-When you revise a PR's code in response to review feedback, check whether the
-title and description still accurately describe the changes. If the approach
-changed (e.g., from "exclude all X" to "add targeted exclusions for X"), update
-the title and body to match. A reviewer reading the description before the diff
-should not be confused by stale framing.
-
-Use the GitHub API to update:
+When revising code after review feedback, update the title and description if
+the approach changed:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{number} -X PATCH \
@@ -251,37 +175,21 @@ gh api repos/{owner}/{repo}/pulls/{number} -X PATCH \
 
 ## Atomic PRs
 
-When creating PRs, split unrelated changes into separate PRs — one concern per
-PR. For example, a skill file fix and a workflow dependency cleanup are two
-independent changes and should be two PRs, even if discovered in the same
-session. This makes PRs easier to review, revert, and bisect.
-
-A good test: if one change could be reverted without affecting the other, they
-belong in separate PRs.
+Split unrelated changes into separate PRs — one concern per PR. If one change
+could be reverted without affecting the other, they belong in separate PRs.
 
 ## Investigating Other CI Runs
 
-When asked to diagnose what a bot did in a previous CI run, the primary evidence
-is the session log artifact — not the console output. Console output
-(`gh run view <id> --log`) contains only workflow boilerplate because
-`show_full_output` defaults to `false`. The actual conversation is in the
-artifact.
-
-### Downloading session logs
-
-All Claude workflows upload session logs as artifacts named
-`claude-session-logs`. Download with:
+The primary evidence for diagnosing bot behavior is the session log artifact —
+not console output (`show_full_output` defaults to `false`).
 
 ```bash
 gh run download <run-id> -n claude-session-logs -D /tmp/session-logs-<run-id>
 ```
 
-The artifact contains JSONL files under a path like
-`-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`.
-
-### Parsing session logs
-
-Each JSONL line is a message with a `type` field (`user`, `assistant`, `system`).
+The artifact contains JSONL files (path like
+`-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`). Each line has a
+`type` field (`user`, `assistant`, `system`).
 
 ```bash
 # Skills loaded
@@ -298,9 +206,7 @@ jq -r 'select(.type == "assistant") | .message.content[]? |
   select(.type == "text") | .text' <FILE>.jsonl
 ```
 
-### Finding the right run
-
-Multiple workflows may trigger on the same event. Use the event type to narrow:
+Find the right run among multiple workflows:
 
 ```bash
 gh api 'repos/{owner}/{repo}/actions/runs?per_page=30' \
@@ -308,7 +214,7 @@ gh api 'repos/{owner}/{repo}/actions/runs?per_page=30' \
     {id, name, event, head_branch, created_at, conclusion}'
 ```
 
-Check which runs have artifacts before downloading:
+Check for artifacts before downloading:
 
 ```bash
 gh api repos/{owner}/{repo}/actions/runs/<run-id>/artifacts \
@@ -319,43 +225,23 @@ Review-response runs triggered by `pull_request_review` or
 `pull_request_review_comment` events sometimes produce no artifact when the
 session is very short.
 
-## Thoroughness — Grounded Analysis
+## Grounded Analysis
 
-CI runs are not interactive chat. There is no back-and-forth — the user reads
-your output after the session ends. Every claim must be grounded in evidence you
-actually examined.
+CI runs are not interactive — every claim must be grounded in evidence. The user
+can't ask follow-up questions; treat every response as your final answer.
 
-- **Do the work, don't speculate.** If you have access to logs, code, or API
-  data, read it before drawing conclusions. "This suggests X may be the cause"
-  is not acceptable when you can check whether X is actually the cause.
-- **Never claim a CI failure is "pre-existing" or "unrelated" without
-  evidence.** Before characterizing any failure this way, check main branch CI
-  history (e.g., `gh api "repos/{owner}/{repo}/actions/runs?branch=main&status=completed&per_page=5"`)
-  to verify the same test fails there. If you cannot verify, say "I haven't
-  confirmed whether this is pre-existing" rather than asserting it is.
-- **Show evidence.** Cite specific log lines, file paths, commit SHAs, or API
-  responses. A conclusion without evidence is speculation.
-- **Trace causation, don't guess at correlation.** If two things co-occur, find
-  the mechanism — don't say "this may be related."
-- **Distinguish what you verified from what you inferred.** If you couldn't
-  verify something (e.g., logs weren't available), say so explicitly rather than
-  hedging with "may" or "suggests."
-- **Check artifacts, not just console logs.** Console output from Claude runs is
-  hidden by default. Session log artifacts are the primary evidence source — see
-  "Investigating Other CI Runs" above.
-
-The user can't ask follow-up questions in the same session. Treat every response
-as your final answer.
+Read logs, code, and API data before drawing conclusions. Show evidence: cite
+log lines, file paths, commit SHAs. Trace causation — if two things co-occur,
+find the mechanism rather than saying "this may be related." Never claim a
+failure is "pre-existing" without checking main branch CI history. Distinguish
+what you verified from what you inferred.
 
 ## Tone
 
-You are a helpful reviewer raising observations, not a manager assigning work.
-Never create checklists or task lists for the PR author. Instead, note what you
-found and let the author decide what to act on.
+Raise observations, don't assign work. Never create checklists or task lists
+for the PR author.
 
 ## PR Review Comments
 
-For PR review comments on specific lines (shown as `[Comment on path:line]` in
-`<review_comments>`), ALWAYS read that file and examine the code at that line
-before answering. The question is about that specific code, not the PR in
-general.
+For review comments on specific lines (`[Comment on path:line]`), read that file
+and examine the code at that line before answering.
