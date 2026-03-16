@@ -82,9 +82,7 @@ before answering. Address unanswered questions in the review body (not via
 
 ### 2. Check for overlapping PRs
 
-Before reading the diff, scan other open bot-authored PRs for file overlap.
-If another PR touches the same files with a similar fix, flag it in the review
-so one can be closed as a duplicate.
+Before reading the diff, scan other open PRs for file overlap.
 
 ### 3. Read and understand the change
 
