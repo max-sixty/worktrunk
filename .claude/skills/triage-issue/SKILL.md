@@ -154,14 +154,9 @@ missing code. Before adding guidance to a skill:
    ---
    Closes #<issue-number> — automated triage"
    ```
-5. Monitor CI using the poll approach from `/running-in-ci`:
-   ```bash
-   gh pr checks <pr-number> --required
-   ```
-   Poll with `gh pr checks <pr-number> --required` every 60 seconds until all
-   required checks complete. Non-required checks (e.g., benchmarks) are ignored.
-   If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix, and
-   repeat.
+5. Monitor CI using the approach from `/running-in-ci` (poll required checks
+   and `codecov/patch`). If CI or codecov fails, diagnose and fix before
+   declaring done.
 
 ### If reproduction test works but fix is not confident
 
