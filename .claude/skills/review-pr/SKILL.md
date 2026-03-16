@@ -51,7 +51,7 @@ gh api "repos/$REPO/compare/$LAST_REVIEW_SHA...$HEAD_SHA" \
 ```
 
 If the incremental changes are trivial, skip the full review **and do not
-submit a new approval** — the existing review stands. Go directly to step 6 to
+submit a new approval** — the existing review stands. Go directly to step 7 to
 resolve any bot threads addressed by the new changes, then exit. Do NOT proceed
 to steps 2, 3, or 4. Rough heuristic: changes under ~20 added+deleted lines
 that don't introduce new functions, types, or control flow are typically
@@ -80,7 +80,28 @@ question — check whether a bot reply exists after the question's timestamp
 before answering. Address unanswered questions in the review body (not via
 `gh pr comment`).
 
-### 2. Read and understand the change
+### 2. Check for overlapping PRs
+
+Before reading the diff, check whether other open PRs touch the same files:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+PR_FILES=$(gh pr diff <number> --name-only | sort)
+# Check other open bot-authored PRs for file overlap
+gh pr list --state open --author "$BOT_LOGIN" --json number,headRefName \
+  --jq ".[] | select(.number != <number>) | .number" | while read -r other; do
+  OTHER_FILES=$(gh pr diff "$other" --name-only 2>/dev/null | sort)
+  OVERLAP=$(comm -12 <(echo "$PR_FILES") <(echo "$OTHER_FILES"))
+  [ -n "$OVERLAP" ] && echo "PR #$other overlaps: $OVERLAP"
+done
+```
+
+If another open PR modifies the same files with a similar fix, flag it in the
+review — one should likely be closed as a duplicate. This catches cases where
+concurrent workflows (triage + mention) independently create fix PRs for the
+same bug.
+
+### 3. Read and understand the change
 
 1. Read the PR diff with `gh pr diff <number>`.
 2. Before going deeper, look at the PR as a reader would — not just the code,
@@ -88,7 +109,7 @@ before answering. Address unanswered questions in the review body (not via
    off?
 3. Read the changed files in full (not just the diff) to understand context.
 
-### 3. Review
+### 4. Review
 
 Scale depth to the change. A docs-only PR or a mechanical rename needs a skim
 for correctness, not the full checklist. A new algorithm or state-management
@@ -170,7 +191,7 @@ Two search strategies, both required:
 
 Flag duplicates — reuse is almost always better than a parallel implementation.
 
-### 4. Submit
+### 5. Submit
 
 **If there are no issues, approve with an empty body — silence means correct.**
 
@@ -202,7 +223,7 @@ review as a COMMENT.
 
 **Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
 `gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
-when there are concerns, or stay silent and skip to step 5. Always post CI
+when there are concerns, or stay silent and skip to step 6. Always post CI
 failure analysis as a COMMENT, even on self-authored PRs.
 
 **Not confident enough to approve** (unfamiliar module, subtle logic): Add a
@@ -279,7 +300,7 @@ array indices to object keys, which GitHub rejects.
   **Minimize the range** — only include lines that actually need changing. A
   range that's too wide can delete correct code adjacent to the fix.
 
-### 5. Monitor CI
+### 6. Monitor CI
 
 After approving or staying silent, monitor CI using the approach from
 `/running-in-ci`.
@@ -313,7 +334,7 @@ After approving or staying silent, monitor CI using the approach from
      ```
      Skip if the bot already commented today and the comment includes this PR.
 
-### 6. Resolve handled suggestions
+### 7. Resolve handled suggestions
 
 After submitting the review, check if any unresolved bot threads have been
 addressed by the new changes. Resolve threads where the suggestion was applied.
@@ -370,7 +391,7 @@ gh api graphql -F query=@/tmp/resolve-thread.graphql -f threadId="THREAD_ID"
 Outdated comments (null line) are best-effort — skip if the original context
 can't be located.
 
-### 7. Push mechanical fixes
+### 8. Push mechanical fixes
 
 **Bot PRs** (Dependabot, renovate, etc.): If the review found concrete, fixable
 issues and there's no human author to act on feedback, commit and push the fix
