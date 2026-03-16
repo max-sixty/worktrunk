@@ -278,3 +278,8 @@ for the PR author.
 
 For review comments on specific lines (`[Comment on path:line]`), read that file
 and examine the code at that line before answering.
+
+When the GitHub API returns a `diff_hunk` with a review comment, the reviewer's
+comment targets the **last line** of that hunk. Use this to disambiguate when
+multiple nearby terms could match the reviewer's request — anchor to the specific
+line the hunk points at, not the surrounding region.
