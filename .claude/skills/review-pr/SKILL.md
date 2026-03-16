@@ -281,10 +281,8 @@ array indices to object keys, which GitHub rejects.
 
 ### 5. Monitor CI
 
-After approving or staying silent, monitor CI. **Load `/running-in-ci` first**
-— it has the polling loop, `run_in_background` requirement, and rules for
-diagnosing failures. Never use `gh pr checks --watch` or `gh run watch` (both
-can hang indefinitely) and never use blocking `sleep` loops in the foreground.
+After approving or staying silent, monitor CI using the approach from
+/running-in-ci.
 
 - **All required checks passed** → done.
 - **A check failed** and it's related to the PR → post a follow-up COMMENT
