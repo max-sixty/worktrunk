@@ -10,7 +10,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, progress_message, success_message,
+    eprintln, format_with_gutter, info_message, progress_message, success_message, warning_message,
 };
 
 use super::types::MergeOperations;
@@ -365,10 +365,14 @@ pub fn handle_no_ff_merge(
     {
         let target_wt = ctx.repo.worktree_at(wt_path);
         if let Err(e) = target_wt.run_command(&["reset", "--hard", "HEAD"]) {
-            log::warn!(
-                "Failed to sync target worktree at {}: {e}. Run `git reset --hard HEAD` there manually.",
-                wt_path.display()
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Failed to sync target worktree; run <bold>git -C {} reset --hard HEAD</> manually",
+                    worktrunk::path::format_path_for_display(wt_path)
+                ))
             );
+            log::warn!("Failed to sync target worktree: {e}");
         }
     }
 
