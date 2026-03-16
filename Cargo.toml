@@ -70,7 +70,7 @@ color-print = "0.3"
 askama = { version = "0.15", default-features = false, features = ["derive", "std"] }
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help"] }
-clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
+clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
 # Only enable TOML format - saves ~250KB by excluding yaml, ron, json5, ini parsers
 config = { version = "0.15", default-features = false, features = ["toml", "convert-case", "preserve_order"] }
 crossbeam-channel = "0.5"
