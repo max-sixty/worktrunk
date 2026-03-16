@@ -331,7 +331,7 @@ pub fn handle_select(
                 .first()
                 .map(|item| item.output().to_string());
             let query = out.query.trim().to_string();
-            let identifier = resolve_print_identifier(&action, query, selected_name)?;
+            let identifier = resolve_identifier(&action, query, selected_name)?;
             println!("{identifier}");
             return Ok(());
         }
@@ -339,10 +339,11 @@ pub fn handle_select(
         match action {
             PickerAction::Remove => {
                 // Get the selected worktree's branch name
-                let selected = out.selected_items.first().context(
-                    "No worktree selected — type a name that matches an existing worktree",
-                )?;
-                let branch_name = selected.output().to_string();
+                let selected_name = out
+                    .selected_items
+                    .first()
+                    .map(|item| item.output().to_string());
+                let branch_name = resolve_identifier(&action, String::new(), selected_name)?;
 
                 let config = repo.user_config();
 
@@ -363,28 +364,12 @@ pub fn handle_select(
                 let should_create = matches!(action, PickerAction::Create);
 
                 // Get branch name: from query if creating new, from selected item if switching
-                let identifier = if should_create {
-                    let query = out.query.trim().to_string();
-                    if query.is_empty() {
-                        anyhow::bail!("Cannot create worktree: no branch name entered");
-                    }
-                    query
-                } else {
-                    // Enter pressed with no matching selection — the query didn't match any worktree
-                    match out.selected_items.first() {
-                        Some(selected) => selected.output().to_string(),
-                        None => {
-                            let query = out.query.trim();
-                            if query.is_empty() {
-                                anyhow::bail!("No worktree selected");
-                            } else {
-                                anyhow::bail!(
-                                    "No worktree matches '{query}' — use alt-c to create a new worktree"
-                                );
-                            }
-                        }
-                    }
-                };
+                let selected_name = out
+                    .selected_items
+                    .first()
+                    .map(|item| item.output().to_string());
+                let query = out.query.trim().to_string();
+                let identifier = resolve_identifier(&action, query, selected_name)?;
 
                 // Load config — reuse recovered repo if we recovered earlier
                 let repo = if is_recovered {
@@ -453,10 +438,11 @@ pub fn handle_select(
     Ok(())
 }
 
-/// Resolve the identifier to print for `--no-cd` print mode.
+/// Resolve the branch identifier from picker output.
 ///
-/// Extracted from the picker callback for testability.
-fn resolve_print_identifier(
+/// Extracted from the picker callback for testability. Used by both the
+/// interactive path and the `--no-cd` print path.
+fn resolve_identifier(
     action: &PickerAction,
     query: String,
     selected_name: Option<String>,
@@ -468,17 +454,33 @@ fn resolve_print_identifier(
             }
             Ok(query)
         }
-        PickerAction::Switch => selected_name.context("skim accept has no selection"),
-        PickerAction::Remove => {
-            anyhow::bail!("--no-cd is read-only and cannot be combined with remove (alt-r)")
-        }
+        PickerAction::Switch => match selected_name {
+            Some(name) => Ok(name),
+            None => {
+                if query.is_empty() {
+                    anyhow::bail!("No worktree selected");
+                } else {
+                    anyhow::bail!(
+                        "No worktree matches '{query}' — use alt-c to create a new worktree"
+                    );
+                }
+            }
+        },
+        PickerAction::Remove => match selected_name {
+            Some(name) => Ok(name),
+            None => {
+                anyhow::bail!(
+                    "No worktree selected — type a name that matches an existing worktree"
+                );
+            }
+        },
     }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, resolve_print_identifier};
+    use super::{PickerAction, resolve_identifier};
     use std::fs;
 
     #[test]
@@ -517,30 +519,49 @@ pub mod tests {
     }
 
     #[test]
-    fn test_resolve_print_identifier() {
+    fn test_resolve_identifier() {
         // Switch returns the selected name
-        let result = resolve_print_identifier(
+        let result = resolve_identifier(
             &PickerAction::Switch,
             String::new(),
             Some("feature/foo".into()),
         );
         assert_eq!(result.unwrap(), "feature/foo");
 
-        // Switch with no selection is an error
-        let result = resolve_print_identifier(&PickerAction::Switch, String::new(), None);
-        assert!(result.is_err());
+        // Switch with no selection and empty query
+        let result = resolve_identifier(&PickerAction::Switch, String::new(), None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No worktree selected")
+        );
+
+        // Switch with no selection but a query — the panic from #1565
+        let result = resolve_identifier(&PickerAction::Switch, "nonexistent".into(), None);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No worktree matches 'nonexistent'"));
+        assert!(err.contains("alt-c"));
 
         // Create returns the query
-        let result = resolve_print_identifier(&PickerAction::Create, "new-branch".into(), None);
+        let result = resolve_identifier(&PickerAction::Create, "new-branch".into(), None);
         assert_eq!(result.unwrap(), "new-branch");
 
         // Create with empty query is an error
-        let result = resolve_print_identifier(&PickerAction::Create, String::new(), None);
+        let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
 
-        // Remove is always an error
-        let result =
-            resolve_print_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
-        assert!(result.unwrap_err().to_string().contains("read-only"));
+        // Remove returns the selected name
+        let result = resolve_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
+        assert_eq!(result.unwrap(), "main");
+
+        // Remove with no selection is an error
+        let result = resolve_identifier(&PickerAction::Remove, String::new(), None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No worktree selected")
+        );
     }
 }
