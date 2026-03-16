@@ -122,13 +122,10 @@ pre-existing."
 
 When a reviewer posts a GitHub suggestion (`suggestion` code block), apply it
 with exact scope — change only the lines the suggestion covers. Do not
-reinterpret the suggestion's intent or extend it to adjacent lines. Use the
-`Edit` tool with an `old_string` that matches **only** the lines the suggestion
-targets, not surrounding context.
+reinterpret the suggestion's intent or extend it to adjacent lines.
 
 If the suggestion seems incomplete or you think more lines should change, apply
-the literal suggestion first and note the potential further improvement in your
-reply.
+the literal suggestion first and note the potential improvement in your reply.
 
 ## Replying to Comments
 
