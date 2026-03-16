@@ -17,7 +17,8 @@ use crate::commands::command_executor::{CommandContext, build_hook_context};
 /// template variables and filters are available.
 ///
 /// With `dry_run`, prints the template variables and the expanded result
-/// to stderr, then the result to stdout — useful for debugging templates.
+/// With `dry_run`, prints the template variables and the expanded result
+/// to stderr — useful for debugging templates.
 pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
