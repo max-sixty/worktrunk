@@ -730,9 +730,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt config state kv
+## wt config state kv [experimental]
 
-[experimental] Arbitrary key-value data per branch.
+Arbitrary key-value data per branch.
 
 Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
 

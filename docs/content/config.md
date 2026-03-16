@@ -509,7 +509,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
-- **kv**: [experimental] Arbitrary key-value data per branch
+- **kv**: <span class="badge-experimental"></span> Arbitrary key-value data per branch
 - **logs**: Background operation logs
 
 ### Examples
@@ -751,9 +751,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt config state kv
+## wt config state kv <span class="badge-experimental"></span>
 
-[experimental] Arbitrary key-value data per branch.
+Arbitrary key-value data per branch.
 
 Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
 
