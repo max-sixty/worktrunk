@@ -17,7 +17,7 @@ env:
 
 jobs:
   claude:
-    # Three triggers:
+    # Two triggers:
     # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
     #    New issues (opened) go to claude-issue-triage instead; this
     #    workflow only handles issue edits that add @worktrunk-bot.
