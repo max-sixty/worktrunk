@@ -61,6 +61,12 @@ pub(super) const MIN_PREVIEW_LINES: usize = 5;
 /// Preview width as percentage of terminal width (for Right layout).
 const PREVIEW_WIDTH_PERCENT: usize = 50;
 
+/// Minimum terminal columns for side-by-side (Right) layout.
+///
+/// Below this width, the list panel in Right layout is too narrow
+/// for branch names to be readable. Fall back to Down layout instead.
+const MIN_COLS_FOR_RIGHT_LAYOUT: f64 = 80.0;
+
 /// Preview layout orientation for the interactive selector
 ///
 /// Preview window position (auto-detected at startup based on terminal dimensions)
@@ -86,10 +92,22 @@ impl PreviewLayout {
     /// - Effective: 1.32 × 0.5 = 0.66 (actually portrait!)
     ///
     /// Returns Down for portrait (effective ratio < 1.0), Right for landscape.
+    /// Also returns Down when the terminal is too narrow for side-by-side layout,
+    /// even if the aspect ratio suggests landscape (e.g. 60×24 on a phone).
     pub(super) fn auto_detect() -> Self {
         let (cols, rows) = terminal_size::terminal_size()
             .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as f64, h as f64))
             .unwrap_or((80.0, 24.0));
+
+        Self::for_dimensions(cols, rows)
+    }
+
+    /// Determine layout for given terminal dimensions (cols × rows).
+    fn for_dimensions(cols: f64, rows: f64) -> Self {
+        // Too narrow for side-by-side — branch names won't fit in half the width
+        if cols < MIN_COLS_FOR_RIGHT_LAYOUT {
+            return Self::Down;
+        }
 
         // Effective aspect ratio accounting for character shape
         let effective_ratio = (cols / rows) * CHAR_ASPECT_RATIO;
@@ -277,5 +295,56 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_file(&state_path);
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_wide_terminal() {
+        // Standard wide terminal: landscape aspect ratio → Right
+        assert_eq!(
+            PreviewLayout::for_dimensions(120.0, 40.0),
+            PreviewLayout::Right
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_portrait_terminal() {
+        // Tall terminal: portrait aspect ratio → Down
+        // 180/136 * 0.5 = 0.66 < 1.0
+        assert_eq!(
+            PreviewLayout::for_dimensions(180.0, 136.0),
+            PreviewLayout::Down
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_narrow_terminal_forces_down() {
+        // Narrow terminal (e.g. phone): landscape ratio but too few columns for
+        // side-by-side layout — branch names would be hidden in half-width list.
+        // 60/24 * 0.5 = 1.25 (landscape ratio), but 60 cols < 80 minimum → Down
+        assert_eq!(
+            PreviewLayout::for_dimensions(60.0, 24.0),
+            PreviewLayout::Down
+        );
+
+        // Even narrower
+        assert_eq!(
+            PreviewLayout::for_dimensions(40.0, 20.0),
+            PreviewLayout::Down
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_boundary() {
+        // Exactly at the minimum → Right (if aspect ratio allows)
+        assert_eq!(
+            PreviewLayout::for_dimensions(80.0, 24.0),
+            PreviewLayout::Right
+        );
+
+        // Just below → Down
+        assert_eq!(
+            PreviewLayout::for_dimensions(79.0, 24.0),
+            PreviewLayout::Down
+        );
     }
 }
