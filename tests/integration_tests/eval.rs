@@ -58,6 +58,16 @@ fn test_eval_template_error(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_eval_dry_run(repo: TestRepo) {
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["eval", "--dry-run", "{{ branch | hash_port }}"],
+        None,
+    ));
+}
+
+#[rstest]
 fn test_eval_conditional(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
