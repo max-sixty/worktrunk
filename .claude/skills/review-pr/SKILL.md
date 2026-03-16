@@ -281,8 +281,9 @@ array indices to object keys, which GitHub rejects.
 
 ### 5. Monitor CI
 
-After approving or staying silent, monitor CI using the approach from
-/running-in-ci.
+After approving or staying silent, load the `/running-in-ci` skill and follow
+its CI monitoring approach. You **must** invoke the Skill tool with
+`running-in-ci` — do not guess CI polling commands from memory.
 
 - **All required checks passed** → done.
 - **A check failed** and it's related to the PR → post a follow-up COMMENT
