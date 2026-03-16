@@ -85,7 +85,7 @@ before answering. Address unanswered questions in the review body (not via
 Before reading the diff, check whether other open PRs touch the same files:
 
 ```bash
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+BOT_LOGIN=$(gh api user --jq '.login')
 PR_FILES=$(gh pr diff <number> --name-only | sort)
 # Check other open bot-authored PRs for file overlap
 gh pr list --state open --author "$BOT_LOGIN" --json number,headRefName \
