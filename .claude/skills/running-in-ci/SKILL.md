@@ -85,9 +85,24 @@ exit 1
    checks complete (up to ~10 minutes). Ignore non-required checks (benchmarks).
 2. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
    fix, commit, push, repeat.
-3. After required checks pass, also poll `codecov/patch` via
-   `gh pr checks <number>` (without `--required`) — this repo treats it as
-   mandatory despite being marked non-required. Fix coverage gaps if it fails.
+3. After required checks pass, poll `codecov/patch` separately — it is
+   mandatory despite being marked non-required. Use a polling loop (up to
+   ~5 minutes) since codecov often reports after the required checks finish:
+   ```bash
+   for i in $(seq 1 5); do
+     CODECOV=$(gh pr checks <number> 2>&1 | grep 'codecov/patch' || true)
+     if echo "$CODECOV" | grep -q 'pass'; then
+       echo "codecov/patch passed"; exit 0
+     elif echo "$CODECOV" | grep -q 'fail'; then
+       echo "codecov/patch FAILED"; exit 1
+     fi
+     sleep 60
+   done
+   echo "codecov/patch not reported after 5 minutes"
+   exit 1
+   ```
+   If it fails, investigate with `task coverage` and
+   `cargo llvm-cov report --show-missing-lines | grep <file>`.
 4. Report completion only after all required checks **and** `codecov/patch` pass.
 
 Never report "done" before CI passes — CI runs on Linux, Windows, and macOS.
