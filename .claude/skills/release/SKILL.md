@@ -1,6 +1,8 @@
 ---
 name: release
 description: Worktrunk release workflow. Use when user asks to "do a release", "release a new version", "cut a release", or wants to publish a new version to crates.io and GitHub.
+metadata:
+  internal: true
 ---
 
 # Release Workflow

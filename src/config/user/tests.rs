@@ -309,7 +309,8 @@ fn test_list_config_serde() {
         branches: Some(false),
         remotes: None,
         summary: None,
-        timeout_ms: Some(500),
+        task_timeout_ms: Some(500),
+        timeout_ms: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ListConfig = serde_json::from_str(&json).unwrap();
@@ -317,7 +318,8 @@ fn test_list_config_serde() {
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
     assert_eq!(parsed.summary, None);
-    assert_eq!(parsed.timeout_ms, Some(500));
+    assert_eq!(parsed.task_timeout_ms, Some(500));
+    assert_eq!(parsed.timeout_ms, None);
 }
 
 #[test]
@@ -522,14 +524,16 @@ fn test_merge_list_config() {
         branches: Some(false),
         remotes: None,
         summary: Some(true),
-        timeout_ms: Some(1000),
+        task_timeout_ms: Some(1000),
+        timeout_ms: Some(2000),
     };
     let override_config = ListConfig {
-        full: None,           // Should fall back to base
-        branches: Some(true), // Should override
-        remotes: Some(true),  // Should override (base was None)
-        summary: None,        // Should fall back to base
-        timeout_ms: None,     // Should fall back to base
+        full: None,            // Should fall back to base
+        branches: Some(true),  // Should override
+        remotes: Some(true),   // Should override (base was None)
+        summary: None,         // Should fall back to base
+        task_timeout_ms: None, // Should fall back to base
+        timeout_ms: None,      // Should fall back to base
     };
 
     let merged = base.merge_with(&override_config);
@@ -537,7 +541,8 @@ fn test_merge_list_config() {
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
     assert_eq!(merged.summary, Some(true)); // From base
-    assert_eq!(merged.timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.timeout_ms, Some(2000)); // From base
 }
 
 #[test]
@@ -956,7 +961,8 @@ fn test_list_config_accessor_methods_defaults() {
     assert!(!config.full());
     assert!(!config.branches());
     assert!(!config.remotes());
-    assert!(config.timeout_ms().is_none());
+    assert!(config.task_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -966,13 +972,21 @@ fn test_list_config_accessor_methods_with_values() {
         branches: Some(true),
         remotes: Some(false),
         summary: Some(true),
-        timeout_ms: Some(5000),
+        task_timeout_ms: Some(5000),
+        timeout_ms: Some(3000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
     assert!(config.summary());
-    assert_eq!(config.timeout_ms(), Some(5000));
+    assert_eq!(
+        config.task_timeout(),
+        Some(std::time::Duration::from_millis(5000))
+    );
+    assert_eq!(
+        config.timeout(),
+        Some(std::time::Duration::from_millis(3000))
+    );
 }
 
 #[test]
@@ -1035,20 +1049,20 @@ fn test_switch_picker_config_accessor_methods() {
 
     let config = SwitchPickerConfig::default();
     assert!(config.pager().is_none());
-    // Default timeout is 200ms
+    // Default wall-clock budget is 500ms
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 
     let config = SwitchPickerConfig {
         pager: Some("delta --paging=never".to_string()),
-        timeout_ms: Some(500),
+        timeout_ms: Some(1000),
     };
     assert_eq!(config.pager(), Some("delta --paging=never"));
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(500))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(1000))
     );
 }
 
@@ -1060,7 +1074,7 @@ fn test_switch_picker_timeout_zero_disables() {
         timeout_ms: Some(0),
         ..Default::default()
     };
-    assert!(config.picker_command_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -1069,8 +1083,8 @@ fn test_switch_picker_timeout_none_uses_default() {
 
     let config = SwitchPickerConfig::default();
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 
@@ -1122,12 +1136,14 @@ fn test_switch_config_merge() {
             pager: Some("delta".to_string()),
             timeout_ms: None,
         }),
+        ..Default::default()
     };
     let other = SwitchConfig {
         picker: Some(SwitchPickerConfig {
             pager: None,
             timeout_ms: Some(300),
         }),
+        ..Default::default()
     };
     let merged = base.merge_with(&other);
     assert_eq!(
@@ -1137,7 +1153,7 @@ fn test_switch_config_merge() {
     assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
 
     // Base has picker, other doesn't
-    let other_none = SwitchConfig { picker: None };
+    let other_none = SwitchConfig::default();
     let merged = base.merge_with(&other_none);
     assert_eq!(
         merged.picker.as_ref().unwrap().pager.as_deref(),
@@ -1145,9 +1161,82 @@ fn test_switch_config_merge() {
     );
 
     // Neither has picker
-    let base_none = SwitchConfig { picker: None };
-    let merged = base_none.merge_with(&other_none);
+    let merged = SwitchConfig::default().merge_with(&other_none);
     assert!(merged.picker.is_none());
+}
+
+#[test]
+fn test_switch_config_no_cd_accessor() {
+    use crate::config::user::SwitchConfig;
+
+    // Default is false
+    let config = SwitchConfig::default();
+    assert!(!config.no_cd());
+
+    // Explicit false
+    let config = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    assert!(!config.no_cd());
+
+    // Explicit true
+    let config = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    assert!(config.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_merge() {
+    use crate::config::user::{Merge, SwitchConfig};
+
+    // Other overrides base
+    let base = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    let other = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&other);
+    assert!(merged.no_cd());
+
+    // Base preserved when other is None
+    let base = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&SwitchConfig::default());
+    assert!(merged.no_cd());
+
+    // Neither set
+    let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
+    assert!(!merged.no_cd()); // default false
+}
+
+#[test]
+fn test_switch_config_no_cd_from_toml() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let switch = config.switch(None).unwrap();
+    assert!(switch.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_resolved() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let resolved = config.resolved(None);
+    assert!(resolved.switch.no_cd());
 }
 
 #[test]
@@ -1168,8 +1257,8 @@ fn test_switch_picker_fallback_from_select() {
     // timeout_ms not available from select, so default applies
     assert_eq!(picker.timeout_ms, None);
     assert_eq!(
-        picker.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        picker.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 
@@ -1185,6 +1274,7 @@ fn test_switch_picker_prefers_new_over_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(100),
                 }),
+                ..Default::default()
             }),
             select: Some(SelectConfig {
                 pager: Some("bat".to_string()),
@@ -1210,6 +1300,7 @@ fn test_switch_picker_project_override() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(200),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1225,6 +1316,7 @@ fn test_switch_picker_project_override() {
                         pager: Some("bat".to_string()),
                         timeout_ms: None, // Fall back to global
                     }),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1250,6 +1342,7 @@ fn test_switch_picker_project_fallback_from_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1298,6 +1391,7 @@ fn test_resolved_config_for_project() {
                     pager: Some("less".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1314,6 +1408,7 @@ fn test_resolved_config_for_project() {
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
     assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
+    assert!(!resolved.switch.no_cd()); // Default false
 }
 
 // =========================================================================

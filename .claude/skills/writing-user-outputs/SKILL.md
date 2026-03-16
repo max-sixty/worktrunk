@@ -1,6 +1,8 @@
 ---
 name: writing-user-outputs
 description: CLI output formatting standards for worktrunk. Use when writing user-facing messages, error handling, progress output, hints, warnings, or working with the output system.
+metadata:
+  internal: true
 ---
 
 # Output System Architecture

@@ -774,6 +774,7 @@ fn handle_branch_only_output(
 ///
 /// Only runs if `verify` is true (hooks approved).
 fn spawn_hooks_after_remove(
+    repo: &Repository,
     main_path: &std::path::Path,
     removed_worktree_path: &std::path::Path,
     removed_branch: &str,
@@ -787,7 +788,7 @@ fn spawn_hooks_after_remove(
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
-    let repo = Repository::at(main_path)?;
+
     // When removing the current worktree, user cd's to main_path → use post_hook logic
     // (suppresses path if shell integration will cd there).
     // When removing a different worktree, user stays at cwd → use pre_hook logic
@@ -801,7 +802,7 @@ fn spawn_hooks_after_remove(
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
     // Template variables differ per hook type (prepared separately below).
-    let remove_ctx = CommandContext::new(&repo, &config, Some(removed_branch), main_path, false);
+    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
     let mut hooks = remove_ctx.prepare_post_remove_commands(
         removed_branch,
         removed_worktree_path,
@@ -815,7 +816,7 @@ fn spawn_hooks_after_remove(
     if changed_directory {
         let dest_branch = repo.worktree_at(main_path).branch()?;
         let switch_ctx =
-            CommandContext::new(&repo, &config, dest_branch.as_deref(), main_path, false);
+            CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
         hooks.extend(prepare_background_hooks(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
@@ -1152,6 +1153,7 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         }
         // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
         spawn_hooks_after_remove(
+            &repo,
             main_path,
             worktree_path,
             "HEAD",
@@ -1210,6 +1212,7 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         print_switch_message_if_changed(changed_directory, main_path)?;
 
         spawn_hooks_after_remove(
+            &repo,
             main_path,
             worktree_path,
             branch_name,
@@ -1264,6 +1267,7 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         )?;
 
         spawn_hooks_after_remove(
+            &repo,
             main_path,
             worktree_path,
             branch_name,

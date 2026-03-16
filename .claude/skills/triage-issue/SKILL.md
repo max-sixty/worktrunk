@@ -2,6 +2,8 @@
 name: triage-issue
 description: Triages new GitHub issues — classifies, reproduces bugs, attempts conservative fixes, and comments. Use when a new issue is opened and needs automated triage.
 argument-hint: "[issue number]"
+metadata:
+  internal: true
 ---
 
 # Issue Triage
@@ -87,18 +89,40 @@ Record what you found (or didn't find) for use in step 7.
 If the test passes (bug may already be fixed), note this for the comment.
 
 If you cannot reproduce the bug (unclear steps, environment-specific, etc.),
-note what you tried and skip to step 7.
+note what you tried and skip to step 7. Do NOT proceed to Step 6 without a
+failing test — a fix without reproduction evidence is not a conservative fix.
 
 ## Step 6: Fix (conservative)
 
 *Bug reports only.*
 
+**CRITICAL — gate check before proceeding:**
+
+You MUST have a failing test from Step 5 before writing any fix. If you skipped
+the test (couldn't write one, environment-specific bug, etc.), do NOT attempt a
+fix — go directly to Step 7 and use the "Reproduction test only" or "Could not
+reproduce" comment template. A fix without a reproduction test violates the AD
+FONTES principle established in Step 1.
+
 **Only attempt a fix if ALL of these conditions are met:**
 
-- Bug is clearly reproducible (test fails)
+- Bug is clearly reproducible (test written in Step 5 fails)
 - Root cause is understood
 - Fix is localized (1-3 files changed)
 - Confident the fix is correct
+
+### Skill text fixes
+
+When the bug is about bot behavior (e.g., "bot didn't use links", "bot posted
+wrong format"), the root cause is often a skill/prompt compliance issue, not
+missing code. Before adding guidance to a skill:
+
+1. **Check ALL co-loaded skills** — Skills loaded together in the same workflow
+   share context. If the guidance already exists in a co-loaded skill (e.g.,
+   `running-in-ci` is loaded alongside `review-pr` and `triage-issue`), the
+   issue is behavioral compliance, not missing instructions.
+2. **Don't duplicate guidance across skills** — Adding the same rule to multiple
+   co-loaded skills creates maintenance burden and doesn't fix compliance gaps.
 
 ### If fixing
 

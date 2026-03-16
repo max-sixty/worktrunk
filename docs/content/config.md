@@ -53,7 +53,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -111,6 +111,41 @@ worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
 
+### Claude Code
+
+```toml
+# [commit.generation]
+# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+```
+
+### Codex
+
+```toml
+# [commit.generation]
+# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+### opencode
+
+```toml
+# [commit.generation]
+# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+```
+
+### llm
+
+```toml
+# [commit.generation]
+# command = "llm -m claude-haiku-4.5"
+```
+
+### aichat
+
+```toml
+# [commit.generation]
+# command = "aichat -m claude:claude-haiku-4.5"
+```
+
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Command config
@@ -126,6 +161,9 @@ summary = false    # Enable LLM branch summaries (requires [commit.generation])
 full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+
+task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
+timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 ### Commit
@@ -150,18 +188,19 @@ remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
 ```
 
-### Switch picker
-
-Configuration for `wt switch` interactive picker.
+### Switch
 
 ```toml
+[switch]
+no-cd = true       # Skip directory change after switching (--cd to override)
+
 [switch.picker]
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
 
-# Timeout (ms) for git commands during picker loading (default: 200)
-# Lower values show the TUI faster; 0 disables timeouts
-# timeout-ms = 200
+# Wall-clock budget (ms) for picker data collection (default: 500)
+# Tasks still running when the budget expires are abandoned; 0 disables
+# timeout-ms = 500
 ```
 
 ### Aliases
@@ -186,7 +225,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides (Experimental)
+#### Setting overrides <span class="badge-experimental"></span>
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 

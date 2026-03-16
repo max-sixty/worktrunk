@@ -1912,3 +1912,70 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
         "Manual pre-switch hook should have created marker"
     );
 }
+
+/// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
+#[rstest]
+fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature-dest");
+
+    // Write pre-switch hook that records {{ branch }} into a marker file
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_branch.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_branch_destination",
+        &repo,
+        &["feature-dest"],
+    );
+
+    // {{ branch }} should be the destination branch, not the source (main)
+    let marker_file = repo.root_path().join("pre_switch_branch.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "feature-dest",
+        "{{{{ branch }}}} should be the destination branch 'feature-dest', got: '{}'",
+        contents.trim(),
+    );
+}
+
+/// When removing the current worktree, post-switch hooks should fire
+/// because the user is implicitly switched back to the primary worktree.
+/// Regression test for https://github.com/max-sixty/worktrunk/issues/1450
+///
+/// Config is committed before creating the worktree, so both worktrees
+/// have .config/wt.toml — isolating the bug to the deleted-cwd problem.
+#[rstest]
+fn test_remove_current_worktree_fires_post_switch_hook(mut repo: TestRepo) {
+    // Write and commit project config BEFORE creating the worktree,
+    // so the feature worktree also has .config/wt.toml
+    repo.write_project_config(
+        r#"post-switch = "echo 'POST_SWITCH_AFTER_REMOVE' > post_switch_marker.txt""#,
+    );
+    repo.commit("Add project config with post-switch hook");
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Remove from WITHIN the feature worktree (current worktree removal)
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Post-switch hook should fire in the primary worktree
+    let marker = repo.root_path().join("post_switch_marker.txt");
+    wait_for_file_content(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(
+        content.contains("POST_SWITCH_AFTER_REMOVE"),
+        "Post-switch hook should run when removing current worktree, got: {content}"
+    );
+}

@@ -10,6 +10,7 @@ mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Context;
 use dashmap::DashMap;
@@ -41,7 +42,7 @@ enum PickerAction {
 pub fn handle_select(
     cli_branches: bool,
     cli_remotes: bool,
-    change_dir: bool,
+    change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
@@ -50,8 +51,9 @@ pub fn handle_select(
 
     let (repo, is_recovered) = current_or_recover()?;
 
-    // Merge CLI flags with resolved config
+    // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
+    let change_dir = change_dir_flag.unwrap_or_else(|| !config.switch.no_cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
 
@@ -68,9 +70,11 @@ pub fn handle_select(
     .into_iter()
     .collect();
 
-    // Configurable timeout for git commands to show TUI faster on large repos.
-    // Operations that timeout fail silently (data not shown), but TUI stays responsive.
-    let command_timeout = config.switch_picker.picker_command_timeout();
+    // Per-task command timeout from shared [list] config.
+    let command_timeout = config.list.task_timeout();
+
+    // Wall-clock budget for the entire collect phase (default: 500ms).
+    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
 
     let Some(list_data) = collect::collect(
         &repo,
@@ -79,6 +83,7 @@ pub fn handle_select(
             show_remotes,
             skip_tasks: skip_tasks.clone(),
             command_timeout,
+            collect_deadline,
         },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
@@ -122,8 +127,16 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // Use layout system to render the line - this handles all column alignment
-            let rendered_line = layout.render_list_item_line(&item);
+            // status_symbols is None only when no task results arrived for this item
+            // (budget truncation). collect() sets it for all other items: via drain
+            // callbacks for items that received results, and the post-drain loop for
+            // prunable worktrees. Each column also shows the placeholder independently
+            // when its own data field is None.
+            let rendered_line = if item.status_symbols.is_none() {
+                layout.render_list_item_stale(&item)
+            } else {
+                layout.render_list_item_line(&item)
+            };
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
@@ -311,6 +324,18 @@ pub fn handle_select(
             _ => PickerAction::Switch,
         };
 
+        // --no-cd: just output the selected branch name and exit (read-only, no side effects)
+        if !change_dir {
+            let selected_name = out
+                .selected_items
+                .first()
+                .map(|item| item.output().to_string());
+            let query = out.query.trim().to_string();
+            let identifier = resolve_print_identifier(&action, query, selected_name)?;
+            println!("{identifier}");
+            return Ok(());
+        }
+
         match action {
             PickerAction::Remove => {
                 // Get the selected worktree's branch name
@@ -362,10 +387,11 @@ pub fn handle_select(
                 };
                 let config = repo.user_config();
 
-                // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+                // Run pre-switch hooks before branch resolution or worktree creation.
+                // {{ branch }} receives the raw user input (before resolution).
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, true)?;
+                    run_pre_switch_hooks(&repo, config, &identifier, true)?;
                 }
 
                 // Switch to existing worktree or create new one
@@ -420,9 +446,32 @@ pub fn handle_select(
     Ok(())
 }
 
+/// Resolve the identifier to print for `--no-cd` print mode.
+///
+/// Extracted from the picker callback for testability.
+fn resolve_print_identifier(
+    action: &PickerAction,
+    query: String,
+    selected_name: Option<String>,
+) -> anyhow::Result<String> {
+    match action {
+        PickerAction::Create => {
+            if query.is_empty() {
+                anyhow::bail!("Cannot create worktree: no branch name entered");
+            }
+            Ok(query)
+        }
+        PickerAction::Switch => selected_name.context("skim accept has no selection"),
+        PickerAction::Remove => {
+            anyhow::bail!("--no-cd is read-only and cannot be combined with remove (alt-r)")
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
+    use super::{PickerAction, resolve_print_identifier};
     use std::fs;
 
     #[test]
@@ -458,5 +507,33 @@ pub mod tests {
         // Down calculates based on item count
         let spec = PreviewLayout::Down.to_preview_window_spec(5);
         assert!(spec.starts_with("down:"));
+    }
+
+    #[test]
+    fn test_resolve_print_identifier() {
+        // Switch returns the selected name
+        let result = resolve_print_identifier(
+            &PickerAction::Switch,
+            String::new(),
+            Some("feature/foo".into()),
+        );
+        assert_eq!(result.unwrap(), "feature/foo");
+
+        // Switch with no selection is an error
+        let result = resolve_print_identifier(&PickerAction::Switch, String::new(), None);
+        assert!(result.is_err());
+
+        // Create returns the query
+        let result = resolve_print_identifier(&PickerAction::Create, "new-branch".into(), None);
+        assert_eq!(result.unwrap(), "new-branch");
+
+        // Create with empty query is an error
+        let result = resolve_print_identifier(&PickerAction::Create, String::new(), None);
+        assert!(result.unwrap_err().to_string().contains("no branch name"));
+
+        // Remove is always an error
+        let result =
+            resolve_print_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
+        assert!(result.unwrap_err().to_string().contains("read-only"));
     }
 }

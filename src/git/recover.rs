@@ -38,13 +38,14 @@ pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
 /// Determine the hint to show when the user's CWD has been removed.
 ///
 /// Tries to find the parent repository and checks if `wt switch ^` would work
-/// (i.e., the default branch has an existing worktree). Falls back to
-/// progressively less specific hints when recovery or resolution fails.
-pub fn cwd_removed_hint() -> String {
-    let Some(repo) = Repository::current().ok().or_else(recover_from_deleted_cwd) else {
-        return "Current directory was removed.".to_string();
-    };
-    hint_for_repo(&repo)
+/// (i.e., the default branch has an existing worktree). Falls back to suggesting
+/// `wt list` when the default branch isn't resolvable. Returns `None` when no
+/// repository can be found (no actionable hint to give).
+pub fn cwd_removed_hint() -> Option<String> {
+    let repo = Repository::current()
+        .ok()
+        .or_else(recover_from_deleted_cwd)?;
+    Some(hint_for_repo(&repo))
 }
 
 fn hint_for_repo(repo: &Repository) -> String {
@@ -58,7 +59,7 @@ fn hint_for_repo(repo: &Repository) -> String {
         return cformat!("Current directory was removed. Try: <underline>wt switch ^</>");
     }
 
-    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees.")
+    cformat!("Current directory was removed. Run <underline>wt list</> to see worktrees")
 }
 
 /// Attempt to recover a repository when the current directory has been deleted.
@@ -525,6 +526,6 @@ mod tests {
             .unwrap();
         let repo = Repository::at(tmp.path()).unwrap();
         let hint = hint_for_repo(&repo);
-        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees.");
+        insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees");
     }
 }

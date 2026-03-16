@@ -75,8 +75,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let repo_root = repo.repo_path()?;
-    let info = provider.fetch_info(number, repo_root)?;
+    let info = provider.fetch_info(number, repo)?;
 
     // Display context with URL (as gutter under fetch progress)
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));

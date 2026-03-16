@@ -27,7 +27,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ## pre-switch
 
-Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (the source), not the destination. Failure aborts the switch.
+Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
 
 ```toml
 [pre-switch]
@@ -158,7 +158,7 @@ build = "cargo build --release"
 
 ## User hooks
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](https://worktrunk.dev/config/#setting-overrides-experimental).
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](https://worktrunk.dev/config/#setting-overrides).
 
 ```toml
 # ~/.config/worktrunk/config.toml

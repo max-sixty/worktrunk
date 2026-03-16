@@ -839,6 +839,74 @@ fn test_copy_ignored_skips_non_regular_files(mut repo: TestRepo) {
     assert!(!feature_path.join("target").join("test.sock").exists());
 }
 
+/// Test that top-level symlinks are copied as symlinks, not as regular files (GitHub issue #1488)
+///
+/// When `git ls-files` lists a symlink as a top-level entry (not inside a directory),
+/// it should be recreated as a symlink in the destination, not copied as a regular file.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_top_level_symlinks(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a regular file and a symlink to it, both gitignored
+    fs::write(repo.root_path().join("test_file"), "content").unwrap();
+    std::os::unix::fs::symlink("test_file", repo.root_path().join("symlink_to_test_file")).unwrap();
+
+    fs::write(
+        repo.root_path().join(".gitignore"),
+        "test_file\nsymlink_to_test_file\n",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    // The symlink should be preserved as a symlink, not copied as a regular file
+    let dest_symlink = feature_path.join("symlink_to_test_file");
+    assert!(
+        dest_symlink
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink_to_test_file should be a symlink, not a regular file"
+    );
+    assert_eq!(
+        fs::read_link(&dest_symlink).unwrap(),
+        std::path::PathBuf::from("test_file"),
+        "symlink target should be preserved"
+    );
+
+    // The regular file should also be copied
+    assert!(feature_path.join("test_file").exists());
+
+    // Run again to exercise the idempotent skip path (symlink already exists)
+    let output2 = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output2.status.success());
+
+    // Symlink should still be intact
+    assert!(
+        dest_symlink
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink should survive idempotent re-run"
+    );
+}
+
 /// Test that symlinks inside directories are copied correctly
 #[cfg(unix)]
 #[rstest]

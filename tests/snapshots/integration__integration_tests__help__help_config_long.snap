@@ -91,7 +91,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
@@ -143,6 +143,31 @@ Controls where new worktrees are created.
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
 
+[32mClaude Code[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+
+[32mCodex[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+
+[32mopencode[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+
+[32mllm[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "llm -m claude-haiku-4.5"[0m
+
+[32maichat[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5"[0m
+
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
 [1m[32mCommand config[0m
@@ -157,6 +182,9 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI, main…± diffstat, and LLM summaries (--full)[0m
 [107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
 [107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
+[107m [0m 
+[107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
 [32mCommit[0m
 
@@ -176,17 +204,18 @@ All flags are on by default. Set to false to change default behavior.
 [107m [0m [2mremove = [0m[2m[33mtrue[0m[2m      [0m[2m# Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-verify to skip)[0m
 
-[32mSwitch picker[0m
+[32mSwitch[0m
 
-Configuration for [2mwt switch[0m interactive picker.
-
+[107m [0m [2m[36m[switch][0m
+[107m [0m [2mno-cd = [0m[2m[33mtrue[0m[2m       [0m[2m# Skip directory change after switching (--cd to override)[0m
+[107m [0m 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2m# Pager command for diff preview (overrides git's core.pager)[0m
 [107m [0m [2m# pager = "delta --paging=never"[0m
 [107m [0m 
-[107m [0m [2m# Timeout (ms) for git commands during picker loading (default: 200)[0m
-[107m [0m [2m# Lower values show the TUI faster; 0 disables timeouts[0m
-[107m [0m [2m# timeout-ms = 200[0m
+[107m [0m [2m# Wall-clock budget (ms) for picker data collection (default: 500)[0m
+[107m [0m [2m# Tasks still running when the budget expires are abandoned; 0 disables[0m
+[107m [0m [2m# timeout-ms = 500[0m
 
 [32mAliases[0m
 
@@ -208,7 +237,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
-[1mSetting overrides (Experimental)[0m
+[1mSetting overrides [experimental][0m
 
 Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 

@@ -890,7 +890,7 @@ mod tests {
         let (_tmp, repo) = test_repo();
 
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
-        // None = not loaded, Some(None) = loaded but no summary — both should be absent in JSON
+        // Both "not collected" and "no summary" should be absent in JSON
         assert!(JsonItem::from_list_item(&item, &repo).summary.is_none());
 
         item.summary = Some(None);
