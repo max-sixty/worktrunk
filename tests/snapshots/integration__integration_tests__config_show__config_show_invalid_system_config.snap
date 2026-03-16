@@ -44,10 +44,10 @@ exit_code: 0
 ----- stderr -----
 [36mSYSTEM CONFIG[39m @ [PROJECT_ID]
 [31m✗[39m [31mInvalid config[39m
-[107m [0m TOML parse error at line 1, column 17
+[107m [0m TOML parse error at line 1, column 16
 [107m [0m   |
 [107m [0m 1 | invalid = [toml
-[107m [0m   |                 ^
+[107m [0m   |                ^
 [107m [0m unclosed array, expected `]`
 [107m [0m [2minvalid = [toml
 
