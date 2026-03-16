@@ -82,24 +82,9 @@ before answering. Address unanswered questions in the review body (not via
 
 ### 2. Check for overlapping PRs
 
-Before reading the diff, check whether other open PRs touch the same files:
-
-```bash
-BOT_LOGIN=$(gh api user --jq '.login')
-PR_FILES=$(gh pr diff <number> --name-only | sort)
-# Check other open bot-authored PRs for file overlap
-gh pr list --state open --author "$BOT_LOGIN" --json number,headRefName \
-  --jq ".[] | select(.number != <number>) | .number" | while read -r other; do
-  OTHER_FILES=$(gh pr diff "$other" --name-only 2>/dev/null | sort)
-  OVERLAP=$(comm -12 <(echo "$PR_FILES") <(echo "$OTHER_FILES"))
-  [ -n "$OVERLAP" ] && echo "PR #$other overlaps: $OVERLAP"
-done
-```
-
-If another open PR modifies the same files with a similar fix, flag it in the
-review — one should likely be closed as a duplicate. This catches cases where
-concurrent workflows (triage + mention) independently create fix PRs for the
-same bug.
+Before reading the diff, scan other open bot-authored PRs for file overlap.
+If another PR touches the same files with a similar fix, flag it in the review
+so one can be closed as a duplicate.
 
 ### 3. Read and understand the change
 
