@@ -1235,6 +1235,25 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn test_cmd_stream_other_signals_are_errors() {
+        use crate::git::WorktrunkError;
+
+        // Non-SIGPIPE signals (like SIGTERM) should still be treated as errors.
+        let result = Cmd::new("sh").args(["-c", "kill -TERM $$"]).stream();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        match wt_err {
+            WorktrunkError::ChildProcessExited { code, .. } => {
+                assert_eq!(*code, 128 + 15); // SIGTERM = 15
+            }
+            _ => panic!("Expected ChildProcessExited error"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn test_cmd_shell_stream_with_stdin() {
         // cat should echo stdin content (output goes to inherited stdout, we can't capture it,
         // but we can verify no error)
