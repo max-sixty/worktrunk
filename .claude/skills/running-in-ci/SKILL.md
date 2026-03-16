@@ -63,6 +63,24 @@ post code inline.
 
 After pushing, wait for CI before reporting completion.
 
+**Use `run_in_background: true`** for the polling loop so it does not block the
+session. When the background task completes you will be notified — check the
+result and take any follow-up action (dismiss approval, post analysis) at that
+point.
+
+```bash
+# Run with Bash tool's run_in_background: true
+for i in $(seq 1 10); do
+  sleep 60
+  if ! gh pr checks <number> --required 2>&1 | grep -q 'pending\|queued\|in_progress'; then
+    gh pr checks <number> --required
+    exit 0
+  fi
+done
+echo "CI still running after 10 minutes"
+exit 1
+```
+
 1. Poll `gh pr checks <number> --required` every 60 seconds until all required
    checks complete (up to ~10 minutes). Ignore non-required checks (benchmarks).
 2. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,

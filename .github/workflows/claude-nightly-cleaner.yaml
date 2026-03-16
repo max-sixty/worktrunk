@@ -50,7 +50,7 @@ jobs:
           additional_permissions: |
             actions: read
 
-          prompt: nightly-cleaner
+          prompt: /nightly-cleaner
 
           claude_args: |
             --model opus

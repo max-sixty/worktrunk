@@ -751,14 +751,19 @@ pub fn step_copy_ignored(
                     copied_count += 1;
                 }
             } else {
-                // Skip existing files for idempotent hook usage
-                match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                    Ok(_) => copied_count += 1,
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                    Err(e) => {
-                        return Err(
-                            anyhow::Error::from(e).context(format!("copying {display_path}"))
-                        );
+                // Skip existing entries (files or symlinks) for idempotent hook usage.
+                // Check symlink_metadata (not exists()) because exists() follows symlinks
+                // and returns false for broken ones, which would cause reflink_or_copy to
+                // fail with ENOENT on some platforms when copying through the broken symlink.
+                if dest_entry.symlink_metadata().is_err() {
+                    match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                        Ok(_) => copied_count += 1,
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(e) => {
+                            return Err(
+                                anyhow::Error::from(e).context(format!("copying {display_path}"))
+                            );
+                        }
                     }
                 }
             }
@@ -885,14 +890,18 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
             if force {
                 remove_if_exists(&dest_path)?;
             }
-            // Skip existing files for idempotent hook usage
-            match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
-                Ok(_) => {}
-                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(
-                        anyhow::Error::from(e).context(format!("copying {}", src_path.display()))
-                    );
+            // Skip existing entries (files or symlinks) for idempotent hook usage.
+            // Check symlink_metadata (not exists()) because exists() follows symlinks
+            // and returns false for broken ones, which would cause reflink_or_copy to
+            // fail with ENOENT on some platforms when copying through the broken symlink.
+            if dest_path.symlink_metadata().is_err() {
+                match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e)
+                            .context(format!("copying {}", src_path.display())));
+                    }
                 }
             }
         }

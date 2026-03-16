@@ -26,7 +26,7 @@ combine commands.
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
-
+PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 
 # Find the bot's most recent substantive review (any state).
 # Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
@@ -50,11 +50,12 @@ gh api "repos/$REPO/compare/$LAST_REVIEW_SHA...$HEAD_SHA" \
   --jq '{total: ([.files[] | .additions + .deletions] | add), files: [.files[] | "\(.filename)\t+\(.additions)/-\(.deletions)"]}'
 ```
 
-If the incremental changes are trivial, skip the full review (steps 2-3) — the
-existing review stands. Still proceed to step 6 to resolve any bot threads
-addressed by the new changes, then exit. Rough heuristic: changes under ~20
-added+deleted lines that don't introduce new functions, types, or control flow
-are typically trivial.
+If the incremental changes are trivial, skip the full review **and do not
+submit a new approval** — the existing review stands. Go directly to step 6 to
+resolve any bot threads addressed by the new changes, then exit. Do NOT proceed
+to steps 2, 3, or 4. Rough heuristic: changes under ~20 added+deleted lines
+that don't introduce new functions, types, or control flow are typically
+trivial.
 
 Then read all previous bot feedback and conversation:
 
@@ -199,8 +200,10 @@ approach: "Does this bypass or duplicate an existing API?" "What does this
 change *not* handle?" If the design involves a judgment call, flag it for human
 review as a COMMENT.
 
-**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): GitHub rejects self-approvals.
-Submit as COMMENT when there are concerns, or stay silent and skip to step 5.
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
+`gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
+when there are concerns, or stay silent and skip to step 5. Always post CI
+failure analysis as a COMMENT, even on self-authored PRs.
 
 **Not confident enough to approve** (unfamiliar module, subtle logic): Add a
 `+1` reaction instead — no review needed unless there are specific observations.
@@ -279,7 +282,7 @@ array indices to object keys, which GitHub rejects.
 ### 5. Monitor CI
 
 After approving or staying silent, monitor CI using the approach from
-`/running-in-ci`.
+/running-in-ci.
 
 - **All required checks passed** → done.
 - **A check failed** and it's related to the PR → post a follow-up COMMENT
@@ -291,6 +294,24 @@ After approving or staying silent, monitor CI using the approach from
   ```
   Skip if already dismissed. **Do not push fixes on human-authored PRs** — post
   the analysis and offer to fix, then wait for the author to accept.
+- **A check failed** and it's a transient flake (unrelated to the PR changes) →
+  1. **Re-run the failed jobs** on any PR (bot or human-authored):
+     ```bash
+     gh run rerun <run-id> --failed
+     ```
+  2. **Report the flake to the tracking issue.** Search for an open issue about
+     the specific flaky test (`gh issue list --search "<test name>" --state open`).
+     If found, check for a recent bot comment. Edit the existing comment to
+     append the new instance (PR number, platform, error snippet, run link)
+     rather than posting a new one — this keeps the issue tidy. If no recent bot
+     comment exists, add one. If no issue exists, open one.
+     ```bash
+     # Find the bot's last comment on the issue
+     LAST_COMMENT=$(gh issue view <issue-number> --json comments \
+       --jq '[.comments[] | select(.author.login == "worktrunk-bot")] | last | {id: .url, createdAt: .createdAt}')
+     # If the bot commented recently, edit that comment; otherwise post a new one
+     ```
+     Skip if the bot already commented today and the comment includes this PR.
 
 ### 6. Resolve handled suggestions
 

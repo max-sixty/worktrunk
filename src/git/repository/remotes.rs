@@ -59,7 +59,7 @@ impl Repository {
 
     /// Get the URL for a remote, if configured.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.run_command(&["remote", "get-url", remote])
+        self.run_command(&["config", &format!("remote.{}.url", remote)])
             .ok()
             .map(|url| url.trim().to_string())
             .filter(|url| !url.is_empty())

@@ -24,8 +24,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        # Pin: 0.9.129 requires rustc 1.91, we use 1.90 (rust-toolchain.toml).
-        version: "=0.9.128"
+        version: "=0.9.130"
 
     - name: "\U0001F4B0 Cache"
       uses: Swatinem/rust-cache@v2
@@ -34,7 +33,7 @@ runs:
         save-if: false
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7.4.0
+      uses: astral-sh/setup-uv@v7.5.0
 
     - name: Install pre-commit
       shell: bash

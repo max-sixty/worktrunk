@@ -53,7 +53,7 @@ use commands::{
     handle_remove_current, handle_show_theme, handle_squash, handle_state_clear,
     handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
     handle_unconfigure_shell, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored,
-    step_diff, step_for_each, step_prune, step_relocate,
+    step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -287,6 +287,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             dry_run,
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
+        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { args } => step_for_each(args),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
