@@ -3,7 +3,7 @@ name: claude-mention
 
 on:
   issues:
-    types: [opened, edited]
+    types: [edited]
   issue_comment:
     types: [created, edited]
   pull_request_review_comment:
@@ -17,8 +17,10 @@ env:
 
 jobs:
   claude:
-    # Two triggers:
+    # Three triggers:
     # 1. @worktrunk-bot mentions — explicit requests on any issue/PR.
+    #    New issues (opened) go to claude-issue-triage instead; this
+    #    workflow only handles issue edits that add @worktrunk-bot.
     # 2. Bot-engaged PRs/issues — any non-bot comment on a PR or issue
     #    where the bot has authored, reviewed, or commented. The verify step
     #    checks engagement via API and skips the job if the bot has not
@@ -61,7 +63,7 @@ jobs:
       # Verify bot engagement — gate for non-mention comments.
       #
       # Skipped (all subsequent steps run) when:
-      #   - Event is not a comment (issues opened/edited with @worktrunk-bot)
+      #   - Event is not a comment (issues edited with @worktrunk-bot)
       #   - Comment body contains @worktrunk-bot (explicit mention)
       #
       # When it runs, checks engagement in order (first match exits 0):
@@ -211,7 +213,7 @@ jobs:
           # 1. Inline review comment (pull_request_review_comment) → reply in thread
           # 2. Explicit @worktrunk-bot mention in a comment → always respond
           # 3. Comment on bot-engaged issue/PR (no mention) → only if helpful
-          # 4. Issue opened/edited with @worktrunk-bot mention → always respond
+          # 4. Issue edited with @worktrunk-bot mention → always respond
           prompt: >-
             ${{ github.event_name == 'pull_request_review_comment'
               && (contains(github.event.comment.body, '@worktrunk-bot')
@@ -240,7 +242,7 @@ jobs:
                   github.event.comment.html_url
                 ))
               || format(
-                'An issue was opened or updated with a mention of you ({0}). Read it and respond.',
+                'An issue was updated with a mention of you ({0}). Read it and respond.',
                 github.event.issue.html_url
               ) }}
 

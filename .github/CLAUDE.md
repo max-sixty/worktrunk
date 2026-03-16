@@ -119,9 +119,13 @@ This is why release secrets must be in a protected environment, not repo-level s
 
 ## Triage ↔ mention handoff
 
-These two workflows explicitly exclude each other to avoid double-processing:
-- Issue body contains `@worktrunk-bot` → triage skips, mention handles it
-- Issue body does not contain `@worktrunk-bot` → triage handles it, mention ignores it
+New issues are always handled by the triage workflow — `claude-mention` only
+triggers on issue **edits** (not opens) to avoid two workflows racing to create
+fix PRs for the same bug.
+
+- **New issue** (opened) → triage handles it, regardless of `@worktrunk-bot` mentions
+- **Issue edited** to add `@worktrunk-bot` → mention handles it
+- **Comment** on an issue/PR → mention handles it (via `issue_comment` trigger)
 
 The mention workflow runs for any user who includes `@worktrunk-bot` — the merge restriction (ruleset) is the safety boundary, not access control on the workflow itself.
 
@@ -132,10 +136,11 @@ The mention workflow runs for any user who includes `@worktrunk-bot` — the mer
 **Triggers a response:**
 - Non-draft PR opened or updated → automatic code review (`claude-review`)
 - Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
-- `@worktrunk-bot` mentioned in an issue body → `claude-mention` responds
+- `@worktrunk-bot` mentioned in a new issue body → `claude-issue-triage` handles it (triage owns all new issues)
+- `@worktrunk-bot` mentioned via issue edit → `claude-mention` responds
 - `@worktrunk-bot` mentioned in any comment (issue or PR) → `claude-mention` responds
 - Any comment on a PR or issue that `worktrunk-bot` has engaged with (authored, mentioned in the issue body, reviewed, or commented on) → `claude-mention` runs (verify step confirms engagement via API), but the prompt instructs Claude to only respond if the comment needs bot input — otherwise exit silently. When the bot authored the PR/issue, it leans toward responding since commenters expect the author to engage.
-- Editing a comment or issue body re-triggers the same response
+- Editing a comment or issue body re-triggers the mention workflow
 
 **Does not trigger:**
 - Issues authored by `worktrunk-bot` (prevents self-triggering when bot-created issues incidentally mention `@worktrunk-bot` in body text)
