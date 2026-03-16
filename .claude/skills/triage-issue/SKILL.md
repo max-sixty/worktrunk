@@ -155,7 +155,7 @@ missing code. Before adding guidance to a skill:
    Closes #<issue-number> — automated triage"
    ```
 5. Monitor CI using the approach from `/running-in-ci` (poll required checks
-   and `codecov/patch`). If CI or codecov fails, diagnose and fix before
+   and codecov/patch). If CI or codecov fails, diagnose and fix before
    declaring done.
 
 ### If reproduction test works but fix is not confident
