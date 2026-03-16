@@ -339,10 +339,9 @@ pub fn handle_select(
         match action {
             PickerAction::Remove => {
                 // Get the selected worktree's branch name
-                let selected = out
-                    .selected_items
-                    .first()
-                    .expect("skim accept has selection");
+                let selected = out.selected_items.first().context(
+                    "No worktree selected — type a name that matches an existing worktree",
+                )?;
                 let branch_name = selected.output().to_string();
 
                 let config = repo.user_config();
@@ -371,12 +370,20 @@ pub fn handle_select(
                     }
                     query
                 } else {
-                    // Enter pressed: skim accept always includes a selection (abort handled above)
-                    let selected = out
-                        .selected_items
-                        .first()
-                        .expect("skim accept has selection");
-                    selected.output().to_string()
+                    // Enter pressed with no matching selection — the query didn't match any worktree
+                    match out.selected_items.first() {
+                        Some(selected) => selected.output().to_string(),
+                        None => {
+                            let query = out.query.trim();
+                            if query.is_empty() {
+                                anyhow::bail!("No worktree selected");
+                            } else {
+                                anyhow::bail!(
+                                    "No worktree matches '{query}' — use alt-c to create a new worktree"
+                                );
+                            }
+                        }
+                    }
                 };
 
                 // Load config — reuse recovered repo if we recovered earlier
