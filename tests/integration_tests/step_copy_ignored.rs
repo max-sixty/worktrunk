@@ -955,6 +955,13 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
 
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
+    // Make source target/sub read-only so the permission is preserved when copied
+    fs::set_permissions(
+        &target_dir.join("sub"),
+        fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+
     // Create destination target/sub as read-only so file copy fails
     let dest_sub = feature_path.join("target").join("sub");
     fs::create_dir_all(&dest_sub).unwrap();
@@ -969,12 +976,17 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
         .unwrap();
 
     // Restore permissions for cleanup
+    fs::set_permissions(
+        &target_dir.join("sub"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying"),
+        stderr.contains("copying") || stderr.contains("setting permissions"),
         "Error should mention the file path, got: {stderr}"
     );
 }
@@ -1079,6 +1091,53 @@ fn test_copy_ignored_broken_symlink_in_dir_at_dest(mut repo: TestRepo) {
         output.status.success(),
         "copy-ignored should succeed when dir entry has broken symlink at dest: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Test that directory permissions are preserved during copy (GitHub issue #1589)
+///
+/// When copying gitignored directories, the destination directories should have the
+/// same permissions as the source directories. For example, a directory with mode 0700
+/// should not become 0755 in the destination.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a directory with restrictive permissions (0700)
+    let test_dir = repo.root_path().join("test");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(test_dir.join("file"), "content").unwrap();
+    fs::set_permissions(&test_dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Add to .gitignore
+    fs::write(repo.root_path().join(".gitignore"), "test\n").unwrap();
+
+    // Run copy-ignored
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify directory was copied
+    let dest_dir = feature_path.join("test");
+    assert!(dest_dir.exists(), "test directory should be copied");
+    assert!(dest_dir.join("file").exists(), "test/file should be copied");
+
+    // Verify directory permissions are preserved (0700, not default 0755)
+    let dest_mode = fs::metadata(&dest_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dest_mode, 0o700,
+        "Directory permissions should be preserved (expected 0700, got {dest_mode:04o})"
     );
 }
 
