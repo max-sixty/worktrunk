@@ -60,9 +60,9 @@ gh issue list --state open --json number,title
 gh pr list --state open --json number,title,headRefName
 ```
 
-For each open issue, check whether recent commits already resolve it. If
-resolved, comment briefly and close with `gh issue close`. Skip feature
-requests, discussions, and partially unresolved issues.
+For each open issue, check whether recent commits or the current codebase
+state already resolve it. If resolved, comment briefly and close with
+`gh issue close`. Skip partially unresolved issues.
 
 ## Step 4: Rolling survey
 
