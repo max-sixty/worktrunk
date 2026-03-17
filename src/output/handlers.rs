@@ -59,11 +59,7 @@ fn execute_instant_removal_or_fallback(
     // Rename worktree into .git/wt-trash/ (instant on same filesystem), then prune
     // git metadata. Background process just does `rm -rf` on the staged directory.
     let trash_dir = repo.wt_trash_dir();
-    if let Err(e) = std::fs::create_dir_all(&trash_dir) {
-        log::debug!("Failed to create trash dir, using legacy removal: {}", e);
-        let force = force_worktree || worktree_path.join(".gitmodules").exists();
-        return build_remove_command(worktree_path, branch_to_delete, force);
-    }
+    let _ = std::fs::create_dir_all(&trash_dir);
     let staged_path = generate_removing_path(&trash_dir, worktree_path);
     match std::fs::rename(worktree_path, &staged_path) {
         Ok(()) => {
