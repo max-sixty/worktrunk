@@ -956,7 +956,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
     // Make source target/sub read-only so the permission is preserved when copied
-    fs::set_permissions(&target_dir.join("sub"), fs::Permissions::from_mode(0o555)).unwrap();
+    fs::set_permissions(target_dir.join("sub"), fs::Permissions::from_mode(0o555)).unwrap();
 
     // Create destination target/sub as read-only so file copy fails
     let dest_sub = feature_path.join("target").join("sub");
@@ -972,7 +972,7 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
         .unwrap();
 
     // Restore permissions for cleanup
-    fs::set_permissions(&target_dir.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(target_dir.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(!output.status.success());
