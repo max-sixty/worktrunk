@@ -596,11 +596,7 @@ mod tests {
 
         // Should have the expected prefix
         let name = removing_path.file_name().unwrap().to_string_lossy();
-        assert!(
-            name.starts_with("my-project.feature-"),
-            "got: {}",
-            name
-        );
+        assert!(name.starts_with("my-project.feature-"), "got: {}", name);
 
         // Should have a timestamp suffix (digits only after the prefix)
         let timestamp_part = name.trim_start_matches("my-project.feature-");
