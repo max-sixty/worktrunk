@@ -373,9 +373,9 @@ fn spawn_detached_windows(
 /// Generate a staging path for worktree removal.
 ///
 /// Places the staging directory inside `.git/wt/trash/` so it is hidden from the
-/// user's workspace. The `.git/` directory is always on the same filesystem as the
-/// worktree (git requires this), so `rename()` is guaranteed to be an instant
-/// metadata operation.
+/// user's workspace. For the main worktree, `.git/` is on the same filesystem,
+/// so `rename()` is an instant metadata operation. Linked worktrees on different
+/// mount points will get EXDEV and fall back to legacy removal.
 ///
 /// Format: `<wt/trash>/<name>-<timestamp>`
 pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
