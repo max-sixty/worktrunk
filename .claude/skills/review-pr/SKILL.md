@@ -318,6 +318,17 @@ After approving or staying silent, monitor CI using the approach from
 After submitting the review, check if any unresolved bot threads have been
 addressed by the new changes. Resolve threads where the suggestion was applied.
 
+**Only resolve if the substance was addressed.** Read both the suggestion and the
+new code — if the author took a different approach, verify its technical accuracy
+before resolving. "Different wording" is not "addressed" when the new wording is
+less accurate than the suggestion. When in doubt, leave the thread open for a
+human reviewer.
+
+**Self-authored PRs are especially risky.** When the bot is both author and
+reviewer, there is a bias toward accepting the code's own claims. Treat
+self-authored thread resolution with extra skepticism — read the code and verify
+the claim independently rather than trusting the doc comment or commit message.
+
 ```bash
 cat > /tmp/review-threads.graphql << 'GRAPHQL'
 query($owner: String!, $repo: String!, $number: Int!) {
