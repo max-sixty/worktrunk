@@ -39,15 +39,15 @@ fn test_default_config_path_returns_platform_path() {
 }
 
 #[test]
-fn test_get_config_path_falls_through_to_default() {
+fn test_config_path_falls_through_to_default() {
     // When no CLI override or WORKTRUNK_CONFIG_PATH env var is set,
-    // get_config_path() should fall through to default_config_path().
+    // config_path() should fall through to default_config_path().
     // This also verifies both functions return the same path.
     let default = default_config_path().unwrap();
-    let resolved = get_config_path().unwrap();
+    let resolved = config_path().unwrap();
     assert_eq!(
         resolved, default,
-        "get_config_path() should match default_config_path() when no overrides are set"
+        "config_path() should match default_config_path() when no overrides are set"
     );
 }
 

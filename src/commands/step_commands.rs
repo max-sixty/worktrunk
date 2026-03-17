@@ -945,7 +945,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
     Ok(())
 }
 
-const PROMOTE_STAGING_DIR: &str = "wt/promote-staging";
+const PROMOTE_STAGING_DIR: &str = "staging/promote";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
@@ -960,7 +960,7 @@ fn stage_ignored(
     path_b: &Path,
     entries_b: &[(PathBuf, bool)],
 ) -> anyhow::Result<(PathBuf, usize)> {
-    let staging_dir = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    let staging_dir = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     fs::create_dir_all(&staging_dir).context("creating promote staging directory")?;
 
     let staging_a = staging_dir.join("a");
@@ -1096,7 +1096,7 @@ fn exchange_branches(
 ///
 /// ## Interruption recovery
 ///
-/// The swap uses a staging directory at `.git/wt/promote-staging/` and proceeds
+/// The swap uses a staging directory at `.git/wt/staging/promote/` and proceeds
 /// in three phases:
 ///
 /// 1. **Stage**: move ignored files from both worktrees into staging (`a/`, `b/`)
@@ -1168,7 +1168,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
     // it may contain the user's only copy of files from the failed swap.
     // Check BEFORE ensure_clean so users see the recovery path first.
-    let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    let staging_path = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     if staging_path.exists() {
         return Err(anyhow::anyhow!(
             "Files may need manual recovery from: {}\n\
@@ -1339,7 +1339,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let worktrees = repo.list_worktrees()?;
     let current_root = repo.current_worktree().root()?.to_path_buf();
     let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
-    let now_secs = worktrunk::utils::get_now();
+    let now_secs = worktrunk::utils::epoch_now();
 
     let default_branch = repo.default_branch();
 

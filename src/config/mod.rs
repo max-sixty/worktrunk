@@ -71,7 +71,7 @@ impl WorktrunkConfig for ProjectConfig {
 }
 
 // Re-export public types
-pub use approvals::{Approvals, get_approvals_path};
+pub use approvals::{Approvals, approvals_path};
 pub use commands::{Command, CommandConfig};
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
@@ -96,9 +96,8 @@ pub use project::{
 pub use user::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
     ResolvedConfig, SelectConfig, StageMode, SwitchConfig, SwitchPickerConfig, UserConfig,
-    UserProjectOverrides, default_config_path, default_system_config_path,
-    find_unknown_keys as find_unknown_user_keys, get_config_path, get_system_config_path,
-    set_config_path,
+    UserProjectOverrides, config_path, default_config_path, default_system_config_path,
+    find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
 };
 
 #[cfg(test)]

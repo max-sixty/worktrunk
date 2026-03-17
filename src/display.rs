@@ -11,12 +11,12 @@ use std::path::{Component, Path};
 use unicode_width::UnicodeWidthChar;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::visual_width;
-use worktrunk::utils::get_now;
+use worktrunk::utils::epoch_now;
 
 /// Format timestamp as abbreviated relative time (e.g., "2h")
 pub(crate) fn format_relative_time_short(timestamp: i64) -> String {
     // Cast to i64 for signed arithmetic (handles future timestamps)
-    format_relative_time_impl(timestamp, get_now() as i64)
+    format_relative_time_impl(timestamp, epoch_now() as i64)
 }
 
 fn format_relative_time_impl(timestamp: i64, now: i64) -> String {
@@ -113,7 +113,7 @@ pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
 }
 
 // Re-export from styling for convenience
-pub(crate) use worktrunk::styling::{get_terminal_width, truncate_visible};
+pub(crate) use worktrunk::styling::{terminal_width, truncate_visible};
 
 #[cfg(test)]
 mod tests {
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_format_relative_time_short_public() {
-        // Test the public function (uses get_now internally)
+        // Test the public function (uses epoch_now internally)
         let result = format_relative_time_short(0);
         // A timestamp of 0 (Unix epoch) should show years ago
         assert!(
@@ -296,11 +296,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_now() {
-        // get_now should return a reasonable timestamp
-        let now = get_now();
+    fn test_epoch_now() {
+        // epoch_now should return a reasonable timestamp
+        let now = epoch_now();
         // Should be after 2020 (1577836800)
-        assert!(now > 1577836800, "get_now() should return current time");
+        assert!(now > 1577836800, "epoch_now() should return current time");
     }
 
     #[test]

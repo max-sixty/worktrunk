@@ -43,7 +43,7 @@ pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
 use commands::handle_select;
-use commands::worktree::handle_push;
+use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
@@ -267,7 +267,15 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
                 })
             }
         }
-        StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
+        StepCommand::Push { target, no_ff, .. } => {
+            if no_ff {
+                let repo = Repository::current()?;
+                let current_branch = repo.require_current_branch("step push --no-ff")?;
+                handle_no_ff_merge(target.as_deref(), None, &current_branch)
+            } else {
+                handle_push(target.as_deref(), "Pushed to", None)
+            }
+        }
         StepCommand::Rebase { target } => {
             handle_rebase(target.as_deref()).map(|result| match result {
                 RebaseResult::Rebased => (),

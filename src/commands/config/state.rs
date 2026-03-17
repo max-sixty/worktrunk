@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::get_config_path;
+use worktrunk::config::config_path;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::styling::{
@@ -18,7 +18,7 @@ use worktrunk::styling::{
 
 use crate::cli::OutputFormat;
 use crate::commands::process::HookLog;
-use worktrunk::utils::get_now;
+use worktrunk::utils::epoch_now;
 
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
 use crate::display::format_relative_time_short;
@@ -28,11 +28,11 @@ use crate::help_pager::show_help_in_pager;
 
 /// Get the user config path, or error if it cannot be determined.
 ///
-/// Delegates to `get_config_path()` so that `config create` and `config show`
+/// Delegates to `config_path()` so that `config create` and `config show`
 /// resolve the same path that config loading uses — including any CLI
 /// (`--config`) or environment variable (`WORKTRUNK_CONFIG_PATH`) overrides.
 pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    get_config_path().context("Cannot determine config directory")
+    config_path().context("Cannot determine config directory")
 }
 
 // ==================== Log Management ====================
@@ -396,7 +396,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             };
 
             // Store as JSON with timestamp
-            let now = get_now();
+            let now = epoch_now();
             let json = serde_json::json!({
                 "marker": value,
                 "set_at": now
@@ -628,7 +628,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     let previous_branch = repo.switch_previous();
 
     // Get markers
-    let markers: Vec<serde_json::Value> = get_all_markers(repo)
+    let markers: Vec<serde_json::Value> = all_markers(repo)
         .into_iter()
         .map(|m| {
             serde_json::json!({
@@ -753,7 +753,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show branch markers
     writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
-    let markers = get_all_markers(repo);
+    let markers = all_markers(repo);
     if markers.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
@@ -844,7 +844,7 @@ pub(super) struct MarkerEntry {
 }
 
 /// Get all branch markers from git config with timestamps
-pub(super) fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
+pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
     let output = repo
         .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .unwrap_or_default();

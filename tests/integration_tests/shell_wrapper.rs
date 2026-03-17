@@ -31,7 +31,7 @@
 // =============================================================================
 
 // Shared imports (both platforms)
-use crate::common::{TestRepo, shell::get_shell_binary, wt_bin};
+use crate::common::{TestRepo, shell::shell_binary, wt_bin};
 use std::process::Command;
 
 // Unix-only imports
@@ -374,7 +374,7 @@ fn exec_in_pty_interactive(
 
     let pair = crate::common::open_pty();
 
-    let shell_binary = get_shell_binary(shell);
+    let shell_binary = shell_binary(shell);
     let mut cmd = CommandBuilder::new(shell_binary);
 
     // Clear inherited environment for test isolation
@@ -3625,7 +3625,7 @@ mod windows_tests {
     #[test]
     fn test_conpty_powershell_basic() {
         let pair = crate::common::open_pty();
-        let shell_binary = get_shell_binary("powershell");
+        let shell_binary = shell_binary("powershell");
         let mut cmd = portable_pty::CommandBuilder::new(shell_binary);
         cmd.env_clear();
 

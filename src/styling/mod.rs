@@ -75,7 +75,7 @@ pub fn verbosity() -> u8 {
 /// When detection fails (piped context, no TTY), returns `usize::MAX` rather than
 /// an arbitrary default. Callers that need width-based formatting will produce
 /// full output, letting the consumer handle truncation.
-pub fn get_terminal_width() -> usize {
+pub fn terminal_width() -> usize {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
     // Check stderr first (status messages), then stdout (table output)
     if let Some((terminal_size::Width(w), _)) =

@@ -123,7 +123,7 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 ///
 /// For remote branches, pass the branch's remote as `remote_hint` to ensure
 /// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
-pub fn get_platform_for_repo(
+pub fn platform_for_repo(
     repo: &Repository,
     platform_override: Option<&str>,
     remote_hint: Option<&str>,

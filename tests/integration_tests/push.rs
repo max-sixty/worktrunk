@@ -229,6 +229,33 @@ fn test_push_with_merge_commits(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_push_no_ff(mut repo: TestRepo) {
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // Push with --no-ff should create a merge commit on main
+    snapshot_push("push_no_ff", &repo, &["--no-ff", "main"], Some(&feature_wt));
+
+    // Verify a merge commit was created (HEAD on main should have 2 parents)
+    let cat_file = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = cat_file
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Merge commit should have exactly 2 parents"
+    );
+
+    // Verify the merge commit message
+    let commit_msg = repo.git_output(&["log", "-1", "--format=%s", "main"]);
+    assert_eq!(commit_msg, "Merge branch 'feature' into main");
+}
+
+#[rstest]
 fn test_push_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     // Note: repo_with_feature_worktree doesn't call setup_remote(), so this tests the "no remote" error case
     let feature_wt = repo.worktree_path("feature");

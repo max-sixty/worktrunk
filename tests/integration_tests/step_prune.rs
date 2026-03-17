@@ -105,7 +105,7 @@ fn test_prune_skips_unmerged(mut repo: TestRepo) {
 
 /// Min-age guard: worktrees younger than threshold are skipped.
 ///
-/// With test epoch (Jan 2025) and real file creation (Feb 2026), get_now()
+/// With test epoch (Jan 2025) and real file creation (Feb 2026), epoch_now()
 /// returns a time before the file was created, so age is 0 — always younger
 /// than any positive threshold. This verifies the guard works.
 #[rstest]

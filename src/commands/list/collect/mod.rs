@@ -569,7 +569,7 @@ pub fn collect(
     );
 
     // Single-line invariant: use safe width to prevent line wrapping
-    let max_width = crate::display::get_terminal_width();
+    let max_width = crate::display::terminal_width();
 
     // Create collection options from skip set
     let returned_skip_tasks = effective_skip_tasks.clone();

@@ -184,7 +184,7 @@ use anstyle::Style;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
-use crate::display::{get_terminal_width, shorten_path};
+use crate::display::{shorten_path, terminal_width};
 
 use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
@@ -869,7 +869,7 @@ pub fn calculate_layout_from_basics(
     calculate_layout_with_width(
         items,
         skip_tasks,
-        get_terminal_width(),
+        terminal_width(),
         main_worktree_path,
         url_template,
     )

@@ -1,11 +1,12 @@
 ---
-source: tests/integration_tests/step_promote.rs
+source: tests/integration_tests/push.rs
 info:
   program: wt
   args:
     - step
-    - promote
-    - feature
+    - push
+    - "--no-ff"
+    - main
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -20,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -37,11 +39,13 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFound leftover staging directory from an interrupted promote[39m
-[107m [0m Files may need manual recovery from: _REPO_/.git/wt/staging/promote
-[107m [0m Remove it to retry: rm -rf "_REPO_/.git/wt/staging/promote"
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (--no-ff)[39m
+[107m [0m * [33m[HASH][m Add test file
+[107m [0m  test.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mMerged to [1mmain[22m @ [2m[HASH][22m [90m(1 commit, 1 file, [32m+1[39m, --no-ff[39m[90m)[39m[39m

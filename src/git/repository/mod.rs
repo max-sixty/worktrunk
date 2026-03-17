@@ -125,7 +125,7 @@ pub(super) struct RepoCache {
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
-    /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
+    /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
 
     // ========== Per-worktree values (keyed by path) ==========
