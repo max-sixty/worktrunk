@@ -122,6 +122,13 @@ change needs trace analysis. Don't over-analyze trivial changes.
   recoverable state? Describing the author's approach ("ordered for safety") is
   not the same as verifying it.
 
+**Data safety (CLAUDE.md §Data Safety):**
+
+- Does new code delete, remove, or overwrite files/directories? If so, is the
+  user explicitly aware and in control? Silent cleanup of stale state, implicit
+  destructive side effects during unrelated operations, and best-effort removal
+  without user visibility all violate the project's data safety principles.
+
 **Testing:**
 
 - Are the changes adequately tested?

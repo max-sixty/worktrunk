@@ -110,6 +110,9 @@ FONTES principle established in Step 1.
 - Root cause is understood
 - Fix is localized (1-3 files changed)
 - Confident the fix is correct
+- Fix respects CLAUDE.md's data safety principles — no silent deletion, no
+  implicit destructive side effects, no removing files/directories without
+  explicit user awareness
 
 ### Skill text fixes
 
