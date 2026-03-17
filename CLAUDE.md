@@ -158,7 +158,10 @@ Never risk data loss without explicit user consent. A failed command that preser
 
 - **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error
 - **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
+- **No implicit destructive side effects** — A command must not silently delete, remove, or overwrite files/directories as a side effect of an unrelated operation. If cleanup is needed, make it a separate explicit action the user chooses to take
 - **Time-of-check vs time-of-use** — Be conservative when there's a gap between checking safety and performing an operation. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
+
+For the full inventory of what Worktrunk creates and deletes, see the FAQ: [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). New code that changes this surface area should be reviewed against these sections.
 
 ## Command Execution Principles
 
