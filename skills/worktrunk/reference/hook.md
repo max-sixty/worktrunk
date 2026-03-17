@@ -9,8 +9,8 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
 | `pre-switch` | Before every switch | Yes | Yes |
-| `post-create` | After worktree created (1st) | Yes | No |
-| `post-start` | After worktree created (2nd) | No | No |
+| `post-create` | After worktree created | Yes | No |
+| `post-start` | After worktree created | No | No |
 | `post-switch` | After every switch | No | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -23,7 +23,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
 
-When creating a worktree, hooks run in this order: pre-switch → post-create (blocking) → post-start + post-switch (background). The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
 ## pre-switch
 
@@ -42,7 +42,7 @@ fi
 
 ## post-create
 
-Runs first after worktree creation — blocks until complete. Use for tasks that must finish before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
+Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
 
 ```toml
 [post-create]
@@ -52,7 +52,7 @@ env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 
 ## post-start
 
-Runs in the background after `post-create` completes. Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
