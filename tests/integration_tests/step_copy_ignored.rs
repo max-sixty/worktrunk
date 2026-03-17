@@ -955,9 +955,6 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
 
     fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
 
-    // Make source target/sub read-only so the permission is preserved when copied
-    fs::set_permissions(target_dir.join("sub"), fs::Permissions::from_mode(0o555)).unwrap();
-
     // Create destination target/sub as read-only so file copy fails
     let dest_sub = feature_path.join("target").join("sub");
     fs::create_dir_all(&dest_sub).unwrap();
@@ -972,13 +969,12 @@ fn test_copy_ignored_error_includes_path_directory(mut repo: TestRepo) {
         .unwrap();
 
     // Restore permissions for cleanup
-    fs::set_permissions(target_dir.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
     fs::set_permissions(&dest_sub, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("copying") || stderr.contains("setting permissions"),
+        stderr.contains("copying"),
         "Error should mention the file path, got: {stderr}"
     );
 }
@@ -1130,6 +1126,39 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     assert_eq!(
         dest_mode, 0o700,
         "Directory permissions should be preserved (expected 0700, got {dest_mode:04o})"
+    );
+
+    // Also verify read-only directories (0o555) are handled correctly.
+    // Permissions must be set AFTER copying contents, otherwise the destination
+    // becomes read-only before files are copied into it.
+    let readonly_dir = repo.root_path().join("readonly");
+    fs::create_dir_all(&readonly_dir).unwrap();
+    fs::write(readonly_dir.join("data"), "content").unwrap();
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "test\nreadonly\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let dest_readonly = feature_path.join("readonly");
+    assert!(
+        output.status.success(),
+        "copy-ignored should handle read-only source dirs: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Check permissions BEFORE restoring for cleanup
+    let dest_readonly_mode = fs::metadata(&dest_readonly).unwrap().permissions().mode() & 0o777;
+    // Restore for cleanup
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    if dest_readonly.exists() {
+        fs::set_permissions(&dest_readonly, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(
+        dest_readonly_mode, 0o555,
+        "Read-only directory permissions should be preserved (expected 0555, got {dest_readonly_mode:04o})"
     );
 }
 

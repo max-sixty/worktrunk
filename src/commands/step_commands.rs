@@ -863,16 +863,6 @@ fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()
 fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
-    // Preserve source directory permissions (create_dir_all uses default 0755)
-    #[cfg(unix)]
-    {
-        let src_perms = fs::metadata(src)
-            .with_context(|| format!("reading permissions for {}", src.display()))?
-            .permissions();
-        fs::set_permissions(dest, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest.display()))?;
-    }
-
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -915,6 +905,18 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
                 }
             }
         }
+    }
+
+    // Preserve source directory permissions AFTER copying contents.
+    // Must be done after the loop — if the source lacks write permission (e.g., 0o555),
+    // setting it before copying would make the destination read-only and fail the copies.
+    #[cfg(unix)]
+    {
+        let src_perms = fs::metadata(src)
+            .with_context(|| format!("reading permissions for {}", src.display()))?
+            .permissions();
+        fs::set_permissions(dest, src_perms)
+            .with_context(|| format!("setting permissions on {}", dest.display()))?;
     }
 
     Ok(())
