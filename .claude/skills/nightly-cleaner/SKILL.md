@@ -86,7 +86,11 @@ For each finding (from both recent-commit review and rolling survey):
    title, include file location and suggested fix
 2. **For confident fixes** (clear bugs, stale docs, obvious missing tests):
    branch `nightly/clean-$GITHUB_RUN_ID`, fix, test
-   (`cargo run -- hook pre-merge --yes`), commit, push, create PR, poll CI
+   (`cargo run -- hook pre-merge --yes`), commit, push, create PR, poll CI.
+   **Every bug fix must include a regression test that would have failed before
+   the fix.** Write the test, verify it passes with the fix, and confirm it
+   targets the specific behavior that was broken. If a test is not feasible
+   (e.g., pure documentation changes), note why in the PR description.
 
 ## Step 6: Summary
 
