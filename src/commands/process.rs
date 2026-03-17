@@ -454,7 +454,7 @@ pub fn build_remove_command(
     // Stop fsmonitor daemon first (best effort - ignore errors)
     // This prevents zombie daemons from accumulating when using builtin fsmonitor
     let stop_fsmonitor = format!(
-        "git -C {} fsmonitor--daemon stop 2>/dev/null || true",
+        "{{ git -C {} fsmonitor--daemon stop 2>/dev/null || true; }}",
         worktree_escaped
     );
 
@@ -568,20 +568,20 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // Without branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
 
         // With branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
 
         // With branch deletion and force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]

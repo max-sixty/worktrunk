@@ -484,7 +484,9 @@ impl GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                let command = format!("cd {path_display} && git switch {branch}");
+                let escaped_path = escape(Cow::Borrowed(path_display.as_str()));
+                let escaped_branch = escape(Cow::Borrowed(branch.as_str()));
+                let command = format!("cd {escaped_path} && git switch {escaped_branch}");
                 write!(
                     f,
                     "{}\n{}",
