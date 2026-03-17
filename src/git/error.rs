@@ -1303,6 +1303,22 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_worktree_path_occupied_special_chars() {
+        // Spaces in path and branch name require shell escaping in the hint command
+        let err = GitError::WorktreePathOccupied {
+            branch: "feature/my branch".into(),
+            path: PathBuf::from("/tmp/my repo"),
+            occupant: Some("main".into()),
+        };
+        let output = err.to_string();
+        // The hint command must quote the path and branch for safe shell execution
+        assert!(
+            output.contains("cd '/tmp/my repo' && git switch 'feature/my branch'"),
+            "expected shell-escaped command in hint, got: {output}"
+        );
+    }
+
+    #[test]
     fn snapshot_worktree_creation_failed() {
         let err = GitError::WorktreeCreationFailed {
             branch: "feature".into(),
