@@ -137,10 +137,9 @@ wt step squash --show-prompt | less
 ```console
 wt step push             # Fast-forward main to current branch
 wt step push develop     # Fast-forward develop instead
-wt step push --no-ff     # Create a merge commit (no fast-forward)
 ```
 
-Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally. With `--no-ff`, creates a merge commit on the target branch instead of fast-forwarding.
+Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
 "#
     )]
     Push {
