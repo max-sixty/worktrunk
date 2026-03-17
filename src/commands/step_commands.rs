@@ -9,7 +9,7 @@
 //!
 //! Standalone:
 //! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
-//! - `handle_promote` - Put a branch into the main worktree
+//! - `handle_promote` - Swap a branch into the main worktree
 //! - `step_prune` - Remove worktrees merged into the default branch
 
 use std::fs;
@@ -139,10 +139,12 @@ pub fn handle_squash(
     // Check if any pre-commit hooks exist (needed for skip message and approval)
     let project_config = repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let any_hooks_exist = user_hooks.pre_commit.is_some()
-        || project_config
-            .as_ref()
-            .is_some_and(|c| c.hooks.pre_commit.is_some());
+    let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+        &user_hooks,
+        project_config.as_ref(),
+        HookType::PreCommit,
+    );
+    let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow verify: if user declines approval, skip hooks but continue squash
@@ -193,10 +195,8 @@ pub fn handle_squash(
         run_hook_with_filter(
             &ctx,
             HookCommandSpec {
-                user_config: user_hooks.pre_commit.as_ref(),
-                project_config: project_config
-                    .as_ref()
-                    .and_then(|c| c.hooks.pre_commit.as_ref()),
+                user_config: user_cfg,
+                project_config: proj_cfg,
                 hook_type: HookType::PreCommit,
                 extra_vars: &extra_vars,
                 name_filter: None,
@@ -736,13 +736,35 @@ pub fn step_copy_ignored(
             if force {
                 remove_if_exists(&dest_entry)?;
             }
-            // Skip existing files for idempotent hook usage
-            match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                Ok(_) => copied_count += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(anyhow::Error::from(e)
-                        .context(format!("copying {}", format_path_for_display(relative))));
+            // Check if source is a symlink — preserve it instead of following it
+            let display_path = format_path_for_display(relative);
+            let source_is_symlink = fs::symlink_metadata(src_entry)
+                .context(format!("reading metadata for {display_path}"))?
+                .file_type()
+                .is_symlink();
+            if source_is_symlink {
+                // Skip existing symlinks for idempotent hook usage
+                if dest_entry.symlink_metadata().is_err() {
+                    let target = fs::read_link(src_entry)
+                        .context(format!("reading symlink {display_path}"))?;
+                    create_symlink(&target, src_entry, &dest_entry)?;
+                    copied_count += 1;
+                }
+            } else {
+                // Skip existing entries (files or symlinks) for idempotent hook usage.
+                // Check symlink_metadata (not exists()) because exists() follows symlinks
+                // and returns false for broken ones, which would cause reflink_or_copy to
+                // fail with ENOENT on some platforms when copying through the broken symlink.
+                if dest_entry.symlink_metadata().is_err() {
+                    match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                        Ok(_) => copied_count += 1,
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(e) => {
+                            return Err(
+                                anyhow::Error::from(e).context(format!("copying {display_path}"))
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -868,14 +890,18 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
             if force {
                 remove_if_exists(&dest_path)?;
             }
-            // Skip existing files for idempotent hook usage
-            match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
-                Ok(_) => {}
-                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(
-                        anyhow::Error::from(e).context(format!("copying {}", src_path.display()))
-                    );
+            // Skip existing entries (files or symlinks) for idempotent hook usage.
+            // Check symlink_metadata (not exists()) because exists() follows symlinks
+            // and returns false for broken ones, which would cause reflink_or_copy to
+            // fail with ENOENT on some platforms when copying through the broken symlink.
+            if dest_path.symlink_metadata().is_err() {
+                match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e)
+                            .context(format!("copying {}", src_path.display())));
+                    }
                 }
             }
         }
@@ -919,7 +945,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
     Ok(())
 }
 
-const PROMOTE_STAGING_DIR: &str = "wt-promote-staging";
+const PROMOTE_STAGING_DIR: &str = "staging/promote";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
@@ -934,7 +960,7 @@ fn stage_ignored(
     path_b: &Path,
     entries_b: &[(PathBuf, bool)],
 ) -> anyhow::Result<(PathBuf, usize)> {
-    let staging_dir = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    let staging_dir = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     fs::create_dir_all(&staging_dir).context("creating promote staging directory")?;
 
     let staging_a = staging_dir.join("a");
@@ -1070,7 +1096,7 @@ fn exchange_branches(
 ///
 /// ## Interruption recovery
 ///
-/// The swap uses a staging directory at `.git/wt-promote-staging/` and proceeds
+/// The swap uses a staging directory at `.git/wt/staging/promote/` and proceeds
 /// in three phases:
 ///
 /// 1. **Stage**: move ignored files from both worktrees into staging (`a/`, `b/`)
@@ -1142,7 +1168,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
     // it may contain the user's only copy of files from the failed swap.
     // Check BEFORE ensure_clean so users see the recovery path first.
-    let staging_path = repo.git_common_dir().join(PROMOTE_STAGING_DIR);
+    let staging_path = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     if staging_path.exists() {
         return Err(anyhow::anyhow!(
             "Files may need manual recovery from: {}\n\
@@ -1313,7 +1339,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let worktrees = repo.list_worktrees()?;
     let current_root = repo.current_worktree().root()?.to_path_buf();
     let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
-    let now_secs = worktrunk::utils::get_now();
+    let now_secs = worktrunk::utils::epoch_now();
 
     let default_branch = repo.default_branch();
 
@@ -1405,11 +1431,9 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
     let mut deferred_current: Option<Candidate> = None; // current worktree removed last
     let mut skipped_young: Vec<String> = Vec::new();
-    // Track branches seen via worktree entries so we don't double-count.
-    // Pre-seed with the default branch to prevent it from being pruned
-    // (it's trivially "integrated" into itself).
-    let mut seen_branches: std::collections::HashSet<String> =
-        default_branch.iter().cloned().collect();
+    // Track branches seen via worktree entries so we don't double-count
+    // in the orphan branch scan below.
+    let mut seen_branches: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     /// Try to remove a candidate immediately. Returns Ok(true) if removed,
     /// Ok(false) if skipped (preparation error), Err on execution error.
@@ -1582,6 +1606,11 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // Also scan local branches that don't have a worktree entry
     for branch in repo.all_branches()? {
         if seen_branches.contains(&branch) {
+            continue;
+        }
+        // Never prune the default branch — it's trivially "integrated" into
+        // itself, which would cause a tautological deletion.
+        if default_branch.as_deref() == Some(branch.as_str()) {
             continue;
         }
         let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;

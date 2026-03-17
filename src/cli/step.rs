@@ -148,6 +148,14 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
     },
 
     /// Rebase onto target
@@ -174,7 +182,7 @@ wt step rebase develop    # Rebase onto develop
     ///
     /// Includes committed, staged, unstaged, and untracked files.
     #[command(
-        after_long_help = r#"Shows all changes that `wt merge` would include: committed, staged, unstaged, and untracked files — in a single diff against the merge base.
+        after_long_help = r#"This is what `wt merge` would include — a single diff against the merge base.
 
 ## Extra git diff arguments
 
@@ -326,6 +334,65 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         force: bool,
     },
 
+    /// \[experimental\] Evaluate a template expression
+    ///
+    /// Prints the result to stdout for use in scripts and shell substitutions.
+    #[command(
+        after_long_help = r#"Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
+
+Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+
+## Examples
+
+Get the port for the current branch:
+
+```console
+$ wt step eval '{{ branch | hash_port }}'
+16066
+```
+
+Use in shell substitution:
+
+```console
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
+
+Combine multiple values:
+
+```console
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+16066,16739
+```
+
+Use conditionals and filters:
+
+```console
+$ wt step eval '{{ branch | sanitize_db }}'
+feature_auth_oauth2_a1b
+```
+
+Show available template variables:
+
+```console
+$ wt step eval --dry-run '{{ branch }}'
+branch=feature/auth-oauth2
+worktree_path=/home/user/projects/myapp-feature-auth-oauth2
+...
+Result: feature/auth-oauth2
+```
+
+Note: This command is experimental and may change in future versions.
+"#
+    )]
+    Eval {
+        /// Template expression to evaluate
+        template: String,
+
+        /// Show template variables and expanded result
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// \[experimental\] Run command in each worktree
     ///
     /// Executes sequentially with real-time output; continues on failure.
@@ -373,9 +440,9 @@ Note: This command is experimental and may change in future versions.
         args: Vec<String>,
     },
 
-    /// \[experimental\] Put a branch into the main worktree
+    /// \[experimental\] Swap a branch into the main worktree
     ///
-    /// The displaced branch moves to the promoted branch's worktree.
+    /// Exchanges branches and gitignored files between two worktrees.
     #[command(
         after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
 
@@ -413,7 +480,9 @@ Without an argument, promotes the current branch — or restores the default bra
 
 ## Gitignored files
 
-Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
+Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
+
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from `.git/`, it falls back to reflink copy.
 "#
     )]
     Promote {

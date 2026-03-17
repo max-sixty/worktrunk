@@ -3350,3 +3350,56 @@ fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
         &["base-test", "--base", "-"],
     );
 }
+
+/// Test that `--cd` flag overrides `[switch] no-cd = true` config
+#[rstest]
+fn test_switch_cd_flag_overrides_no_cd_config(repo: TestRepo) {
+    // Set up config with no-cd = true
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+no-cd = true
+"#,
+    );
+
+    repo.run_git(&["branch", "cd-override-test"]);
+
+    // --cd should override the config and include cd directive
+    snapshot_switch(
+        "switch_cd_flag_overrides_config",
+        &repo,
+        &["cd-override-test", "--cd"],
+    );
+}
+
+/// Test that `--no-cd` flag works (explicit flag, no config)
+#[rstest]
+fn test_switch_no_cd_flag_explicit(repo: TestRepo) {
+    repo.run_git(&["branch", "no-cd-explicit"]);
+
+    // --no-cd should skip the cd directive
+    snapshot_switch(
+        "switch_no_cd_flag_explicit",
+        &repo,
+        &["no-cd-explicit", "--no-cd"],
+    );
+}
+
+/// Test that `[switch] no-cd = true` config is respected when no flags provided
+#[rstest]
+fn test_switch_no_cd_config_default(repo: TestRepo) {
+    // Set up config with no-cd = true
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+no-cd = true
+"#,
+    );
+
+    repo.run_git(&["branch", "no-cd-config-test"]);
+
+    // Without any cd flags, config should be respected (no cd directive)
+    snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
+}

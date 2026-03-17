@@ -14,7 +14,7 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
 /// Get the HEAD commit SHA for a branch
-fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
+fn branch_sha(repo: &TestRepo, branch: &str) -> String {
     repo.git_output(&["rev-parse", branch])
 }
 
@@ -62,7 +62,7 @@ fn setup_github_repo_with_feature(repo: &mut TestRepo) -> String {
     ]);
     repo.add_worktree("feature");
     setup_tracking_for_all_branches(repo, "origin");
-    get_branch_sha(repo, "feature")
+    branch_sha(repo, "feature")
 }
 
 // =============================================================================
@@ -249,7 +249,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     ]);
     repo.add_worktree("feature");
     setup_tracking_for_all_branches(&repo, "origin");
-    let head_sha = get_branch_sha(&repo, "feature");
+    let head_sha = branch_sha(&repo, "feature");
 
     // Multiple PRs - only one from our org (should filter to my-org's PR)
     let pr_json = format!(
@@ -307,7 +307,7 @@ platform = "github"
     setup_tracking_for_all_branches(&repo, "github");
 
     // Get actual commit SHA
-    let head_sha = get_branch_sha(&repo, "feature");
+    let head_sha = branch_sha(&repo, "feature");
 
     // Setup mock gh with PR data - this should work because platform is overridden to github
     let pr_json = format!(
@@ -380,7 +380,7 @@ platform = "invalid_platform"
     // Create a feature branch with tracking
     repo.add_worktree("feature");
     setup_tracking_for_all_branches(&repo, "origin");
-    let head_sha = get_branch_sha(&repo, "feature");
+    let head_sha = branch_sha(&repo, "feature");
 
     // Setup mock gh - platform should fall back to GitHub via URL detection
     let pr_json = format!(
@@ -440,7 +440,7 @@ fn setup_gitlab_repo_with_feature(repo: &mut TestRepo) -> String {
     ]);
     repo.add_worktree("feature");
     setup_tracking_for_all_branches(repo, "origin");
-    get_branch_sha(repo, "feature")
+    branch_sha(repo, "feature")
 }
 
 #[rstest]
@@ -529,7 +529,7 @@ fn test_list_full_with_gitlab_filters_by_project_id(mut repo: TestRepo) {
     ]);
     repo.add_worktree("feature");
     setup_tracking_for_all_branches(&repo, "origin");
-    let head_sha = get_branch_sha(&repo, "feature");
+    let head_sha = branch_sha(&repo, "feature");
 
     // Multiple MRs - only one from our project (should filter to project 99999)
     // The "other" MR is listed first to prove filtering works (not just taking first element)
@@ -678,7 +678,7 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
         "https://github.com/upstream-owner/test-repo.git",
     ]);
     repo.add_worktree("feature");
-    let head_sha = get_branch_sha(&repo, "feature");
+    let head_sha = branch_sha(&repo, "feature");
 
     // Simulate `gh pr checkout` behavior:
     // - Sets pushremote to the fork URL (not a remote name)

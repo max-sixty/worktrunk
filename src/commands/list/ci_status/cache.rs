@@ -1,6 +1,6 @@
 //! CI status caching.
 //!
-//! Caches CI status in `.git/wt-cache/ci-status/<branch>.json` to avoid
+//! Caches CI status in `.git/wt/cache/ci-status/<branch>.json` to avoid
 //! hitting API rate limits.
 
 use std::collections::hash_map::DefaultHasher;
@@ -14,7 +14,7 @@ use worktrunk::path::sanitize_for_filename;
 
 use super::PrStatus;
 
-/// Cached CI status stored in `.git/wt-cache/ci-status/<branch>.json`
+/// Cached CI status stored in `.git/wt/cache/ci-status/<branch>.json`
 ///
 /// Uses file-based caching instead of git config to avoid file locking issues.
 /// On Windows, concurrent `git config` writes can temporarily lock `.git/config`,
@@ -66,9 +66,9 @@ impl CachedCiStatus {
         self.head == current_head && now_secs.saturating_sub(self.checked_at) < ttl
     }
 
-    /// Get the cache directory path: `.git/wt-cache/ci-status/`
+    /// Get the cache directory path: `.git/wt/cache/ci-status/`
     fn cache_dir(repo: &Repository) -> PathBuf {
-        repo.git_common_dir().join("wt-cache").join("ci-status")
+        repo.wt_dir().join("cache").join("ci-status")
     }
 
     /// Get the cache file path for a branch.

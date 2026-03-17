@@ -162,7 +162,7 @@ impl SymlinkMapping {
 /// this translates canonical paths back to the symlink tree. Returns the original path unchanged
 /// if no symlink mapping exists or the translation doesn't round-trip correctly.
 pub fn to_logical_path(path: &Path) -> PathBuf {
-    let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+    let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
     let Some(mapping) = &guard.symlink_mapping else {
         return path.to_path_buf();
     };
@@ -176,7 +176,7 @@ pub fn to_logical_path(path: &Path) -> PathBuf {
 ///
 /// Reads `WORKTRUNK_DIRECTIVE_FILE` from environment on first access.
 /// Empty or whitespace-only strings are treated as "not set" to handle edge cases.
-fn get_state() -> &'static Mutex<OutputState> {
+fn state() -> &'static Mutex<OutputState> {
     OUTPUT_STATE.get_or_init(|| {
         let directive_file = std::env::var(DIRECTIVE_FILE_ENV_VAR)
             .ok()
@@ -196,7 +196,7 @@ fn get_state() -> &'static Mutex<OutputState> {
 
 /// Check if shell integration is active (directive file is set)
 fn has_directive_file() -> bool {
-    get_state()
+    state()
         .lock()
         .expect("OUTPUT_STATE lock poisoned")
         .directive_file
@@ -207,7 +207,7 @@ fn has_directive_file() -> bool {
 fn write_directive(directive: &str) -> io::Result<()> {
     // Copy path out of lock to avoid holding mutex during I/O
     let path = {
-        let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+        let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
         guard.directive_file.clone()
     };
 
@@ -226,7 +226,7 @@ fn write_directive(directive: &str) -> io::Result<()> {
 /// Also stores path for execute() to use as working directory.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
-    let mut guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+    let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
 
     // Store for execute() to use as process cwd
     guard.target_dir = Some(path.to_path_buf());
@@ -261,7 +261,7 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
 /// process CWD was part of the worktree being removed. The error handler in
 /// `main.rs` checks this to show a "directory was removed" hint.
 pub fn mark_cwd_removed() {
-    get_state()
+    state()
         .lock()
         .expect("OUTPUT_STATE lock poisoned")
         .cwd_removed = true;
@@ -269,7 +269,7 @@ pub fn mark_cwd_removed() {
 
 /// Check whether the CWD worktree was removed during this command.
 pub fn was_cwd_removed() -> bool {
-    get_state()
+    state()
         .lock()
         .expect("OUTPUT_STATE lock poisoned")
         .cwd_removed
@@ -283,7 +283,7 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
 
     let (has_directive, target_dir) = {
-        let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+        let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
         (guard.directive_file.is_some(), guard.target_dir.clone())
     };
 

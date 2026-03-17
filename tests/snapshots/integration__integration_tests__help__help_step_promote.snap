@@ -32,9 +32,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt step promote - [experimental] Put a branch into the main worktree[0m
+wt step promote - [experimental] Swap a branch into the main worktree[0m
 
-The displaced branch moves to the promoted branch's worktree.[0m
+Exchanges branches and gitignored files between two worktrees.[0m
 
 Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
 
@@ -88,4 +88,6 @@ Without an argument, promotes the current branch — or restores the default bra
 
 [1m[32mGitignored files[0m
 
-Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See copy-ignored for filtering with [2m.worktreeinclude[0m.
+Gitignored files (build artifacts, [2mnode_modules/[0m, [2m.env[0m) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [2mcopy-ignored[0m and can be filtered with [2m.worktreeinclude[0m.
+
+The swap uses [2mrename()[0m for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from [2m.git/[0m, it falls back to reflink copy.

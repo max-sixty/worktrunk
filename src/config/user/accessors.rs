@@ -11,7 +11,8 @@ use crate::config::expansion::expand_template;
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig, SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig, SwitchConfig,
+    SwitchPickerConfig,
 };
 
 /// Default worktree path template
@@ -110,6 +111,17 @@ impl UserConfig {
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.merge.as_ref());
         merge_optional(self.configs.merge.as_ref(), project_config)
+    }
+
+    /// Returns the switch config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn switch(&self, project: Option<&str>) -> Option<SwitchConfig> {
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.overrides.switch.as_ref());
+        merge_optional(self.configs.switch.as_ref(), project_config)
     }
 
     /// Returns the select config for a specific project (deprecated path).

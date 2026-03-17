@@ -131,7 +131,6 @@ fn create_config_file(
             format_path_for_display(&path)
         ))
     );
-    eprintln!();
     for hint in success_hints {
         eprintln!("{}", hint_message(*hint));
     }

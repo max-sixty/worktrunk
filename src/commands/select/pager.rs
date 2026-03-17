@@ -45,7 +45,7 @@ fn needs_paging_disabled(pager_cmd: &str) -> bool {
 /// 2. `[select] pager` in user config (deprecated, used as-is)
 /// 3. `GIT_PAGER` environment variable (auto-detection applied)
 /// 4. `core.pager` git config (auto-detection applied)
-pub(super) fn get_diff_pager() -> Option<&'static String> {
+pub(super) fn diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
             // Check user config first - use exactly as specified (no auto-detection)
@@ -195,7 +195,7 @@ mod tests {
     fn test_get_diff_pager_initializes() {
         // Exercise the config initialization path
         // Returns None or Some depending on user's pager config
-        let _ = get_diff_pager();
+        let _ = diff_pager();
     }
 
     #[test]

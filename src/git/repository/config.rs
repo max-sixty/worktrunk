@@ -9,7 +9,7 @@ use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
-    pub fn get_config(&self, key: &str) -> anyhow::Result<Option<String>> {
+    pub fn config_value(&self, key: &str) -> anyhow::Result<Option<String>> {
         match self.run_command(&["config", key]) {
             Ok(value) => Ok(Some(value.trim().to_string())),
             Err(_) => Ok(None), // Config key doesn't exist
@@ -214,7 +214,7 @@ impl Repository {
         let remote = self.primary_remote().ok()?;
 
         // Try git's local cache for this remote (e.g., origin/HEAD)
-        if let Ok(branch) = self.get_local_default_branch(&remote) {
+        if let Ok(branch) = self.local_default_branch(&remote) {
             return Some(branch);
         }
 
@@ -339,7 +339,7 @@ impl Repository {
             && self.all_branches().is_ok_and(|b| b.is_empty())
     }
 
-    fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
+    fn local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout =
             self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
         DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)

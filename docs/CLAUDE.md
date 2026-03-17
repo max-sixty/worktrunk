@@ -241,8 +241,9 @@ The `--help-page` generator in `src/main.rs` applies post-processing to transfor
 | `` `●` red `` | `<span style='color:#a00'>●</span> red` |
 | `` `●` yellow `` | `<span style='color:#a60'>●</span> yellow` |
 | `` `●` gray `` | `<span style='color:#888'>●</span> gray` |
+| `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS `::after`) |
 
-To add web-only styling for new content, edit `colorize_ci_status_for_html()` in `src/main.rs` — not the markdown files.
+To add web-only styling for new content, edit `post_process_for_html()` in `src/help.rs` — not the markdown files.
 
 Similarly, `md_help::colorize_status_symbols()` applies ANSI colors for terminal `--help` output.
 

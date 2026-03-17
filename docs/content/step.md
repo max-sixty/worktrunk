@@ -30,39 +30,18 @@ wt step push
 
 ## Operations
 
-- `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
-- `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
+- [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](@/llm-commits.md)
+- [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
-- `copy-ignored` — Copy gitignored files between worktrees
-- `for-each` — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
-- `prune` — Remove worktrees and branches merged into the default branch
-- `relocate` — [experimental] Move worktrees to expected paths
-- `<alias>` — [experimental] Run a configured command alias
-
-## Aliases
-
-Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
-
-```toml
-# .config/wt.toml
-[aliases]
-deploy = "make deploy BRANCH={{ branch }}"
-port = "echo http://localhost:{{ branch | hash_port }}"
-```
-
-```bash
-wt step deploy                            # run the alias
-wt step deploy --dry-run                  # show expanded command
-wt step deploy --var env=staging          # pass extra template variables
-wt step deploy --yes                      # skip approval prompt
-```
-
-When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
-
-Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
+- [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
+- [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
+- [`eval`](#wt-step-eval) — <span class="badge-experimental"></span> Evaluate a template expression
+- [`for-each`](#wt-step-for-each) — <span class="badge-experimental"></span> Run a command in every worktree
+- [`promote`](#wt-step-promote) — <span class="badge-experimental"></span> Swap a branch into the main worktree
+- [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
+- [`relocate`](#wt-step-relocate) — <span class="badge-experimental"></span> Move worktrees to expected paths
+- [`<alias>`](#aliases) — <span class="badge-experimental"></span> Run a configured command alias
 
 ## See also
 
@@ -86,8 +65,9 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>rebase</span></b>        Rebase onto target
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
+  <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
-  <b><span class=c>promote</span></b>       [experimental] Put a branch into the main worktree
+  <b><span class=c>promote</span></b>       [experimental] Swap a branch into the main worktree
   <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
 
@@ -280,6 +260,73 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
+## wt step diff
+
+Show all changes since branching. Includes committed, staged, unstaged, and untracked files.
+
+This is what `wt merge` would include — a single diff against the merge base.
+
+### Extra git diff arguments
+
+Arguments after `--` are forwarded to `git diff`:
+
+```bash
+wt step diff -- --stat
+wt step diff -- --name-only
+wt step diff -- -- '*.rs'
+```
+
+The diff is pipeable to tools like `delta`:
+
+```bash
+wt step diff | delta
+```
+
+### How it works
+
+Equivalent to:
+
+```bash
+cp "$(git rev-parse --git-dir)/index" /tmp/idx
+GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+```
+
+`git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
+
+### Command reference
+
+{% terminal() %}
+wt step diff - Show all changes since branching
+
+Includes committed, staged, unstaged, and untracked files.
+
+Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXTRA_ARGS&gt;...</span><b><span class=c>]</span></b>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[TARGET]</span>
+          Target branch
+
+          Defaults to default branch.
+
+  <span class=c>[EXTRA_ARGS]...</span>
+          Extra arguments forwarded to <b>git diff</b>
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
 ## wt step copy-ignored
 
 Copy gitignored files to another worktree. Eliminates cold starts by copying build caches and dependencies.
@@ -406,9 +453,89 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step for-each
+## wt step eval <span class="badge-experimental"></span>
 
-[experimental] Run command in each worktree. Executes sequentially with real-time output; continues on failure.
+Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
+
+Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
+
+Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+
+### Examples
+
+Get the port for the current branch:
+
+```bash
+$ wt step eval '{{ branch | hash_port }}'
+16066
+```
+
+Use in shell substitution:
+
+```bash
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
+
+Combine multiple values:
+
+```bash
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+16066,16739
+```
+
+Use conditionals and filters:
+
+```bash
+$ wt step eval '{{ branch | sanitize_db }}'
+feature_auth_oauth2_a1b
+```
+
+Show available template variables:
+
+```bash
+$ wt step eval --dry-run '{{ branch }}'
+branch=feature/auth-oauth2
+worktree_path=/home/user/projects/myapp-feature-auth-oauth2
+...
+Result: feature/auth-oauth2
+```
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+{% terminal() %}
+wt step eval - [experimental] Evaluate a template expression
+
+Prints the result to stdout for use in scripts and shell substitutions.
+
+Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;TEMPLATE&gt;</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>&lt;TEMPLATE&gt;</span>
+          Template expression to evaluate
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--dry-run</span></b>
+          Show template variables and expanded result
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step for-each <span class="badge-experimental"></span>
+
+Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
 
@@ -474,9 +601,83 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step prune
+## wt step promote <span class="badge-experimental"></span>
 
-[experimental] Remove worktrees merged into the default branch.
+Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
+
+**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
+
+### Example
+
+```bash
+# from ~/project (main worktree)
+$ wt step promote feature
+```
+
+Before:
+
+```
+  Branch   Path
+@ main     ~/project
++ feature  ~/project.feature
+```
+
+After:
+
+```
+  Branch   Path
+@ feature  ~/project
++ main     ~/project.feature
+```
+
+To restore: `wt step promote main` from anywhere, or just `wt step promote` from the main worktree.
+
+Without an argument, promotes the current branch — or restores the default branch if run from the main worktree.
+
+### Requirements
+
+- Both worktrees must be clean
+- The branch must have an existing worktree
+
+### Gitignored files
+
+Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
+
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from `.git/`, it falls back to reflink copy.
+
+### Command reference
+
+{% terminal() %}
+wt step promote - [experimental] Swap a branch into the main worktree
+
+Exchanges branches and gitignored files between two worktrees.
+
+Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[BRANCH]</span>
+          Branch to promote to main worktree
+
+          Defaults to current branch, or default branch from main worktree.
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+{% end %}
+
+## wt step prune <span class="badge-experimental"></span>
+
+Remove worktrees merged into the default branch.
 
 Bulk-removes worktrees and branches that are integrated into the default branch, using the same criteria as `wt remove`'s branch cleanup. Stale worktree entries are cleaned up too.
 
@@ -544,9 +745,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step relocate
+## wt step relocate <span class="badge-experimental"></span>
 
-[experimental] Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
+Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
 Moves worktrees to match the configured `worktree-path` template.
 
@@ -640,5 +841,27 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
+
+## Aliases
+
+[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+
+```toml
+# .config/wt.toml
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+port = "echo http://localhost:{{ branch | hash_port }}"
+```
+
+```bash
+wt step deploy                            # run the alias
+wt step deploy --dry-run                  # show expanded command
+wt step deploy --var env=staging          # pass extra template variables
+wt step deploy --yes                      # skip approval prompt
+```
+
+When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
+
+Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
 
 <!-- END AUTO-GENERATED from `wt step --help-page` -->

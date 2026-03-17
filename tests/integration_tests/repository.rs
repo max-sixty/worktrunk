@@ -300,7 +300,7 @@ fn test_project_identifier_no_remote_fallback() {
 }
 
 // =============================================================================
-// get_config/set_config tests
+// config_value/set_config tests
 // =============================================================================
 
 #[test]
@@ -312,7 +312,7 @@ fn test_get_config_exists() {
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("test.key").unwrap();
+    let value = repository.config_value("test.key").unwrap();
     assert_eq!(value, Some("test-value".to_string()));
 }
 
@@ -321,7 +321,7 @@ fn test_get_config_not_exists() {
     let repo = TestRepo::new();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("nonexistent.key").unwrap();
+    let value = repository.config_value("nonexistent.key").unwrap();
     assert!(value.is_none());
 }
 
@@ -333,7 +333,7 @@ fn test_set_config() {
     repository.set_config("test.setting", "new-value").unwrap();
 
     // Verify it was set
-    let value = repository.get_config("test.setting").unwrap();
+    let value = repository.config_value("test.setting").unwrap();
     assert_eq!(value, Some("new-value".to_string()));
 }
 

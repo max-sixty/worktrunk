@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::{UserConfig, expand_template, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
@@ -13,7 +13,7 @@ use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
-    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, path_mismatch, plan_switch,
 };
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
@@ -29,25 +29,23 @@ pub struct SwitchOptions<'a> {
     pub execute_args: &'a [String],
     pub yes: bool,
     pub clobber: bool,
-    /// Whether to change directory after switching (default: true)
-    pub change_dir: bool,
+    /// Resolved from --cd/--no-cd flags: Some(true) = cd, Some(false) = no cd, None = use config
+    pub change_dir: Option<bool>,
     pub verify: bool,
 }
 
-/// Run pre-switch hooks before branch validation or worktree creation.
+/// Run pre-switch hooks before branch resolution or worktree creation.
 ///
-/// Uses current worktree context since the destination is unknown at this point.
+/// The hook context uses the **destination** branch argument as `{{ branch }}`,
+/// so hooks receive the user's raw input before resolution.
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
+    target_branch: &str,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let current_branch = repo
-        .current_worktree()
-        .branch()
-        .context("Failed to determine current branch")?;
     let current_path = repo.current_worktree().path().to_path_buf();
-    let pre_ctx = CommandContext::new(repo, config, current_branch.as_deref(), &current_path, yes);
+    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
@@ -61,6 +59,22 @@ pub(crate) fn run_pre_switch_hooks(
         )?;
     }
     Ok(())
+}
+
+/// Hook types that apply after a switch operation.
+///
+/// Creates trigger post-create + post-start + post-switch hooks;
+/// existing worktrees trigger only post-switch.
+fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
+    if is_create {
+        &[
+            HookType::PostCreate,
+            HookType::PostStart,
+            HookType::PostSwitch,
+        ]
+    } else {
+        &[HookType::PostSwitch]
+    }
 }
 
 /// Approve switch hooks upfront and show "Commands declined" if needed.
@@ -79,18 +93,7 @@ pub(crate) fn approve_switch_hooks(
     }
 
     let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
-    let approved = if plan.is_create() {
-        approve_hooks(
-            &ctx,
-            &[
-                HookType::PostCreate,
-                HookType::PostStart,
-                HookType::PostSwitch,
-            ],
-        )?
-    } else {
-        approve_hooks(&ctx, &[HookType::PostSwitch])?
-    };
+    let approved = approve_hooks(&ctx, switch_post_hook_types(plan.is_create()))?;
 
     if !approved {
         eprintln!(
@@ -171,17 +174,18 @@ pub fn handle_switch(
         execute_args,
         yes,
         clobber,
-        change_dir,
+        change_dir: change_dir_flag,
         verify,
     } = opts;
 
     let (repo, is_recovered) = current_or_recover().context("Failed to switch worktree")?;
 
-    // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
-    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-    if verify && !is_recovered {
-        run_pre_switch_hooks(&repo, config, yes)?;
-    }
+    // Resolve change_dir: explicit CLI flags > project config > global config > default (true)
+    // Now that we have the repo, we can resolve project-specific config.
+    let change_dir = change_dir_flag.unwrap_or_else(|| {
+        let project_id = repo.project_identifier().ok();
+        !config.resolved(project_id.as_deref()).switch.no_cd()
+    });
 
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
@@ -194,7 +198,14 @@ pub fn handle_switch(
         }
     });
 
-    // Validate FIRST (before approval) - fails fast if branch doesn't exist, etc.
+    // Run pre-switch hooks before branch resolution or worktree creation.
+    // {{ branch }} receives the raw user input (before resolution).
+    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
+    if verify && !is_recovered {
+        run_pre_switch_hooks(&repo, config, branch, yes)?;
+    }
+
+    // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
             Some(ref ctx) => match err.downcast::<GitError>() {
@@ -214,6 +225,11 @@ pub fn handle_switch(
     // If user declines, skip hooks but continue with worktree operation
     let hooks_approved = approve_switch_hooks(&repo, config, &plan, yes, verify)?;
 
+    // Pre-flight: validate all templates before mutation (worktree creation).
+    // Catches syntax errors and undefined variables early so a broken template
+    // doesn't leave behind a half-created worktree that blocks re-running.
+    validate_switch_templates(&repo, config, &plan, execute, execute_args, hooks_approved)?;
+
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
@@ -225,7 +241,7 @@ pub fn handle_switch(
     // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
     let branch_info = match &result {
         SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
+            let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
             SwitchBranchInfo {
                 expected_path,
                 ..branch_info
@@ -249,8 +265,9 @@ pub fn handle_switch(
     // Offer shell integration if not already installed/active
     // (only shows prompt/hint when shell integration isn't working)
     // With --execute: show hints only (don't interrupt with prompt)
+    // Skip when change_dir is false — user opted out of cd, so shell integration is irrelevant
     // Best-effort: don't fail switch if offer fails
-    if !is_shell_integration_active() {
+    if change_dir && !is_shell_integration_active() {
         let skip_prompt = execute.is_some();
         let _ = prompt_shell_integration(config, binary_name, skip_prompt);
     }
@@ -306,6 +323,78 @@ pub fn handle_switch(
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };
         execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+    }
+
+    Ok(())
+}
+
+/// Validate all templates that will be expanded after worktree creation.
+///
+/// Catches syntax errors and undefined variable references *before* the
+/// irreversible worktree creation, so a broken template doesn't leave behind
+/// a worktree that blocks re-running the command.
+///
+/// This is a best-effort pre-flight check: it catches definite errors (syntax,
+/// unknown variables) but cannot catch failures from conditional variables that
+/// are absent at expansion time (e.g., `upstream` when no tracking is configured).
+/// Such late failures propagate as normal errors — no panics.
+///
+/// ## Why only switch needs pre-flight validation
+///
+/// Switch is the only command where template failure after mutation creates a
+/// **blocking half-state**: `wt switch -c <branch>` creates a worktree, then if
+/// hook/--execute expansion fails, the worktree exists and the same command
+/// can't be re-run (branch already exists). Other commands don't have this
+/// problem:
+///
+/// - **Pre-operation hooks** (pre-merge, pre-remove, pre-commit) run before the
+///   irreversible operation, so template errors abort cleanly.
+/// - **Post-operation hooks** (post-merge, post-remove) run after the operation
+///   completed successfully — template failure is a missed notification, not a
+///   blocking state. The user can fix the template and run `wt hook` manually.
+///
+/// Validates:
+/// - `--execute` command template (if present)
+/// - `--execute` trailing arg templates (if present)
+/// - Hook templates (post-create, post-start, post-switch) from user and project config
+fn validate_switch_templates(
+    repo: &Repository,
+    config: &UserConfig,
+    plan: &SwitchPlan,
+    execute: Option<&str>,
+    execute_args: &[String],
+    hooks_approved: bool,
+) -> anyhow::Result<()> {
+    // Validate --execute template and trailing args
+    if let Some(cmd) = execute {
+        validate_template(cmd, repo, "--execute command")?;
+        for arg in execute_args {
+            validate_template(arg, repo, "--execute argument")?;
+        }
+    }
+
+    // Validate hook templates only when hooks will actually run
+    if !hooks_approved {
+        return Ok(());
+    }
+
+    let project_config = repo.load_project_config()?;
+    let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
+
+    for &hook_type in switch_post_hook_types(plan.is_create()) {
+        let (user_cfg, proj_cfg) =
+            super::hooks::lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
+        for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
+            if let Some(cfg) = cfg {
+                for cmd in cfg.commands() {
+                    let name = match &cmd.name {
+                        Some(n) => format!("{source} {hook_type}:{n}"),
+                        None => format!("{source} {hook_type} hook"),
+                    };
+                    validate_template(&cmd.template, repo, &name)?;
+                }
+            }
+        }
     }
 
     Ok(())

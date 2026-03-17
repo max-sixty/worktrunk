@@ -18,16 +18,17 @@ env:
 
 jobs:
   triage:
-    # Skip bot-created issues, @worktrunk-bot mentions (handled by claude-mention.yaml),
-    # and issues from worktrunk-bot (nightly workflows, ci-fix, etc.). Nightly
-    # workflows handle their own remediation because they have richer context
-    # (session logs, aggregate diffs) that would be lost if the triager
-    # re-derived it from the issue body alone.
+    # Skip bot-created issues and issues from worktrunk-bot (nightly workflows,
+    # ci-fix, etc.). Nightly workflows handle their own remediation because they
+    # have richer context (session logs, aggregate diffs) that would be lost if
+    # the triager re-derived it from the issue body alone.
+    #
+    # Issues mentioning @worktrunk-bot are handled here too — claude-mention
+    # only triggers on issue edits (not opens) to avoid duplicate workflows
+    # racing to create fix PRs.
     if: >-
       github.event.issue.user.type != 'Bot' &&
-      github.event.issue.user.login != 'worktrunk-bot' &&
-      !contains(github.event.issue.body, '@worktrunk-bot') &&
-      !contains(github.event.issue.title, '@worktrunk-bot')
+      github.event.issue.user.login != 'worktrunk-bot'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

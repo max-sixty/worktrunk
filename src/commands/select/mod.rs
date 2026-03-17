@@ -10,6 +10,7 @@ mod summary;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Context;
 use dashmap::DashMap;
@@ -21,7 +22,7 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, handle_remove, plan_switch,
+    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
 
@@ -41,7 +42,7 @@ enum PickerAction {
 pub fn handle_select(
     cli_branches: bool,
     cli_remotes: bool,
-    change_dir: bool,
+    change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI
     if !std::io::stdin().is_terminal() {
@@ -50,8 +51,9 @@ pub fn handle_select(
 
     let (repo, is_recovered) = current_or_recover()?;
 
-    // Merge CLI flags with resolved config
+    // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
+    let change_dir = change_dir_flag.unwrap_or_else(|| !config.switch.no_cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
 
@@ -68,9 +70,11 @@ pub fn handle_select(
     .into_iter()
     .collect();
 
-    // Configurable timeout for git commands to show TUI faster on large repos.
-    // Operations that timeout fail silently (data not shown), but TUI stays responsive.
-    let command_timeout = config.switch_picker.picker_command_timeout();
+    // Per-task command timeout from shared [list] config.
+    let command_timeout = config.list.task_timeout();
+
+    // Wall-clock budget for the entire collect phase (default: 500ms).
+    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
 
     let Some(list_data) = collect::collect(
         &repo,
@@ -79,6 +83,7 @@ pub fn handle_select(
             show_remotes,
             skip_tasks: skip_tasks.clone(),
             command_timeout,
+            collect_deadline,
         },
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
@@ -92,7 +97,7 @@ pub fn handle_select(
     // List width depends on preview position:
     // - Right layout: skim splits ~50% for list, ~50% for preview
     // - Down layout: list gets full width, preview is below
-    let terminal_width = crate::display::get_terminal_width();
+    let terminal_width = crate::display::terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
@@ -122,8 +127,16 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // Use layout system to render the line - this handles all column alignment
-            let rendered_line = layout.render_list_item_line(&item);
+            // status_symbols is None only when no task results arrived for this item
+            // (budget truncation). collect() sets it for all other items: via drain
+            // callbacks for items that received results, and the post-drain loop for
+            // prunable worktrees. Each column also shows the placeholder independently
+            // when its own data field is None.
+            let rendered_line = if item.status_symbols.is_none() {
+                layout.render_list_item_stale(&item)
+            } else {
+                layout.render_list_item_line(&item)
+            };
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
@@ -318,7 +331,7 @@ pub fn handle_select(
                 .first()
                 .map(|item| item.output().to_string());
             let query = out.query.trim().to_string();
-            let identifier = resolve_print_identifier(&action, query, selected_name)?;
+            let identifier = resolve_identifier(&action, query, selected_name)?;
             println!("{identifier}");
             return Ok(());
         }
@@ -326,11 +339,11 @@ pub fn handle_select(
         match action {
             PickerAction::Remove => {
                 // Get the selected worktree's branch name
-                let selected = out
+                let selected_name = out
                     .selected_items
                     .first()
-                    .expect("skim accept has selection");
-                let branch_name = selected.output().to_string();
+                    .map(|item| item.output().to_string());
+                let branch_name = resolve_identifier(&action, String::new(), selected_name)?;
 
                 let config = repo.user_config();
 
@@ -351,20 +364,12 @@ pub fn handle_select(
                 let should_create = matches!(action, PickerAction::Create);
 
                 // Get branch name: from query if creating new, from selected item if switching
-                let identifier = if should_create {
-                    let query = out.query.trim().to_string();
-                    if query.is_empty() {
-                        anyhow::bail!("Cannot create worktree: no branch name entered");
-                    }
-                    query
-                } else {
-                    // Enter pressed: skim accept always includes a selection (abort handled above)
-                    let selected = out
-                        .selected_items
-                        .first()
-                        .expect("skim accept has selection");
-                    selected.output().to_string()
-                };
+                let selected_name = out
+                    .selected_items
+                    .first()
+                    .map(|item| item.output().to_string());
+                let query = out.query.trim().to_string();
+                let identifier = resolve_identifier(&action, query, selected_name)?;
 
                 // Load config — reuse recovered repo if we recovered earlier
                 let repo = if is_recovered {
@@ -374,10 +379,11 @@ pub fn handle_select(
                 };
                 let config = repo.user_config();
 
-                // Run pre-switch hooks before anything else (before branch validation, planning, etc.)
+                // Run pre-switch hooks before branch resolution or worktree creation.
+                // {{ branch }} receives the raw user input (before resolution).
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, true)?;
+                    run_pre_switch_hooks(&repo, config, &identifier, true)?;
                 }
 
                 // Switch to existing worktree or create new one
@@ -389,8 +395,7 @@ pub fn handle_select(
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
                     SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                        let expected_path =
-                            get_path_mismatch(&repo, &branch_info.branch, path, config);
+                        let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
                         SwitchBranchInfo {
                             expected_path,
                             ..branch_info
@@ -432,10 +437,11 @@ pub fn handle_select(
     Ok(())
 }
 
-/// Resolve the identifier to print for `--no-cd` print mode.
+/// Resolve the branch identifier from picker output.
 ///
-/// Extracted from the picker callback for testability.
-fn resolve_print_identifier(
+/// Extracted from the picker callback for testability. Used by both the
+/// interactive path and the `--no-cd` print path.
+fn resolve_identifier(
     action: &PickerAction,
     query: String,
     selected_name: Option<String>,
@@ -447,17 +453,33 @@ fn resolve_print_identifier(
             }
             Ok(query)
         }
-        PickerAction::Switch => selected_name.context("skim accept has no selection"),
-        PickerAction::Remove => {
-            anyhow::bail!("--no-cd is read-only and cannot be combined with remove (alt-r)")
-        }
+        PickerAction::Switch => match selected_name {
+            Some(name) => Ok(name),
+            None => {
+                if query.is_empty() {
+                    anyhow::bail!("No worktree selected");
+                } else {
+                    anyhow::bail!(
+                        "No worktree matches '{query}' — use alt-c to create a new worktree"
+                    );
+                }
+            }
+        },
+        PickerAction::Remove => match selected_name {
+            Some(name) => Ok(name),
+            None => {
+                anyhow::bail!(
+                    "No worktree selected — type a name that matches an existing worktree"
+                );
+            }
+        },
     }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, resolve_print_identifier};
+    use super::{PickerAction, resolve_identifier};
     use std::fs;
 
     #[test]
@@ -496,30 +518,49 @@ pub mod tests {
     }
 
     #[test]
-    fn test_resolve_print_identifier() {
+    fn test_resolve_identifier() {
         // Switch returns the selected name
-        let result = resolve_print_identifier(
+        let result = resolve_identifier(
             &PickerAction::Switch,
             String::new(),
             Some("feature/foo".into()),
         );
         assert_eq!(result.unwrap(), "feature/foo");
 
-        // Switch with no selection is an error
-        let result = resolve_print_identifier(&PickerAction::Switch, String::new(), None);
-        assert!(result.is_err());
+        // Switch with no selection and empty query
+        let result = resolve_identifier(&PickerAction::Switch, String::new(), None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No worktree selected")
+        );
+
+        // Switch with no selection but a query — the panic from #1565
+        let result = resolve_identifier(&PickerAction::Switch, "nonexistent".into(), None);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No worktree matches 'nonexistent'"));
+        assert!(err.contains("alt-c"));
 
         // Create returns the query
-        let result = resolve_print_identifier(&PickerAction::Create, "new-branch".into(), None);
+        let result = resolve_identifier(&PickerAction::Create, "new-branch".into(), None);
         assert_eq!(result.unwrap(), "new-branch");
 
         // Create with empty query is an error
-        let result = resolve_print_identifier(&PickerAction::Create, String::new(), None);
+        let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
 
-        // Remove is always an error
-        let result =
-            resolve_print_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
-        assert!(result.unwrap_err().to_string().contains("read-only"));
+        // Remove returns the selected name
+        let result = resolve_identifier(&PickerAction::Remove, String::new(), Some("main".into()));
+        assert_eq!(result.unwrap(), "main");
+
+        // Remove with no selection is an error
+        let result = resolve_identifier(&PickerAction::Remove, String::new(), None);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No worktree selected")
+        );
     }
 }

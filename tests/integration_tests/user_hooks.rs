@@ -1367,7 +1367,7 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     );
 
     // Wait for log file to be created and contain output
-    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Find and read the log file
@@ -1411,7 +1411,7 @@ second = "echo SECOND_OUTPUT"
     );
 
     // Wait for both log files to be created
-    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 2);
 
     // Collect log files and their contents
@@ -1910,6 +1910,39 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
     assert!(
         marker_file.exists(),
         "Manual pre-switch hook should have created marker"
+    );
+}
+
+/// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
+#[rstest]
+fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature-dest");
+
+    // Write pre-switch hook that records {{ branch }} into a marker file
+    repo.write_test_config(
+        r#"[pre-switch]
+check = "echo '{{ branch }}' > pre_switch_branch.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_branch_destination",
+        &repo,
+        &["feature-dest"],
+    );
+
+    // {{ branch }} should be the destination branch, not the source (main)
+    let marker_file = repo.root_path().join("pre_switch_branch.txt");
+    assert!(
+        marker_file.exists(),
+        "Pre-switch hook should have created marker"
+    );
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "feature-dest",
+        "{{{{ branch }}}} should be the destination branch 'feature-dest', got: '{}'",
+        contents.trim(),
     );
 }
 

@@ -990,6 +990,30 @@ ul > li::marker {
 }
 
 // ============================================================================
+// Badges — status labels (experimental, deprecated, etc.)
+// ============================================================================
+
+// Experimental badge — empty span, text via ::after so it doesn't affect
+// Zola's heading slug generation or page TOC entries.
+.badge-experimental {
+    display: inline-block;
+    vertical-align: middle;
+    white-space: nowrap;
+
+    &::after {
+        content: "EXPERIMENTAL";
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--wt-color-text-soft);
+        border: 1px solid var(--wt-color-border-subtle);
+        border-radius: var(--wt-radius-pill);
+        padding: 0.05rem 0.5rem;
+        line-height: 1.4;
+    }
+}
+
+// ============================================================================
 // Figures
 // ============================================================================
 

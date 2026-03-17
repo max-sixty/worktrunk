@@ -1,7 +1,7 @@
 //! Verbose log file management for diagnostics.
 //!
 //! When `--verbose` is passed, logs are written to both stderr AND
-//! `.git/wt-logs/verbose.log`. This file can be included in diagnostic
+//! `.git/wt/logs/verbose.log`. This file can be included in diagnostic
 //! reports to help debug issues.
 //!
 //! # Usage
@@ -64,13 +64,13 @@ pub(crate) fn log_file_path() -> Option<PathBuf> {
     })
 }
 
-/// Try to create the verbose log file in the repo's wt-logs directory.
+/// Try to create the verbose log file in the repo's wt/logs directory.
 ///
 fn try_create_log_file() -> Option<(PathBuf, File)> {
     // Find the git repo from current directory
     let repo = worktrunk::git::Repository::current().ok()?;
 
-    // Get the wt-logs directory (creates it if needed)
+    // Get the wt/logs directory (creates it if needed)
     let log_dir = repo.wt_logs_dir();
     std::fs::create_dir_all(&log_dir).ok()?;
 

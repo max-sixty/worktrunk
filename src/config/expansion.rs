@@ -298,6 +298,84 @@ fn build_template_error(
     }
 }
 
+/// Set up a minijinja environment with worktrunk's custom filters and functions.
+///
+/// Shared by [`expand_template`] and [`validate_template`] to ensure both use
+/// the same filters, functions, and undefined-behavior settings.
+fn setup_template_env(repo: &Repository) -> Environment<'static> {
+    let mut env = Environment::new();
+    // SemiStrict: errors on undefined variable use (printing, iteration) but allows
+    // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
+
+    // Register custom filters
+    env.add_filter("sanitize", |value: Value| -> String {
+        sanitize_branch_name(value.as_str().unwrap_or_default())
+    });
+    env.add_filter("sanitize_db", |value: Value| -> String {
+        sanitize_db(value.as_str().unwrap_or_default())
+    });
+    env.add_filter("hash_port", |value: String| string_to_port(&value));
+
+    // Register worktree_path_of_branch function for looking up branch worktree paths.
+    // Returns raw paths — shell escaping is applied by the formatter at output time.
+    let repo_clone = repo.clone();
+    env.add_function("worktree_path_of_branch", move |branch: String| -> String {
+        repo_clone
+            .worktree_for_branch(&branch)
+            .ok()
+            .flatten()
+            .map(|p| to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default()
+    });
+
+    env
+}
+
+/// Validate that a template can be expanded without errors.
+///
+/// Performs a trial expansion with placeholder values for all known template variables
+/// ([`TEMPLATE_VARS`] + [`DEPRECATED_TEMPLATE_VARS`]). Catches syntax errors and
+/// undefined variable references *before* irreversible operations like worktree creation.
+///
+/// This is deliberately more permissive than real expansion: all known variables are
+/// provided, even conditional ones (`upstream`, `commit`, etc.) that may be absent at
+/// expansion time. This means a template like `{{ upstream }}` passes validation but
+/// could fail later if no upstream tracking is configured. This is an acceptable
+/// trade-off — the alternative (predicting which optional variables will be available)
+/// would be fragile and context-dependent.
+///
+/// No verbose logging is performed — this is a pre-flight check, not the real expansion.
+pub fn validate_template(
+    template: &str,
+    repo: &Repository,
+    name: &str,
+) -> Result<(), TemplateExpandError> {
+    let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
+    let context: HashMap<String, minijinja::Value> = all_vars
+        .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
+        .collect();
+
+    let env = setup_template_env(repo);
+
+    let tmpl = env
+        .template_from_named_str(name, template)
+        .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+
+    tmpl.render(minijinja::Value::from_object(context))
+        .map_err(|e| {
+            let mut keys: Vec<String> = TEMPLATE_VARS
+                .iter()
+                .chain(DEPRECATED_TEMPLATE_VARS.iter())
+                .map(|k| k.to_string())
+                .collect();
+            keys.sort();
+            build_template_error(&e, template, name, keys)
+        })?;
+
+    Ok(())
+}
+
 /// Expand a template with variable substitution.
 ///
 /// # Arguments
@@ -333,11 +411,7 @@ pub fn expand_template(
         );
     }
 
-    // Render template with minijinja
-    let mut env = Environment::new();
-    // SemiStrict: errors on undefined variable use (printing, iteration) but allows
-    // truthiness checks ({% if var %}). This catches typos while supporting optional vars.
-    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
+    let mut env = setup_template_env(repo);
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
@@ -356,27 +430,6 @@ pub fn expand_template(
             Ok(())
         });
     }
-
-    // Register custom filters
-    env.add_filter("sanitize", |value: Value| -> String {
-        sanitize_branch_name(value.as_str().unwrap_or_default())
-    });
-    env.add_filter("sanitize_db", |value: Value| -> String {
-        sanitize_db(value.as_str().unwrap_or_default())
-    });
-    env.add_filter("hash_port", |value: String| string_to_port(&value));
-
-    // Register worktree_path_of_branch function for looking up branch worktree paths.
-    // Returns raw paths — shell escaping is applied by the formatter at output time.
-    let repo_clone = repo.clone();
-    env.add_function("worktree_path_of_branch", move |branch: String| -> String {
-        repo_clone
-            .worktree_for_branch(&branch)
-            .ok()
-            .flatten()
-            .map(|p| to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default()
-    });
 
     // Cache verbosity level for consistent behavior within this call
     let verbose = verbosity();
@@ -1052,5 +1105,58 @@ mod tests {
             redact_credentials("https://token@github.com/owner/repo.git?ref=main"),
             "https://[REDACTED]@github.com/owner/repo.git?ref=main"
         );
+    }
+
+    #[test]
+    fn test_validate_template_valid() {
+        let test = test_repo();
+
+        // Static text
+        assert!(validate_template("echo hello", &test.repo, "test").is_ok());
+
+        // Known variables
+        assert!(validate_template("{{ branch }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ repo }}/{{ branch }}", &test.repo, "test").is_ok());
+
+        // Filters
+        assert!(validate_template("{{ branch | sanitize }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize_db }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | hash_port }}", &test.repo, "test").is_ok());
+
+        // Conditionals with optional vars
+        assert!(
+            validate_template(
+                "{% if upstream %}{{ upstream }}{% endif %}",
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
+        // Deprecated vars still valid
+        assert!(validate_template("{{ main_worktree }}", &test.repo, "test").is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_syntax_error() {
+        let test = test_repo();
+
+        let err = validate_template("{{ unclosed", &test.repo, "test").unwrap_err();
+        assert!(err.message.contains("syntax error"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_validate_template_undefined_var() {
+        let test = test_repo();
+
+        let err = validate_template("{{ nonexistent_var }}", &test.repo, "test").unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+        // Should list available vars in hint
+        assert!(!err.available_vars.is_empty(), "should list available vars");
+        assert!(err.available_vars.contains(&"branch".to_string()));
     }
 }

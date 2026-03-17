@@ -376,11 +376,11 @@ url = "http://localhost:8080/{{ branch }}"
     assert_eq!(url, "http://localhost:8080/main");
 }
 
-/// Test that timeout-ms config option is parsed correctly.
+/// Test that task-timeout-ms config option is parsed correctly.
 /// We use a very short timeout (1ms) to trigger timeouts.
 #[rstest]
 fn test_list_config_timeout_triggers_timeouts(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with a very short timeout
+    // Create user config with a very short per-task timeout
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -388,7 +388,7 @@ fn test_list_config_timeout_triggers_timeouts(repo: TestRepo, temp_home: TempDir
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
-timeout-ms = 1
+task-timeout-ms = 1
 "#,
     )
     .unwrap();
@@ -409,10 +409,10 @@ timeout-ms = 1
     );
 }
 
-/// Test that timeout-ms = 0 explicitly disables timeout.
+/// Test that task-timeout-ms = 0 explicitly disables timeout.
 #[rstest]
 fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with timeout-ms = 0
+    // Create user config with task-timeout-ms = 0
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -420,7 +420,7 @@ fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo, temp_home: Tem
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
-timeout-ms = 0
+task-timeout-ms = 0
 "#,
     )
     .unwrap();
@@ -433,18 +433,18 @@ timeout-ms = 0
     let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // With timeout-ms = 0, there should be no timeout
+    // With task-timeout-ms = 0, there should be no timeout
     assert!(
         !stderr.contains("timed out"),
-        "Expected no timeout message with timeout-ms = 0, but got: {}",
+        "Expected no timeout message with task-timeout-ms = 0, but got: {}",
         stderr
     );
 }
 
-/// Test that --full disables the timeout.
+/// Test that --full disables the task timeout.
 #[rstest]
 fn test_list_config_timeout_disabled_with_full(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with a very short timeout
+    // Create user config with a very short per-task timeout
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -452,7 +452,7 @@ fn test_list_config_timeout_disabled_with_full(repo: TestRepo, temp_home: TempDi
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
-timeout-ms = 1
+task-timeout-ms = 1
 "#,
     )
     .unwrap();

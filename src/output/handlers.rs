@@ -56,9 +56,11 @@ fn execute_instant_removal_or_fallback(
     force_worktree: bool,
 ) -> String {
     // Fast path: instant removal via rename-then-prune.
-    // Rename worktree to staging path (instant on same filesystem), then prune
+    // Rename worktree into .git/wt/trash/ (instant on same filesystem), then prune
     // git metadata. Background process just does `rm -rf` on the staged directory.
-    let staged_path = generate_removing_path(worktree_path);
+    let trash_dir = repo.wt_trash_dir();
+    let _ = std::fs::create_dir_all(&trash_dir);
+    let staged_path = generate_removing_path(&trash_dir, worktree_path);
     match std::fs::rename(worktree_path, &staged_path) {
         Ok(()) => {
             // Fast path succeeded - prune git metadata synchronously.
@@ -76,7 +78,14 @@ fn execute_instant_removal_or_fallback(
             {
                 log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
             }
-            build_remove_command_staged(&staged_path)
+            // Create an empty placeholder at the original path so the shell's working
+            // directory ($env.PWD) remains valid until the wrapper has cd'd away.
+            // Without this, shells that validate PWD (notably Nushell) emit errors
+            // between binary exit and the cd directive executing.
+            // Best-effort: if create_dir fails (permissions, race), the only effect
+            // is that Nushell may still emit PWD errors — not a correctness issue.
+            let _ = std::fs::create_dir(worktree_path);
+            build_remove_command_staged(&staged_path, worktree_path)
         }
         Err(e) => {
             // Fallback: cross-filesystem, permissions, Windows file locking, etc.
@@ -295,7 +304,7 @@ impl FlagNote {
 /// Get flag acknowledgment note for remove messages
 ///
 /// `target_branch`: The branch we checked integration against (shown in reason)
-fn get_flag_note(
+fn flag_note(
     deletion_mode: BranchDeletionMode,
     outcome: &BranchDeletionOutcome,
     target_branch: Option<&str>,
@@ -731,7 +740,7 @@ fn handle_branch_only_output(
             );
         }
     } else {
-        let flag_note = get_flag_note(
+        let flag_note = flag_note(
             deletion_mode,
             &deletion.outcome,
             Some(&deletion.integration_target),
@@ -934,7 +943,7 @@ impl RemovalDisplayInfo {
 
     /// Print the removal message (progress for background, success for foreground).
     fn print_message(&self, branch_name: &str, foreground: bool) -> anyhow::Result<()> {
-        let flag_note = get_flag_note(
+        let flag_note = flag_note(
             if self.branch_deleted() {
                 BranchDeletionMode::SafeDelete // Doesn't matter, outcome already determined
             } else {
@@ -1371,9 +1380,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_flag_note() {
+    fn test_flag_note() {
         // --no-delete-branch flag (text only, no symbol, no suffix)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::Keep,
             &BranchDeletionOutcome::NotDeleted,
             None,
@@ -1383,7 +1392,7 @@ mod tests {
         assert!(note.suffix.is_empty());
 
         // NotDeleted without flag (empty)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::SafeDelete,
             &BranchDeletionOutcome::NotDeleted,
             None,
@@ -1393,7 +1402,7 @@ mod tests {
         assert!(note.suffix.is_empty());
 
         // Force deleted (text only, no symbol, no suffix)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::ForceDelete,
             &BranchDeletionOutcome::ForceDeleted,
             None,
@@ -1411,7 +1420,7 @@ mod tests {
             (IntegrationReason::MergeAddsNothing, "all changes in"),
         ];
         for (reason, expected_desc) in cases {
-            let note = get_flag_note(
+            let note = flag_note(
                 BranchDeletionMode::SafeDelete,
                 &BranchDeletionOutcome::Integrated(reason),
                 Some("main"),

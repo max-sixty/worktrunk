@@ -12,7 +12,8 @@ use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
+    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
+    path_mismatch,
 };
 
 /// Options for the merge command
@@ -29,6 +30,8 @@ pub struct MergeOptions<'a> {
     pub rebase: Option<bool>,
     /// CLI override for remove. None = use effective config default.
     pub remove: Option<bool>,
+    /// CLI override for no-ff. None = use effective config default.
+    pub no_ff: Option<bool>,
     /// CLI override for verify. None = use effective config default.
     pub verify: Option<bool>,
     pub yes: bool,
@@ -83,6 +86,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         commit: commit_opt,
         rebase: rebase_opt,
         remove: remove_opt,
+        no_ff: no_ff_opt,
         verify: verify_opt,
         yes,
         stage,
@@ -109,6 +113,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let commit = commit_opt.unwrap_or(resolved.merge.commit());
     let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
     let remove = remove_opt.unwrap_or(resolved.merge.remove());
+    let no_ff = no_ff_opt.unwrap_or(resolved.merge.no_ff());
     let verify = verify_opt.unwrap_or(resolved.merge.verify());
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
@@ -219,16 +224,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         )?;
     }
 
-    // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
-    handle_push(
-        Some(&target_branch),
-        "Merged to",
-        Some(MergeOperations {
-            committed,
-            squashed,
-            rebased,
-        }),
-    )?;
+    // Merge to target branch
+    let operations = Some(MergeOperations {
+        committed,
+        squashed,
+        rebased,
+    });
+    if no_ff {
+        // Create a merge commit on the target branch via commit-tree + update-ref
+        handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
+    } else {
+        // Fast-forward push to target branch
+        handle_push(Some(&target_branch), "Merged to", operations)?;
+    }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
     let destination_path = match target_worktree_path {
@@ -247,7 +255,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // After a successful merge, get integration reason
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
-        let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
+        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
         // Capture commit SHA before removal for post-remove hook template variables
         let removed_commit = current_wt
             .run_command(&["rev-parse", "HEAD"])

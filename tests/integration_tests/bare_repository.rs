@@ -437,7 +437,7 @@ fn test_bare_repo_merge_workflow() {
 #[test]
 fn test_bare_repo_background_logs_location() {
     // This test verifies that background operation logs go to the correct location
-    // in bare repos (bare_repo/wt-logs/ instead of worktree/.git/wt-logs/)
+    // in bare repos (bare_repo/wt/logs/ instead of worktree/.git/wt/logs/)
     let test = BareRepoTest::new();
 
     // Create main worktree
@@ -468,7 +468,7 @@ fn test_bare_repo_background_logs_location() {
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
     // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
-    let log_dir = test.bare_repo_path().join("wt-logs");
+    let log_dir = test.bare_repo_path().join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Verify the log file matches expected pattern (feature-*-remove.log)
@@ -489,7 +489,7 @@ fn test_bare_repo_background_logs_location() {
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
-    let wrong_dir = main_worktree.join(".git/wt-logs");
+    let wrong_dir = main_worktree.join(".git/wt/logs");
     assert!(
         !wrong_dir.exists()
             || std::fs::read_dir(&wrong_dir)

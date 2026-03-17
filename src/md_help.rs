@@ -252,7 +252,7 @@ fn unescape_table_pipes(line: &str) -> String {
 /// restructuring since `cmd` is consumed by `try_get_matches_from_mut`.
 ///
 /// Current workaround: Use plain URLs in cli.rs (terminals auto-link `https://...`),
-/// transform to markdown links for web docs in `colorize_ci_status_for_html()`.
+/// transform to markdown links for web docs in `post_process_for_html()`.
 fn strip_markdown_links(line: &str) -> String {
     let mut result = String::new();
     let mut chars = line.chars().peekable();

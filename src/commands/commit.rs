@@ -157,12 +157,12 @@ impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
-        let user_hooks_exist = user_hooks.pre_commit.is_some();
-        let project_hooks_exist = project_config
-            .as_ref()
-            .map(|c| c.hooks.pre_commit.is_some())
-            .unwrap_or(false);
-        let any_hooks_exist = user_hooks_exist || project_hooks_exist;
+        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+            &user_hooks,
+            project_config.as_ref(),
+            HookType::PreCommit,
+        );
+        let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
         // Show skip message
         if !self.verify && any_hooks_exist {
@@ -183,10 +183,8 @@ impl CommitOptions<'_> {
             super::hooks::run_hook_with_filter(
                 self.ctx,
                 HookCommandSpec {
-                    user_config: user_hooks.pre_commit.as_ref(),
-                    project_config: project_config
-                        .as_ref()
-                        .and_then(|c| c.hooks.pre_commit.as_ref()),
+                    user_config: user_cfg,
+                    project_config: proj_cfg,
                     hook_type: HookType::PreCommit,
                     extra_vars: &extra_vars,
                     name_filter: None,

@@ -44,7 +44,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -102,6 +102,41 @@ worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
 
+### Claude Code
+
+```toml
+# [commit.generation]
+# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+```
+
+### Codex
+
+```toml
+# [commit.generation]
+# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+### opencode
+
+```toml
+# [commit.generation]
+# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+```
+
+### llm
+
+```toml
+# [commit.generation]
+# command = "llm -m claude-haiku-4.5"
+```
+
+### aichat
+
+```toml
+# [commit.generation]
+# command = "aichat -m claude:claude-haiku-4.5"
+```
+
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Command config
@@ -117,6 +152,9 @@ summary = false    # Enable LLM branch summaries (requires [commit.generation])
 full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+
+task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
+timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 ### Commit
@@ -130,7 +168,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -139,20 +177,22 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
-### Switch picker
-
-Configuration for `wt switch` interactive picker.
+### Switch
 
 ```toml
+[switch]
+no-cd = true       # Skip directory change after switching (--cd to override)
+
 [switch.picker]
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
 
-# Timeout (ms) for git commands during picker loading (default: 200)
-# Lower values show the TUI faster; 0 disables timeouts
-# timeout-ms = 200
+# Wall-clock budget (ms) for picker data collection (default: 500)
+# Tasks still running when the budget expires are abandoned; 0 disables
+# timeout-ms = 500
 ```
 
 ### Aliases
@@ -177,7 +217,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides (Experimental)
+#### Setting overrides [experimental]
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 
@@ -692,7 +732,7 @@ View and manage logs from background operations.
 
 ### What's logged
 
-Two kinds of logs live in `.git/wt-logs/`:
+Two kinds of logs live in `.git/wt/logs/`:
 
 #### Command log (`commands.jsonl`)
 
@@ -709,7 +749,7 @@ Source is `user` or `project` depending on where the hook is defined.
 
 ### Location
 
-All logs are stored in `.git/wt-logs/` (in the main worktree's git directory).
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 ### Behavior
 
@@ -726,12 +766,12 @@ wt config state logs get
 
 Query the command log:
 ```bash
-tail -5 .git/wt-logs/commands.jsonl | jq .
+tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```bash
-cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
+cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:

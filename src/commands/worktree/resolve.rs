@@ -188,7 +188,7 @@ pub(crate) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
 ///
 /// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
 /// Used to show path mismatch warnings in switch, select, remove, and merge.
-pub fn get_path_mismatch(
+pub fn path_mismatch(
     repo: &Repository,
     branch: &str,
     actual_path: &std::path::Path,
@@ -274,7 +274,7 @@ pub(super) fn compute_clobber_backup(
     }
 
     if clobber {
-        let timestamp = worktrunk::utils::get_now() as i64;
+        let timestamp = worktrunk::utils::epoch_now() as i64;
         let datetime =
             chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
         let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();

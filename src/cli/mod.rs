@@ -264,11 +264,7 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 ## Creating a branch
 
-The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
-
-**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking as needed.
-
-Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
+The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
 ## Creating worktrees
 
@@ -276,10 +272,12 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
-2. Switches to new directory
-3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
-4. Spawns [post-start hooks](@/hook.md#post-start) (background)
+1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
+2. Creates worktree at configured path
+3. Switches to new directory
+4. Runs [post-create hooks](@/hook.md#post-create) (blocking)
+5. Spawns [post-start hooks](@/hook.md#post-start) (background)
+6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
 
 ```console
 wt switch feature                        # Existing branch → creates worktree
@@ -342,29 +340,18 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
 
-## GitHub pull requests
+## Pull requests and merge requests
 
-The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
-
-```console
-wt switch pr:101                 # Checkout PR #101
-```
-
-Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
-
-**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-## GitLab merge requests
-
-The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```console
-wt switch mr:101                 # Checkout MR !101
+wt switch pr:101                 # GitHub PR #101
+wt switch mr:101                 # GitLab MR !101
 ```
 
-Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
-**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+**Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 
@@ -449,12 +436,16 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Skip directory change after switching
         ///
         /// Hooks still run normally. Useful when hooks handle navigation
-        /// (e.g., tmux workflows) or for CI/automation.
+        /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
         ///
         /// In picker mode (no branch argument), prints the selected branch
         /// name and exits without switching. Useful for scripting.
-        #[arg(long)]
+        #[arg(long, overrides_with = "cd")]
         no_cd: bool,
+
+        /// Change directory after switching
+        #[arg(long, overrides_with = "no_cd", hide = true)]
+        cd: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -470,7 +461,11 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 <!-- demo: wt-list.gif 1600x900 -->
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network and LLM summaries are generated — the table displays instantly and columns fill in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
+
+## Full mode
+
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -510,7 +505,7 @@ $ wt list --format=json
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) (experimental) |
+| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status (`--full`) |
 | Path | Worktree directory |
@@ -537,12 +532,9 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries (experimental)
+### LLM summaries [experimental]
 
-With `--full`, `summary = true`, and a [`commit.generation`](@/config.md#commit) command configured, the Summary column shows an LLM-generated one-line description of each branch's changes relative to the default branch.
-
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
-<!-- TODO: promote this feature more prominently once it's been tested in the wild -->
+Reuses the [`commit.generation`](@/config.md#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
 ## Status symbols
 
@@ -575,6 +567,15 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⇣` | Behind remote |
 
 Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
+
+### Placeholder symbols
+
+These appear across all columns while the table is loading:
+
+| Symbol | Meaning |
+|--------|---------|
+| `⋯` | Data is loading |
+| `·` | Skipped — collection timed out or branch too stale |
 
 ---
 
@@ -811,7 +812,7 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 
@@ -888,6 +889,12 @@ Preserve commit history (no squash):
 wt merge --no-squash
 ```
 
+Create a merge commit (semi-linear history):
+
+```console
+wt merge --no-ff
+```
+
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
@@ -901,7 +908,7 @@ wt merge --no-commit
 1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
+4. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
@@ -968,6 +975,14 @@ lint = "cargo clippy"
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
 
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
+
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
         yes: bool,
@@ -1026,21 +1041,36 @@ wt step push
 
 ## Operations
 
-- `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
-- `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
+- [`commit`](#wt-step-commit) — Stage and commit with [LLM-generated message](@/llm-commits.md)
+- [`squash`](#wt-step-squash) — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `diff` — Show all changes since branching (committed, staged, unstaged, untracked)
-- `copy-ignored` — Copy gitignored files between worktrees
-- `for-each` — [experimental] Run a command in every worktree
-- `promote` — [experimental] Put a branch into the main worktree
-- `prune` — Remove worktrees and branches merged into the default branch
-- `relocate` — [experimental] Move worktrees to expected paths
-- `<alias>` — [experimental] Run a configured command alias
+- [`diff`](#wt-step-diff) — Show all changes since branching (committed, staged, unstaged, untracked)
+- [`copy-ignored`](#wt-step-copy-ignored) — Copy gitignored files between worktrees
+- [`eval`](#wt-step-eval) — [experimental] Evaluate a template expression
+- [`for-each`](#wt-step-for-each) — [experimental] Run a command in every worktree
+- [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
+- [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
+- [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`<alias>`](#aliases) — [experimental] Run a configured command alias
 
+## See also
+
+- [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [`wt hook`](@/hook.md) — Run configured hooks
+
+<!-- subdoc: commit -->
+<!-- subdoc: squash -->
+<!-- subdoc: diff -->
+<!-- subdoc: copy-ignored -->
+<!-- subdoc: eval -->
+<!-- subdoc: for-each -->
+<!-- subdoc: promote -->
+<!-- subdoc: prune -->
+<!-- subdoc: relocate -->
 ## Aliases
 
-Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml
@@ -1058,18 +1088,7 @@ wt step deploy --yes                      # skip approval prompt
 
 When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
 
-Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
-
-## See also
-
-- [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [`wt hook`](@/hook.md) — Run configured hooks
-<!-- subdoc: commit -->
-<!-- subdoc: squash -->
-<!-- subdoc: copy-ignored -->
-<!-- subdoc: for-each -->
-<!-- subdoc: prune -->
-<!-- subdoc: relocate -->"#
+Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run."#
     )]
     Step {
         #[command(subcommand)]
@@ -1086,8 +1105,8 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
 | `pre-switch` | Before every switch | Yes | Yes |
-| `post-start` | After worktree created | No | No |
 | `post-create` | After worktree created | Yes | No |
+| `post-start` | After worktree created | No | No |
 | `post-switch` | After every switch | No | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -1104,7 +1123,7 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ## pre-switch
 
-Runs before every `wt switch` — before branch validation or worktree creation. Useful for ensuring the repository is up to date before switching. Template variables reflect the current worktree (the source), not the destination. Failure aborts the switch.
+Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
 
 ```toml
 [pre-switch]
@@ -1117,16 +1136,6 @@ fi
 """
 ```
 
-## post-start
-
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
 ## post-create
 
 Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
@@ -1137,9 +1146,19 @@ install = "npm ci"
 env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
+## post-start
+
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
 ## post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
 [post-switch]
@@ -1185,7 +1204,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ## post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]
@@ -1235,7 +1254,7 @@ build = "cargo build --release"
 
 ## User hooks
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides-experimental).
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -1559,7 +1578,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 [commit.generation]
-command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 **Project config** — shared team settings:
@@ -1617,6 +1636,41 @@ worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
 
+### Claude Code
+
+```toml
+# [commit.generation]
+# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+```
+
+### Codex
+
+```toml
+# [commit.generation]
+# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+```
+
+### opencode
+
+```toml
+# [commit.generation]
+# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+```
+
+### llm
+
+```toml
+# [commit.generation]
+# command = "llm -m claude-haiku-4.5"
+```
+
+### aichat
+
+```toml
+# [commit.generation]
+# command = "aichat -m claude:claude-haiku-4.5"
+```
+
 See [LLM commits docs](@/llm-commits.md) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
 
 ## Command config
@@ -1632,6 +1686,9 @@ summary = false    # Enable LLM branch summaries (requires [commit.generation])
 full = false       # Show CI, main…± diffstat, and LLM summaries (--full)
 branches = false   # Include branches without worktrees (--branches)
 remotes = false    # Include remote-only branches (--remotes)
+
+task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
+timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
 ```
 
 ### Commit
@@ -1645,7 +1702,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -1654,20 +1711,22 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
-### Switch picker
-
-Configuration for `wt switch` interactive picker.
+### Switch
 
 ```toml
+[switch]
+no-cd = true       # Skip directory change after switching (--cd to override)
+
 [switch.picker]
 # Pager command for diff preview (overrides git's core.pager)
 # pager = "delta --paging=never"
 
-# Timeout (ms) for git commands during picker loading (default: 200)
-# Lower values show the TUI faster; 0 disables timeouts
-# timeout-ms = 200
+# Wall-clock budget (ms) for picker data collection (default: 500)
+# Tasks still running when the budget expires are abandoned; 0 disables
+# timeout-ms = 500
 ```
 
 ### Aliases
@@ -1692,7 +1751,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides (Experimental)
+#### Setting overrides [experimental]
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
 

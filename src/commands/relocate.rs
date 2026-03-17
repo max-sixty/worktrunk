@@ -274,7 +274,7 @@ impl RelocationExecutor {
         validated: Vec<ValidatedCandidate>,
         clobber: bool,
     ) -> anyhow::Result<Self> {
-        let temp_dir = repo.git_common_dir().join("wt-relocate-tmp");
+        let temp_dir = repo.wt_dir().join("staging/relocate");
 
         // Build map of current locations for cycle detection
         let mut current_locations: HashMap<PathBuf, usize> = HashMap::new();
@@ -326,7 +326,7 @@ impl RelocationExecutor {
 
             if clobber {
                 // Backup the blocker
-                let timestamp_secs = worktrunk::utils::get_now() as i64;
+                let timestamp_secs = worktrunk::utils::epoch_now() as i64;
                 let datetime = chrono::DateTime::from_timestamp(timestamp_secs, 0)
                     .unwrap_or_else(chrono::Utc::now);
                 let suffix = datetime.format("%Y%m%d-%H%M%S");

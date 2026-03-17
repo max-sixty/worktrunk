@@ -4,13 +4,24 @@
 //! attempt a commit without configuration. Detects available tools (claude, codex)
 //! and offers to auto-configure the recommended settings.
 
+use std::collections::HashMap;
 use std::io::{self, IsTerminal};
+use std::sync::LazyLock;
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::styling::{eprintln, format_toml, hint_message, info_message, success_message};
 
 use super::prompt::{PromptResponse, prompt_yes_no_preview};
+
+/// Example config file content, used to extract recommended commands.
+const CONFIG_EXAMPLE: &str = include_str!("../../dev/config.example.toml");
+
+/// Recommended commands parsed from the config example file (single source of truth).
+///
+/// Keyed by the h3 heading text in the config example (e.g., "Claude Code", "Codex").
+static RECOMMENDED_COMMANDS: LazyLock<HashMap<String, String>> =
+    LazyLock::new(|| parse_recommended_commands(CONFIG_EXAMPLE));
 
 /// Detected LLM tool available on the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,18 +39,21 @@ impl LlmTool {
         }
     }
 
+    /// The h3 heading text in config.example.toml for this tool's section.
+    fn config_heading(&self) -> &'static str {
+        match self {
+            LlmTool::Claude => "Claude Code",
+            LlmTool::Codex => "Codex",
+        }
+    }
+
     /// Returns the recommended configuration command for this tool.
     ///
-    /// These must match the examples in docs/content/llm-commits.md.
-    pub fn recommended_config(&self) -> &'static str {
-        match self {
-            LlmTool::Claude => {
-                "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
-            }
-            LlmTool::Codex => {
-                r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#
-            }
-        }
+    /// Parsed from the double-commented examples in dev/config.example.toml,
+    /// which is the single source of truth for these commands.
+    pub fn recommended_config(&self) -> &str {
+        // Indexing is safe: all LlmTool variants have entries in the config example.
+        &RECOMMENDED_COMMANDS[self.config_heading()]
     }
 }
 
@@ -47,6 +61,38 @@ impl std::fmt::Display for LlmTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.command_name())
     }
+}
+
+/// Parse tool commands from the double-commented config example.
+///
+/// Scans the entire file for `# ### ToolName` headings followed by `# # command = "..."`
+/// lines. Currently only the LLM section uses this pattern; if other sections gain
+/// `# # command = ` lines, scope the scan to the `## LLM commit messages` section.
+/// The command value is TOML-unescaped via the `toml` crate.
+fn parse_recommended_commands(config: &str) -> HashMap<String, String> {
+    let mut commands = HashMap::new();
+    let mut current_heading: Option<String> = None;
+
+    for line in config.lines() {
+        // H3 headings: "# ### Claude Code", "# ### Codex"
+        if let Some(heading) = line.strip_prefix("# ### ") {
+            current_heading = Some(heading.trim().to_string());
+            continue;
+        }
+
+        // Double-commented command: "# # command = "...""
+        if let Some(toml_part) = line.strip_prefix("# # ")
+            && toml_part.starts_with("command = ")
+            && let Some(heading) = current_heading.take()
+        {
+            // Config example is compile-time data; unwrap is safe.
+            let table: toml::Table = toml_part.parse().unwrap();
+            let cmd = table["command"].as_str().unwrap().to_string();
+            commands.insert(heading, cmd);
+        }
+    }
+
+    commands
 }
 
 /// Check if a command is available in PATH.
@@ -198,8 +244,46 @@ mod tests {
 
     #[test]
     fn test_llm_tool_recommended_config() {
-        assert_snapshot!(LlmTool::Claude.recommended_config(), @"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
-        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::Claude.recommended_config(), @"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
+        assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+    }
+
+    #[test]
+    fn test_parse_recommended_commands() {
+        let config = "\
+# ### MyTool
+#
+# # [commit.generation]
+# # command = \"echo hello\"
+#
+# ### OtherTool
+#
+# # [commit.generation]
+# # command = \"jq -sr '[.[] | select(.type? == \\\"msg\\\")]'\"
+";
+        let commands = parse_recommended_commands(config);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands["MyTool"], "echo hello");
+        assert_eq!(
+            commands["OtherTool"],
+            r#"jq -sr '[.[] | select(.type? == "msg")]'"#
+        );
+    }
+
+    #[test]
+    fn test_parse_recommended_commands_ignores_non_command_lines() {
+        let config = "\
+# ### ToolA
+#
+# # [commit.generation]
+# # template = \"not a command\"
+# ### ToolB
+# # command = \"real command\"
+";
+        let commands = parse_recommended_commands(config);
+        // ToolA has no command line, ToolB does
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands["ToolB"], "real command");
     }
 
     #[test]
@@ -217,7 +301,7 @@ mod tests {
         // Long commands stay as single-line TOML
         let cmd = LlmTool::Claude.recommended_config();
         let result = format_command_for_display(cmd);
-        assert_snapshot!(result, @r#""MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
+        assert_snapshot!(result, @r#""CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''""#);
     }
 
     #[test]

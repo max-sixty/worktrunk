@@ -34,19 +34,24 @@ pub fn delete_branch_if_safe(
     target: &str,
     force_delete: bool,
 ) -> anyhow::Result<BranchDeletionResult> {
+    // Force-delete: skip integration check entirely (matches compute_integration_reason
+    // behavior for the Worktree path). The user explicitly chose -D.
+    if force_delete {
+        repo.run_command(&["branch", "-D", branch_name])?;
+        return Ok(BranchDeletionResult {
+            outcome: BranchDeletionOutcome::ForceDeleted,
+            integration_target: target.to_string(),
+        });
+    }
+
     let (effective_target, reason) = repo.integration_reason(branch_name, target)?;
 
-    // Determine outcome based on integration and force flag
-    let outcome = match (reason, force_delete) {
-        (Some(r), _) => {
+    let outcome = match reason {
+        Some(r) => {
             repo.run_command(&["branch", "-D", branch_name])?;
             BranchDeletionOutcome::Integrated(r)
         }
-        (None, true) => {
-            repo.run_command(&["branch", "-D", branch_name])?;
-            BranchDeletionOutcome::ForceDeleted
-        }
-        (None, false) => BranchDeletionOutcome::NotDeleted,
+        None => BranchDeletionOutcome::NotDeleted,
     };
 
     Ok(BranchDeletionResult {

@@ -1,7 +1,7 @@
 use super::{TestRepo, wt_bin, wt_command};
 
 /// Map shell display names to actual binaries.
-pub fn get_shell_binary(shell: &str) -> &str {
+pub fn shell_binary(shell: &str) -> &str {
     match shell {
         "nushell" => "nu",
         "powershell" => "pwsh",
@@ -22,7 +22,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
 
     let pair = super::open_pty();
 
-    let mut cmd = CommandBuilder::new(get_shell_binary(shell));
+    let mut cmd = CommandBuilder::new(shell_binary(shell));
 
     // Clear inherited environment for test isolation
     cmd.env_clear();
@@ -47,7 +47,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
         std::env::var("PATH").unwrap_or_else(|_| default_path.to_string()),
     );
     cmd.env("USER", "testuser");
-    cmd.env("SHELL", get_shell_binary(shell));
+    cmd.env("SHELL", shell_binary(shell));
 
     // Add repo's test environment (git config, worktrunk config, etc.)
     for (key, value) in repo.test_env_vars() {

@@ -43,5 +43,5 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mFound leftover staging directory from an interrupted promote[39m
-[107m [0m Files may need manual recovery from: _REPO_/.git/wt-promote-staging
-[107m [0m Remove it to retry: rm -rf "_REPO_/.git/wt-promote-staging"
+[107m [0m Files may need manual recovery from: _REPO_/.git/wt/staging/promote
+[107m [0m Remove it to retry: rm -rf "_REPO_/.git/wt/staging/promote"

@@ -17,7 +17,7 @@ use super::super::list::model::ListItem;
 use super::log_formatter::{
     FIELD_DELIM, batch_fetch_stats, format_log_output, process_log_with_dimming, strip_hash_markers,
 };
-use super::pager::{get_diff_pager, pipe_through_pager};
+use super::pager::{diff_pager, pipe_through_pager};
 use super::preview::{PreviewMode, PreviewStateData};
 
 /// Cache key for pre-computed previews: (branch_name, mode).
@@ -172,7 +172,7 @@ impl WorktreeSkimItem {
         match mode {
             PreviewMode::Summary => super::summary::render_summary(&content, width),
             PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
-                if let Some(pager_cmd) = get_diff_pager() {
+                if let Some(pager_cmd) = diff_pager() {
                     pipe_through_pager(&content, pager_cmd, width)
                 } else {
                     content
@@ -377,6 +377,7 @@ impl WorktreeSkimItem {
         let args = vec![
             "log",
             "--graph",
+            "--no-show-signature",
             format,
             "--color=always",
             "-n",

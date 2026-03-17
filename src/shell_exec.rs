@@ -54,7 +54,7 @@ fn max_concurrent_commands() -> usize {
         .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)
 }
 
-fn get_semaphore() -> &'static Semaphore {
+fn semaphore() -> &'static Semaphore {
     CMD_SEMAPHORE.get_or_init(|| Semaphore::new(max_concurrent_commands()))
 }
 
@@ -537,7 +537,7 @@ impl Cmd {
 
     /// Mark this command as an external (user-configured) command for logging.
     ///
-    /// When set, the command execution is logged to `.git/wt-logs/commands.jsonl`
+    /// When set, the command execution is logged to `.git/wt/logs/commands.jsonl`
     /// with the given label (e.g., "pre-merge user:lint", "commit.generation").
     pub fn external(mut self, label: impl Into<String>) -> Self {
         self.external_label = Some(label.into());
@@ -574,7 +574,7 @@ impl Cmd {
         }
 
         // Acquire semaphore to limit concurrent commands
-        let _guard = get_semaphore().acquire();
+        let _guard = semaphore().acquire();
 
         // Capture timing for tracing
         let t0 = Instant::now();
@@ -708,7 +708,7 @@ impl Cmd {
     pub fn stream(mut self) -> anyhow::Result<()> {
         #[cfg(unix)]
         use {
-            signal_hook::consts::{SIGINT, SIGTERM},
+            signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM},
             signal_hook::iterator::Signals,
             std::os::unix::process::CommandExt,
         };
@@ -875,6 +875,12 @@ impl Cmd {
 
         #[cfg(unix)]
         if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
+            // SIGPIPE (13) is expected when a pager (less, bat) exits before the
+            // child finishes writing — not an error from the user's perspective.
+            if sig == SIGPIPE {
+                log_external(Some(0));
+                return Ok(());
+            }
             log_external(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1209,6 +1215,38 @@ mod tests {
         match wt_err {
             WorktrunkError::ChildProcessExited { code, .. } => {
                 assert_eq!(*code, 42);
+            }
+            _ => panic!("Expected ChildProcessExited error"),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_stream_sigpipe_is_not_an_error() {
+        // Simulates pager quit: the child is killed by SIGPIPE, same as when
+        // `git diff` writes to a pager and the user presses `q`.
+        // `sh -c 'kill -PIPE $$'` sends SIGPIPE to itself, terminating with signal 13.
+        let result = Cmd::new("sh").args(["-c", "kill -PIPE $$"]).stream();
+        assert!(
+            result.is_ok(),
+            "SIGPIPE should not be treated as an error: {result:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_cmd_stream_other_signals_are_errors() {
+        use crate::git::WorktrunkError;
+
+        // Non-SIGPIPE signals (like SIGTERM) should still be treated as errors.
+        let result = Cmd::new("sh").args(["-c", "kill -TERM $$"]).stream();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        match wt_err {
+            WorktrunkError::ChildProcessExited { code, .. } => {
+                assert_eq!(*code, 128 + 15); // SIGTERM = 15
             }
             _ => panic!("Expected ChildProcessExited error"),
         }
