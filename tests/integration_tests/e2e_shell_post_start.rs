@@ -64,7 +64,7 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
     // First check if log file was created (proves process was spawned)
     // Logs are centralized in the common git directory
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     assert!(
         log_dir.exists(),
         "Log directory should exist at {}",

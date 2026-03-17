@@ -30,10 +30,10 @@ fn state_get_settings() -> insta::Settings {
     settings
 }
 
-/// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
+/// Write CI status to the file-based cache at .git/wt/cache/ci-status/<branch>.json
 fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let git_dir = repo.root_path().join(".git");
-    let cache_dir = git_dir.join("wt-cache").join("ci-status");
+    let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Sanitize branch name for filename
@@ -480,16 +480,16 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     );
     // Path separator varies by platform, so check for either / or \
     assert!(
-        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
-        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
+        stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
+        "Expected .git/wt/logs or .git\\wt\\logs in output: {stderr}"
     );
 }
 
 #[rstest]
 fn test_state_get_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with hook output and command log files
+    // Create wt/logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(
         log_dir.join("feature-post-start-npm.log"),
@@ -520,9 +520,9 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
-    // Create wt-logs directory with non-log files (empty of actual log files)
+    // Create wt/logs directory with non-log files (empty of actual log files)
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("README.txt"), "not a log file").unwrap();
     std::fs::write(log_dir.join(".gitkeep"), "").unwrap();
@@ -553,9 +553,9 @@ fn test_state_clear_logs_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with hook output and command log files
+    // Create wt/logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
@@ -571,9 +571,9 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_logs_single_file(repo: TestRepo) {
-    // Create wt-logs directory with one log file
+    // Create wt/logs directory with one log file
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
 
@@ -623,7 +623,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     // Logs
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-remove.log"), "output").unwrap();
 
@@ -651,7 +651,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
             == Some(1)
     );
     // CI cache is now file-based, verify the cache file is cleared
-    let ci_cache_dir = git_dir.join("wt-cache").join("ci-status");
+    let ci_cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     assert!(
         !ci_cache_dir.join("feature.json").exists(),
         "CI cache file should be cleared"
@@ -775,7 +775,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 
     // Create log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
@@ -860,7 +860,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 fn test_state_get_json_with_logs(repo: TestRepo) {
     // Create hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
@@ -1159,9 +1159,9 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
-    // Create wt-logs directory with a post-start log file
+    // Create wt/logs directory with a post-start log file
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("main", "user", "post-start", "server");
     let log_file = log_dir.join(&filename);
@@ -1185,7 +1185,7 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
 fn test_state_logs_get_hook_project_source(repo: TestRepo) {
     // Test that project source logs are found with explicit format
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("main", "project", "post-start", "build");
     let log_file = log_dir.join(&filename);
@@ -1208,7 +1208,7 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
 fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
     // Test finding an internal operation log (e.g., "internal:remove")
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = internal_log_filename("main", "remove");
     let log_file = log_dir.join(&filename);
@@ -1228,9 +1228,9 @@ fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_not_found(repo: TestRepo) {
-    // Create wt-logs directory with some log files but not the requested one
+    // Create wt/logs directory with some log files but not the requested one
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let other_filename = hook_log_filename("main", "user", "post-start", "other");
     std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
@@ -1279,9 +1279,9 @@ fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
-    // Create wt-logs directory with logs for different branch
+    // Create wt/logs directory with logs for different branch
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
     std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
@@ -1308,7 +1308,7 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
         .unwrap();
 
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("feature", "user", "post-start", "dev");
     std::fs::write(log_dir.join(&filename), "dev output").unwrap();

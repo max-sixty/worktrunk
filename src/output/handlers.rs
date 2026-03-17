@@ -56,9 +56,11 @@ fn execute_instant_removal_or_fallback(
     force_worktree: bool,
 ) -> String {
     // Fast path: instant removal via rename-then-prune.
-    // Rename worktree to staging path (instant on same filesystem), then prune
+    // Rename worktree into .git/wt/trash/ (instant on same filesystem), then prune
     // git metadata. Background process just does `rm -rf` on the staged directory.
-    let staged_path = generate_removing_path(worktree_path);
+    let trash_dir = repo.wt_trash_dir();
+    let _ = std::fs::create_dir_all(&trash_dir);
+    let staged_path = generate_removing_path(&trash_dir, worktree_path);
     match std::fs::rename(worktree_path, &staged_path) {
         Ok(()) => {
             // Fast path succeeded - prune git metadata synchronously.

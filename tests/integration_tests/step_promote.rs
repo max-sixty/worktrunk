@@ -811,7 +811,7 @@ fn test_promote_swap_no_staging_leftover(mut repo: TestRepo) {
     // The staging directory should be cleaned up
     let git_dir = repo.root_path().join(".git");
     assert!(
-        !git_dir.join("wt-promote-staging").exists(),
+        !git_dir.join("wt/staging/promote").exists(),
         "staging directory should be cleaned up after promote"
     );
 }
@@ -890,7 +890,7 @@ fn test_promote_stale_staging_blocks_with_guidance(mut repo: TestRepo) {
 
     // Create a fake leftover staging directory (as if previous promote was interrupted)
     let git_dir = repo.root_path().join(".git");
-    let staging_dir = git_dir.join("wt-promote-staging");
+    let staging_dir = git_dir.join("wt/staging/promote");
     fs::create_dir_all(staging_dir.join("a")).unwrap();
     fs::write(staging_dir.join("a/leftover"), "leftover data").unwrap();
 

@@ -753,7 +753,7 @@ View and manage logs from background operations.
 
 ### What's logged
 
-Two kinds of logs live in `.git/wt-logs/`:
+Two kinds of logs live in `.git/wt/logs/`:
 
 #### Command log (`commands.jsonl`)
 
@@ -770,7 +770,7 @@ Source is `user` or `project` depending on where the hook is defined.
 
 ### Location
 
-All logs are stored in `.git/wt-logs/` (in the main worktree's git directory).
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 ### Behavior
 
@@ -787,12 +787,12 @@ wt config state logs get
 
 Query the command log:
 ```bash
-tail -5 .git/wt-logs/commands.jsonl | jq .
+tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```bash
-cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
+cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:

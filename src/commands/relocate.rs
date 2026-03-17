@@ -274,7 +274,7 @@ impl RelocationExecutor {
         validated: Vec<ValidatedCandidate>,
         clobber: bool,
     ) -> anyhow::Result<Self> {
-        let temp_dir = repo.git_common_dir().join("wt-relocate-tmp");
+        let temp_dir = repo.wt_dir().join("staging/relocate");
 
         // Build map of current locations for cycle detection
         let mut current_locations: HashMap<PathBuf, usize> = HashMap::new();

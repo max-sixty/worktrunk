@@ -128,7 +128,7 @@ Without [2m--force[0m, removal fails if the worktree contains untracked files.
 
 [1m[32mBackground removal[0m
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt/logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
 
 [1m[32mHooks[0m
 

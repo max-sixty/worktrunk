@@ -1,6 +1,6 @@
 //! Always-on logging for configured external commands.
 //!
-//! Logs hook execution and LLM commands to `.git/wt-logs/commands.jsonl` as JSONL.
+//! Logs hook execution and LLM commands to `.git/wt/logs/commands.jsonl` as JSONL.
 //! Provides an audit trail for debugging without requiring `-vv`.
 //!
 //! # Growth control

@@ -37,7 +37,7 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 // ==================== Log Management ====================
 
-/// Check if a file in `.git/wt-logs/` is a worktrunk log file.
+/// Check if a file in `.git/wt/logs/` is a worktrunk log file.
 ///
 /// Matches `.log` (hook output), `.jsonl` (command audit log), and `.jsonl.old` (rotated).
 fn is_wt_log_file(path: &std::path::Path) -> bool {
@@ -47,7 +47,7 @@ fn is_wt_log_file(path: &std::path::Path) -> bool {
     name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
 }
 
-/// Clear all log files from the wt-logs directory
+/// Clear all log files from the wt/logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     let log_dir = repo.wt_logs_dir();
 

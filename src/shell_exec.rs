@@ -537,7 +537,7 @@ impl Cmd {
 
     /// Mark this command as an external (user-configured) command for logging.
     ///
-    /// When set, the command execution is logged to `.git/wt-logs/commands.jsonl`
+    /// When set, the command execution is logged to `.git/wt/logs/commands.jsonl`
     /// with the given label (e.g., "pre-merge user:lint", "commit.generation").
     pub fn external(mut self, label: impl Into<String>) -> Self {
         self.external_label = Some(label.into());
