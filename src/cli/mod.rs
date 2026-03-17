@@ -812,7 +812,7 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 
@@ -1148,7 +1148,7 @@ env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 
 ## post-start
 
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
@@ -1158,7 +1158,7 @@ server = "npm run dev -- --port {{ branch | hash_port }}"
 
 ## post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
 [post-switch]
@@ -1204,7 +1204,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ## post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]

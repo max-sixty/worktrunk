@@ -945,7 +945,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
     Ok(())
 }
 
-const PROMOTE_STAGING_DIR: &str = "wt-promote-staging";
+const PROMOTE_STAGING_DIR: &str = "wt/promote-staging";
 
 /// Move gitignored files from both worktrees into a staging directory.
 ///
@@ -1096,7 +1096,7 @@ fn exchange_branches(
 ///
 /// ## Interruption recovery
 ///
-/// The swap uses a staging directory at `.git/wt-promote-staging/` and proceeds
+/// The swap uses a staging directory at `.git/wt/promote-staging/` and proceeds
 /// in three phases:
 ///
 /// 1. **Stage**: move ignored files from both worktrees into staging (`a/`, `b/`)

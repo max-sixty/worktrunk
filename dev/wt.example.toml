@@ -48,7 +48,7 @@
 
 # Post-Start: Runs in BACKGROUND after worktree creation (parallel)
 # Use for: dev servers, file watchers, background builds
-# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log
+# Output logged to .git/wt/logs/{branch}-project-post-start-{name}.log
 #
 # [post-start]
 # server = "npm run dev -- --port {{ branch | hash_port }}"

@@ -30,8 +30,8 @@
 //!
 //! # File Location
 //!
-//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md` (typically
-//! `.git/wt-logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
+//! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
+//! `.git/wt/logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
 //!
 //! # Usage
 //!
@@ -202,7 +202,7 @@ pub(crate) fn issue_hint() -> String {
 /// Write diagnostic file when -vv is used.
 ///
 /// Called at the end of command execution. If verbose level is >= 2, writes
-/// a diagnostic report to `.git/wt-logs/diagnostic.md` for issue filing.
+/// a diagnostic report to `.git/wt/logs/diagnostic.md` for issue filing.
 ///
 /// Silently returns if:
 /// - verbose < 2

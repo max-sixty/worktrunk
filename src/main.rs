@@ -795,7 +795,7 @@ fn main() {
     }
 
     // Configure logging based on --verbose flag or RUST_LOG env var
-    // When -vv is set, also write logs to .git/wt-logs/verbose.log
+    // When -vv is set, also write logs to .git/wt/logs/verbose.log
     if cli.verbose >= 2 {
         verbose_log::init();
     }

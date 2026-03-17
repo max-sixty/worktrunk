@@ -1,7 +1,7 @@
 //! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt-cache/summaries/`. Summaries are invalidated when the combined
+//! in `.git/wt/cache/summaries/`. Summaries are invalidated when the combined
 //! diff (branch diff + working tree diff) changes.
 //!
 //! Used by both `wt list --full` (Summary column) and `wt switch` (preview tab).
@@ -27,7 +27,7 @@ use crate::llm::{execute_llm_command, prepare_diff};
 /// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
 pub(crate) static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
-/// Cached summary stored in `.git/wt-cache/summaries/<branch>.json`
+/// Cached summary stored in `.git/wt/cache/summaries/<branch>.json`
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
     pub summary: String,
@@ -65,7 +65,7 @@ const SUMMARY_TEMPLATE: &str = r#"Write a summary of this branch's changes as a 
 
 /// Get the cache directory for summaries
 pub(crate) fn cache_dir(repo: &Repository) -> PathBuf {
-    repo.git_common_dir().join("wt-cache").join("summaries")
+    repo.wt_dir().join("cache").join("summaries")
 }
 
 /// Get the cache file path for a branch

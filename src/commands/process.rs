@@ -185,7 +185,7 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// - On Unix: uses process_group(0) to create a new process group (survives PTY closure)
 /// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
 ///
-/// Logs are centralized in the main worktree's `.git/wt-logs/` directory.
+/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 ///
 /// # Arguments
 /// * `repo` - Repository instance for accessing git common directory
@@ -372,12 +372,12 @@ fn spawn_detached_windows(
 
 /// Generate a staging path for worktree removal.
 ///
-/// Places the staging directory inside `.git/wt-trash/` so it is hidden from the
+/// Places the staging directory inside `.git/wt/trash/` so it is hidden from the
 /// user's workspace. The `.git/` directory is always on the same filesystem as the
 /// worktree (git requires this), so `rename()` is guaranteed to be an instant
 /// metadata operation.
 ///
-/// Format: `<wt-trash>/<name>-<timestamp>`
+/// Format: `<wt/trash>/<name>-<timestamp>`
 pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
     let timestamp = get_now();
     let name = worktree_path
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_generate_removing_path() {
-        let trash_dir = PathBuf::from("/tmp/repo/.git/wt-trash");
+        let trash_dir = PathBuf::from("/tmp/repo/.git/wt/trash");
         let path = PathBuf::from("/tmp/my-project.feature");
         let removing_path = generate_removing_path(&trash_dir, &path);
 
@@ -609,14 +609,14 @@ mod tests {
 
     #[test]
     fn test_build_remove_command_staged() {
-        let staged_path = PathBuf::from("/tmp/repo/.git/wt-trash/my-project.feature-1234567890");
+        let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt-trash/my-project.feature-1234567890");
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
 
         // Shell escaping for special characters (space in path)
-        let special_path = PathBuf::from("/tmp/repo/.git/wt-trash/test worktree-123");
+        let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt-trash/test worktree-123'");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
     }
 
     #[test]

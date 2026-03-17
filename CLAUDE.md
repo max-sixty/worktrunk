@@ -238,7 +238,7 @@ When no structured alternative exists, document the fragility inline.
 
 ## Background Operation Logs
 
-All background logs are centralized in `.git/wt-logs/` (main worktree's git directory):
+All background logs are centralized in `.git/wt/logs/` (main worktree's git directory):
 
 - **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
 - **Background removal**: `{branch}-remove.log`
@@ -247,7 +247,7 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ### Log Behavior
 
-- **Centralized**: All logs go to main worktree's `.git/wt-logs/`, shared across all worktrees
+- **Centralized**: All logs go to main worktree's `.git/wt/logs/`, shared across all worktrees
 - **Overwrites**: Same operation on same branch overwrites previous log (prevents accumulation)
 - **Not tracked**: Logs are in `.git/` directory, which git doesn't track
 - **Manual cleanup**: Stale logs from deleted branches persist but are bounded by branch count

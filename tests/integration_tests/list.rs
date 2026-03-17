@@ -1765,7 +1765,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     };
 
     // Create cache directory and write file
-    let cache_dir = git_path.join("wt-cache").join("ci-status");
+    let cache_dir = git_path.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Use the same sanitization as production code for cache filenames

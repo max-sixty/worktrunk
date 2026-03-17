@@ -2035,7 +2035,7 @@ fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
         "Worktree path should be gone immediately after wt remove returns"
     );
 
-    // Note: The staging directory in .git/wt-trash/ might already be deleted by the
+    // Note: The staging directory in .git/wt/trash/ might already be deleted by the
     // background process, or it might still exist. Both are valid outcomes.
     // The key assertion above is that the original path is gone immediately.
 }
@@ -2193,10 +2193,10 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-fallback");
 
     // Calculate the expected staged path that the rename would use.
-    // The path is: <git-common-dir>/wt-trash/<name>-<TEST_EPOCH>
+    // The path is: <git-common-dir>/wt/trash/<name>-<TEST_EPOCH>
     // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
     let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
-    let trash_dir = git_common_dir.join("wt-trash");
+    let trash_dir = git_common_dir.join("wt/trash");
     std::fs::create_dir_all(&trash_dir).unwrap();
     let staged_path = trash_dir.join(format!(
         "{}-{}",
@@ -2246,10 +2246,10 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
-/// Stale staging directories from crashed removals are contained in `.git/wt-trash/`.
+/// Stale staging directories from crashed removals are contained in `.git/wt/trash/`.
 ///
 /// If `wt remove` is killed after `fs::rename()` succeeds but before the background
-/// `rm -rf` spawns, the staging directory is left behind inside `.git/wt-trash/`.
+/// `rm -rf` spawns, the staging directory is left behind inside `.git/wt/trash/`.
 /// Unlike the old sibling-path approach, these are hidden from the user's workspace.
 /// When the same worktree is re-created and removed again, the new staging path uses
 /// a fresh timestamp so there is no collision.
@@ -2259,7 +2259,7 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
 
     // Calculate the deterministic staging path (TEST_EPOCH is fixed in tests)
     let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
-    let trash_dir = git_common_dir.join("wt-trash");
+    let trash_dir = git_common_dir.join("wt/trash");
     std::fs::create_dir_all(&trash_dir).unwrap();
     let staged_path = trash_dir.join(format!(
         "{}-{}",
@@ -2272,7 +2272,7 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
     std::fs::rename(&worktree_path, &staged_path).unwrap();
     repo.run_git(&["worktree", "prune"]);
 
-    // Verify the crash state: original path gone, stale staging dir remains in .git/wt-trash/
+    // Verify the crash state: original path gone, stale staging dir remains in .git/wt/trash/
     assert!(!worktree_path.exists());
     assert!(staged_path.exists());
 
