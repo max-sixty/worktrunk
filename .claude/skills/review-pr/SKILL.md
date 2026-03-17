@@ -27,6 +27,7 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 HEAD_SHA=$(gh pr view <number> --json commits --jq '.commits[-1].oid')
 PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
+PR_STATE=$(gh pr view <number> --json state --jq '.state')
 
 # Find the bot's most recent substantive review (any state).
 # Include reviews with a non-empty body OR approvals (LGTM uses --approve -b "").
@@ -36,6 +37,9 @@ PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
   --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and (.body | length > 0 or .state == \"APPROVED\"))] | last | .commit.oid // empty")
 ```
+
+If `PR_STATE` is `MERGED` or `CLOSED`, exit silently — reviewing a finalized PR
+wastes compute and any CI monitoring or issue filing is out of scope.
 
 If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
 silently. The only exception: an unanswered conversation question directed at

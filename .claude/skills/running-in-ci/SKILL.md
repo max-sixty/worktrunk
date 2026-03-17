@@ -108,6 +108,12 @@ exit 1
 Never report "done" before CI passes — CI runs on Linux, Windows, and macOS.
 Avoid `gh run watch` and `gh pr checks --watch` — both can hang indefinitely.
 
+**Never start a second polling loop.** If the first ~10-minute loop expires with
+CI still running, report the partial status (which checks passed, which are
+still pending) and exit. Do not re-run failed jobs and start another wait — that
+compounds the time budget and risks the session dying before completing its
+primary task. Post what you know and let the next trigger handle the rest.
+
 Before dismissing local test failures as "pre-existing", check main branch CI:
 
 ```bash
