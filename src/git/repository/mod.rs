@@ -381,6 +381,15 @@ impl Repository {
         self.git_common_dir().join("wt-logs")
     }
 
+    /// Get the directory where worktrees are staged for background deletion.
+    ///
+    /// Returns `<git-common-dir>/wt-trash/` (typically `.git/wt-trash/`).
+    /// Worktrees are renamed here (instant same-filesystem rename) before
+    /// being deleted by a background process.
+    pub fn wt_trash_dir(&self) -> PathBuf {
+        self.git_common_dir().join("wt-trash")
+    }
+
     /// The repository root path (the main worktree directory).
     ///
     /// - Normal repositories: the main worktree directory (parent of .git)

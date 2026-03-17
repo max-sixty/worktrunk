@@ -372,18 +372,19 @@ fn spawn_detached_windows(
 
 /// Generate a staging path for worktree removal.
 ///
-/// Creates a sibling path with a unique suffix to enable instant rename-based removal.
-/// The path is guaranteed to be on the same filesystem as the original worktree
-/// (sibling paths share the same parent directory).
+/// Places the staging directory inside `.git/wt-trash/` so it is hidden from the
+/// user's workspace. The `.git/` directory is always on the same filesystem as the
+/// worktree (git requires this), so `rename()` is guaranteed to be an instant
+/// metadata operation.
 ///
-/// Format: `<path>.wt-removing-<timestamp>`
-pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
+/// Format: `<wt-trash>/<name>-<timestamp>`
+pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
     let timestamp = get_now();
     let name = worktree_path
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
-    worktree_path.with_file_name(format!("{}.wt-removing-{}", name, timestamp))
+    trash_dir.join(format!("{}-{}", name, timestamp))
 }
 
 /// Build shell command for background removal of a staged (renamed) worktree.
@@ -586,22 +587,23 @@ mod tests {
 
     #[test]
     fn test_generate_removing_path() {
+        let trash_dir = PathBuf::from("/tmp/repo/.git/wt-trash");
         let path = PathBuf::from("/tmp/my-project.feature");
-        let removing_path = generate_removing_path(&path);
+        let removing_path = generate_removing_path(&trash_dir, &path);
 
-        // Should be a sibling path (same parent)
-        assert_eq!(removing_path.parent(), path.parent());
+        // Should be inside the trash directory
+        assert_eq!(removing_path.parent(), Some(trash_dir.as_path()));
 
         // Should have the expected prefix
         let name = removing_path.file_name().unwrap().to_string_lossy();
         assert!(
-            name.starts_with("my-project.feature.wt-removing-"),
+            name.starts_with("my-project.feature-"),
             "got: {}",
             name
         );
 
         // Should have a timestamp suffix (digits only after the prefix)
-        let timestamp_part = name.trim_start_matches("my-project.feature.wt-removing-");
+        let timestamp_part = name.trim_start_matches("my-project.feature-");
         assert!(
             timestamp_part.chars().all(|c| c.is_ascii_digit()),
             "timestamp part should be numeric: {}",
@@ -611,14 +613,14 @@ mod tests {
 
     #[test]
     fn test_build_remove_command_staged() {
-        let staged_path = PathBuf::from("/tmp/my-project.feature.wt-removing-1234567890");
+        let staged_path = PathBuf::from("/tmp/repo/.git/wt-trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/my-project.feature.wt-removing-1234567890");
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt-trash/my-project.feature-1234567890");
 
         // Shell escaping for special characters (space in path)
-        let special_path = PathBuf::from("/tmp/test worktree.wt-removing-123");
+        let special_path = PathBuf::from("/tmp/repo/.git/wt-trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/test worktree.wt-removing-123'");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt-trash/test worktree-123'");
     }
 
     #[test]
