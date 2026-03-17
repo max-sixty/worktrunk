@@ -13,7 +13,7 @@ use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
-    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, get_path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, path_mismatch, plan_switch,
 };
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
@@ -241,7 +241,7 @@ pub fn handle_switch(
     // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
     let branch_info = match &result {
         SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = get_path_mismatch(&repo, &branch_info.branch, path, config);
+            let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
             SwitchBranchInfo {
                 expected_path,
                 ..branch_info

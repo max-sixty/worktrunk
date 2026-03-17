@@ -18,7 +18,7 @@ use std::path::Path;
 use std::process::Command;
 use wt_perf::{RepoConfig, create_repo, setup_fake_remote};
 
-fn get_release_binary() -> &'static Path {
+fn release_binary() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_wt"))
 }
 
@@ -34,7 +34,7 @@ fn run_bench_cmd(cmd: &mut Command) {
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
-    let binary = get_release_binary();
+    let binary = release_binary();
     let env = ("WORKTRUNK_FIRST_OUTPUT", "1");
 
     let config = RepoConfig::typical(4);

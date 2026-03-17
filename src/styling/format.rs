@@ -8,7 +8,7 @@ use super::highlighting::bash_token_style;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 // Import canonical implementations from parent module
-use super::{get_terminal_width, visual_width};
+use super::{terminal_width, visual_width};
 
 /// Width overhead added by format_with_gutter()
 ///
@@ -114,7 +114,7 @@ pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
     let gutter = super::GUTTER;
 
     // Use provided width or detect terminal width (respects COLUMNS env var)
-    let term_width = max_width.unwrap_or_else(get_terminal_width);
+    let term_width = max_width.unwrap_or_else(terminal_width);
 
     // Account for gutter (1) + space (1)
     let available_width = term_width.saturating_sub(2);
@@ -255,7 +255,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let string_style = bash_token_style("string").unwrap_or(dim);
 
     // Calculate available width for content
-    let term_width = width_override.unwrap_or_else(get_terminal_width);
+    let term_width = width_override.unwrap_or_else(terminal_width);
     let available_width = term_width.saturating_sub(2);
 
     // Set up tree-sitter bash highlighting

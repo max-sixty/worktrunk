@@ -54,7 +54,7 @@ fn max_concurrent_commands() -> usize {
         .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)
 }
 
-fn get_semaphore() -> &'static Semaphore {
+fn semaphore() -> &'static Semaphore {
     CMD_SEMAPHORE.get_or_init(|| Semaphore::new(max_concurrent_commands()))
 }
 
@@ -574,7 +574,7 @@ impl Cmd {
         }
 
         // Acquire semaphore to limit concurrent commands
-        let _guard = get_semaphore().acquire();
+        let _guard = semaphore().acquire();
 
         // Capture timing for tracing
         let t0 = Instant::now();

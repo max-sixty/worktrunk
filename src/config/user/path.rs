@@ -31,7 +31,7 @@ pub fn is_config_path_explicit() -> bool {
 /// 1. CLI --config flag (set via `set_config_path`)
 /// 2. WORKTRUNK_CONFIG_PATH environment variable
 /// 3. Platform-specific default location (via `default_config_path`)
-pub fn get_config_path() -> Option<PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     // Priority 1: CLI --config flag
     if let Some(path) = CONFIG_PATH.get() {
         return Some(path.clone());
@@ -48,7 +48,7 @@ pub fn get_config_path() -> Option<PathBuf> {
 
 /// Platform-specific default config path, without CLI or env var overrides.
 ///
-/// Returns the etcetera-based platform default. Called by `get_config_path()`
+/// Returns the etcetera-based platform default. Called by `config_path()`
 /// as the final fallback when no CLI or env var override is set.
 ///
 ///
@@ -73,7 +73,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 ///    - Linux: /etc/xdg/worktrunk/config.toml (XDG default)
 ///    - macOS: /Library/Application Support/worktrunk/config.toml
 ///    - Windows: %PROGRAMDATA%\worktrunk\config.toml
-pub fn get_system_config_path() -> Option<PathBuf> {
+pub fn system_config_path() -> Option<PathBuf> {
     // Priority 1: Explicit environment variable override
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {
         let path = PathBuf::from(path);
@@ -99,7 +99,7 @@ pub fn get_system_config_path() -> Option<PathBuf> {
 /// The expected system config path for the current platform.
 ///
 /// Used by `wt config show` to display where to put a system config file.
-/// Mirrors the lookup order in `get_system_config_path()` so the displayed
+/// Mirrors the lookup order in `system_config_path()` so the displayed
 /// path matches where the tool actually looks.
 pub fn default_system_config_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_SYSTEM_CONFIG_PATH") {

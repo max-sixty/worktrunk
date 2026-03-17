@@ -133,7 +133,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
 
                     // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                     // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                    let width = worktrunk::styling::get_terminal_width();
+                    let width = worktrunk::styling::terminal_width();
                     let help = crate::md_help::render_markdown_in_help_with_width(
                         &clap_output,
                         Some(width),
@@ -168,15 +168,15 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// Returns the usage/options/subcommands section without the after_long_help content.
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
-fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
-    let output = get_help_reference_inner(command_path, width);
+fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = help_reference_inner(command_path, width);
     // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
     // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
     // (colors), not OSC sequences - hyperlinks leak through as garbage.
     worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
-fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
+fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -381,7 +381,7 @@ Commands with pages: merge, switch, remove, list"
     };
 
     // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = get_help_reference(&[subcommand], Some(80));
+    let reference_block = help_reference(&[subcommand], Some(80));
 
     // Output the generated content (frontmatter is in skeleton files)
     // Uses region markers so sync can replace just this content
@@ -608,7 +608,7 @@ fn format_subcommand_section(
         .collect();
 
     // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = get_help_reference(&command_path, Some(80));
+    let reference_block = help_reference(&command_path, Some(80));
 
     // Format the section: heading, main content, command reference, then nested subdocs
     let mut section = format!("## {full_command}{heading_badge}\n\n");

@@ -22,7 +22,7 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, get_path_mismatch, handle_remove, plan_switch,
+    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
 
@@ -97,7 +97,7 @@ pub fn handle_select(
     // List width depends on preview position:
     // - Right layout: skim splits ~50% for list, ~50% for preview
     // - Down layout: list gets full width, preview is below
-    let terminal_width = crate::display::get_terminal_width();
+    let terminal_width = crate::display::terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
@@ -395,8 +395,7 @@ pub fn handle_select(
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
                     SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                        let expected_path =
-                            get_path_mismatch(&repo, &branch_info.branch, path, config);
+                        let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
                         SwitchBranchInfo {
                             expected_path,
                             ..branch_info

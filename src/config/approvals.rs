@@ -56,7 +56,7 @@ struct ApprovedProject {
 /// 1. `WORKTRUNK_APPROVALS_PATH` environment variable
 /// 2. In test builds: panic if env var not set
 /// 3. Production: sibling of config.toml (`approvals.toml` in same directory)
-pub fn get_approvals_path() -> Option<PathBuf> {
+pub fn approvals_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_APPROVALS_PATH") {
         return Some(PathBuf::from(path));
     }
@@ -69,7 +69,7 @@ pub fn get_approvals_path() -> Option<PathBuf> {
 
     #[cfg(not(test))]
     {
-        super::user::get_config_path().map(|p| p.with_file_name("approvals.toml"))
+        super::user::config_path().map(|p| p.with_file_name("approvals.toml"))
     }
 }
 
@@ -89,7 +89,7 @@ impl Approvals {
     /// source of truth. Users can clean up stale `approved-commands` in config.toml
     /// at their convenience.
     pub fn load() -> Result<Self, ConfigError> {
-        let Some(path) = get_approvals_path() else {
+        let Some(path) = approvals_path() else {
             return Ok(Self::default());
         };
 
@@ -131,7 +131,7 @@ impl Approvals {
     /// 3. If neither exists → return empty
     ///
     /// The fallback uses sibling derivation (`path.with_file_name("config.toml")`)
-    /// which is correct because `get_approvals_path()` derives approvals.toml as
+    /// which is correct because `approvals_path()` derives approvals.toml as
     /// a sibling of config.toml.
     fn load_with_fallback(path: &Path) -> Result<Self, ConfigError> {
         if path.exists() {
@@ -241,7 +241,7 @@ impl Approvals {
     {
         let path = match approvals_path {
             Some(p) => p.to_path_buf(),
-            None => get_approvals_path().ok_or_else(|| {
+            None => self::approvals_path().ok_or_else(|| {
                 ConfigError::Message(
                     "Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string(),
                 )

@@ -302,7 +302,7 @@ impl FlagNote {
 /// Get flag acknowledgment note for remove messages
 ///
 /// `target_branch`: The branch we checked integration against (shown in reason)
-fn get_flag_note(
+fn flag_note(
     deletion_mode: BranchDeletionMode,
     outcome: &BranchDeletionOutcome,
     target_branch: Option<&str>,
@@ -738,7 +738,7 @@ fn handle_branch_only_output(
             );
         }
     } else {
-        let flag_note = get_flag_note(
+        let flag_note = flag_note(
             deletion_mode,
             &deletion.outcome,
             Some(&deletion.integration_target),
@@ -941,7 +941,7 @@ impl RemovalDisplayInfo {
 
     /// Print the removal message (progress for background, success for foreground).
     fn print_message(&self, branch_name: &str, foreground: bool) -> anyhow::Result<()> {
-        let flag_note = get_flag_note(
+        let flag_note = flag_note(
             if self.branch_deleted() {
                 BranchDeletionMode::SafeDelete // Doesn't matter, outcome already determined
             } else {
@@ -1378,9 +1378,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_flag_note() {
+    fn test_flag_note() {
         // --no-delete-branch flag (text only, no symbol, no suffix)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::Keep,
             &BranchDeletionOutcome::NotDeleted,
             None,
@@ -1390,7 +1390,7 @@ mod tests {
         assert!(note.suffix.is_empty());
 
         // NotDeleted without flag (empty)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::SafeDelete,
             &BranchDeletionOutcome::NotDeleted,
             None,
@@ -1400,7 +1400,7 @@ mod tests {
         assert!(note.suffix.is_empty());
 
         // Force deleted (text only, no symbol, no suffix)
-        let note = get_flag_note(
+        let note = flag_note(
             BranchDeletionMode::ForceDelete,
             &BranchDeletionOutcome::ForceDeleted,
             None,
@@ -1418,7 +1418,7 @@ mod tests {
             (IntegrationReason::MergeAddsNothing, "all changes in"),
         ];
         for (reason, expected_desc) in cases {
-            let note = get_flag_note(
+            let note = flag_note(
                 BranchDeletionMode::SafeDelete,
                 &BranchDeletionOutcome::Integrated(reason),
                 Some("main"),

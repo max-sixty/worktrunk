@@ -9,7 +9,7 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
-use worktrunk::utils::get_now;
+use worktrunk::utils::epoch_now;
 
 use crate::commands::hook_filter::HookSource;
 
@@ -378,7 +378,7 @@ fn spawn_detached_windows(
 ///
 /// Format: `<path>.wt-removing-<timestamp>`
 pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
-    let timestamp = get_now();
+    let timestamp = epoch_now();
     let name = worktree_path
         .file_name()
         .map(|n| n.to_string_lossy())

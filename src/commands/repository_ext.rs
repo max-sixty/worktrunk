@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
+use super::worktree::{BranchDeletionMode, RemoveResult, path_mismatch};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
@@ -253,7 +253,7 @@ impl RepositoryCliExt for Repository {
         // Only set if actual path differs from expected (path mismatch)
         let expected_path = branch_name
             .as_ref()
-            .and_then(|branch| get_path_mismatch(self, branch, &worktree_path, config));
+            .and_then(|branch| path_mismatch(self, branch, &worktree_path, config));
 
         // Capture commit SHA before removal for post-remove hook template variables.
         // This ensures {{ commit }} references the removed worktree's state.

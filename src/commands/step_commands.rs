@@ -1339,7 +1339,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     let worktrees = repo.list_worktrees()?;
     let current_root = repo.current_worktree().root()?.to_path_buf();
     let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
-    let now_secs = worktrunk::utils::get_now();
+    let now_secs = worktrunk::utils::epoch_now();
 
     let default_branch = repo.default_branch();
 

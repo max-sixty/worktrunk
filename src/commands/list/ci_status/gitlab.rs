@@ -30,7 +30,7 @@ use super::{
 ///
 /// Returns None if glab is not configured for this repo (e.g., non-GitLab
 /// remote, auth issues).
-fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
+fn gitlab_project_id(repo: &Repository) -> Option<u64> {
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Use glab repo view to get the project info as JSON
@@ -76,7 +76,7 @@ pub(super) fn detect_gitlab(
     let repo_root = repo.current_worktree().root().ok()?;
 
     // Get current project ID for filtering
-    let project_id = get_gitlab_project_id(repo);
+    let project_id = gitlab_project_id(repo);
     if project_id.is_none() {
         log::debug!("Could not determine GitLab project ID");
     }

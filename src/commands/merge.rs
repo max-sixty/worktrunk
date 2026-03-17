@@ -12,8 +12,8 @@ use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_no_ff_merge,
-    handle_push,
+    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
+    path_mismatch,
 };
 
 /// Options for the merge command
@@ -255,7 +255,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // After a successful merge, get integration reason
         let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
         // Compute expected_path for path mismatch detection
-        let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
+        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
         // Capture commit SHA before removal for post-remove hook template variables
         let removed_commit = current_wt
             .run_command(&["rev-parse", "HEAD"])

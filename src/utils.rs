@@ -20,9 +20,9 @@ pub fn format_timestamp_iso8601(timestamp: u64) -> String {
 
 /// Format the current time as ISO 8601 string.
 ///
-/// Convenience function combining `get_now()` and `format_timestamp_iso8601()`.
+/// Convenience function combining `epoch_now()` and `format_timestamp_iso8601()`.
 pub fn now_iso8601() -> String {
-    format_timestamp_iso8601(get_now())
+    format_timestamp_iso8601(epoch_now())
 }
 
 /// Get current Unix timestamp in seconds.
@@ -38,7 +38,7 @@ pub fn now_iso8601() -> String {
 ///
 /// All code that needs timestamps for display or storage should use this
 /// function rather than `SystemTime::now()` directly.
-pub fn get_now() -> u64 {
+pub fn epoch_now() -> u64 {
     std::env::var("WORKTRUNK_TEST_EPOCH")
         .ok()
         .and_then(|val| val.parse::<u64>().ok())
@@ -55,18 +55,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_now_returns_reasonable_timestamp() {
-        let now = get_now();
+    fn test_epoch_now_returns_reasonable_timestamp() {
+        let now = epoch_now();
         // Should be after 2020-01-01
-        assert!(now > 1577836800, "get_now() should return current time");
+        assert!(now > 1577836800, "epoch_now() should return current time");
     }
 
     #[test]
-    fn test_get_now_respects_test_epoch() {
-        // When WORKTRUNK_TEST_EPOCH is set (by test harness), get_now() returns it
+    fn test_epoch_now_respects_test_epoch() {
+        // When WORKTRUNK_TEST_EPOCH is set (by test harness), epoch_now() returns it
         if let Ok(epoch) = std::env::var("WORKTRUNK_TEST_EPOCH") {
             let expected: u64 = epoch.parse().unwrap();
-            assert_eq!(get_now(), expected);
+            assert_eq!(epoch_now(), expected);
         }
     }
 
