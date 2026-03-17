@@ -1,12 +1,12 @@
-name: claude-hourly-review-reviewers
+name: claude-nightly-review-reviewers
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
-# Hourly analysis of Claude CI session logs — identifies behavioral problems,
+# Nightly analysis of Claude CI session logs — identifies behavioral problems,
 # skill gaps, and workflow issues across all Claude-powered CI runs.
 on:
   schedule:
-    # Run at :47 past every hour (off-peak minute)
-    - cron: '47 * * * *'
+    # Run at 7:47 AM UTC daily (off-peak minute, after nightly-cleaner at 6:17)
+    - cron: '47 7 * * *'
   workflow_dispatch:
 
 # Consistent with ci.yaml for cache compatibility
