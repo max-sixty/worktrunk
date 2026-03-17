@@ -1,11 +1,13 @@
 ---
 source: tests/integration_tests/merge.rs
-assertion_line: 346
+assertion_line: 2278
 info:
   program: wt
   args:
     - merge
     - main
+    - "--no-ff"
+    - "--no-remove"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -27,7 +29,6 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
-    WORKTRUNK_COMMIT__GENERATION__COMMAND: nonexistent-llm-command
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -38,14 +39,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-[36m◎[39m [36mGenerating squash commit message...[39m
-[31m✗[39m [31mCommit generation command failed[39m
-[107m [0m sh: nonexistent-llm-command: command not found
-[2m○[22m Ran command:
-[107m [0m wt step squash --show-prompt | nonexistent-llm-command
+[2m○[22m Already up to date with [1mmain[22m (no new commits, no rebase needed)
+[2m○[22m Worktree preserved (--no-remove)

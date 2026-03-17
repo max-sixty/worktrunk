@@ -889,6 +889,12 @@ Preserve commit history (no squash):
 wt merge --no-squash
 ```
 
+Create a merge commit (semi-linear history):
+
+```console
+wt merge --no-ff
+```
+
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
@@ -902,7 +908,7 @@ wt merge --no-commit
 1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
+4. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
@@ -968,6 +974,14 @@ lint = "cargo clippy"
         /// Keep worktree after merge
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
+
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -1688,7 +1702,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -1697,6 +1711,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
 ### Switch

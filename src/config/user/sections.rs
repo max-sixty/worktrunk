@@ -265,6 +265,10 @@ pub struct MergeConfig {
     /// Run project hooks (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<bool>,
+
+    /// Create a merge commit instead of fast-forwarding (default: false)
+    #[serde(rename = "no-ff", skip_serializing_if = "Option::is_none")]
+    pub no_ff: Option<bool>,
 }
 
 impl MergeConfig {
@@ -292,6 +296,11 @@ impl MergeConfig {
     pub fn verify(&self) -> bool {
         self.verify.unwrap_or(true)
     }
+
+    /// Create a merge commit instead of fast-forwarding (default: false)
+    pub fn no_ff(&self) -> bool {
+        self.no_ff.unwrap_or(false)
+    }
 }
 
 impl Merge for MergeConfig {
@@ -302,6 +311,7 @@ impl Merge for MergeConfig {
             rebase: other.rebase.or(self.rebase),
             remove: other.remove.or(self.remove),
             verify: other.verify.or(self.verify),
+            no_ff: other.no_ff.or(self.no_ff),
         }
     }
 }
