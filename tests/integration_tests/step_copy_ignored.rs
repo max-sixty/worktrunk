@@ -1082,6 +1082,86 @@ fn test_copy_ignored_broken_symlink_in_dir_at_dest(mut repo: TestRepo) {
     );
 }
 
+/// Test that directory permissions are preserved during copy (GitHub issue #1589)
+///
+/// When copying gitignored directories, the destination directories should have the
+/// same permissions as the source directories. For example, a directory with mode 0700
+/// should not become 0755 in the destination.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a directory with restrictive permissions (0700)
+    let test_dir = repo.root_path().join("test");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(test_dir.join("file"), "content").unwrap();
+    fs::set_permissions(&test_dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Add to .gitignore
+    fs::write(repo.root_path().join(".gitignore"), "test\n").unwrap();
+
+    // Run copy-ignored
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify directory was copied
+    let dest_dir = feature_path.join("test");
+    assert!(dest_dir.exists(), "test directory should be copied");
+    assert!(dest_dir.join("file").exists(), "test/file should be copied");
+
+    // Verify directory permissions are preserved (0700, not default 0755)
+    let dest_mode = fs::metadata(&dest_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dest_mode, 0o700,
+        "Directory permissions should be preserved (expected 0700, got {dest_mode:04o})"
+    );
+
+    // Also verify read-only directories (0o555) are handled correctly.
+    // Permissions must be set AFTER copying contents, otherwise the destination
+    // becomes read-only before files are copied into it.
+    let readonly_dir = repo.root_path().join("readonly");
+    fs::create_dir_all(&readonly_dir).unwrap();
+    fs::write(readonly_dir.join("data"), "content").unwrap();
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "test\nreadonly\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let dest_readonly = feature_path.join("readonly");
+    assert!(
+        output.status.success(),
+        "copy-ignored should handle read-only source dirs: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Check permissions BEFORE restoring for cleanup
+    let dest_readonly_mode = fs::metadata(&dest_readonly).unwrap().permissions().mode() & 0o777;
+    // Restore for cleanup
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    if dest_readonly.exists() {
+        fs::set_permissions(&dest_readonly, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(
+        dest_readonly_mode, 0o555,
+        "Read-only directory permissions should be preserved (expected 0555, got {dest_readonly_mode:04o})"
+    );
+}
+
 /// Test that VCS metadata directories are excluded from copy-ignored (GitHub issue #1249)
 ///
 /// VCS metadata directories like `.jj` (Jujutsu), `.hg` (Mercurial) contain internal

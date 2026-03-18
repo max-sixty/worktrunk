@@ -907,6 +907,18 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
         }
     }
 
+    // Preserve source directory permissions AFTER copying contents.
+    // Must be done after the loop — if the source lacks write permission (e.g., 0o555),
+    // setting it before copying would make the destination read-only and fail the copies.
+    #[cfg(unix)]
+    {
+        let src_perms = fs::metadata(src)
+            .with_context(|| format!("reading permissions for {}", src.display()))?
+            .permissions();
+        fs::set_permissions(dest, src_perms)
+            .with_context(|| format!("setting permissions on {}", dest.display()))?;
+    }
+
     Ok(())
 }
 
