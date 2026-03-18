@@ -9,10 +9,19 @@ use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
+    ///
+    /// Distinguishes "key not found" (exit code 1) from actual errors
+    /// (corrupt config, permission denied, etc.) which are propagated.
     pub fn config_value(&self, key: &str) -> anyhow::Result<Option<String>> {
-        match self.run_command(&["config", key]) {
-            Ok(value) => Ok(Some(value.trim().to_string())),
-            Err(_) => Ok(None), // Config key doesn't exist
+        let output = self.run_command_output(&["config", key])?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(Some(stdout.trim().to_string()))
+        } else if output.status.code() == Some(1) {
+            Ok(None) // Config key doesn't exist
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config {}: {}", key, stderr.trim());
         }
     }
 
@@ -84,10 +93,19 @@ impl Repository {
     }
 
     /// Clear a hint so it will show again.
+    ///
+    /// Returns `true` if the hint was cleared, `false` if it didn't exist.
+    /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
-        match self.run_command(&["config", "--unset", &format!("worktrunk.hints.{name}")]) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false), // Key didn't exist
+        let key = format!("worktrunk.hints.{name}");
+        let output = self.run_command_output(&["config", "--unset", &key])?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(5) {
+            Ok(false) // Key didn't exist (--unset uses exit code 5)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
         }
     }
 
@@ -365,10 +383,20 @@ impl Repository {
     /// `default_branch()` will re-detect (using git's cache or querying remote).
     ///
     /// Returns `true` if cache was cleared, `false` if no cache existed.
+    /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .run_command(&["config", "--unset", "worktrunk.default-branch"])
-            .is_ok())
+        let output = self.run_command_output(&["config", "--unset", "worktrunk.default-branch"])?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(5) {
+            Ok(false) // Key didn't exist (--unset uses exit code 5)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "git config --unset worktrunk.default-branch: {}",
+                stderr.trim()
+            );
+        }
     }
 
     // =========================================================================
