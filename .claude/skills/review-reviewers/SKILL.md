@@ -15,6 +15,11 @@ skill gaps, and workflow issues — then create PRs or issues to fix them.
 Run `.github/scripts/list-recent-runs.sh` for recently completed Claude CI runs.
 If empty, report "no runs to review" and exit.
 
+**Skip `claude-hourly-review-reviewers` runs** — analyzing your own workflow's
+prior sessions is recursive self-analysis that wastes tokens without producing
+actionable findings. Only analyze runs from other workflows (e.g.,
+`claude-review`, `claude-issue-triage`, `claude-mention`, `claude-nightly-cleaner`).
+
 ## Step 2: Download and analyze session logs
 
 ```bash
