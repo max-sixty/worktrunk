@@ -99,7 +99,22 @@ gh issue view "$TRACKING_NUMBER" --json comments \
 ```
 
 Also check last month's tracking issue (if it exists) for recent carry-over.
-Add matching historical occurrences to your tally when evaluating gates.
+
+When a historical entry looks like it might match a current finding, **download
+and investigate the linked workflow's session logs** — don't rely on the summary
+text alone, which lacks sufficient context to judge relatedness:
+
+```bash
+# Each tracking entry has a Run ID — use it to pull the actual logs
+gh run download <run-id> --name claude-session-logs --dir /tmp/logs/<run-id>/
+```
+
+Trace the original decision chain in the session JSONL to confirm the historical
+case is genuinely the same pattern, not just superficially similar. This is
+laborious but necessary for accurate evidence counts.
+
+Add confirmed matching historical occurrences to your tally when evaluating
+gates.
 
 ### Recording below-threshold findings
 
@@ -125,6 +140,7 @@ Format each finding in the comment body as:
 - **Evidence level**: Medium
 - **Occurrences this run**: 1
 - **Run ID**: <run-id>
+- **Workflow**: https://github.com/{owner}/{repo}/actions/runs/<run-id>
 - **Session**: <session file>
 - **Detail**: <brief description of what was observed>
 ```
