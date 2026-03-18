@@ -338,6 +338,53 @@ fn test_set_config() {
 }
 
 // =============================================================================
+// config_value() error handling: corrupt config propagation
+// =============================================================================
+
+#[test]
+fn test_config_value_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+
+    // Corrupt the git config file after repository creation
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.config_value("test.key");
+
+    // Should propagate the error, not silently return None
+    assert!(
+        result.is_err(),
+        "config_value() should propagate errors from corrupt config, not return Ok(None)"
+    );
+}
+
+#[test]
+fn test_clear_hint_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository and set a hint before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+    repository.mark_hint_shown("test-hint").unwrap();
+
+    // Corrupt the git config file
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.clear_hint("test-hint");
+
+    // Should propagate the error, not silently return Ok(false)
+    assert!(
+        result.is_err(),
+        "clear_hint() should propagate errors from corrupt config, not return Ok(false)"
+    );
+}
+
+// =============================================================================
 // Bug #1: Tag/branch name collision tests
 // =============================================================================
 
