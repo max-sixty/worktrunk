@@ -362,7 +362,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-Use `post-create` when subsequent hooks need the copied files — for example, copying `node_modules/` before `npm ci` so the install reuses cached packages. Use `post-start` instead when the copy is large and nothing depends on it immediately (e.g., Rust's `target/` directory).
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install`.
 
 ### Language-specific notes
 

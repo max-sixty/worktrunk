@@ -42,21 +42,21 @@ fi
 
 ## post-create
 
-Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation, copying caches needed by install.
+Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
 
 ```toml
 [post-create]
-copy = "wt step copy-ignored"
 install = "npm ci"
 env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
 ## post-start
 
-Dev servers, long builds, file watchers. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
 
 ```toml
 [post-start]
+copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
 ```
 
@@ -316,11 +316,19 @@ Background processes spawned by `post-start` outlive the worktree — pair them 
 Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) copies gitignored files between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` when subsequent hooks need the copied files — for example, copying `node_modules/` before `npm ci` so the install reuses cached packages. Use `post-start` instead when the copy is large and nothing depends on it immediately (e.g., Rust's `target/` directory).
+Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
+
+```toml
+[post-create]
+copy = "wt step copy-ignored"
+install = "pnpm install"
+```
+
+Note: `npm ci` deletes `node_modules/` before installing, so `copy-ignored` doesn't help there — use `pnpm install` or `npm install` instead.
 
 ## Dev servers
 
