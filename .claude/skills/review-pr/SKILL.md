@@ -276,8 +276,22 @@ array indices to object keys, which GitHub rejects.
 - If a review has both suggestions and prose observations, put the suggestions
   as inline comments and the prose in the review body.
 - Multi-line suggestions: set `start_line` and `line` to define the range.
-  **Minimize the range** — only include lines that actually need changing. A
-  range that's too wide can delete correct code adjacent to the fix.
+  GitHub **replaces** every line in that range with the suggestion content — any
+  line in the range that isn't reproduced in the replacement is **deleted**.
+
+  **Before posting any multi-line suggestion, verify it:**
+
+  1. **Read the exact lines** `start_line` through `line` from the diff hunk.
+  2. **Diff mentally**: every line in that range must either appear (possibly
+     modified) in the replacement text, or be a line you intend to delete. If
+     any line would be silently dropped, **shrink the range** or include the
+     line in the replacement.
+  3. **Cap the range at ~10 lines.** Larger suggestions are error-prone and hard
+     to review. For changes spanning more than 10 lines, split into multiple
+     suggestions or push a fix commit instead.
+  4. **Never span markdown fences.** If the range includes a `` ``` `` line,
+     GitHub's suggestion parser may consume it as a delimiter, corrupting the
+     result. Either shrink the range to avoid the fence or push a commit.
 
 ### 5. Monitor CI
 
