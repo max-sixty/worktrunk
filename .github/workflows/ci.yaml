@@ -204,7 +204,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.60"
 
-    - uses: clechasseur/rs-cargo@v5.0.0
+    - uses: clechasseur/rs-cargo@v5.0.1
       with:
         command: udeps
         args: --all-targets
