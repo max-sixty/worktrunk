@@ -103,8 +103,22 @@ Add matching historical occurrences to your tally when evaluating gates.
 
 ### Recording below-threshold findings
 
-After analysis, post a comment on the tracking issue with any findings that
-didn't pass the gates. Format each finding as:
+After analysis, find **the bot's existing comment** on the tracking issue and
+**edit it** to include any new findings. If no bot comment exists yet, create
+one. This avoids notification spam from hourly runs.
+
+```bash
+# Find existing bot comment on the tracking issue
+BOT_LOGIN=$(gh api user --jq '.login')
+EXISTING_COMMENT=$(gh api "repos/$REPO/issues/$TRACKING_NUMBER/comments" \
+  --jq "[.[] | select(.user.login == \"$BOT_LOGIN\")] | last | .id // empty")
+```
+
+If `EXISTING_COMMENT` is non-empty, update it via
+`gh api repos/$REPO/issues/comments/$EXISTING_COMMENT -X PATCH -F body=@/tmp/findings.md`.
+Otherwise create a new comment.
+
+Format each finding in the comment body as:
 
 ```
 ### <short description>
