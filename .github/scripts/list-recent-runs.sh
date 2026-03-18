@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # Lists recently completed Claude CI runs.
 #
-# Fetches runs started in the lookback window, then filters to only those that
-# are completed and whose updatedAt is within the window. This two-step
+# Fetches runs started in the past 3 hours, then filters to only those that
+# are completed and whose updatedAt is within the past hour. This two-step
 # approach is needed because `gh run list --created` filters by *start* time,
-# not *end* time — a run started hours ago may have just finished, and a run
-# started recently may still be running. See #1301 for details.
-#
-# Usage: list-recent-runs.sh [HOURS]
-#   HOURS: lookback window in hours (default: 25, covers a full day plus buffer)
+# not *end* time — a run started 2h ago may have just finished, and a run
+# started 50min ago may still be running. See #1301 for details.
 #
 # Output: JSON array of {databaseId, conclusion, createdAt, updatedAt} objects.
 
@@ -20,9 +17,8 @@ export NO_COLOR=1
 # Dynamically discover all claude-* workflows instead of maintaining a hardcoded list.
 mapfile -t WORKFLOWS < <(gh workflow list --json name --jq '.[].name | select(startswith("claude-"))')
 
-LOOKBACK_HOURS="${1:-25}"
-CREATED_SINCE=$(date -d "${LOOKBACK_HOURS} hours ago" +%Y-%m-%dT%H:%M:%S)
-COMPLETED_AFTER=$(date -d "${LOOKBACK_HOURS} hours ago" +%s)
+CREATED_SINCE=$(date -d '3 hours ago' +%Y-%m-%dT%H:%M:%S)
+COMPLETED_AFTER=$(date -d '1 hour ago' +%s)
 
 all_runs="[]"
 

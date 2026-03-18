@@ -1,18 +1,18 @@
 ---
 name: review-reviewers
-description: Nightly analysis of Claude CI session logs — identifies behavioral problems, skill gaps, and workflow issues.
+description: Hourly analysis of Claude CI session logs — identifies behavioral problems, skill gaps, and workflow issues.
 metadata:
   internal: true
 ---
 
 # Review Reviewers
 
-Analyze Claude-powered CI runs from the past day. Identify behavioral problems,
+Analyze Claude-powered CI runs from the past hour. Identify behavioral problems,
 skill gaps, and workflow issues — then create PRs or issues to fix them.
 
 ## Confidence and magnitude gates
 
-Before creating a PR, every finding must pass two gates:
+Before creating a PR, every finding must pass two gates.
 
 ### Gate 1: Confidence — is this a real problem?
 
@@ -25,8 +25,11 @@ Rate each finding on the evidence scale:
 | **Medium** | Plausible problem seen once, could be noise | 5+ |
 | **Low** | Nitpick or stylistic preference | Do not act |
 
+Occurrences include both the current hour's sessions **and** historical evidence
+from the tracking issue (see [Evidence accumulation](#evidence-accumulation)).
+
 If a finding doesn't meet the threshold, **skip it** — don't create a PR, don't
-create an issue, don't comment. Log it in the summary (Step 6) so it can
+create an issue, don't comment. Record it in the tracking issue so it can
 accumulate evidence over future runs.
 
 ### Gate 2: Magnitude — is the fix proportionate?
@@ -47,11 +50,72 @@ broad rewrites.
 ### Applying the gates
 
 For each finding, state:
-1. The evidence level and occurrence count
+1. The evidence level and occurrence count (current hour + historical)
 2. The proposed change type
 3. Whether it passes both gates
 
 Only proceed to Step 5 for findings that pass both gates.
+
+## Evidence accumulation
+
+Each run only sees the past hour of CI sessions, but patterns may emerge over
+days or weeks. Use a **monthly tracking issue** to accumulate evidence across
+runs.
+
+### Finding or creating the tracking issue
+
+```bash
+# Look for this month's tracking issue
+MONTH=$(date +%Y-%m)
+gh issue list --state open --label review-reviewers-tracking \
+  --json number,title --jq ".[] | select(.title | contains(\"$MONTH\"))"
+```
+
+If none exists for the current month, create one:
+
+```bash
+cat > /tmp/tracking-body.md << 'EOF'
+Monthly tracking issue for review-reviewers findings that haven't yet met
+the confidence threshold. Each run appends below-threshold findings as a
+comment. Future runs read these to build cumulative evidence.
+
+**Do not close manually** — a new issue is created each month.
+EOF
+gh issue create \
+  --title "review-reviewers tracking: $MONTH" \
+  --label review-reviewers-tracking \
+  -F /tmp/tracking-body.md
+```
+
+### Reading historical evidence
+
+Before applying the gates, read the current tracking issue's comments to find
+prior observations that overlap with this hour's findings:
+
+```bash
+TRACKING_NUMBER=<number from above>
+gh issue view "$TRACKING_NUMBER" --json comments \
+  --jq '.comments[] | {author: .author.login, body: .body}'
+```
+
+Also check last month's tracking issue (if it exists) for recent carry-over.
+Add matching historical occurrences to your tally when evaluating gates.
+
+### Recording below-threshold findings
+
+After analysis, post a comment on the tracking issue with any findings that
+didn't pass the gates. Format each finding as:
+
+```
+### <short description>
+- **Evidence level**: Medium
+- **Occurrences this run**: 1
+- **Run ID**: <run-id>
+- **Session**: <session file>
+- **Detail**: <brief description of what was observed>
+```
+
+This lets future runs search for the description and count prior occurrences.
 
 ## Step 1: Find recent runs
 
@@ -90,7 +154,7 @@ PR_NUMBER=$(gh pr list --head "$HEAD_BRANCH" --state all --json number --jq '.[0
 
 Check for subsequent commits that undid something the bot approved (gap in
 review), and human review comments flagging issues the bot missed. Pull in the
-full PR context — not just changes from the past day.
+full PR context — not just changes from the past hour.
 
 CI polling time is expected and acceptable — do not flag it.
 
@@ -115,19 +179,19 @@ re-statements of evidence already in the issue.
 **Prefer PRs over issues.** A PR with a clear description is immediately
 actionable.
 
-- **PR** (default): Branch `nightly/review-$GITHUB_RUN_ID`, fix, commit, push,
+- **PR** (default): Branch `hourly/review-$GITHUB_RUN_ID`, fix, commit, push,
   create with label `claude-behavior`. Put full analysis in PR description (run
-  ID, log excerpts, root cause, **gate assessment**). Don't also create a
-  separate issue.
+  ID, log excerpts, root cause, **gate assessment** including historical
+  evidence count). Don't also create a separate issue.
 - **Issue** (fallback): Only for problems too large or ambiguous to fix
   directly. Include run ID, log excerpts, root cause analysis.
 
 Group multiple findings by broad theme. **Limit to at most 2 PRs per run** —
 if you have more findings, pick the highest-confidence ones and note the rest
-in the summary.
+in the tracking issue.
 
 ## Step 6: Summary
 
 If no problems found (or none passed the gates), report "all clear" with: runs
 analyzed, sessions reviewed, brief quality assessment, and any below-threshold
-findings noted for future evidence accumulation.
+findings recorded in the tracking issue.
