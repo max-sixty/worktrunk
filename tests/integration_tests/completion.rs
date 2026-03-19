@@ -826,6 +826,71 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(!subcommands.contains(&"pre-merge"));
 }
 
+/// Cross-shell completion contract for hook command names.
+///
+/// Same contract as branch completions (test_completion_cross_shell_filtering_contract):
+/// - fish/zsh get ALL candidates (shell does its own substring/fuzzy matching)
+/// - bash gets only prefix-filtered candidates (binary must filter)
+#[rstest]
+fn test_hook_command_completion_cross_shell_filtering_contract(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Set up a project config with named pre-merge commands
+    repo.write_project_config(
+        r#"
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+build = "cargo build"
+"#,
+    );
+
+    // Prefix "te" — matches "test" but not "lint" or "build"
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "hook", "pre-merge", "te"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+
+        assert!(
+            values.contains(&"test"),
+            "{shell} should return 'test' (prefix match)\n{stdout}"
+        );
+        assert!(
+            values.contains(&"lint"),
+            "{shell} should return ALL candidates (shell does its own matching)\n{stdout}"
+        );
+        assert!(
+            values.contains(&"build"),
+            "{shell} should return ALL candidates\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "hook", "pre-merge", "te"], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.contains(&"test"),
+        "bash should return 'test' (prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.contains(&"lint"),
+        "bash should NOT return 'lint' (not a prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.contains(&"build"),
+        "bash should NOT return 'build' (not a prefix match)\n{stdout}"
+    );
+}
+
 #[rstest]
 fn test_complete_init_shell_all_variations(repo: TestRepo) {
     repo.commit("initial");

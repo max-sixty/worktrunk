@@ -191,7 +191,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
     })
 }
 
-/// Hook command name completion for `wt step <hook-type> <name>`.
+/// Hook command name completion for `wt hook <hook-type> <name>`.
 /// Completes with command names from the project config for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
@@ -207,79 +207,67 @@ impl ValueCompleter for HookCommandCompleter {
             return Vec::new();
         }
 
-        let prefix = current.to_string_lossy();
-        complete_hook_commands()
-            .into_iter()
-            .filter(|candidate| {
-                candidate
-                    .get_value()
-                    .to_string_lossy()
-                    .starts_with(&*prefix)
-            })
-            .collect()
-    }
-}
+        // Return all candidates without prefix filtering — let the shell apply its
+        // own matching (substring in fish, fuzzy in zsh, prefix in bash). The
+        // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
 
-fn complete_hook_commands() -> Vec<CompletionCandidate> {
-    // Get the hook type from the command line context
-    let hook_type = CONTEXT.with(|ctx| {
-        ctx.borrow().as_ref().and_then(|ctx| {
-            // Look for the hook subcommand in the args
-            for hook in &[
-                "post-create",
-                "post-start",
-                "pre-commit",
-                "pre-merge",
-                "post-merge",
-                "pre-remove",
-            ] {
-                if ctx.contains(hook) {
-                    return Some(*hook);
+        // Get the hook type from the command line context
+        let hook_type = CONTEXT.with(|ctx| {
+            ctx.borrow().as_ref().and_then(|ctx| {
+                for hook in &[
+                    "post-create",
+                    "post-start",
+                    "pre-commit",
+                    "pre-merge",
+                    "post-merge",
+                    "pre-remove",
+                ] {
+                    if ctx.contains(hook) {
+                        return Some(*hook);
+                    }
                 }
-            }
-            None
-        })
-    });
+                None
+            })
+        });
 
-    let Some(hook_type_str) = hook_type else {
-        return Vec::new();
-    };
-    let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
-        return Vec::new();
-    };
-
-    let mut candidates = Vec::new();
-
-    // Helper to extract named commands from a hook config
-    let add_named_commands =
-        |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-            candidates.extend(
-                config
-                    .commands()
-                    .iter()
-                    .filter_map(|cmd| cmd.name.as_ref())
-                    .map(|name| CompletionCandidate::new(name.clone())),
-            );
+        let Some(hook_type_str) = hook_type else {
+            return Vec::new();
+        };
+        let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
+            return Vec::new();
         };
 
-    // Load user config and add user hook names
-    // Uses overrides.hooks for completion (global hooks from user config file)
-    if let Ok(user_config) = UserConfig::load()
-        && let Some(config) = user_config.configs.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let mut candidates = Vec::new();
 
-    // Load project config and add project hook names
-    // Pass write_hints=false to avoid side effects during completion
-    if let Ok(repo) = Repository::current()
-        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-        && let Some(config) = project_config.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let add_named_commands =
+            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
+                candidates.extend(
+                    config
+                        .commands()
+                        .iter()
+                        .filter_map(|cmd| cmd.name.as_ref())
+                        .map(|name| CompletionCandidate::new(name.clone())),
+                );
+            };
 
-    candidates
+        // Load user config and add user hook names
+        if let Ok(user_config) = UserConfig::load()
+            && let Some(config) = user_config.configs.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        // Load project config and add project hook names
+        // Pass write_hints=false to avoid side effects during completion
+        if let Ok(repo) = Repository::current()
+            && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(config) = project_config.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        candidates
+    }
 }
 
 #[derive(Clone, Copy)]
