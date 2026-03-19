@@ -384,7 +384,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install`.
+Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Language-specific notes
 

@@ -328,8 +328,6 @@ copy = "wt step copy-ignored"
 install = "pnpm install"
 ```
 
-Note: `npm ci` deletes `node_modules/` before installing, so `copy-ignored` doesn't help there — use `pnpm install` or `npm install` instead.
-
 ## Dev servers
 
 Run a dev server per worktree on a deterministic port using `hash_port`:
