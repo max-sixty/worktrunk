@@ -117,6 +117,20 @@ fn test_merge_already_on_target(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
+    // Create a feature branch with a commit, then merge from main worktree into it.
+    // Main worktree can't be removed, so should show "primary worktree" preservation.
+    let feature_wt = repo.add_feature();
+    drop(feature_wt); // we don't need the path; we'll run from main
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["feature"],
+        None
+    ));
+}
+
+#[rstest]
 fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     // Create a feature worktree with uncommitted changes
     let feature_wt = repo.add_worktree("feature");
