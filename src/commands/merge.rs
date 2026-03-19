@@ -138,10 +138,17 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target or we're in the main worktree, disable remove (can't remove it)
-    let in_main = !current_wt.is_linked().unwrap_or(false);
+    // When current == target or we're in the primary worktree, disable remove (can't remove it).
+    // In normal repos, the primary worktree is the non-linked main worktree.
+    // In bare repos, all worktrees are linked — protect the default branch worktree.
+    let in_primary = !current_wt.is_linked().unwrap_or(false)
+        || (repo.is_bare()?
+            && repo
+                .default_branch()
+                .as_deref()
+                .is_some_and(|db| db == current_branch));
     let on_target = current_branch == target_branch;
-    let remove_effective = remove && !on_target && !in_main;
+    let remove_effective = remove && !on_target && !in_primary;
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) =
@@ -279,9 +286,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // Approval was handled at the gate (collect_merge_commands)
         crate::output::handle_remove_output(&remove_result, false, verify, false)?;
     } else {
-        // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)
-        let message = if in_main {
-            "Worktree preserved (main worktree)"
+        // Worktree preserved - show reason (priority: primary worktree > on target > --no-remove flag)
+        let message = if in_primary {
+            "Worktree preserved (primary worktree)"
         } else if on_target {
             "Worktree preserved (already on target branch)"
         } else {
@@ -295,7 +302,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         // This runs after cleanup so the context is clear to the user
         let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
         // Show path when user's shell won't be in the destination directory where hooks run.
-        let display_path = if remove_effective && !in_main && !on_target {
+        let display_path = if remove_effective && !in_primary && !on_target {
             // Worktree removed, user will cd to destination
             crate::output::post_hook_display_path(&destination_path)
         } else {

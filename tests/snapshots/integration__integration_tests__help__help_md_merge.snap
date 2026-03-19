@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/help.rs
-assertion_line: 131
 info:
   program: wt
   args:
@@ -9,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -135,7 +135,7 @@ wt merge --no-commit
 3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
 4. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
+6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
