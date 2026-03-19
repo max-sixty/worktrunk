@@ -211,27 +211,40 @@ fn fit_header(header: &str, data_width: usize) -> usize {
 /// Updates `remaining` by subtracting the allocated width + spacing.
 /// If is_first is true, doesn't require spacing before the column.
 ///
+/// When `min_width` is provided, the column can shrink below its ideal width (down to
+/// `min_width`) instead of being dropped entirely. This prevents high-priority columns
+/// like Branch from disappearing on narrow terminals.
+///
 /// The spacing is consumed from the budget (subtracted from `remaining`) but not returned
 /// as part of the column's width, since the spacing appears before the column content.
 fn try_allocate(
     remaining: &mut usize,
     ideal_width: usize,
+    min_width: Option<usize>,
     spacing: usize,
     is_first: bool,
 ) -> usize {
     if ideal_width == 0 {
         return 0;
     }
-    let required = if is_first {
-        ideal_width
-    } else {
-        ideal_width + spacing // Gap before column + column content
-    };
-    if *remaining < required {
-        return 0;
+    let spacing_cost = if is_first { 0 } else { spacing };
+
+    // Try ideal width first
+    if *remaining >= ideal_width + spacing_cost {
+        *remaining -= ideal_width + spacing_cost;
+        return ideal_width;
     }
-    *remaining = remaining.saturating_sub(required);
-    ideal_width // Return just the column width
+
+    // Fall back to whatever fits above min_width
+    if let Some(min) = min_width {
+        if *remaining >= min + spacing_cost {
+            let width = *remaining - spacing_cost;
+            *remaining = 0;
+            return width;
+        }
+    }
+
+    0
 }
 
 /// Width information for two-part columns: diffs ("+128 -147") and arrows ("↑6 ↓1")
@@ -725,7 +738,12 @@ fn allocate_columns_with_priority(
         };
 
         let is_first = !needs_spacing(&pending);
-        let allocated = try_allocate(&mut remaining, ideal_width, spacing, is_first);
+        let min_width = if spec.shrinkable {
+            Some(spec.kind.header().width().max(1))
+        } else {
+            None
+        };
+        let allocated = try_allocate(&mut remaining, ideal_width, min_width, spacing, is_first);
         if allocated > 0 {
             pending.push(PendingColumn {
                 spec,
@@ -955,24 +973,51 @@ mod tests {
     fn test_try_allocate() {
         // First column doesn't need spacing
         let mut remaining = 100;
-        let allocated = try_allocate(&mut remaining, 20, 2, true);
+        let allocated = try_allocate(&mut remaining, 20, None, 2, true);
         assert_eq!(allocated, 20);
         assert_eq!(remaining, 80);
 
         // Subsequent columns need spacing
-        let allocated = try_allocate(&mut remaining, 15, 2, false);
+        let allocated = try_allocate(&mut remaining, 15, None, 2, false);
         assert_eq!(allocated, 15);
         assert_eq!(remaining, 63); // 80 - 15 - 2
 
         // Zero width returns 0
         let mut remaining = 50;
-        assert_eq!(try_allocate(&mut remaining, 0, 2, false), 0);
+        assert_eq!(try_allocate(&mut remaining, 0, None, 2, false), 0);
         assert_eq!(remaining, 50);
 
-        // Insufficient space returns 0
+        // Insufficient space returns 0 (no min_width)
         let mut remaining = 10;
-        assert_eq!(try_allocate(&mut remaining, 20, 2, false), 0);
+        assert_eq!(try_allocate(&mut remaining, 20, None, 2, false), 0);
         assert_eq!(remaining, 10);
+    }
+
+    #[test]
+    fn test_try_allocate_with_min_width() {
+        // Ideal fits: allocate ideal
+        let mut remaining = 30;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 20);
+        assert_eq!(remaining, 8); // 30 - 20 - 2
+
+        // Ideal doesn't fit, but min does: allocate whatever fits
+        let mut remaining = 15;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 13); // 15 - 2 spacing = 13 available
+        assert_eq!(remaining, 0);
+
+        // Neither ideal nor min fits: return 0
+        let mut remaining = 5;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 0);
+        assert_eq!(remaining, 5);
+
+        // First column with min_width (no spacing cost)
+        let mut remaining = 10;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, true);
+        assert_eq!(allocated, 10); // all remaining space
+        assert_eq!(remaining, 0);
     }
 
     #[test]
@@ -1672,6 +1717,39 @@ mod tests {
         assert!(
             find_column(&layout, ColumnKind::Message).is_none(),
             "Message should not fit at 40 chars"
+        );
+    }
+
+    #[test]
+    fn test_branch_column_never_dropped() {
+        // Branch is shrinkable: it should always be present, even at narrow widths
+        // where its ideal width (longest branch name) doesn't fit.
+        let items = vec![make_test_item(
+            "feature/very-long-branch-name-that-exceeds-available-space",
+        )];
+        let skip = non_full_skip_tasks();
+        let main_path = Path::new("/test");
+
+        // At 30 cols, ideal branch width (~57) can't fit, but Branch should still
+        // be allocated at a reduced width rather than dropped.
+        let layout = calculate_layout_with_width(&items, &skip, 30, main_path, None);
+        let branch = find_column(&layout, ColumnKind::Branch);
+        assert!(
+            branch.is_some(),
+            "Branch column should never be dropped, even at 30 cols"
+        );
+        let branch_width = branch.unwrap().width;
+        assert!(
+            branch_width >= 6,
+            "Branch should be at least header width (6): got {branch_width}"
+        );
+
+        // At 80 cols, Branch should fit comfortably
+        let layout = calculate_layout_with_width(&items, &skip, 80, main_path, None);
+        let branch = find_column(&layout, ColumnKind::Branch).unwrap();
+        assert!(
+            branch.width > 6,
+            "Branch should have more than header width at 80 cols"
         );
     }
 
