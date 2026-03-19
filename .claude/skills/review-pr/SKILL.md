@@ -41,6 +41,14 @@ If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
 silently. The only exception: an unanswered conversation question directed at
 the bot (check below).
 
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Skip the full code review
+(steps 2–4). The bot cannot approve its own PRs, and performing a full analysis
+that produces no visible output wastes CI compute. Instead:
+
+1. Check for unanswered human review comments or questions — respond to those
+   as a COMMENT review.
+2. Go directly to step 5 (Monitor CI) and step 6 (Resolve threads).
+
 If the bot reviewed a previous commit (`LAST_REVIEW_SHA` exists but differs from
 `HEAD_SHA`), check the incremental changes:
 
