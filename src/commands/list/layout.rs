@@ -236,12 +236,12 @@ fn try_allocate(
     }
 
     // Fall back to whatever fits above min_width
-    if let Some(min) = min_width {
-        if *remaining >= min + spacing_cost {
-            let width = *remaining - spacing_cost;
-            *remaining = 0;
-            return width;
-        }
+    if let Some(min) = min_width
+        && *remaining >= min + spacing_cost
+    {
+        let width = *remaining - spacing_cost;
+        *remaining = 0;
+        return width;
     }
 
     0
