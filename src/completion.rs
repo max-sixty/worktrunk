@@ -60,7 +60,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)
     // clap only returns matches for the prefix, so we call complete twice
-    let current_word = args.get(index).map(|s| s.to_string_lossy());
+    let current_word = args.get(index).map(|s| s.to_string_lossy().into_owned());
     let include_long_flags = current_word.as_deref() == Some("-");
 
     let completions = match clap_complete::engine::complete(
@@ -104,8 +104,25 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         completions
     };
 
-    // Write completions in the appropriate format for the shell
+    // Bash does not filter COMPREPLY by prefix — its programmable completion
+    // (-F) passes the array as-is. Fish/zsh apply their own matching (substring,
+    // fuzzy), so they receive all candidates. For bash, we must filter here.
     let shell_name = shell_name.to_string_lossy();
+    let completions = if shell_name.as_ref() == "bash" {
+        let prefix = current_word.as_deref().unwrap_or("").to_owned();
+        if prefix.is_empty() {
+            completions
+        } else {
+            completions
+                .into_iter()
+                .filter(|c| c.get_value().to_string_lossy().starts_with(&*prefix))
+                .collect()
+        }
+    } else {
+        completions
+    };
+
+    // Write completions in the appropriate format for the shell
     let ifs = std::env::var("_CLAP_IFS").ok();
     let separator = ifs.as_deref().unwrap_or("\n");
 

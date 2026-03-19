@@ -289,7 +289,7 @@ fn test_init_fish_no_inline_completions() {
 }
 
 #[rstest]
-fn test_complete_with_partial_prefix_returns_all_branches(repo: TestRepo) {
+fn test_complete_with_partial_prefix_returns_all_branches_in_fish(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches with common prefix
@@ -297,18 +297,17 @@ fn test_complete_with_partial_prefix_returns_all_branches(repo: TestRepo) {
     repo.run_git(&["branch", "feature/two"]);
     repo.run_git(&["branch", "hotfix/bug"]);
 
-    // Complete with partial prefix — binary returns ALL branches, shell does its own
-    // matching (substring in fish, fuzzy in zsh, prefix in bash). This enables
-    // fish/zsh substring matching for e.g. `wt switch auth<TAB>` → feature/user-auth.
+    // Fish/zsh apply their own matching (substring, fuzzy), so the binary returns
+    // ALL candidates. This enables fish/zsh substring matching.
     let output = repo
-        .completion_cmd(&["wt", "switch", "feat"])
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "fish")
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let values = value_suggestions(&stdout);
 
-    // All branches returned, not just prefix matches
+    // All branches returned for fish (no prefix filtering)
     assert!(values.iter().any(|v| v.contains("feature/one")));
     assert!(values.iter().any(|v| v.contains("feature/two")));
     assert!(values.iter().any(|v| v.contains("hotfix/bug")));
@@ -317,8 +316,9 @@ fn test_complete_with_partial_prefix_returns_all_branches(repo: TestRepo) {
 
 /// Typing a substring that appears mid-branch (e.g. "auth") should still return
 /// branches containing that substring, because the binary no longer prefix-filters.
-/// This is the core use case from #1468: `wt switch auth<TAB>` should let fish/zsh
-/// match `feature/user-auth`.
+/// Fish/zsh apply their own matching (substring, fuzzy), so the binary returns
+/// all candidates for those shells. This is the core use case from #1468:
+/// `wt switch auth<TAB>` should let fish/zsh match `feature/user-auth`.
 #[rstest]
 fn test_complete_switch_returns_candidates_for_substring_matching(repo: TestRepo) {
     repo.commit("initial");
@@ -327,10 +327,9 @@ fn test_complete_switch_returns_candidates_for_substring_matching(repo: TestRepo
     repo.run_git(&["branch", "bugfix/user-auth-timeout"]);
     repo.run_git(&["branch", "release/2024-q1"]);
 
-    // Type "auth" — not a prefix of any branch, but the binary returns all candidates
-    // so the shell can apply substring matching
+    // Type "auth" in fish — not a prefix of any branch, but fish does substring matching
     let output = repo
-        .completion_cmd(&["wt", "switch", "auth"])
+        .completion_cmd_for_shell(&["wt", "switch", "auth"], "fish")
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -351,6 +350,64 @@ fn test_complete_switch_returns_candidates_for_substring_matching(repo: TestRepo
         values.iter().any(|v| v.contains("release/2024-q1")),
         "should return all branches regardless of typed prefix\n{stdout}"
     );
+}
+
+/// Bash does not filter COMPREPLY by prefix — the binary must return only
+/// prefix-matching candidates. (#1621)
+#[rstest]
+fn test_complete_switch_bash_filters_by_prefix(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "feature/login"]);
+    repo.run_git(&["branch", "bugfix/crash"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Type "feat" in bash — should only return branches starting with "feat"
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "should include feature/user-auth (prefix match)\n{stdout}"
+    );
+    assert!(
+        values.iter().any(|v| v.contains("feature/login")),
+        "should include feature/login (prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("bugfix/crash")),
+        "should NOT include bugfix/crash (not a prefix match)\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("release/2024-q1")),
+        "should NOT include release/2024-q1 (not a prefix match)\n{stdout}"
+    );
+}
+
+/// Bash with empty prefix should still return all branches.
+#[rstest]
+fn test_complete_switch_bash_empty_prefix_shows_all(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/new"]);
+    repo.run_git(&["branch", "bugfix/crash"]);
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", ""], "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("feature/new"));
+    assert!(stdout.contains("bugfix/crash"));
+    assert!(stdout.contains("main"));
 }
 
 #[rstest]
