@@ -11,10 +11,7 @@ use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
-    path_mismatch,
-};
+use super::worktree::{MergeOperations, handle_no_ff_merge, handle_push};
 
 /// Options for the merge command
 ///
@@ -138,21 +135,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target or we're in the primary worktree, disable remove (can't remove it).
-    // In normal repos, the primary worktree is the non-linked main worktree.
-    // In bare repos, all worktrees are linked — protect the default branch worktree.
-    let in_primary = !current_wt.is_linked().unwrap_or(false)
-        || (repo.is_bare()?
-            && repo
-                .default_branch()
-                .as_deref()
-                .is_some_and(|db| db == current_branch));
+    // Quick check for command approval: will removal be attempted?
+    // The authoritative guard is prepare_merge_removal (shared with wt remove),
+    // but we need a lightweight answer here to decide whether to include
+    // pre-remove/post-remove hooks in the batch approval prompt.
     let on_target = current_branch == target_branch;
-    let remove_effective = remove && !on_target && !in_primary;
+    let remove_requested = remove && !on_target;
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
+        collect_merge_commands(repo, commit, verify, remove_requested, squash_enabled)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -251,58 +243,46 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         None => repo.home_path()?,
     };
 
-    // Finish worktree unless --no-remove was specified
-    if remove_effective {
-        // STEP 1: Check for uncommitted changes before attempting cleanup
-        // This prevents showing "Cleaning up worktree..." before failing
-        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
-
-        // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
-        let worktree_root = current_wt.root()?;
-        // After a successful merge, get integration reason
-        let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
-        // Compute expected_path for path mismatch detection
-        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
-        // Capture commit SHA before removal for post-remove hook template variables
-        let removed_commit = current_wt
-            .run_command(&["rev-parse", "HEAD"])
-            .ok()
-            .map(|s| s.trim().to_string());
-        let remove_result = RemoveResult::RemovedWorktree {
-            main_path: destination_path.clone(),
-            worktree_path: worktree_root,
-            changed_directory: true,
-            branch_name: Some(current_branch.clone()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.clone()),
-            integration_reason,
-            // Don't force removal - if worktree has untracked files added after
-            // commit, removal will fail and user can run `wt remove --force`
-            force_worktree: false,
-            expected_path,
-            removed_commit,
-        };
-        // Run hooks during merge removal (pass through verify flag)
-        // Approval was handled at the gate (collect_merge_commands)
-        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+    // Finish worktree unless removal is disabled or blocked.
+    // Removal validation is shared with `wt remove` via prepare_merge_removal,
+    // so the same Phase 2 (main-worktree guard) and Phase 3 (default-branch
+    // guard) protect both code paths.
+    let removed = if !remove {
+        eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
+        false
+    } else if on_target {
+        eprintln!(
+            "{}",
+            info_message("Worktree preserved (already on target branch)")
+        );
+        false
     } else {
-        // Worktree preserved - show reason (priority: primary worktree > on target > --no-remove flag)
-        let message = if in_primary {
-            "Worktree preserved (primary worktree)"
-        } else if on_target {
-            "Worktree preserved (already on target branch)"
-        } else {
-            "Worktree preserved (--no-remove)"
-        };
-        eprintln!("{}", info_message(message));
-    }
+        match repo.prepare_merge_removal(
+            &current_branch,
+            &target_branch,
+            &destination_path,
+            config,
+        )? {
+            Some(remove_result) => {
+                // Run hooks during merge removal (pass through verify flag)
+                // Approval was handled at the gate (collect_merge_commands)
+                crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+                true
+            }
+            None => {
+                // prepare_merge_removal returned None: primary worktree.
+                eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
+                false
+            }
+        }
+    };
 
     if verify {
         // Execute post-merge commands in the destination worktree
         // This runs after cleanup so the context is clear to the user
         let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
         // Show path when user's shell won't be in the destination directory where hooks run.
-        let display_path = if remove_effective && !in_primary && !on_target {
+        let display_path = if removed {
             // Worktree removed, user will cd to destination
             crate::output::post_hook_display_path(&destination_path)
         } else {
