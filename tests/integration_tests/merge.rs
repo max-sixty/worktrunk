@@ -2511,7 +2511,11 @@ fn test_merge_no_ff_sync_failure_warns(mut repo_with_main_worktree: TestRepo) {
         .lines()
         .filter(|l| l.starts_with("parent "))
         .collect();
-    assert_eq!(parents.len(), 2, "Should create merge commit despite sync failure");
+    assert_eq!(
+        parents.len(),
+        2,
+        "Should create merge commit despite sync failure"
+    );
 
     // Clean up lock so test teardown doesn't fail
     let _ = fs::remove_file(&index_lock);
