@@ -41,14 +41,6 @@ If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
 silently. The only exception: an unanswered conversation question directed at
 the bot (check below).
 
-**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Skip the full code review
-(steps 2–4). The bot cannot approve its own PRs, and performing a full analysis
-that produces no visible output wastes CI compute. Instead:
-
-1. Check for unanswered human review comments or questions — respond to those
-   as a COMMENT review.
-2. Go directly to step 5 (Monitor CI) and step 6 (Resolve threads).
-
 If the bot reviewed a previous commit (`LAST_REVIEW_SHA` exists but differs from
 `HEAD_SHA`), check the incremental changes:
 
@@ -208,7 +200,9 @@ approach: "Does this bypass or duplicate an existing API?" "What does this
 change *not* handle?" If the design involves a judgment call, flag it for human
 review as a COMMENT.
 
-**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Still perform the full review
+(steps 2–3) — self-review catches real issues (lint failures, edge cases) and is
+intentionally valuable. Do NOT attempt
 `gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
 when there are concerns, or stay silent and skip to step 5. Always post CI
 failure analysis as a COMMENT, even on self-authored PRs.
