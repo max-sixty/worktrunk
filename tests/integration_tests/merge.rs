@@ -122,12 +122,7 @@ fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
     // Main worktree can't be removed, so should show "primary worktree" preservation.
     let feature_wt = repo.add_feature();
     drop(feature_wt); // we don't need the path; we'll run from main
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "merge",
-        &["feature"],
-        None
-    ));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["feature"], None));
 }
 
 #[rstest]
