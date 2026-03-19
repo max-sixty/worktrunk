@@ -10,8 +10,13 @@ use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
-use super::repository_ext::RepositoryCliExt;
-use super::worktree::{MergeOperations, handle_no_ff_merge, handle_push};
+use super::repository_ext::{
+    RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
+};
+use super::worktree::{
+    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
+    path_mismatch,
+};
 
 /// Options for the merge command
 ///
@@ -244,9 +249,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     };
 
     // Finish worktree unless removal is disabled or blocked.
-    // Removal validation is shared with `wt remove` via prepare_merge_removal,
-    // so the same Phase 2 (main-worktree guard) and Phase 3 (default-branch
-    // guard) protect both code paths.
+    // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
+    // check_not_default_branch (Phase 3) are the same helpers both paths use.
     let removed = if !remove {
         eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
         false
@@ -256,25 +260,43 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             info_message("Worktree preserved (already on target branch)")
         );
         false
+    } else if is_primary_worktree(repo, &current_branch)? {
+        eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
+        false
     } else {
-        match repo.prepare_merge_removal(
-            &current_branch,
-            &target_branch,
-            &destination_path,
-            config,
-        )? {
-            Some(remove_result) => {
-                // Run hooks during merge removal (pass through verify flag)
-                // Approval was handled at the gate (collect_merge_commands)
-                crate::output::handle_remove_output(&remove_result, false, verify, false)?;
-                true
-            }
-            None => {
-                // prepare_merge_removal returned None: primary worktree.
-                eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
-                false
-            }
-        }
+        // Phase 3: reject removing default branch (merge always uses SafeDelete).
+        check_not_default_branch(repo, &current_branch, &BranchDeletionMode::SafeDelete)?;
+
+        let current_wt = repo.current_worktree();
+        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
+
+        let worktree_root = current_wt.root()?;
+        let integration_reason = compute_integration_reason(
+            repo,
+            Some(&current_branch),
+            Some(&target_branch),
+            BranchDeletionMode::SafeDelete,
+        );
+        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
+        let removed_commit = current_wt
+            .run_command(&["rev-parse", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        let remove_result = RemoveResult::RemovedWorktree {
+            main_path: destination_path.clone(),
+            worktree_path: worktree_root,
+            changed_directory: true,
+            branch_name: Some(current_branch.to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some(target_branch.to_string()),
+            integration_reason,
+            force_worktree: false,
+            expected_path,
+            removed_commit,
+        };
+        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+        true
     };
 
     if verify {

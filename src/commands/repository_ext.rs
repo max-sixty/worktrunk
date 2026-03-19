@@ -44,24 +44,6 @@ pub trait RepositoryCliExt {
         config: &UserConfig,
     ) -> anyhow::Result<RemoveResult>;
 
-    /// Prepare the current worktree for removal after a merge.
-    ///
-    /// Runs the same Phase 2 (main-worktree guard) and Phase 3 (default-branch
-    /// guard) checks as `prepare_worktree_removal`, so merge and remove share
-    /// a single validation path.
-    ///
-    /// Returns `None` if the current worktree is the primary worktree or the
-    /// current branch is the merge target (removal should be skipped silently).
-    /// Returns `Err` if removal is blocked by a guard (e.g. default branch
-    /// without force-delete).
-    fn prepare_merge_removal(
-        &self,
-        current_branch: &str,
-        target_branch: &str,
-        destination_path: &Path,
-        config: &UserConfig,
-    ) -> anyhow::Result<Option<RemoveResult>>;
-
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
     fn prepare_target_worktree(
         &self,
@@ -294,70 +276,6 @@ impl RepositoryCliExt for Repository {
         })
     }
 
-    fn prepare_merge_removal(
-        &self,
-        current_branch: &str,
-        target_branch: &str,
-        destination_path: &Path,
-        config: &UserConfig,
-    ) -> anyhow::Result<Option<RemoveResult>> {
-        // Skip removal when merging to the same branch (already on target).
-        if current_branch == target_branch {
-            return Ok(None);
-        }
-
-        let current_wt = self.current_worktree();
-
-        // Phase 2: Main-worktree guard — same check as prepare_worktree_removal.
-        // In normal repos, the main worktree is not linked. In bare repos all
-        // worktrees are linked, so we additionally protect the default branch.
-        if !current_wt.is_linked()? {
-            return Ok(None);
-        }
-        if self.is_bare()?
-            && self
-                .default_branch()
-                .as_deref()
-                .is_some_and(|db| db == current_branch)
-        {
-            return Ok(None);
-        }
-
-        // Phase 3: Default-branch guard — reject removing default branch
-        // without force-delete (merge always uses SafeDelete).
-        check_not_default_branch(self, current_branch, &BranchDeletionMode::SafeDelete)?;
-
-        // Validate clean state before constructing the result.
-        current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
-
-        // Build RemoveResult using the same fields as prepare_worktree_removal Phase 5.
-        let worktree_root = current_wt.root()?;
-        let integration_reason = compute_integration_reason(
-            self,
-            Some(current_branch),
-            Some(target_branch),
-            BranchDeletionMode::SafeDelete,
-        );
-        let expected_path = path_mismatch(self, current_branch, &worktree_root, config);
-        let removed_commit = current_wt
-            .run_command(&["rev-parse", "HEAD"])
-            .ok()
-            .map(|s| s.trim().to_string());
-
-        Ok(Some(RemoveResult::RemovedWorktree {
-            main_path: destination_path.to_path_buf(),
-            worktree_path: worktree_root,
-            changed_directory: true,
-            branch_name: Some(current_branch.to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.to_string()),
-            integration_reason,
-            force_worktree: false,
-            expected_path,
-            removed_commit,
-        }))
-    }
-
     fn prepare_target_worktree(
         &self,
         target_worktree: Option<&PathBuf>,
@@ -472,6 +390,27 @@ impl RepositoryCliExt for Repository {
     }
 }
 
+/// Check if the current worktree is the primary worktree (should not be removed).
+///
+/// Returns true for the main worktree in normal repos and the default branch
+/// worktree in bare repos. Used by `wt merge` to skip removal silently, and
+/// by `prepare_worktree_removal` Phase 2 (which errors instead of skipping).
+pub(crate) fn is_primary_worktree(repo: &Repository, branch: &str) -> anyhow::Result<bool> {
+    let current_wt = repo.current_worktree();
+    if !current_wt.is_linked()? {
+        return Ok(true);
+    }
+    if repo.is_bare()?
+        && repo
+            .default_branch()
+            .as_deref()
+            .is_some_and(|db| db == branch)
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Compute integration reason for branch deletion.
 ///
 /// Returns `None` if:
@@ -482,7 +421,7 @@ impl RepositoryCliExt for Repository {
 ///
 /// Note: Integration is computed even for `Keep` mode so we can inform the user
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
-fn compute_integration_reason(
+pub(crate) fn compute_integration_reason(
     repo: &Repository,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
@@ -503,7 +442,7 @@ fn compute_integration_reason(
 ///
 /// The default branch is the integration target — checking it against itself is
 /// tautological (same logic as `wt list`'s `is_main` guard in `check_integration_state`).
-fn check_not_default_branch(
+pub(crate) fn check_not_default_branch(
     repo: &Repository,
     branch: &str,
     deletion_mode: &BranchDeletionMode,
