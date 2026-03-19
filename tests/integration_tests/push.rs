@@ -256,6 +256,46 @@ fn test_push_no_ff(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_push_with_submodule_recurse_config(mut repo: TestRepo) {
+    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604
+    // When submodule.recurse=true is set, git push tries to recurse into
+    // submodules which fails for local worktree-to-worktree pushes.
+    repo.run_git(&["config", "submodule.recurse", "true"]);
+
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // Fast-forward push should succeed despite submodule.recurse=true
+    snapshot_push(
+        "push_with_submodule_recurse",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[rstest]
+fn test_push_no_ff_with_submodule_recurse_config(mut repo: TestRepo) {
+    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604
+    repo.run_git(&["config", "submodule.recurse", "true"]);
+
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // No-ff push should succeed despite submodule.recurse=true
+    snapshot_push(
+        "push_no_ff_with_submodule_recurse",
+        &repo,
+        &["--no-ff", "main"],
+        Some(&feature_wt),
+    );
+}
+
+#[rstest]
 fn test_push_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     // Note: repo_with_feature_worktree doesn't call setup_remote(), so this tests the "no remote" error case
     let feature_wt = repo.worktree_path("feature");

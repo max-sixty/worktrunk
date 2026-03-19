@@ -268,6 +268,7 @@ pub fn handle_push(
     ctx.repo
         .run_command(&[
             "push",
+            "--recurse-submodules=no",
             "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
             git_common_dir_str.as_ref(),
             &push_target,
