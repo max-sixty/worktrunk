@@ -2467,6 +2467,56 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 }
 
+/// --no-ff merge succeeds with a warning when target worktree sync fails.
+///
+/// Simulates a TOCTOU race by locking the target worktree's index before the
+/// merge. The merge commit is still created (via update-ref), but the working
+/// tree sync (read-tree) fails and emits a warning instead of aborting.
+#[rstest]
+fn test_merge_no_ff_sync_failure_warns(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
+
+    // Lock the target worktree's index to make read-tree fail
+    let index_lock = main_wt.join(".git/index.lock");
+    fs::write(&index_lock, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-ff", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Merge should still succeed (ref was updated before sync)
+    assert!(
+        output.status.success(),
+        "merge should succeed despite sync failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Should emit a warning about the sync failure
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to sync target worktree"),
+        "should warn about sync failure: {stderr}"
+    );
+
+    // Verify merge commit was created on the ref
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(parents.len(), 2, "Should create merge commit despite sync failure");
+
+    // Clean up lock so test teardown doesn't fail
+    let _ = fs::remove_file(&index_lock);
+}
+
 /// --no-ff merge when the target branch has no checked-out worktree.
 ///
 /// The merge should succeed without attempting read-tree (no worktree to sync).
