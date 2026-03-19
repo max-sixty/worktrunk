@@ -141,7 +141,8 @@ fn test_complete_base_flag_all_formats(repo: TestRepo) {
         );
     }
 
-    // Test partial completion --base=m (shell handles filtering, we return all)
+    // Test partial completion --base=m (clap returns "--base=<value>" form,
+    // so bash prefix filter matches correctly: "--base=main".starts_with("--base=m"))
     let output = repo
         .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base=m"])
         .output()
@@ -387,6 +388,88 @@ fn test_complete_switch_bash_filters_by_prefix(repo: TestRepo) {
     assert!(
         !values.iter().any(|v| v.contains("release/2024-q1")),
         "should NOT include release/2024-q1 (not a prefix match)\n{stdout}"
+    );
+}
+
+/// Cross-shell completion contract: each shell gets the filtering it needs.
+///
+/// This captures the tension between #1468 (fish/zsh need all candidates for
+/// substring/fuzzy matching) and #1621 (bash needs prefix filtering because
+/// its programmable completion doesn't filter COMPREPLY).
+///
+/// The same set of branches with the same typed prefix must produce different
+/// results depending on the shell:
+/// - bash: only prefix matches (binary filters)
+/// - fish: all candidates (fish does substring matching)
+/// - zsh: all candidates (zsh does fuzzy matching)
+#[rstest]
+fn test_completion_cross_shell_filtering_contract(repo: TestRepo) {
+    repo.commit("initial");
+
+    repo.run_git(&["branch", "feature/user-auth"]);
+    repo.run_git(&["branch", "bugfix/auth-timeout"]);
+    repo.run_git(&["branch", "release/2024-q1"]);
+
+    // Prefix "feat" — matches feature/* but not bugfix/* or release/*
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "feat"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.iter().any(|v| v.contains("bugfix/auth-timeout")),
+            "{shell} should return ALL candidates (shell does its own matching)\n{stdout}"
+        );
+        assert!(
+            values.iter().any(|v| v.contains("release/2024-q1")),
+            "{shell} should return ALL candidates\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "feat"], "bash")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+    assert!(
+        values.iter().any(|v| v.contains("feature/user-auth")),
+        "bash should return prefix matches\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("bugfix/auth-timeout")),
+        "bash should NOT return non-prefix matches\n{stdout}"
+    );
+    assert!(
+        !values.iter().any(|v| v.contains("release/2024-q1")),
+        "bash should NOT return non-prefix matches\n{stdout}"
+    );
+
+    // Substring "auth" — appears mid-branch, not as a prefix
+    for shell in ["fish", "zsh"] {
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "switch", "auth"], shell)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.iter().any(|v| v.contains("feature/user-auth")),
+            "{shell} should return all candidates so shell can substring-match 'auth'\n{stdout}"
+        );
+    }
+
+    let output = repo
+        .completion_cmd_for_shell(&["wt", "switch", "auth"], "bash")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
+    assert!(
+        !values.iter().any(|v| v.contains("feature/user-auth")),
+        "bash should not return 'feature/user-auth' — 'auth' is not a prefix\n{stdout}"
     );
 }
 
