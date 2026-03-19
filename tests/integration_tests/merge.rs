@@ -2309,7 +2309,7 @@ fn test_merge_no_ff_diverged_no_rebase(mut repo_with_main_worktree: TestRepo) {
     ));
 }
 
-/// --no-ff merge succeeds and syncs target worktree via reset --hard.
+/// --no-ff merge succeeds and syncs target worktree via read-tree.
 ///
 /// Verifies that after a --no-ff merge, the target worktree's working tree
 /// reflects the merge commit (not the old HEAD).
@@ -2340,10 +2340,10 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Verify the feature file exists in the main worktree (reset --hard synced it)
+    // Verify the feature file exists in the main worktree (read-tree synced it)
     assert!(
         main_wt.join("feature.txt").exists(),
-        "Target worktree should contain the merged file after reset --hard"
+        "Target worktree should contain the merged file after read-tree"
     );
 
     // Verify the merge commit is on main
@@ -2363,7 +2363,7 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         .to_string();
     assert_eq!(
         main_tip, wt_head,
-        "Target worktree HEAD should match main after reset --hard"
+        "Target worktree HEAD should match main after read-tree"
     );
 }
 
@@ -2469,7 +2469,7 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
 
 /// --no-ff merge when the target branch has no checked-out worktree.
 ///
-/// The merge should succeed without attempting reset --hard (no worktree to sync).
+/// The merge should succeed without attempting read-tree (no worktree to sync).
 #[rstest]
 fn test_merge_no_ff_target_without_worktree(repo: TestRepo) {
     // Move primary off main so main has no worktree
