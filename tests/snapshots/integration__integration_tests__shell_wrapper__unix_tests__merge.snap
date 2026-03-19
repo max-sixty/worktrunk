@@ -4,4 +4,4 @@ expression: "&output.combined"
 ---
 
 [2m○[22m Already up to date with [1mmain[22m (no new commits, no rebase needed)
-[2m○[22m Worktree preserved (primary worktree)
+[2m○[22m Worktree preserved (already on target branch)
