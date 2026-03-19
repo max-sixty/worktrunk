@@ -200,7 +200,9 @@ approach: "Does this bypass or duplicate an existing API?" "What does this
 change *not* handle?" If the design involves a judgment call, flag it for human
 review as a COMMENT.
 
-**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Do NOT attempt
+**Self-authored PRs** (`PR_AUTHOR == BOT_LOGIN`): Still perform the full review
+(steps 2–3) — self-review catches real issues (lint failures, edge cases) and is
+intentionally valuable. Do NOT attempt
 `gh pr review --approve` — GitHub rejects self-approvals. Submit as COMMENT
 when there are concerns, or stay silent and skip to step 5. Always post CI
 failure analysis as a COMMENT, even on self-authored PRs.
