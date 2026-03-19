@@ -2309,7 +2309,7 @@ fn test_merge_no_ff_diverged_no_rebase(mut repo_with_main_worktree: TestRepo) {
     ));
 }
 
-/// --no-ff merge succeeds and syncs target worktree via reset --hard.
+/// --no-ff merge succeeds and syncs target worktree via read-tree.
 ///
 /// Verifies that after a --no-ff merge, the target worktree's working tree
 /// reflects the merge commit (not the old HEAD).
@@ -2340,10 +2340,10 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Verify the feature file exists in the main worktree (reset --hard synced it)
+    // Verify the feature file exists in the main worktree (read-tree synced it)
     assert!(
         main_wt.join("feature.txt").exists(),
-        "Target worktree should contain the merged file after reset --hard"
+        "Target worktree should contain the merged file after read-tree"
     );
 
     // Verify the merge commit is on main
@@ -2363,7 +2363,7 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         .to_string();
     assert_eq!(
         main_tip, wt_head,
-        "Target worktree HEAD should match main after reset --hard"
+        "Target worktree HEAD should match main after read-tree"
     );
 }
 
@@ -2467,9 +2467,63 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 }
 
+/// --no-ff merge succeeds with a warning when target worktree sync fails.
+///
+/// Simulates a TOCTOU race by locking the target worktree's index before the
+/// merge. The merge commit is still created (via update-ref), but the working
+/// tree sync (read-tree) fails and emits a warning instead of aborting.
+#[rstest]
+fn test_merge_no_ff_sync_failure_warns(mut repo_with_main_worktree: TestRepo) {
+    let repo = &mut repo_with_main_worktree;
+    let main_wt = repo.root_path().to_path_buf();
+    let feature_wt = repo.add_worktree("feature");
+
+    repo.commit_in_worktree(&feature_wt, "feature.txt", "feature content", "Add feature");
+
+    // Lock the target worktree's index to make read-tree fail
+    let index_lock = main_wt.join(".git/index.lock");
+    fs::write(&index_lock, "").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--no-ff", "--no-remove"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Merge should still succeed (ref was updated before sync)
+    assert!(
+        output.status.success(),
+        "merge should succeed despite sync failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Should emit a warning about the sync failure
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to sync target worktree"),
+        "should warn about sync failure: {stderr}"
+    );
+
+    // Verify merge commit was created on the ref
+    let parent_count = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = parent_count
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Should create merge commit despite sync failure"
+    );
+
+    // Clean up lock so test teardown doesn't fail
+    let _ = fs::remove_file(&index_lock);
+}
+
 /// --no-ff merge when the target branch has no checked-out worktree.
 ///
-/// The merge should succeed without attempting reset --hard (no worktree to sync).
+/// The merge should succeed without attempting read-tree (no worktree to sync).
 #[rstest]
 fn test_merge_no_ff_target_without_worktree(repo: TestRepo) {
     // Move primary off main so main has no worktree
