@@ -189,7 +189,9 @@ Check for subsequent commits that undid something the bot approved (gap in
 review), and human review comments flagging issues the bot missed. Pull in the
 full PR context — not just changes from the past hour.
 
-CI polling time is expected and acceptable — do not flag it.
+CI polling time (including codecov timeouts on docs-only or test-only PRs) is
+expected and acceptable — do not flag it. Wasted polling is a very low-priority
+concern that does not warrant skill changes or PRs.
 
 ## Step 4: Deduplicate
 

@@ -86,11 +86,8 @@ exit 1
 2. If a required check fails, diagnose with `gh run view <run-id> --log-failed`,
    fix, commit, push, repeat.
 3. After required checks pass, poll `codecov/patch` separately — it is
-   mandatory despite being marked non-required. **Skip this step for PRs with
-   no production code changes** (docs-only, test-only) — codecov evaluates
-   changed production lines only, so it has nothing to report on these PRs.
-   For PRs with production code changes, use a polling loop (up to ~5 minutes)
-   since codecov often reports after the required checks finish:
+   mandatory despite being marked non-required. Use a polling loop (up to
+   ~5 minutes) since codecov often reports after the required checks finish:
    ```bash
    for i in $(seq 1 5); do
      CODECOV=$(gh pr checks <number> 2>&1 | grep 'codecov/patch' || true)
