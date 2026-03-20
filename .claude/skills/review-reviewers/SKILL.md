@@ -149,6 +149,14 @@ This lets future runs search for the description and count prior occurrences.
 
 ## Step 1: Find recent runs
 
+Set the repo identifier first — do not guess the repo name:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+```
+
+Use `$REPO` for all subsequent `gh api` calls that require a repo path.
+
 Run `.github/scripts/list-recent-runs.sh` for recently completed Claude CI runs.
 If empty, report "no runs to review" and exit.
 
