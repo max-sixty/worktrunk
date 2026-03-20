@@ -395,20 +395,10 @@ impl RepositoryCliExt for Repository {
 /// Returns true for the main worktree in normal repos and the default branch
 /// worktree in bare repos. Used by `wt merge` to skip removal silently, and
 /// by `prepare_worktree_removal` Phase 2 (which errors instead of skipping).
-pub(crate) fn is_primary_worktree(repo: &Repository, branch: &str) -> anyhow::Result<bool> {
-    let current_wt = repo.current_worktree();
-    if !current_wt.is_linked()? {
-        return Ok(true);
-    }
-    if repo.is_bare()?
-        && repo
-            .default_branch()
-            .as_deref()
-            .is_some_and(|db| db == branch)
-    {
-        return Ok(true);
-    }
-    Ok(false)
+pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
+    let current_root = repo.current_worktree().root()?;
+    let primary = repo.primary_worktree()?;
+    Ok(primary.as_deref() == Some(current_root.as_path()))
 }
 
 /// Compute integration reason for branch deletion.

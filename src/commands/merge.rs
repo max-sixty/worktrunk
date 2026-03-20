@@ -260,7 +260,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             info_message("Worktree preserved (already on target branch)")
         );
         false
-    } else if is_primary_worktree(repo, &current_branch)? {
+    } else if is_primary_worktree(repo)? {
         eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
         false
     } else {
