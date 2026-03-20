@@ -11,6 +11,7 @@ use crate::common::{
     wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use std::thread;
@@ -1976,12 +1977,11 @@ echo '{{ source_worktree_path }}' > {{ source_worktree_path }}/pre_switch_source
     let dest_file = repo.root_path().join("pre_switch_dest.txt");
     assert!(dest_file.exists(), "Hook should have written dest marker");
     let dest_contents = fs::read_to_string(&dest_file).unwrap();
-    let dest_wt_name = feature_wt.file_name().unwrap().to_string_lossy();
-    assert!(
-        dest_contents.trim().ends_with(dest_wt_name.as_ref()),
-        "{{{{ worktree_path }}}} should end with destination worktree name '{}', got: '{}'",
-        dest_wt_name,
+    let expected_dest = feature_wt.to_slash_lossy();
+    assert_eq!(
         dest_contents.trim(),
+        expected_dest.as_ref(),
+        "{{{{ worktree_path }}}} should be the destination worktree path"
     );
 
     // {{ source_worktree_path }} should be the source (main) worktree
@@ -1991,16 +1991,11 @@ echo '{{ source_worktree_path }}' > {{ source_worktree_path }}/pre_switch_source
         "Hook should have written source marker"
     );
     let source_contents = fs::read_to_string(&source_file).unwrap();
-    let source_wt_name = repo
-        .root_path()
-        .file_name()
-        .unwrap()
-        .to_string_lossy();
-    assert!(
-        source_contents.trim().ends_with(source_wt_name.as_ref()),
-        "{{{{ source_worktree_path }}}} should end with source worktree name '{}', got: '{}'",
-        source_wt_name,
+    let expected_source = repo.root_path().to_slash_lossy();
+    assert_eq!(
         source_contents.trim(),
+        expected_source.as_ref(),
+        "{{{{ source_worktree_path }}}} should be the source worktree path"
     );
 }
 
