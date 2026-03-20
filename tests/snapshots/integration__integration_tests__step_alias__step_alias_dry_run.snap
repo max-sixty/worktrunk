@@ -44,4 +44,4 @@ exit_code: 0
 
 ----- stderr -----
 [2m○[22m Alias [1mhello[22m would run:
-[107m [0m echo Hello from feature
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello from feature
