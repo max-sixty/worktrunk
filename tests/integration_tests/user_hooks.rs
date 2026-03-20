@@ -1817,13 +1817,14 @@ submodule = "echo '4' >> hook_order.txt"
 // User Pre-Switch Hook Tests
 // ============================================================================
 
-/// Test that a pre-switch hook executes before switching to an existing worktree
+/// Test that a pre-switch hook executes before switching to an existing worktree.
+/// The hook runs in the destination worktree's directory (worktree_path points to target).
 #[rstest]
 fn test_user_pre_switch_hook_executes(mut repo: TestRepo) {
     // Create a worktree to switch to
-    let _feature_wt = repo.add_worktree("feature");
+    let feature_wt = repo.add_worktree("feature");
 
-    // Write user config with pre-switch hook that creates a marker in the current worktree
+    // Write user config with pre-switch hook that creates a marker file
     repo.write_test_config(
         r#"[pre-switch]
 check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
@@ -1832,11 +1833,11 @@ check = "echo 'USER_PRE_SWITCH_RAN' > pre_switch_marker.txt"
 
     snapshot_switch("user_pre_switch_executes", &repo, &["feature"]);
 
-    // Verify user hook ran in the source worktree (main), not the destination
-    let marker_file = repo.root_path().join("pre_switch_marker.txt");
+    // Hook runs in the destination worktree (worktree_path = target for existing worktrees)
+    let marker_file = feature_wt.join("pre_switch_marker.txt");
     assert!(
         marker_file.exists(),
-        "User pre-switch hook should have created marker in source worktree"
+        "User pre-switch hook should have created marker in destination worktree"
     );
 
     let contents = fs::read_to_string(&marker_file).unwrap();
@@ -1916,7 +1917,7 @@ check = "echo 'MANUAL_PRE_SWITCH' > pre_switch_marker.txt"
 /// Test that `{{ branch }}` in pre-switch hooks is the destination branch argument, not the source.
 #[rstest]
 fn test_user_pre_switch_branch_var_is_destination(mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature-dest");
+    let feature_wt = repo.add_worktree("feature-dest");
 
     // Write pre-switch hook that records {{ branch }} into a marker file
     repo.write_test_config(
@@ -1932,7 +1933,8 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
     );
 
     // {{ branch }} should be the destination branch, not the source (main)
-    let marker_file = repo.root_path().join("pre_switch_branch.txt");
+    // Hook runs in destination worktree (worktree_path = target)
+    let marker_file = feature_wt.join("pre_switch_branch.txt");
     assert!(
         marker_file.exists(),
         "Pre-switch hook should have created marker"
@@ -1943,6 +1945,54 @@ check = "echo '{{ branch }}' > pre_switch_branch.txt"
         "feature-dest",
         "{{{{ branch }}}} should be the destination branch 'feature-dest', got: '{}'",
         contents.trim(),
+    );
+}
+
+/// Test that `{{ worktree_path }}` in pre-switch hooks points to the destination worktree
+/// and `{{ source_worktree_path }}` points to the source.
+#[rstest]
+fn test_user_pre_switch_worktree_path_is_destination(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature-target");
+
+    // Write pre-switch hook that records both paths
+    repo.write_test_config(
+        r#"[pre-switch]
+check = """
+echo '{{ worktree_path }}' > {{ source_worktree_path }}/pre_switch_dest.txt
+echo '{{ source_worktree_path }}' > {{ source_worktree_path }}/pre_switch_source.txt
+"""
+"#,
+    );
+
+    snapshot_switch(
+        "user_pre_switch_worktree_path_destination",
+        &repo,
+        &["feature-target"],
+    );
+
+    // {{ worktree_path }} should be the destination worktree
+    let dest_file = repo.root_path().join("pre_switch_dest.txt");
+    assert!(dest_file.exists(), "Hook should have written dest marker");
+    let dest_contents = fs::read_to_string(&dest_file).unwrap();
+    let expected_dest = feature_wt.to_string_lossy();
+    assert_eq!(
+        dest_contents.trim(),
+        expected_dest.as_ref(),
+        "{{{{ worktree_path }}}} should be the destination worktree path"
+    );
+
+    // {{ source_worktree_path }} should be the source (main) worktree
+    let source_file = repo.root_path().join("pre_switch_source.txt");
+    assert!(
+        source_file.exists(),
+        "Hook should have written source marker"
+    );
+    let source_contents = fs::read_to_string(&source_file).unwrap();
+    let expected_source = repo.root_path().to_string_lossy();
+    assert_eq!(
+        source_contents.trim(),
+        expected_source.as_ref(),
+        "{{{{ source_worktree_path }}}} should be the source worktree path"
     );
 }
 

@@ -1,11 +1,10 @@
 ---
-source: tests/integration_tests/approvals.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - hook
-    - approvals
-    - clear
+    - switch
+    - feature-target
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -43,4 +42,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No approvals to clear for this project
+[36m◎[39m [36mRunning pre-switch [1muser:check[22m @ [1m_REPO_.feature-target[22m[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m _REPO_.feature-target [0m[2m[36m>[0m[2m _REPO_/pre_switch_dest.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m _REPO_ [0m[2m[36m>[0m[2m _REPO_/pre_switch_source.txt
+[0m[33m▲[39m [33mWorktree for [1mfeature-target[22m @ [1m_REPO_.feature-target[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

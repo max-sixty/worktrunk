@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - "-C"
-    - /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpUeh34J/repo
+    - /tmp/.tmpG3zxuB/repo
     - list
   env:
     CLICOLOR_FORCE: "1"
@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
