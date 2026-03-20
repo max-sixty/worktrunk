@@ -124,13 +124,14 @@ one. This avoids notification spam from hourly runs.
 
 ```bash
 # Find existing bot comment on the tracking issue
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 BOT_LOGIN=$(gh api user --jq '.login')
 EXISTING_COMMENT=$(gh api "repos/$REPO/issues/$TRACKING_NUMBER/comments" \
   --jq "[.[] | select(.user.login == \"$BOT_LOGIN\")] | last | .id // empty")
 ```
 
 If `EXISTING_COMMENT` is non-empty, update it via
-`gh api repos/$REPO/issues/comments/$EXISTING_COMMENT -X PATCH -F body=@/tmp/findings.md`.
+`REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') && gh api repos/$REPO/issues/comments/$EXISTING_COMMENT -X PATCH -F body=@/tmp/findings.md`.
 Otherwise create a new comment.
 
 Format each finding in the comment body as:
@@ -148,14 +149,6 @@ Format each finding in the comment body as:
 This lets future runs search for the description and count prior occurrences.
 
 ## Step 1: Find recent runs
-
-Set the repo identifier first — do not guess the repo name:
-
-```bash
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-```
-
-Use `$REPO` for all subsequent `gh api` calls that require a repo path.
 
 Run `.github/scripts/list-recent-runs.sh` for recently completed Claude CI runs.
 If empty, report "no runs to review" and exit.
