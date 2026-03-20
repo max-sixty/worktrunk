@@ -286,67 +286,56 @@ impl ValueCompleter for BranchCompleter {
 
         // Return all candidates without prefix filtering — let the shell apply its
         // own matching (substring in fish, fuzzy in zsh, prefix in bash). Pre-filtering
-        // here prevents shells from using their native matching strategies. The >100
-        // remote exclusion in complete_branches() still applies to avoid overwhelming
-        // the shell with thousands of remote-only branches.
-        complete_branches(
-            self.suppress_with_create,
-            self.exclude_remote_only,
-            self.worktree_only,
-        )
+        // here prevents shells from using their native matching strategies.
+
+        if self.suppress_with_create && suppress_switch_branch_completion() {
+            return Vec::new();
+        }
+
+        let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        };
+
+        if branches.is_empty() {
+            return Vec::new();
+        }
+
+        // If remote-only branches aren't already excluded, drop them when the total
+        // count is large. Shells like bash/zsh prompt "do you wish to see all N
+        // possibilities?" which makes completion unusable in repos with many remotes.
+        // Threshold of 100 aligns with bash's default `completion-query-items`.
+        let exclude_remote_only = self.exclude_remote_only
+            || (!self.worktree_only
+                && branches.len() > 100
+                && branches
+                    .iter()
+                    .any(|b| matches!(b.category, BranchCategory::Remote(_))));
+
+        branches
+            .into_iter()
+            .filter(|branch| {
+                if self.worktree_only {
+                    matches!(branch.category, BranchCategory::Worktree)
+                } else if exclude_remote_only {
+                    !matches!(branch.category, BranchCategory::Remote(_))
+                } else {
+                    true
+                }
+            })
+            .map(|branch| {
+                let time_str = format_relative_time_short(branch.timestamp);
+                let help = match branch.category {
+                    BranchCategory::Worktree => format!("+ {}", time_str),
+                    BranchCategory::Local => format!("/ {}", time_str),
+                    BranchCategory::Remote(remotes) => {
+                        format!("⇣ {} {}", time_str, remotes.join(", "))
+                    }
+                };
+                CompletionCandidate::new(branch.name).help(Some(help.into()))
+            })
+            .collect()
     }
-}
-
-fn complete_branches(
-    suppress_with_create: bool,
-    exclude_remote_only: bool,
-    worktree_only: bool,
-) -> Vec<CompletionCandidate> {
-    if suppress_with_create && suppress_switch_branch_completion() {
-        return Vec::new();
-    }
-
-    let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-
-    if branches.is_empty() {
-        return Vec::new();
-    }
-
-    // If remote-only branches aren't already excluded, drop them when the total
-    // count is large. Shells like bash/zsh prompt "do you wish to see all N
-    // possibilities?" which makes completion unusable in repos with many remotes.
-    // Threshold of 100 aligns with bash's default `completion-query-items`.
-    let exclude_remote_only = exclude_remote_only
-        || (!worktree_only
-            && branches.len() > 100
-            && branches
-                .iter()
-                .any(|b| matches!(b.category, BranchCategory::Remote(_))));
-
-    branches
-        .into_iter()
-        .filter(|branch| {
-            if worktree_only {
-                matches!(branch.category, BranchCategory::Worktree)
-            } else if exclude_remote_only {
-                !matches!(branch.category, BranchCategory::Remote(_))
-            } else {
-                true
-            }
-        })
-        .map(|branch| {
-            let time_str = format_relative_time_short(branch.timestamp);
-            let help = match branch.category {
-                BranchCategory::Worktree => format!("+ {}", time_str),
-                BranchCategory::Local => format!("/ {}", time_str),
-                BranchCategory::Remote(remotes) => format!("⇣ {} {}", time_str, remotes.join(", ")),
-            };
-            CompletionCandidate::new(branch.name).help(Some(help.into()))
-        })
-        .collect()
 }
 
 fn suppress_switch_branch_completion() -> bool {
