@@ -3407,7 +3407,11 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     );
 
     // Verify the .git file in the worktree contains a relative path
-    let worktree_path = repo.root_path().parent().unwrap().join("repo.relative-test");
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.relative-test");
     let git_file = std::fs::read_to_string(worktree_path.join(".git")).unwrap();
     assert!(
         !git_file.contains(repo.root_path().to_str().unwrap()),
