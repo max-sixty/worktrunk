@@ -387,4 +387,110 @@ mod tests {
         // Should use the branch name as-is when no refs/heads/ prefix
         assert_eq!(wt.branch, Some("main".to_string()));
     }
+
+    // ============================================================================
+    // parse_porcelain_z Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_porcelain_z_empty() {
+        assert!(parse_porcelain_z("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_modified_file() {
+        // "M  src/main.rs\0"
+        let output = " M src/main.rs\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_multiple_files() {
+        let output = " M src/main.rs\0?? new_file.txt\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["src/main.rs", "new_file.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_rename() {
+        // Renames: "R  new_name\0old_name\0"
+        let output = "R  new_name.rs\0old_name.rs\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["new_name.rs", "old_name.rs"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_copy() {
+        let output = "C  copy.rs\0original.rs\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["copy.rs", "original.rs"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_rename_among_others() {
+        let output = " M keep.rs\0R  new.rs\0old.rs\0?? untracked.txt\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["keep.rs", "new.rs", "old.rs", "untracked.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_spaces_in_path() {
+        let output = " M path with spaces/file name.rs\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["path with spaces/file name.rs"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_skips_short_entries() {
+        // Entries shorter than 3 chars (status + space + path) are skipped
+        let output = " M valid.rs\0ab\0";
+        let files = parse_porcelain_z(output);
+        assert_eq!(files, vec!["valid.rs"]);
+    }
+
+    // ============================================================================
+    // parse_untracked_files Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_untracked_files_empty() {
+        assert!(parse_untracked_files("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_untracked_files_only_untracked() {
+        let output = "?? new_file.txt\0?? another.rs\0";
+        let files = parse_untracked_files(output);
+        assert_eq!(files, vec!["new_file.txt", "another.rs"]);
+    }
+
+    #[test]
+    fn test_parse_untracked_files_filters_tracked() {
+        let output = " M modified.rs\0?? untracked.txt\0A  added.rs\0";
+        let files = parse_untracked_files(output);
+        assert_eq!(files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_parse_untracked_files_skips_rename_old_path() {
+        // Rename entry has an extra NUL-separated old path that must be skipped
+        let output = "R  new.rs\0old.rs\0?? untracked.txt\0";
+        let files = parse_untracked_files(output);
+        assert_eq!(files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_parse_untracked_files_no_untracked() {
+        let output = " M modified.rs\0A  added.rs\0";
+        let files = parse_untracked_files(output);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_parse_untracked_files_spaces_in_path() {
+        let output = "?? path with spaces/new file.txt\0";
+        let files = parse_untracked_files(output);
+        assert_eq!(files, vec!["path with spaces/new file.txt"]);
+    }
 }
