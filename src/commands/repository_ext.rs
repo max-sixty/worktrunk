@@ -80,9 +80,9 @@ impl RepositoryCliExt for Repository {
     ) -> anyhow::Result<RemoveResult> {
         let current_path = self.current_worktree().root()?.to_path_buf();
         let worktrees = self.list_worktrees()?;
-        // Home worktree: prefer default branch's worktree, fall back to first worktree,
-        // then repo base for bare repos with no worktrees.
-        let home_worktree_path = self.home_path()?;
+        // Primary worktree path: prefer default branch's worktree, fall back to first
+        // worktree, then repo base for bare repos with no worktrees.
+        let primary_path = self.home_path()?;
 
         // Phase 1: Resolve target to branch name and worktree disposition.
         // BranchOnly variants don't early-return — they go through shared validation below.
@@ -233,10 +233,10 @@ impl RepositoryCliExt for Repository {
         // (bare repo only — normal repos guard this in Phase 2 above).
         // changed_directory: whether the user needs to cd away from cwd.
         let changed_directory = is_current;
-        let main_path = if worktree_path == home_worktree_path {
+        let main_path = if worktree_path == primary_path {
             current_path
         } else {
-            home_worktree_path
+            primary_path
         };
 
         // Resolve target branch for integration reason display
