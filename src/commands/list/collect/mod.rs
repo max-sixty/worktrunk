@@ -202,7 +202,7 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
 #[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
-    /// Flags already resolved by the caller (used by `wt select`).
+    /// Flags already resolved by the caller (used by the picker).
     Resolved {
         show_branches: bool,
         show_remotes: bool,

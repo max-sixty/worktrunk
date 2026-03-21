@@ -242,7 +242,7 @@ impl LayoutConfig {
 
     /// Render with stale placeholders for items where data collection was truncated.
     /// Uses `·` instead of `⋯` to indicate data won't arrive.
-    #[cfg_attr(windows, allow(dead_code))] // Used only by select module (unix-only)
+    #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
     pub fn render_list_item_stale(&self, item: &ListItem) -> StyledLine {
         self.render_item_with_placeholder(item, "·")
     }
