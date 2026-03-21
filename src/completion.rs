@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
@@ -368,7 +369,88 @@ thread_local! {
 
 fn completion_command() -> Command {
     let cmd = cli::build_command();
+    let cmd = inject_alias_subcommands(cmd);
     hide_non_positional_options_for_completion(cmd)
+}
+
+/// Inject configured aliases as subcommands of `step` so they appear in completions.
+///
+/// Aliases are loaded from user config and project config (same merge order as
+/// `step_alias`). Aliases that shadow built-in step commands are skipped.
+fn inject_alias_subcommands(cmd: Command) -> Command {
+    let aliases = load_aliases_for_completion();
+    if aliases.is_empty() {
+        return cmd;
+    }
+
+    cmd.mut_subcommand("step", |mut step| {
+        for (name, template) in aliases {
+            // Skip aliases that shadow built-in step commands
+            if step
+                .get_subcommands()
+                .any(|s| s.get_name() == name.as_str())
+            {
+                continue;
+            }
+            let help = truncate_template(&template);
+            // clap::Command::new() requires Into<Str>, and Str only implements
+            // From<&'static str> (not From<String>). Leak is fine: completion is
+            // a short-lived subprocess that exits after printing candidates.
+            let name: &'static str = Box::leak(name.into_boxed_str());
+            let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
+            let sub = Command::new(name)
+                .about(about)
+                .arg(clap::Arg::new("dry-run").long("dry-run"))
+                .arg(clap::Arg::new("yes").short('y').long("yes"))
+                .arg(
+                    clap::Arg::new("var")
+                        .long("var")
+                        .num_args(1)
+                        .action(clap::ArgAction::Append),
+                );
+            step = step.subcommand(sub);
+        }
+        step
+    })
+}
+
+/// Load aliases from user and project config for completion.
+fn load_aliases_for_completion() -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+
+    if let Ok(repo) = Repository::current() {
+        // Project config aliases first
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(project_aliases) = project_config.aliases
+        {
+            aliases.extend(project_aliases);
+        }
+        // User config aliases override
+        if let Ok(user_config) = UserConfig::load() {
+            let project_id = repo.project_identifier().ok();
+            aliases.extend(user_config.aliases(project_id.as_deref()));
+        }
+    } else if let Ok(user_config) = UserConfig::load() {
+        aliases.extend(user_config.aliases(None));
+    }
+
+    aliases
+}
+
+/// Truncate a template string for use as completion help text.
+fn truncate_template(template: &str) -> &str {
+    let s = template.trim();
+    let first_line = s.lines().next().unwrap_or(s);
+    if first_line.len() > 60 {
+        // Find the last char boundary at or before byte 57
+        let mut end = 57;
+        while end > 0 && !first_line.is_char_boundary(end) {
+            end -= 1;
+        }
+        &first_line[..end]
+    } else {
+        first_line
+    }
 }
 
 /// Hide non-positional options so they're filtered out when positional/subcommand
@@ -415,4 +497,37 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
     }
 
     process_command(cmd, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_template() {
+        // Short template — returned as-is
+        assert_eq!(truncate_template("echo hello"), "echo hello");
+
+        // Multiline — only first line
+        assert_eq!(truncate_template("line one\nline two"), "line one");
+
+        // Leading/trailing whitespace trimmed
+        assert_eq!(truncate_template("  spaced  \n"), "spaced");
+
+        // Exactly 60 chars — no truncation
+        let s60 = "a".repeat(60);
+        assert_eq!(truncate_template(&s60), s60.as_str());
+
+        // 61 chars — truncated to 57
+        let s61 = "b".repeat(61);
+        assert_eq!(truncate_template(&s61), &"b".repeat(57));
+
+        // Multi-byte chars where byte 57 falls mid-character.
+        // 'a' (1 byte) × 56 + '€' (3 bytes) × 2 = 62 bytes, > 60.
+        // Byte 57 is the second byte of the first '€', so the loop backs up to 56.
+        let multi = "a".repeat(56) + "€€";
+        let result = truncate_template(&multi);
+        assert_eq!(result.len(), 56);
+        assert_eq!(result, "a".repeat(56));
+    }
 }
