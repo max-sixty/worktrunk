@@ -116,6 +116,25 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 paru worktrunk-bin && wt config shell install
 ```
 
+<details>
+<summary><strong>Script installer (experimental)</strong></summary>
+
+Downloads a static binary — no package manager required.
+
+**macOS & Linux:**
+
+```bash
+curl -fsSL https://worktrunk.dev/install.sh | sh
+```
+
+**Windows:**
+
+```bash
+powershell -c "irm https://worktrunk.dev/install.ps1 | iex"
+```
+
+</details>
+
 ## Quick start
 
 Create a worktree for a new feature:
