@@ -9,11 +9,6 @@ on:
   pull_request_review_comment:
     types: [created, edited]
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C debuginfo=0"
-  RUSTDOCFLAGS: "-Dwarnings"
-
 jobs:
   # Engagement verification — gate for non-mention comments.
   # Runs as a separate job so the routing jobs can depend on its result.
@@ -115,6 +110,12 @@ jobs:
     if: |
       needs.verify.outputs.should_run == 'true' &&
       github.event_name == 'issue_comment'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     uses: max-sixty/continuous/.github/workflows/mention-comment.yaml@main
     with:
       bot_name: worktrunk-bot
@@ -134,6 +135,12 @@ jobs:
     if: |
       needs.verify.outputs.should_run == 'true' &&
       github.event_name == 'pull_request_review_comment'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     uses: max-sixty/continuous/.github/workflows/mention-review.yaml@main
     with:
       bot_name: worktrunk-bot
@@ -154,6 +161,12 @@ jobs:
     if: |
       needs.verify.outputs.should_run == 'true' &&
       github.event_name == 'issues'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     uses: max-sixty/continuous/.github/workflows/mention-issue-edit.yaml@main
     with:
       bot_name: worktrunk-bot

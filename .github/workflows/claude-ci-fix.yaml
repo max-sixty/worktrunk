@@ -6,14 +6,14 @@ on:
     types: [completed]
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C debuginfo=0"
-  RUSTDOCFLAGS: "-Dwarnings"
-
 jobs:
   fix-ci:
     if: github.event.workflow_run.conclusion == 'failure'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
     uses: max-sixty/continuous/.github/workflows/ci-fix.yaml@main
     with:
       bot_name: worktrunk-bot

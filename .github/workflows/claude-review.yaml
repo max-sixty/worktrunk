@@ -3,14 +3,9 @@ name: claude-review
 # on bot-authored PRs. Delegates to max-sixty/continuous for execution.
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_ready, reopened]
+    types: [opened, synchronize, ready_for_review, reopened]
   pull_request_review:
     types: [submitted]
-
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C debuginfo=0"
-  RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
   review:
@@ -24,6 +19,12 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     uses: max-sixty/continuous/.github/workflows/review.yaml@main
     with:
       bot_name: worktrunk-bot

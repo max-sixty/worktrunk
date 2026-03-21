@@ -8,17 +8,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.issue.number }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C debuginfo=0"
-  RUSTDOCFLAGS: "-Dwarnings"
-
 jobs:
   triage:
     # Skip bot-created issues and issues from worktrunk-bot
     if: >-
       github.event.issue.user.type != 'Bot' &&
       github.event.issue.user.login != 'worktrunk-bot'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     uses: max-sixty/continuous/.github/workflows/triage.yaml@main
     with:
       bot_name: worktrunk-bot

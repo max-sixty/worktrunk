@@ -5,13 +5,14 @@ on:
     - cron: '17 6 * * *'
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C debuginfo=0"
-  RUSTDOCFLAGS: "-Dwarnings"
-
 jobs:
   cleaner:
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
     uses: max-sixty/continuous/.github/workflows/nightly.yaml@main
     with:
       bot_name: worktrunk-bot
