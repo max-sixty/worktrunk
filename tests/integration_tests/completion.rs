@@ -1582,3 +1582,106 @@ fn test_complete_switch_includes_remote_branches_when_under_threshold(mut repo: 
         "Remote branches should appear when total <= 100: {stdout}"
     );
 }
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_project_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+lint = "cargo clippy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // Built-in commands still present
+    assert!(subcommands.contains(&"commit"), "Missing commit");
+    assert!(subcommands.contains(&"push"), "Missing push");
+    // Aliases appear
+    assert!(
+        subcommands.contains(&"deploy"),
+        "Missing alias 'deploy': {stdout}"
+    );
+    assert!(
+        subcommands.contains(&"lint"),
+        "Missing alias 'lint': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_user_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_test_config(
+        r#"
+[aliases]
+update = "git pull --rebase"
+"#,
+    );
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    assert!(
+        subcommands.contains(&"update"),
+        "Missing user alias 'update': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_alias_does_not_shadow_builtins(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+commit = "echo 'shadowed'"
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // 'commit' should appear exactly once (the built-in), not duplicated
+    let commit_count = subcommands.iter().filter(|&&s| s == "commit").count();
+    assert_eq!(commit_count, 1, "Built-in 'commit' should appear once");
+    // 'deploy' alias should appear
+    assert!(subcommands.contains(&"deploy"));
+}
+
+#[rstest]
+fn test_complete_step_alias_shows_flags(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    // Complete flags for the alias subcommand
+    let output = repo
+        .completion_cmd(&["wt", "step", "deploy", "--"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--dry-run"),
+        "Missing --dry-run flag: {stdout}"
+    );
+    assert!(stdout.contains("--yes"), "Missing --yes flag: {stdout}");
+    assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
+}
