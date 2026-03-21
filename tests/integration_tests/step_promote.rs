@@ -7,7 +7,7 @@ use std::fs;
 use std::process::Command;
 
 /// Helper to get the current branch in a directory
-fn get_branch(repo: &TestRepo, dir: &std::path::Path) -> String {
+fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
     let output = repo
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -38,12 +38,12 @@ fn test_promote_from_worktree(mut repo: TestRepo) {
 
     // Verify branches were exchanged
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "feature",
         "main worktree should now have feature"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "main",
         "other worktree should now have main"
     );
@@ -65,12 +65,12 @@ fn test_promote_with_branch_argument(mut repo: TestRepo) {
 
     // Verify branches were exchanged
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "feature",
         "main worktree should now have feature"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "main",
         "other worktree should now have main"
     );
@@ -95,7 +95,7 @@ fn test_promote_restore(mut repo: TestRepo) {
     );
 
     // Verify first promote worked
-    assert_eq!(get_branch(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
 
     // Restore: promote main back (now 'main' is in the other worktree)
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -107,12 +107,12 @@ fn test_promote_restore(mut repo: TestRepo) {
 
     // Verify canonical state restored
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "main",
         "main worktree should have main again"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "feature",
         "other worktree should have feature again"
     );
@@ -150,8 +150,8 @@ fn test_promote_auto_restore(mut repo: TestRepo) {
     );
 
     // Verify first promote worked
-    assert_eq!(get_branch(&repo, repo.root_path()), "feature");
-    assert_eq!(get_branch(&repo, &feature_path), "main");
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, &feature_path), "main");
 
     // Auto-restore: no argument from main worktree restores default branch
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -163,12 +163,12 @@ fn test_promote_auto_restore(mut repo: TestRepo) {
 
     // Verify canonical state restored
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "main",
         "main worktree should have main again"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "feature",
         "other worktree should have feature again"
     );
@@ -687,8 +687,8 @@ fn test_promote_swap_roundtrip(mut repo: TestRepo) {
     );
 
     // After round-trip: everything should be back to original state
-    assert_eq!(get_branch(&repo, repo.root_path()), "main");
-    assert_eq!(get_branch(&repo, &feature_path), "feature");
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature_path), "feature");
 
     assert_eq!(
         fs::read_to_string(repo.root_path().join("build/artifact")).unwrap(),
@@ -811,7 +811,7 @@ fn test_promote_swap_no_staging_leftover(mut repo: TestRepo) {
     // The staging directory should be cleaned up
     let git_dir = repo.root_path().join(".git");
     assert!(
-        !git_dir.join("wt-promote-staging").exists(),
+        !git_dir.join("wt/staging/promote").exists(),
         "staging directory should be cleaned up after promote"
     );
 }
@@ -890,7 +890,7 @@ fn test_promote_stale_staging_blocks_with_guidance(mut repo: TestRepo) {
 
     // Create a fake leftover staging directory (as if previous promote was interrupted)
     let git_dir = repo.root_path().join(".git");
-    let staging_dir = git_dir.join("wt-promote-staging");
+    let staging_dir = git_dir.join("wt/staging/promote");
     fs::create_dir_all(staging_dir.join("a")).unwrap();
     fs::write(staging_dir.join("a/leftover"), "leftover data").unwrap();
 

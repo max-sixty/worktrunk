@@ -112,12 +112,20 @@
 //!    - Within the visibility gate, follows normal two-tier priority
 //!      (BranchDiff: 6/16, CiStatus: 5/15)
 //!
-//! 2. **Summary** - Flexible sizing with post-allocation expansion
+//! 2. **No-data columns** yield to Summary
+//!    - After Summary's initial expansion, columns where `has_data()` is false
+//!      are dropped (lowest priority first) and their space reclaimed for Summary
+//!    - Currently only Path can be no-data in progressive mode (when all paths
+//!      are predictable from branch names, i.e., no branch-worktree mismatch)
+//!    - When Path has data (mismatch exists), it is kept at priority 7
+//!
+//! 3. **Summary** - Flexible sizing with post-allocation expansion
 //!    - Allocated at priority 10 with minimum width 10
 //!    - After all columns allocated, expands up to 70 using leftover space
+//!    - Reclaims no-data columns before Message drop
 //!    - Expands BEFORE Message, so Summary gets priority for space
 //!
-//! 3. **Message** - Flexible sizing, gated on Summary readability
+//! 4. **Message** - Flexible sizing, gated on Summary readability
 //!    - Allocated at priority 13 with minimum width 10
 //!    - **Only kept if Summary reaches 40 chars** — below that, Summary needs
 //!      all flexible space and Message is dropped (its space reclaimed for Summary)
@@ -184,7 +192,7 @@ use anstyle::Style;
 use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
-use crate::display::{get_terminal_width, shorten_path};
+use crate::display::{shorten_path, terminal_width};
 
 use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
@@ -211,27 +219,40 @@ fn fit_header(header: &str, data_width: usize) -> usize {
 /// Updates `remaining` by subtracting the allocated width + spacing.
 /// If is_first is true, doesn't require spacing before the column.
 ///
+/// When `min_width` is provided, the column can shrink below its ideal width (down to
+/// `min_width`) instead of being dropped entirely. This prevents high-priority columns
+/// like Branch from disappearing on narrow terminals.
+///
 /// The spacing is consumed from the budget (subtracted from `remaining`) but not returned
 /// as part of the column's width, since the spacing appears before the column content.
 fn try_allocate(
     remaining: &mut usize,
     ideal_width: usize,
+    min_width: Option<usize>,
     spacing: usize,
     is_first: bool,
 ) -> usize {
     if ideal_width == 0 {
         return 0;
     }
-    let required = if is_first {
-        ideal_width
-    } else {
-        ideal_width + spacing // Gap before column + column content
-    };
-    if *remaining < required {
-        return 0;
+    let spacing_cost = if is_first { 0 } else { spacing };
+
+    // Try ideal width first
+    if *remaining >= ideal_width + spacing_cost {
+        *remaining -= ideal_width + spacing_cost;
+        return ideal_width;
     }
-    *remaining = remaining.saturating_sub(required);
-    ideal_width // Return just the column width
+
+    // Fall back to whatever fits above min_width
+    if let Some(min) = min_width
+        && *remaining >= min + spacing_cost
+    {
+        let width = *remaining - spacing_cost;
+        *remaining = 0;
+        return width;
+    }
+
+    0
 }
 
 /// Width information for two-part columns: diffs ("+128 -147") and arrows ("↑6 ↓1")
@@ -725,7 +746,12 @@ fn allocate_columns_with_priority(
         };
 
         let is_first = !needs_spacing(&pending);
-        let allocated = try_allocate(&mut remaining, ideal_width, spacing, is_first);
+        let min_width = if spec.shrinkable {
+            Some(spec.kind.header().width().max(1))
+        } else {
+            None
+        };
+        let allocated = try_allocate(&mut remaining, ideal_width, min_width, spacing, is_first);
         if allocated > 0 {
             pending.push(PendingColumn {
                 spec,
@@ -749,6 +775,35 @@ fn allocate_columns_with_priority(
             remaining -= expansion;
         }
         max_summary_len = summary_col.width;
+    }
+
+    // Drop no-data columns if Summary hasn't reached its max. Columns without
+    // data are showing empty/redundant content (e.g., Path when all paths are
+    // predictable from branch names) and should yield space to Summary.
+    while max_summary_len > 0 && max_summary_len < MAX_SUMMARY {
+        // Find the lowest-priority no-data column (highest base_priority value)
+        let drop_pos = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, col)| !col.spec.kind.has_data(&metadata.data_flags))
+            .max_by_key(|(_, col)| col.spec.base_priority)
+            .map(|(i, _)| i);
+
+        let Some(pos) = drop_pos else { break };
+
+        let reclaimed = pending[pos].width + spacing;
+        pending.remove(pos);
+        remaining += reclaimed;
+
+        if let Some(summary_col) = pending
+            .iter_mut()
+            .find(|col| col.spec.kind == ColumnKind::Summary)
+        {
+            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
+            summary_col.width += expansion;
+            remaining -= expansion;
+            max_summary_len = summary_col.width;
+        }
     }
 
     // Drop Message if Summary didn't reach the readability threshold, reclaiming
@@ -869,7 +924,7 @@ pub fn calculate_layout_from_basics(
     calculate_layout_with_width(
         items,
         skip_tasks,
-        get_terminal_width(),
+        terminal_width(),
         main_worktree_path,
         url_template,
     )
@@ -955,24 +1010,51 @@ mod tests {
     fn test_try_allocate() {
         // First column doesn't need spacing
         let mut remaining = 100;
-        let allocated = try_allocate(&mut remaining, 20, 2, true);
+        let allocated = try_allocate(&mut remaining, 20, None, 2, true);
         assert_eq!(allocated, 20);
         assert_eq!(remaining, 80);
 
         // Subsequent columns need spacing
-        let allocated = try_allocate(&mut remaining, 15, 2, false);
+        let allocated = try_allocate(&mut remaining, 15, None, 2, false);
         assert_eq!(allocated, 15);
         assert_eq!(remaining, 63); // 80 - 15 - 2
 
         // Zero width returns 0
         let mut remaining = 50;
-        assert_eq!(try_allocate(&mut remaining, 0, 2, false), 0);
+        assert_eq!(try_allocate(&mut remaining, 0, None, 2, false), 0);
         assert_eq!(remaining, 50);
 
-        // Insufficient space returns 0
+        // Insufficient space returns 0 (no min_width)
         let mut remaining = 10;
-        assert_eq!(try_allocate(&mut remaining, 20, 2, false), 0);
+        assert_eq!(try_allocate(&mut remaining, 20, None, 2, false), 0);
         assert_eq!(remaining, 10);
+    }
+
+    #[test]
+    fn test_try_allocate_with_min_width() {
+        // Ideal fits: allocate ideal
+        let mut remaining = 30;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 20);
+        assert_eq!(remaining, 8); // 30 - 20 - 2
+
+        // Ideal doesn't fit, but min does: allocate whatever fits
+        let mut remaining = 15;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 13); // 15 - 2 spacing = 13 available
+        assert_eq!(remaining, 0);
+
+        // Neither ideal nor min fits: return 0
+        let mut remaining = 5;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, false);
+        assert_eq!(allocated, 0);
+        assert_eq!(remaining, 5);
+
+        // First column with min_width (no spacing cost)
+        let mut remaining = 10;
+        let allocated = try_allocate(&mut remaining, 20, Some(6), 2, true);
+        assert_eq!(allocated, 10); // all remaining space
+        assert_eq!(remaining, 0);
     }
 
     #[test]
@@ -1672,6 +1754,263 @@ mod tests {
         assert!(
             find_column(&layout, ColumnKind::Message).is_none(),
             "Message should not fit at 40 chars"
+        );
+    }
+
+    /// Helper: create a test item with a specific worktree path and no mismatch.
+    fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
+        use crate::commands::list::model::{
+            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+        };
+        super::super::model::ListItem {
+            head: "abc12345".to_string(),
+            branch: Some(branch.to_string()),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            committed_trees_match: None,
+            has_file_changes: None,
+            would_merge_add: None,
+            is_ancestor: None,
+            is_orphan: None,
+            upstream: None,
+            pr_status: None,
+            url: None,
+            url_active: None,
+            summary: None,
+            status_symbols: None,
+            display: DisplayFields::default(),
+            kind: ItemKind::Worktree(Box::new(WorktreeData {
+                path: PathBuf::from(path),
+                detached: false,
+                locked: None,
+                prunable: None,
+                working_tree_diff: None,
+                git_operation: ActiveGitOperation::None,
+                is_main: false,
+                is_current: false,
+                is_previous: false,
+                branch_worktree_mismatch: false,
+                working_diff_display: None,
+            })),
+        }
+    }
+
+    /// When paths are consistent (no mismatch), Path should yield space to Summary.
+    ///
+    /// Scenario: 4 worktrees with `../agents.*` sibling paths (longest ~28 chars),
+    /// full mode, moderate terminal width. Path is redundant (paths are predictable
+    /// from branch names) and should not reduce Summary's readability.
+    ///
+    /// At very wide terminals both columns coexist. At moderate widths where space
+    /// is constrained, Summary should be preferred over Path.
+    #[test]
+    fn test_path_yields_to_summary_when_no_mismatch() {
+        // Mirrors the user's real setup: worktrees at sibling dirs with consistent naming
+        let items = vec![
+            {
+                let mut item = make_test_item_at("main", "/test/worktrunk");
+                if let super::super::model::ItemKind::Worktree(ref mut data) = item.kind {
+                    data.is_main = true;
+                }
+                item
+            },
+            make_test_item_at("hourly-maintenance", "/test/agents.hourly-maintenance"),
+            make_test_item_at("lab-continue", "/test/agents.lab-continue"),
+            make_test_item_at("dry-run-pager", "/test/agents.dry-run-pager"),
+        ];
+        let main_path = Path::new("/test/worktrunk");
+
+        // Full mode: all columns enabled
+        let skip = full_skip_tasks();
+
+        // At very wide terminals: both Path and Summary coexist
+        let layout_wide = calculate_layout_with_width(&items, &skip, 300, main_path, None);
+        assert!(
+            find_column(&layout_wide, ColumnKind::Summary).is_some(),
+            "Summary should be present at 300"
+        );
+        assert!(
+            find_column(&layout_wide, ColumnKind::Path).is_some(),
+            "Path should be present at 300 (infinite space → show everything)"
+        );
+
+        // At moderate widths (170): Summary should reach at least 50 chars.
+        // Currently Path eats ~30 chars from Summary's expansion budget,
+        // leaving Summary at ~48 and dropping Message entirely.
+        let layout_170 = calculate_layout_with_width(&items, &skip, 170, main_path, None);
+        let summary_170 = find_column(&layout_170, ColumnKind::Summary)
+            .expect("Summary should be present at 170")
+            .width;
+        assert!(
+            summary_170 >= 50,
+            "Summary should reach at least 50 at width 170 when paths are consistent: got {summary_170}"
+        );
+    }
+
+    /// Snapshot test rendering the motivating case: 4 worktrees with consistent
+    /// paths, full mode, 170-char terminal. Verifies Summary gets adequate space
+    /// by dropping redundant Path column.
+    #[test]
+    fn test_snapshot_path_yields_to_summary() {
+        use crate::commands::list::model::{
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
+            ItemKind, StatusSymbols, UpstreamStatus, WorktreeData,
+        };
+        use worktrunk::git::LineDiff;
+
+        let ts = 1742500000; // fixed timestamp for reproducible "Age"
+
+        let make_item = |branch: &str,
+                         path: &str,
+                         is_main: bool,
+                         is_current: bool,
+                         ahead: usize,
+                         behind: usize,
+                         diff: Option<(usize, usize)>,
+                         summary: Option<&str>,
+                         upstream: bool|
+         -> super::super::model::ListItem {
+            let counts = if is_main {
+                None
+            } else {
+                Some(AheadBehind { ahead, behind })
+            };
+            let branch_diff = diff.map(|(a, d)| BranchDiffTotals {
+                diff: LineDiff::from((a, d)),
+            });
+            let upstream_status = upstream.then(|| UpstreamStatus {
+                remote: Some("origin".to_string()),
+                ahead: 0,
+                behind: 0,
+            });
+            super::super::model::ListItem {
+                head: "a620bcfe".to_string(),
+                branch: Some(branch.to_string()),
+                commit: Some(CommitDetails {
+                    timestamp: ts,
+                    commit_message: "Some commit message".to_string(),
+                }),
+                counts,
+                branch_diff,
+                committed_trees_match: None,
+                has_file_changes: None,
+                would_merge_add: None,
+                is_ancestor: None,
+                is_orphan: None,
+                upstream: upstream_status,
+                pr_status: Some(None), // loaded, no CI
+                url: None,
+                url_active: None,
+                summary: Some(summary.map(|s| s.to_string())),
+                status_symbols: Some(StatusSymbols::default()),
+                display: DisplayFields::default(),
+                kind: ItemKind::Worktree(Box::new(WorktreeData {
+                    path: PathBuf::from(path),
+                    detached: false,
+                    locked: None,
+                    prunable: None,
+                    working_tree_diff: Some(LineDiff::default()),
+                    git_operation: ActiveGitOperation::None,
+                    is_main,
+                    is_current,
+                    is_previous: false,
+                    branch_worktree_mismatch: false,
+                    working_diff_display: None,
+                })),
+            }
+        };
+
+        let items = vec![
+            make_item(
+                "main",
+                "/test/worktrunk",
+                true,
+                true,
+                0,
+                0,
+                None,
+                None,
+                true,
+            ),
+            make_item(
+                "hourly-maintenance",
+                "/test/agents.hourly-maintenance",
+                false,
+                false,
+                2,
+                0,
+                None,
+                None,
+                false,
+            ),
+            make_item(
+                "lab-continue",
+                "/test/agents.lab-continue",
+                false,
+                false,
+                1,
+                2,
+                Some((28, 1)),
+                Some("Add extend and block insert in Markdown parser"),
+                true,
+            ),
+            make_item(
+                "dry-run-pager",
+                "/test/agents.dry-run-pager",
+                false,
+                false,
+                3,
+                1,
+                None,
+                None,
+                true,
+            ),
+        ];
+        let main_path = Path::new("/test/worktrunk");
+        let skip = full_skip_tasks();
+
+        let layout = calculate_layout_with_width(&items, &skip, 170, main_path, None);
+
+        let mut lines = Vec::new();
+        lines.push(layout.render_header_line().plain_text());
+        for item in &items {
+            lines.push(layout.render_list_item_line(item).plain_text());
+        }
+        let table = lines.join("\n");
+        insta::assert_snapshot!(table);
+    }
+
+    #[test]
+    fn test_branch_column_never_dropped() {
+        // Branch is shrinkable: it should always be present, even at narrow widths
+        // where its ideal width (longest branch name) doesn't fit.
+        let items = vec![make_test_item(
+            "feature/very-long-branch-name-that-exceeds-available-space",
+        )];
+        let skip = non_full_skip_tasks();
+        let main_path = Path::new("/test");
+
+        // At 30 cols, ideal branch width (~57) can't fit, but Branch should still
+        // be allocated at a reduced width rather than dropped.
+        let layout = calculate_layout_with_width(&items, &skip, 30, main_path, None);
+        let branch = find_column(&layout, ColumnKind::Branch);
+        assert!(
+            branch.is_some(),
+            "Branch column should never be dropped, even at 30 cols"
+        );
+        let branch_width = branch.unwrap().width;
+        assert!(
+            branch_width >= 6,
+            "Branch should be at least header width (6): got {branch_width}"
+        );
+
+        // At 80 cols, Branch should fit comfortably
+        let layout = calculate_layout_with_width(&items, &skip, 80, main_path, None);
+        let branch = find_column(&layout, ColumnKind::Branch).unwrap();
+        assert!(
+            branch.width > 6,
+            "Branch should have more than header width at 80 cols"
         );
     }
 

@@ -15,7 +15,7 @@ use dunce::canonicalize;
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
-use worktrunk::styling::{fix_dim_after_color_reset, get_terminal_width, truncate_visible};
+use worktrunk::styling::{fix_dim_after_color_reset, terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::OutputFormat;
@@ -201,7 +201,7 @@ pub fn run(format: OutputFormat) -> Result<()> {
     if let Ok(repo) = Repository::current()
         && repo.worktree_at(&cwd).git_dir().is_ok()
     {
-        let git_segments = get_git_status_segments(&repo, &cwd, !claude_code)?;
+        let git_segments = git_status_segments(&repo, &cwd, !claude_code)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template
         let git_segments = if let Some(ref dir) = dir_str {
@@ -232,7 +232,7 @@ pub fn run(format: OutputFormat) -> Result<()> {
     }
 
     // Fit segments to terminal width using priority-based dropping
-    let max_width = get_terminal_width();
+    let max_width = terminal_width();
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
     let fitted_segments = StatuslineSegment::fit_to_width(segments, content_budget);
@@ -339,7 +339,7 @@ fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<S
 /// Get git status as prioritized segments for the current worktree.
 ///
 /// When `include_links` is true, CI status includes clickable OSC 8 hyperlinks.
-fn get_git_status_segments(
+fn git_status_segments(
     repo: &Repository,
     cwd: &Path,
     include_links: bool,

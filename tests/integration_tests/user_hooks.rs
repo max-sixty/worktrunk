@@ -1367,7 +1367,7 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     );
 
     // Wait for log file to be created and contain output
-    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Find and read the log file
@@ -1411,7 +1411,7 @@ second = "echo SECOND_OUTPUT"
     );
 
     // Wait for both log files to be created
-    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 2);
 
     // Collect log files and their contents

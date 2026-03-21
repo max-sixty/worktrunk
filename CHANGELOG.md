@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.30.1
+
+### Fixed
+
+- **Narrow terminal layout**: `wt switch` picker now uses vertical (Down) layout on terminals narrower than 80 columns, and the Branch column shrinks instead of being dropped — branch names are always visible. ([#1564](https://github.com/max-sixty/worktrunk/pull/1564), [#1626](https://github.com/max-sixty/worktrunk/pull/1626), thanks @armstrjare for reporting [#1563](https://github.com/max-sixty/worktrunk/issues/1563))
+
+- **Bash tab completion showed all branches**: `wt switch feat<TAB>` displayed every branch instead of filtering by prefix, prompting "Display all N possibilities?" for users with many branches. Fish and zsh still use their native substring/fuzzy matching. ([#1622](https://github.com/max-sixty/worktrunk/pull/1622), thanks @altruic for reporting [#1621](https://github.com/max-sixty/worktrunk/issues/1621))
+
+- **Hook command completion pre-filtered in all shells**: `HookCommandCompleter` filtered by prefix before returning candidates, preventing fish/zsh substring matching on hook command names. ([#1627](https://github.com/max-sixty/worktrunk/pull/1627))
+
+- **`wt merge` failed with `submodule.recurse=true`**: Users with `submodule.recurse=true` in their git config saw push errors during merge. Local push now passes `--recurse-submodules=no`. ([#1619](https://github.com/max-sixty/worktrunk/pull/1619), thanks @viicslen for reporting [#1604](https://github.com/max-sixty/worktrunk/issues/1604))
+
+- **Worktree sync uses safe `read-tree`**: Target worktree sync after `--no-ff` push uses `read-tree -m -u` instead of `reset --hard`, consistent with the project's norms. ([#1623](https://github.com/max-sixty/worktrunk/pull/1623))
+
+### Internal
+
+- Inlined `complete_branches` and `complete_hook_commands` into their respective completers. ([#1628](https://github.com/max-sixty/worktrunk/pull/1628), [#1627](https://github.com/max-sixty/worktrunk/pull/1627))
+
+## 0.30.0
+
+### Improved
+
+- **`wt merge --no-ff`**: Create a merge commit instead of fast-forwarding, for semi-linear history (rebased commits plus a merge commit). Also available as `merge.no-ff = true` in user config. [Docs](https://worktrunk.dev/merge/) ([#1438](https://github.com/max-sixty/worktrunk/pull/1438), thanks @siriobalmelli)
+
+- **`wt step eval`** [experimental]: Evaluate template expressions from the command line. All hook variables (`branch`, `repo`, `worktree_path`) and filters (`hash_port`, `sanitize`, `sanitize_db`) are available. Designed for scripting: `curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health`. [Docs](https://worktrunk.dev/step/) ([#1004](https://github.com/max-sixty/worktrunk/pull/1004), thanks @EduardoSimon for the feature request in [#947](https://github.com/max-sixty/worktrunk/issues/947))
+
+- **`wt step push --no-ff`**: Mirrors `wt merge --no-ff` for manual step-by-step workflows: `wt step commit && wt step rebase && wt step push --no-ff`. ([#1587](https://github.com/max-sixty/worktrunk/pull/1587))
+
+- **Worktree removal now hidden**: Removed worktrees are staged in `.git/wt/trash/` instead of a visible `.wt-removing-*` sibling directory. All worktrunk state consolidated under `.git/wt/`. ([#1583](https://github.com/max-sixty/worktrunk/pull/1583), thanks @ortonomy for reporting [#1572](https://github.com/max-sixty/worktrunk/issues/1572))
+
+### Fixed
+
+- **`wt merge` could remove the default branch worktree in bare repos**: In bare repository layouts, merging from the default branch worktree could remove it instead of preserving it. ([#1620](https://github.com/max-sixty/worktrunk/pull/1620), thanks @viicslen for reporting [#1618](https://github.com/max-sixty/worktrunk/issues/1618))
+
+- **`wt switch` panicked on empty picker selection**: Entering a non-existent branch name in the interactive picker caused a panic. Now returns an error message gracefully. ([#1566](https://github.com/max-sixty/worktrunk/pull/1566), thanks @dlnilsson for reporting [#1565](https://github.com/max-sixty/worktrunk/issues/1565))
+
+- **`copy-ignored` lost directory permissions**: Source directory permissions (e.g., mode 0700 for Postgres data directories) were replaced with default 0755. ([#1590](https://github.com/max-sixty/worktrunk/pull/1590), thanks @RileyMathews for reporting [#1589](https://github.com/max-sixty/worktrunk/issues/1589))
+
+- **`copy-ignored` failed on broken symlinks at destination**: If a gitignored file's destination was already an invalid symlink, the copy failed with "No such file or directory". ([#1549](https://github.com/max-sixty/worktrunk/pull/1549), thanks @armstrjare for reporting [#1547](https://github.com/max-sixty/worktrunk/issues/1547))
+
+- **Nushell `$env.PWD` errors after `wt remove`**: Removing a worktree from inside it produced repeated `$env.PWD points to a non-existent directory` errors in Nushell. ([#1508](https://github.com/max-sixty/worktrunk/pull/1508), thanks @mystilleef for reporting [#1507](https://github.com/max-sixty/worktrunk/issues/1507))
+
+- **Remote URL used `insteadOf` rewrites**: `wt list` and PR detection used the rewritten remote URL instead of the raw config value, causing mismatches with CI and forge detection. ([#1546](https://github.com/max-sixty/worktrunk/pull/1546), thanks @volkanbicer)
+
+- **SIGPIPE from pager quit treated as error**: Quitting a pager (e.g., `q` in `less`) during `wt step diff` showed "terminated by signal 13" instead of exiting cleanly. ([#1559](https://github.com/max-sixty/worktrunk/pull/1559))
+
+- **Missing vs corrupt git config errors conflated**: Missing config keys and corrupt config files both returned the same error, making corrupt configurations hard to diagnose. ([#1610](https://github.com/max-sixty/worktrunk/pull/1610))
+
+- **Shell operator precedence in remove command**: The `|| true` for fsmonitor stop had incorrect precedence, potentially swallowing failures from the entire removal chain. ([#1584](https://github.com/max-sixty/worktrunk/pull/1584))
+
+- **Missing shell escaping in error hints**: Branch names and paths in suggested `cd ... && git switch ...` commands were not shell-escaped. ([#1584](https://github.com/max-sixty/worktrunk/pull/1584))
+
+### Documentation
+
+- **pnpm post-create example**: Added a recipe for running `pnpm install` after worktree creation via `copy-ignored`. ([#1581](https://github.com/max-sixty/worktrunk/pull/1581))
+
+- **Hook execution order**: Clarified that post-create hooks run before post-start hooks. ([#1573](https://github.com/max-sixty/worktrunk/pull/1573))
+
 ## 0.29.4
 
 ### Improved

@@ -408,7 +408,7 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&["branch", "-D", "feature-remote"]);
 
     // Set a GitHub-style URL AFTER pushing so platform detection works
-    // This exercises the remote_hint path in get_platform_for_repo
+    // This exercises the remote_hint path in platform_for_repo
     repo.run_git(&[
         "remote",
         "set-url",
@@ -1765,7 +1765,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     };
 
     // Create cache directory and write file
-    let cache_dir = git_path.join("wt-cache").join("ci-status");
+    let cache_dir = git_path.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Use the same sanitization as production code for cache filenames

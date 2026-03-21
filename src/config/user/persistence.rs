@@ -7,7 +7,7 @@ use config::ConfigError;
 use serde::Serialize;
 
 use super::UserConfig;
-use super::path::get_config_path;
+use super::path;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
@@ -24,7 +24,7 @@ impl UserConfig {
         match config_path {
             Some(path) => self.save_to(path),
             None => {
-                let path = get_config_path().ok_or_else(|| {
+                let path = path::config_path().ok_or_else(|| {
                     ConfigError::Message(
                         "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
                     )

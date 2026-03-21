@@ -63,7 +63,7 @@ impl BenchConfig {
     }
 }
 
-fn get_release_binary() -> &'static Path {
+fn release_binary() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_wt"))
 }
 
@@ -102,7 +102,7 @@ fn run_benchmark(
 
 fn bench_skeleton(c: &mut Criterion) {
     let mut group = c.benchmark_group("skeleton");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -133,7 +133,7 @@ fn bench_skeleton(c: &mut Criterion) {
 
 fn bench_complete(c: &mut Criterion) {
     let mut group = c.benchmark_group("complete");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -157,7 +157,7 @@ fn bench_complete(c: &mut Criterion) {
 
 fn bench_worktree_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("worktree_scaling");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -181,7 +181,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -228,7 +228,7 @@ fn bench_real_repo(c: &mut Criterion) {
 
 fn bench_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("many_branches");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
@@ -256,7 +256,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(30));
     group.sample_size(10);
 
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
@@ -307,7 +307,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(60));
     group.sample_size(10);
 
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     // Setup function - each bench_function creates its own fresh workspace
     // Uses setup_rust_workspace_with_branches plus a worktree for worktrees_only test

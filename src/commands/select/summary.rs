@@ -154,7 +154,9 @@ mod tests {
         use crate::summary::{CachedSummary, read_cache, write_cache};
         let (_dir, repo) = temp_repo();
         // Block cache directory creation by placing a file where the directory should be
-        let cache_parent = repo.git_common_dir().join("wt-cache");
+        let wt_dir = repo.wt_dir();
+        fs::create_dir_all(&wt_dir).unwrap();
+        let cache_parent = wt_dir.join("cache");
         fs::write(&cache_parent, "blocker").unwrap();
 
         let cached = CachedSummary {
@@ -226,7 +228,7 @@ mod tests {
         use crate::summary::cache_dir;
         let (_dir, repo) = temp_repo();
         let dir = cache_dir(&repo);
-        assert!(dir.to_str().unwrap().contains("wt-cache"));
+        assert!(dir.to_str().unwrap().contains("wt"));
         assert!(dir.to_str().unwrap().contains("summaries"));
     }
 

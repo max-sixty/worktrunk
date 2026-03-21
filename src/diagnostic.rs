@@ -30,8 +30,8 @@
 //!
 //! # File Location
 //!
-//! Reports are written to `<git-common-dir>/wt-logs/diagnostic.md` (typically
-//! `.git/wt-logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
+//! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
+//! `.git/wt/logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
 //!
 //! # Usage
 //!
@@ -133,7 +133,7 @@ impl DiagnosticReport {
         let version = version_str();
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        let git_version = get_git_version().unwrap_or_else(|_| "(unknown)".to_string());
+        let git_version = git_version().unwrap_or_else(|_| "(unknown)".to_string());
         let shell_integration = if output::is_shell_integration_active() {
             "active"
         } else {
@@ -145,7 +145,7 @@ impl DiagnosticReport {
             .unwrap_or_else(|_| "(failed to get worktree list)".to_string());
 
         // Get config show output (if available)
-        let config_show = get_config_show_output(repo);
+        let config_show = config_show_output(repo);
 
         // Get verbose log content (if available)
         let verbose_log = crate::verbose_log::log_file_path()
@@ -202,7 +202,7 @@ pub(crate) fn issue_hint() -> String {
 /// Write diagnostic file when -vv is used.
 ///
 /// Called at the end of command execution. If verbose level is >= 2, writes
-/// a diagnostic report to `.git/wt-logs/diagnostic.md` for issue filing.
+/// a diagnostic report to `.git/wt/logs/diagnostic.md` for issue filing.
 ///
 /// Silently returns if:
 /// - verbose < 2
@@ -295,7 +295,7 @@ fn truncate_log(content: &str) -> String {
 }
 
 /// Get git version string.
-fn get_git_version() -> anyhow::Result<String> {
+fn git_version() -> anyhow::Result<String> {
     let output = Cmd::new("git")
         .arg("--version")
         .run()
@@ -314,11 +314,11 @@ fn get_git_version() -> anyhow::Result<String> {
 /// Get config show output for diagnostic.
 ///
 /// Returns a summary of user and project config files.
-fn get_config_show_output(repo: &Repository) -> Option<String> {
+fn config_show_output(repo: &Repository) -> Option<String> {
     let mut output = String::new();
 
     // User config
-    if let Some(user_config_path) = worktrunk::config::get_config_path() {
+    if let Some(user_config_path) = worktrunk::config::config_path() {
         output.push_str(&format_config_section(&user_config_path, "User config"));
     }
 

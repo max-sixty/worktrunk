@@ -158,7 +158,11 @@ Never risk data loss without explicit user consent. A failed command that preser
 
 - **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error
 - **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
+- **No implicit destructive side effects** — A command must not silently delete, remove, or overwrite files/directories as a side effect of an unrelated operation. If cleanup is needed, make it a separate explicit action the user chooses to take
+- **Favor retaining data and failing on race conditions** — When there's a gap between checking safety and performing an operation, choose the variant that fails rather than silently discards work. Example: use `git reset --keep` (fails if tracked files were modified) over `git reset --hard` (silently overwrites). Similarly, prefer `git checkout --merge` over `git checkout --force`. If a safer variant doesn't exist, document the risk inline
 - **Time-of-check vs time-of-use** — Be conservative when there's a gap between checking safety and performing an operation. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
+
+For the full inventory of what Worktrunk creates and deletes, see the FAQ: [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). New code that changes this surface area should be reviewed against these sections.
 
 ## Command Execution Principles
 
@@ -238,7 +242,7 @@ When no structured alternative exists, document the fragility inline.
 
 ## Background Operation Logs
 
-All background logs are centralized in `.git/wt-logs/` (main worktree's git directory):
+All background logs are centralized in `.git/wt/logs/` (main worktree's git directory):
 
 - **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
 - **Background removal**: `{branch}-remove.log`
@@ -247,7 +251,7 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 
 ### Log Behavior
 
-- **Centralized**: All logs go to main worktree's `.git/wt-logs/`, shared across all worktrees
+- **Centralized**: All logs go to main worktree's `.git/wt/logs/`, shared across all worktrees
 - **Overwrites**: Same operation on same branch overwrites previous log (prevents accumulation)
 - **Not tracked**: Logs are in `.git/` directory, which git doesn't track
 - **Manual cleanup**: Stale logs from deleted branches persist but are bounded by branch count

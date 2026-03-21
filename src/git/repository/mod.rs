@@ -125,7 +125,7 @@ pub(super) struct RepoCache {
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
-    /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
+    /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
 
     // ========== Per-worktree values (keyed by path) ==========
@@ -374,11 +374,28 @@ impl Repository {
         &self.git_common_dir
     }
 
+    /// Get the worktrunk data directory inside the git directory.
+    ///
+    /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
+    /// All worktrunk-managed state lives under this single directory.
+    pub fn wt_dir(&self) -> PathBuf {
+        self.git_common_dir().join("wt")
+    }
+
     /// Get the directory where worktrunk background logs are stored.
     ///
-    /// Returns `<git-common-dir>/wt-logs/` (typically `.git/wt-logs/`).
+    /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).
     pub fn wt_logs_dir(&self) -> PathBuf {
-        self.git_common_dir().join("wt-logs")
+        self.wt_dir().join("logs")
+    }
+
+    /// Get the directory where worktrees are staged for background deletion.
+    ///
+    /// Returns `<git-common-dir>/wt/trash/` (typically `.git/wt/trash/`).
+    /// Worktrees are renamed here (instant same-filesystem rename) before
+    /// being deleted by a background process.
+    pub fn wt_trash_dir(&self) -> PathBuf {
+        self.wt_dir().join("trash")
     }
 
     /// The repository root path (the main worktree directory).

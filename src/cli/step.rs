@@ -148,6 +148,14 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
     },
 
     /// Rebase onto target

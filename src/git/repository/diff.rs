@@ -229,7 +229,7 @@ impl Repository {
     /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
     /// all counts in a single command. Returns a map from branch name to (ahead, behind).
     ///
-    /// Results are cached so subsequent lookups via `get_cached_ahead_behind()` avoid
+    /// Results are cached so subsequent lookups via `cached_ahead_behind()` avoid
     /// running individual git commands (though cache access still has minor overhead).
     ///
     /// On git < 2.36 or if the command fails, returns an empty map.
@@ -271,7 +271,7 @@ impl Repository {
     ///
     /// Returns cached results from a prior `batch_ahead_behind()` call, or None
     /// if the branch wasn't in the batch or batch wasn't run.
-    pub fn get_cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
+    pub fn cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
         self.cache
             .ahead_behind
             .get(&(base.to_string(), branch.to_string()))

@@ -751,7 +751,7 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     // Verify log file was created in the common git directory
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     assert!(log_dir.exists());
 
     // Wait for the background command to complete
@@ -896,7 +896,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     // Wait for log file to be created (not just the directory)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Find the log file
@@ -985,7 +985,7 @@ approved-commands = [
     // Wait for all 3 log files to be created (poll, don't use fixed sleep)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     wait_for_file_count(&log_dir, "log", 3);
 
     let log_files: Vec<_> = fs::read_dir(&log_dir)

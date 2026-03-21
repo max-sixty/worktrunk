@@ -813,7 +813,7 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 
@@ -890,6 +890,12 @@ Preserve commit history (no squash):
 wt merge --no-squash
 ```
 
+Create a merge commit (semi-linear history):
+
+```console
+wt merge --no-ff
+```
+
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
@@ -903,9 +909,9 @@ wt merge --no-commit
 1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
+4. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
+6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
 
 Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
@@ -969,6 +975,14 @@ lint = "cargo clippy"
         /// Keep worktree after merge
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
+
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -1092,8 +1106,8 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
 | `pre-switch` | Before every switch | Yes | Yes |
-| `post-start` | After worktree created | No | No |
 | `post-create` | After worktree created | Yes | No |
+| `post-start` | After worktree created | No | No |
 | `post-switch` | After every switch | No | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -1123,16 +1137,6 @@ fi
 """
 ```
 
-## post-start
-
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
 ## post-create
 
 Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
@@ -1143,9 +1147,19 @@ install = "npm ci"
 env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
+## post-start
+
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
 ## post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
 [post-switch]
@@ -1191,7 +1205,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ## post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]
@@ -1411,7 +1425,13 @@ Git worktrees share the repository but not untracked files. [`wt step copy-ignor
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
+
+```toml
+[post-create]
+copy = "wt step copy-ignored"
+install = "pnpm install"
+```
 
 ## Dev servers
 
@@ -1697,7 +1717,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -1706,6 +1726,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
 ### Switch

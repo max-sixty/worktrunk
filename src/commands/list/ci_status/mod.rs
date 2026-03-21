@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::utils::get_now;
+use worktrunk::utils::epoch_now;
 
 /// A parsed branch name for CI status detection.
 ///
@@ -100,7 +100,7 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::CachedCiStatus;
-pub use platform::{CiPlatform, get_platform_for_repo};
+pub use platform::{CiPlatform, platform_for_repo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -330,7 +330,7 @@ impl PrStatus {
     /// Returns None if no CI found or CLI tools unavailable
     ///
     /// # Caching
-    /// Results (including None) are cached in `.git/wt-cache/ci-status/<branch>.json`
+    /// Results (including None) are cached in `.git/wt/cache/ci-status/<branch>.json`
     /// for 30-60 seconds to avoid hitting GitHub API rate limits. TTL uses deterministic jitter
     /// based on repo path to spread cache expirations across concurrent statuslines. Invalidated
     /// when HEAD changes.
@@ -349,7 +349,7 @@ impl PrStatus {
 
         // Check cache first to avoid hitting API rate limits
         // Use full_name as cache key to distinguish local "feature" from remote "origin/feature"
-        let now_secs = get_now();
+        let now_secs = epoch_now();
 
         if let Some(cached) = CachedCiStatus::read(repo, &branch.full_name) {
             if cached.is_valid(local_head, now_secs, &repo_path) {
@@ -404,7 +404,7 @@ impl PrStatus {
 
         // Determine platform (config override, branch's remote, or any remote URL)
         // For remote branches, use their specific remote to get the correct platform
-        let platform = get_platform_for_repo(repo, platform_override, branch.remote.as_deref());
+        let platform = platform_for_repo(repo, platform_override, branch.remote.as_deref());
 
         match platform {
             Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),

@@ -386,4 +386,4 @@ repo.git_command(&[
 ]);
 ```
 
-**For production code** that needs timestamps, use `worktrunk::utils::get_now()` which respects `WORKTRUNK_TEST_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.
+**For production code** that needs timestamps, use `worktrunk::utils::epoch_now()` which respects `WORKTRUNK_TEST_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.

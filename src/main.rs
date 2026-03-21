@@ -43,7 +43,7 @@ pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
 use commands::handle_select;
-use commands::worktree::handle_push;
+use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
     clear_approvals, handle_completions, handle_config_create, handle_config_show,
@@ -268,7 +268,15 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
                 })
             }
         }
-        StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
+        StepCommand::Push { target, no_ff, .. } => {
+            if no_ff {
+                let repo = Repository::current()?;
+                let current_branch = repo.require_current_branch("step push --no-ff")?;
+                handle_no_ff_merge(target.as_deref(), None, &current_branch)
+            } else {
+                handle_push(target.as_deref(), "Pushed to", None)
+            }
+        }
         StepCommand::Rebase { target } => {
             handle_rebase(target.as_deref()).map(|result| match result {
                 RebaseResult::Rebased => (),
@@ -802,7 +810,7 @@ fn main() {
     }
 
     // Configure logging based on --verbose flag or RUST_LOG env var
-    // When -vv is set, also write logs to .git/wt-logs/verbose.log
+    // When -vv is set, also write logs to .git/wt/logs/verbose.log
     if cli.verbose >= 2 {
         verbose_log::init();
     }
@@ -968,6 +976,8 @@ fn main() {
             no_rebase,
             remove,
             no_remove,
+            no_ff,
+            ff,
             verify,
             no_verify,
             yes,
@@ -978,6 +988,7 @@ fn main() {
             commit: flag_pair(commit, no_commit),
             rebase: flag_pair(rebase, no_rebase),
             remove: flag_pair(remove, no_remove),
+            no_ff: flag_pair(no_ff, ff),
             verify: flag_pair(verify, no_verify),
             yes,
             stage,

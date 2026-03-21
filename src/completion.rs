@@ -60,7 +60,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)
     // clap only returns matches for the prefix, so we call complete twice
-    let current_word = args.get(index).map(|s| s.to_string_lossy());
+    let current_word = args.get(index).map(|s| s.to_string_lossy().into_owned());
     let include_long_flags = current_word.as_deref() == Some("-");
 
     let completions = match clap_complete::engine::complete(
@@ -104,8 +104,25 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         completions
     };
 
-    // Write completions in the appropriate format for the shell
+    // Bash does not filter COMPREPLY by prefix — its programmable completion
+    // (-F) passes the array as-is. Fish/zsh apply their own matching (substring,
+    // fuzzy), so they receive all candidates. For bash, we must filter here.
     let shell_name = shell_name.to_string_lossy();
+    let completions = if shell_name.as_ref() == "bash" {
+        let prefix = current_word.as_deref().unwrap_or("").to_owned();
+        if prefix.is_empty() {
+            completions
+        } else {
+            completions
+                .into_iter()
+                .filter(|c| c.get_value().to_string_lossy().starts_with(&*prefix))
+                .collect()
+        }
+    } else {
+        completions
+    };
+
+    // Write completions in the appropriate format for the shell
     let ifs = std::env::var("_CLAP_IFS").ok();
     let separator = ifs.as_deref().unwrap_or("\n");
 
@@ -174,7 +191,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
     })
 }
 
-/// Hook command name completion for `wt step <hook-type> <name>`.
+/// Hook command name completion for `wt hook <hook-type> <name>`.
 /// Completes with command names from the project config for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
@@ -190,79 +207,67 @@ impl ValueCompleter for HookCommandCompleter {
             return Vec::new();
         }
 
-        let prefix = current.to_string_lossy();
-        complete_hook_commands()
-            .into_iter()
-            .filter(|candidate| {
-                candidate
-                    .get_value()
-                    .to_string_lossy()
-                    .starts_with(&*prefix)
-            })
-            .collect()
-    }
-}
+        // Return all candidates without prefix filtering — let the shell apply its
+        // own matching (substring in fish, fuzzy in zsh, prefix in bash). The
+        // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
 
-fn complete_hook_commands() -> Vec<CompletionCandidate> {
-    // Get the hook type from the command line context
-    let hook_type = CONTEXT.with(|ctx| {
-        ctx.borrow().as_ref().and_then(|ctx| {
-            // Look for the hook subcommand in the args
-            for hook in &[
-                "post-create",
-                "post-start",
-                "pre-commit",
-                "pre-merge",
-                "post-merge",
-                "pre-remove",
-            ] {
-                if ctx.contains(hook) {
-                    return Some(*hook);
+        // Get the hook type from the command line context
+        let hook_type = CONTEXT.with(|ctx| {
+            ctx.borrow().as_ref().and_then(|ctx| {
+                for hook in &[
+                    "post-create",
+                    "post-start",
+                    "pre-commit",
+                    "pre-merge",
+                    "post-merge",
+                    "pre-remove",
+                ] {
+                    if ctx.contains(hook) {
+                        return Some(*hook);
+                    }
                 }
-            }
-            None
-        })
-    });
+                None
+            })
+        });
 
-    let Some(hook_type_str) = hook_type else {
-        return Vec::new();
-    };
-    let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
-        return Vec::new();
-    };
-
-    let mut candidates = Vec::new();
-
-    // Helper to extract named commands from a hook config
-    let add_named_commands =
-        |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-            candidates.extend(
-                config
-                    .commands()
-                    .iter()
-                    .filter_map(|cmd| cmd.name.as_ref())
-                    .map(|name| CompletionCandidate::new(name.clone())),
-            );
+        let Some(hook_type_str) = hook_type else {
+            return Vec::new();
+        };
+        let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
+            return Vec::new();
         };
 
-    // Load user config and add user hook names
-    // Uses overrides.hooks for completion (global hooks from user config file)
-    if let Ok(user_config) = UserConfig::load()
-        && let Some(config) = user_config.configs.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let mut candidates = Vec::new();
 
-    // Load project config and add project hook names
-    // Pass write_hints=false to avoid side effects during completion
-    if let Ok(repo) = Repository::current()
-        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-        && let Some(config) = project_config.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let add_named_commands =
+            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
+                candidates.extend(
+                    config
+                        .commands()
+                        .iter()
+                        .filter_map(|cmd| cmd.name.as_ref())
+                        .map(|name| CompletionCandidate::new(name.clone())),
+                );
+            };
 
-    candidates
+        // Load user config and add user hook names
+        if let Ok(user_config) = UserConfig::load()
+            && let Some(config) = user_config.configs.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        // Load project config and add project hook names
+        // Pass write_hints=false to avoid side effects during completion
+        if let Ok(repo) = Repository::current()
+            && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(config) = project_config.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        candidates
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -281,67 +286,56 @@ impl ValueCompleter for BranchCompleter {
 
         // Return all candidates without prefix filtering — let the shell apply its
         // own matching (substring in fish, fuzzy in zsh, prefix in bash). Pre-filtering
-        // here prevents shells from using their native matching strategies. The >100
-        // remote exclusion in complete_branches() still applies to avoid overwhelming
-        // the shell with thousands of remote-only branches.
-        complete_branches(
-            self.suppress_with_create,
-            self.exclude_remote_only,
-            self.worktree_only,
-        )
+        // here prevents shells from using their native matching strategies.
+
+        if self.suppress_with_create && suppress_switch_branch_completion() {
+            return Vec::new();
+        }
+
+        let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        };
+
+        if branches.is_empty() {
+            return Vec::new();
+        }
+
+        // If remote-only branches aren't already excluded, drop them when the total
+        // count is large. Shells like bash/zsh prompt "do you wish to see all N
+        // possibilities?" which makes completion unusable in repos with many remotes.
+        // Threshold of 100 aligns with bash's default `completion-query-items`.
+        let exclude_remote_only = self.exclude_remote_only
+            || (!self.worktree_only
+                && branches.len() > 100
+                && branches
+                    .iter()
+                    .any(|b| matches!(b.category, BranchCategory::Remote(_))));
+
+        branches
+            .into_iter()
+            .filter(|branch| {
+                if self.worktree_only {
+                    matches!(branch.category, BranchCategory::Worktree)
+                } else if exclude_remote_only {
+                    !matches!(branch.category, BranchCategory::Remote(_))
+                } else {
+                    true
+                }
+            })
+            .map(|branch| {
+                let time_str = format_relative_time_short(branch.timestamp);
+                let help = match branch.category {
+                    BranchCategory::Worktree => format!("+ {}", time_str),
+                    BranchCategory::Local => format!("/ {}", time_str),
+                    BranchCategory::Remote(remotes) => {
+                        format!("⇣ {} {}", time_str, remotes.join(", "))
+                    }
+                };
+                CompletionCandidate::new(branch.name).help(Some(help.into()))
+            })
+            .collect()
     }
-}
-
-fn complete_branches(
-    suppress_with_create: bool,
-    exclude_remote_only: bool,
-    worktree_only: bool,
-) -> Vec<CompletionCandidate> {
-    if suppress_with_create && suppress_switch_branch_completion() {
-        return Vec::new();
-    }
-
-    let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-
-    if branches.is_empty() {
-        return Vec::new();
-    }
-
-    // If remote-only branches aren't already excluded, drop them when the total
-    // count is large. Shells like bash/zsh prompt "do you wish to see all N
-    // possibilities?" which makes completion unusable in repos with many remotes.
-    // Threshold of 100 aligns with bash's default `completion-query-items`.
-    let exclude_remote_only = exclude_remote_only
-        || (!worktree_only
-            && branches.len() > 100
-            && branches
-                .iter()
-                .any(|b| matches!(b.category, BranchCategory::Remote(_))));
-
-    branches
-        .into_iter()
-        .filter(|branch| {
-            if worktree_only {
-                matches!(branch.category, BranchCategory::Worktree)
-            } else if exclude_remote_only {
-                !matches!(branch.category, BranchCategory::Remote(_))
-            } else {
-                true
-            }
-        })
-        .map(|branch| {
-            let time_str = format_relative_time_short(branch.timestamp);
-            let help = match branch.category {
-                BranchCategory::Worktree => format!("+ {}", time_str),
-                BranchCategory::Local => format!("/ {}", time_str),
-                BranchCategory::Remote(remotes) => format!("⇣ {} {}", time_str, remotes.join(", ")),
-            };
-            CompletionCandidate::new(branch.name).help(Some(help.into()))
-        })
-        .collect()
 }
 
 fn suppress_switch_branch_completion() -> bool {

@@ -563,7 +563,7 @@ fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
 /// Get help output for a command
 ///
 /// Expected format: `wt <subcommand> --help-md` (ID includes backticks from marker)
-fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
+fn help_output(id: &str, project_root: &Path) -> Result<String, String> {
     // Strip backticks from ID (captured by MARKER_PATTERN)
     let command = id.trim_matches('`');
     let args: Vec<&str> = command.split_whitespace().collect();
@@ -826,7 +826,7 @@ fn transform_zola_to_github(content: &str) -> String {
 ///
 /// Parses `path#anchor` ID format, extracts section(s) by anchor
 /// (supports ranges like `start..end`), and transforms Zola links to GitHub URLs.
-fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, String> {
+fn docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, String> {
     let (path, anchor) = id
         .split_once('#')
         .ok_or_else(|| format!("Invalid section ID (missing #): {}", id))?;
@@ -845,17 +845,15 @@ fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, 
 /// Get content for a README marker based on its type
 ///
 /// Handles help (`cmd`) and section (#anchor) markers.
-fn get_readme_content(
+fn generate_readme_content(
     id: &str,
     _current_content: &str,
     project_root: &Path,
 ) -> Result<String, String> {
     match MarkerType::from_id(id) {
         MarkerType::Snapshot => unreachable!("README has no snapshot markers"),
-        MarkerType::Help => get_help_output(id, project_root),
-        MarkerType::Section => {
-            get_docs_section_for_readme(id, project_root).map(|c| trim_lines(&c))
-        }
+        MarkerType::Help => help_output(id, project_root),
+        MarkerType::Section => docs_section_for_readme(id, project_root).map(|c| trim_lines(&c)),
     }
 }
 
@@ -892,7 +890,7 @@ fn sync_readme_markers(
         // Strip wrapper from current content (snapshots have ```console```, others are raw)
         let current_inner = marker_type.extract_inner(&current_with_wrapper);
 
-        let expected = match get_readme_content(&id, &current_with_wrapper, project_root) {
+        let expected = match generate_readme_content(&id, &current_with_wrapper, project_root) {
             Ok(content) => content,
             Err(e) => {
                 errors.push(format!("❌ {}: {}", id, e));
@@ -1304,7 +1302,7 @@ fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec
 
     // Process in reverse order
     for (start, end, id, current) in matches.into_iter().rev() {
-        let expected = match get_help_output(&id, project_root) {
+        let expected = match help_output(&id, project_root) {
             Ok(content) => content,
             Err(e) => {
                 errors.push(format!("❌ {}: {}", id, e));

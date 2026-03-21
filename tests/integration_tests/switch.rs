@@ -3386,6 +3386,53 @@ fn test_switch_no_cd_flag_explicit(repo: TestRepo) {
     );
 }
 
+/// Test that worktrunk works correctly when `worktree.useRelativePaths` is enabled.
+///
+/// Git 2.48+ supports `worktree.useRelativePaths`, which stores relative paths in the
+/// `.git` file of linked worktrees instead of absolute paths. This makes worktree
+/// directories relocatable. We verify that worktrunk's path handling (which canonicalizes
+/// paths internally) works correctly with this configuration.
+///
+/// See: https://github.com/max-sixty/worktrunk/issues/1630
+#[rstest]
+fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
+    // Enable relative paths for worktrees
+    repo.run_git(&["config", "worktree.useRelativePaths", "true"]);
+
+    // Create a new worktree via wt switch --create
+    snapshot_switch(
+        "switch_create_relative_paths",
+        &repo,
+        &["--create", "relative-test"],
+    );
+
+    // Verify the .git file in the worktree contains a relative path
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.relative-test");
+    let git_file = std::fs::read_to_string(worktree_path.join(".git")).unwrap();
+    assert!(
+        !git_file.contains(repo.root_path().to_str().unwrap()),
+        "Expected relative path in .git file, but found absolute path: {git_file}"
+    );
+    assert!(
+        git_file.contains("gitdir: ../"),
+        "Expected relative gitdir in .git file: {git_file}"
+    );
+
+    // Verify wt list shows the worktree (path resolution works)
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
+        assert_cmd_snapshot!("list_with_relative_paths", cmd);
+    });
+
+    // Verify switching to the relative-path worktree works
+    snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
+}
+
 /// Test that `[switch] no-cd = true` config is respected when no flags provided
 #[rstest]
 fn test_switch_no_cd_config_default(repo: TestRepo) {

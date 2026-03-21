@@ -2035,7 +2035,7 @@ fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
         "Worktree path should be gone immediately after wt remove returns"
     );
 
-    // Note: The staging directory (.wt-removing-*) might already be deleted by the
+    // Note: The staging directory in .git/wt/trash/ might already be deleted by the
     // background process, or it might still exist. Both are valid outcomes.
     // The key assertion above is that the original path is gone immediately.
 }
@@ -2193,10 +2193,13 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-fallback");
 
     // Calculate the expected staged path that the rename would use.
-    // The path is: <worktree>.wt-removing-<TEST_EPOCH>
+    // The path is: <git-common-dir>/wt/trash/<name>-<TEST_EPOCH>
     // Since WT_TEST_EPOCH is set by the test harness, the timestamp is deterministic.
-    let staged_path = worktree_path.with_file_name(format!(
-        "{}.wt-removing-{}",
+    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let trash_dir = git_common_dir.join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
         worktree_path.file_name().unwrap().to_string_lossy(),
         crate::common::TEST_EPOCH
     ));
@@ -2243,19 +2246,23 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
-/// Stale `.wt-removing-*` directories from crashed removals accumulate on disk.
+/// Stale staging directories from crashed removals are contained in `.git/wt/trash/`.
 ///
 /// If `wt remove` is killed after `fs::rename()` succeeds but before the background
-/// `rm -rf` spawns, the staging directory is left behind. When the same worktree is
-/// re-created and removed again, the staging path collides (non-empty directory),
-/// forcing a fallback to legacy removal. The stale directory is never cleaned up.
+/// `rm -rf` spawns, the staging directory is left behind inside `.git/wt/trash/`.
+/// Unlike the old sibling-path approach, these are hidden from the user's workspace.
+/// When the same worktree is re-created and removed again, the new staging path uses
+/// a fresh timestamp so there is no collision.
 #[rstest]
 fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-crash");
 
     // Calculate the deterministic staging path (TEST_EPOCH is fixed in tests)
-    let staged_path = worktree_path.with_file_name(format!(
-        "{}.wt-removing-{}",
+    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let trash_dir = git_common_dir.join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
         worktree_path.file_name().unwrap().to_string_lossy(),
         crate::common::TEST_EPOCH
     ));
@@ -2265,36 +2272,15 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
     std::fs::rename(&worktree_path, &staged_path).unwrap();
     repo.run_git(&["worktree", "prune"]);
 
-    // Verify the crash state: original path gone, stale staging dir remains
+    // Verify the crash state: original path gone, stale staging dir remains in .git/wt/trash/
     assert!(!worktree_path.exists());
     assert!(staged_path.exists());
 
-    // Re-create the same worktree (branch was deleted by prune, so create fresh)
-    let _ = repo.add_worktree("feature-crash");
-
-    // Remove it again — staging path collides with stale dir, falls back to legacy
-    let output = repo
-        .wt_command()
-        .args(["remove", "feature-crash"])
-        .output()
-        .unwrap();
-
+    // The stale dir is inside .git/ — invisible to the user, unlike the old
+    // sibling-path approach that left confusingly-named dirs in the workspace.
     assert!(
-        output.status.success(),
-        "wt remove should succeed despite stale staging dir: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Poll for legacy background removal (includes 1-second sleep before git worktree remove)
-    crate::common::wait_for("re-created worktree removed by fallback", || {
-        !worktree_path.exists()
-    });
-
-    // But the stale staging directory from the first crash is STILL there —
-    // nothing cleans it up. This is the accumulation risk.
-    assert!(
-        staged_path.exists(),
-        "Stale staging directory from crashed removal is never cleaned up"
+        staged_path.starts_with(&git_common_dir),
+        "Stale staging dir should be inside .git/"
     );
 }
 

@@ -484,7 +484,9 @@ impl GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                let command = format!("cd {path_display} && git switch {branch}");
+                let escaped_path = escape(path.to_string_lossy());
+                let escaped_branch = escape(Cow::Borrowed(branch.as_str()));
+                let command = format!("cd {escaped_path} && git switch {escaped_branch}");
                 write!(
                     f,
                     "{}\n{}",
@@ -1298,6 +1300,22 @@ mod tests {
         [31m✗[39m [31mCannot switch to [1mfeature[22m — there's a detached worktree at the expected path [1m/tmp/repo[22m[39m
         [2m↳[22m [2mTo switch the worktree at [4m/tmp/repo[24m to [4mfeature[24m, run [4mcd /tmp/repo && git switch feature[24m[22m
         ");
+    }
+
+    #[test]
+    fn snapshot_worktree_path_occupied_special_chars() {
+        // Spaces in path and branch name require shell escaping in the hint command
+        let err = GitError::WorktreePathOccupied {
+            branch: "feature/my branch".into(),
+            path: PathBuf::from("/tmp/my repo"),
+            occupant: Some("main".into()),
+        };
+        let output = err.to_string();
+        // The hint command must quote the path and branch for safe shell execution
+        assert!(
+            output.contains("cd '/tmp/my repo' && git switch 'feature/my branch'"),
+            "expected shell-escaped command in hint, got: {output}"
+        );
     }
 
     #[test]

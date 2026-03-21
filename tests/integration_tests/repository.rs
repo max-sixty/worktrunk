@@ -300,7 +300,7 @@ fn test_project_identifier_no_remote_fallback() {
 }
 
 // =============================================================================
-// get_config/set_config tests
+// config_value/set_config tests
 // =============================================================================
 
 #[test]
@@ -312,7 +312,7 @@ fn test_get_config_exists() {
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("test.key").unwrap();
+    let value = repository.config_value("test.key").unwrap();
     assert_eq!(value, Some("test-value".to_string()));
 }
 
@@ -321,7 +321,7 @@ fn test_get_config_not_exists() {
     let repo = TestRepo::new();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("nonexistent.key").unwrap();
+    let value = repository.config_value("nonexistent.key").unwrap();
     assert!(value.is_none());
 }
 
@@ -333,8 +333,55 @@ fn test_set_config() {
     repository.set_config("test.setting", "new-value").unwrap();
 
     // Verify it was set
-    let value = repository.get_config("test.setting").unwrap();
+    let value = repository.config_value("test.setting").unwrap();
     assert_eq!(value, Some("new-value".to_string()));
+}
+
+// =============================================================================
+// config_value() error handling: corrupt config propagation
+// =============================================================================
+
+#[test]
+fn test_config_value_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+
+    // Corrupt the git config file after repository creation
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.config_value("test.key");
+
+    // Should propagate the error, not silently return None
+    assert!(
+        result.is_err(),
+        "config_value() should propagate errors from corrupt config, not return Ok(None)"
+    );
+}
+
+#[test]
+fn test_clear_hint_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository and set a hint before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+    repository.mark_hint_shown("test-hint").unwrap();
+
+    // Corrupt the git config file
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.clear_hint("test-hint");
+
+    // Should propagate the error, not silently return Ok(false)
+    assert!(
+        result.is_err(),
+        "clear_hint() should propagate errors from corrupt config, not return Ok(false)"
+    );
 }
 
 // =============================================================================

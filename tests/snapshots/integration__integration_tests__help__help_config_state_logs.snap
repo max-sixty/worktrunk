@@ -59,7 +59,7 @@ View and manage logs from background operations.
 
 [1m[32mWhat's logged[0m
 
-Two kinds of logs live in [2m.git/wt-logs/[0m:
+Two kinds of logs live in [2m.git/wt/logs/[0m:
 
 [32mCommand log (`commands.jsonl`)[0m
 
@@ -76,7 +76,7 @@ Source is [2muser[0m or [2mproject[0m depending on where the hook is defined
 
 [1m[32mLocation[0m
 
-All logs are stored in [2m.git/wt-logs/[0m (in the main worktree's git directory).
+All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directory).
 
 [1m[32mBehavior[0m
 
@@ -90,10 +90,10 @@ List all log files:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs get[0m
 
 Query the command log:
-[107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt-logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
+[107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 View a specific hook log:
-[107m [0m [2m[0m[2m[34mcat[0m[2m [0m[2m[32m"$([0m[2m[34mgit[0m[2m rev-parse [0m[2m[36m--git-dir[0m[2m)/wt-logs/feature-project-post-start-build.log"[0m[2m[0m
+[107m [0m [2m[0m[2m[34mcat[0m[2m [0m[2m[32m"$([0m[2m[34mgit[0m[2m rev-parse [0m[2m[36m--git-dir[0m[2m)/wt/logs/feature-project-post-start-build.log"[0m[2m[0m
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m

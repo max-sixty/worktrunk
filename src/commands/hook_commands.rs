@@ -438,7 +438,7 @@ fn render_user_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let config_path = worktrunk::config::get_config_path();
+    let config_path = worktrunk::config::config_path();
 
     writeln!(
         out,

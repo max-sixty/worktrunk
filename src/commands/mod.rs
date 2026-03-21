@@ -80,7 +80,7 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::get_terminal_width();
+    let term_width = crate::display::terminal_width();
     let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
     let diff_stat = repo
         .run_command(&[

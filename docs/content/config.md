@@ -177,7 +177,7 @@ stage = "all"      # What to stage before commit: "all", "tracked", or "none"
 
 ### Merge
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
 ```toml
 [merge]
@@ -186,6 +186,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
+no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
 ```
 
 ### Switch
@@ -843,7 +844,7 @@ View and manage logs from background operations.
 
 ### What's logged
 
-Two kinds of logs live in `.git/wt-logs/`:
+Two kinds of logs live in `.git/wt/logs/`:
 
 #### Command log (`commands.jsonl`)
 
@@ -860,7 +861,7 @@ Source is `user` or `project` depending on where the hook is defined.
 
 ### Location
 
-All logs are stored in `.git/wt-logs/` (in the main worktree's git directory).
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 ### Behavior
 
@@ -877,12 +878,12 @@ wt config state logs get
 
 Query the command log:
 ```bash
-tail -5 .git/wt-logs/commands.jsonl | jq .
+tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```bash
-cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
+cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:

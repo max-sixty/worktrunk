@@ -9,7 +9,7 @@ use fs2::FileExt;
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
-use super::path::get_config_path;
+use super::path;
 use super::sections::CommitConfig;
 use super::sections::CommitGenerationConfig;
 
@@ -56,7 +56,7 @@ impl UserConfig {
     {
         let path = match config_path {
             Some(p) => p.to_path_buf(),
-            None => get_config_path().ok_or_else(|| {
+            None => path::config_path().ok_or_else(|| {
                 ConfigError::Message(
                     "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
                 )
@@ -82,7 +82,7 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         let path = match config_path {
             Some(p) => Some(p.to_path_buf()),
-            None => get_config_path(),
+            None => path::config_path(),
         };
 
         let Some(path) = path else {

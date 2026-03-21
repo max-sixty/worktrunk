@@ -140,7 +140,7 @@ missing code. Before adding guidance to a skill:
 
    Closes #$ARGUMENTS
 
-   Co-authored-by: Claude <noreply@anthropic.com>"
+   Co-Authored-By: Claude <noreply@anthropic.com>"
    git push -u origin fix/issue-$ARGUMENTS
    gh pr create --title "fix: <description>" --label "automated-fix" --body "## Problem
    [What the issue reported and the root cause]
@@ -154,14 +154,9 @@ missing code. Before adding guidance to a skill:
    ---
    Closes #<issue-number> — automated triage"
    ```
-5. Monitor CI using the poll approach from `/running-in-ci`:
-   ```bash
-   gh pr checks <pr-number> --required
-   ```
-   Poll with `gh pr checks <pr-number> --required` every 60 seconds until all
-   required checks complete. Non-required checks (e.g., benchmarks) are ignored.
-   If CI fails, diagnose with `gh run view <run-id> --log-failed`, fix, and
-   repeat.
+5. Monitor CI using the approach from /running-in-ci (poll required checks
+   and `codecov/patch`). If CI or codecov fails, diagnose and fix before
+   declaring done.
 
 ### If reproduction test works but fix is not confident
 
@@ -172,7 +167,7 @@ git checkout -b repro/issue-$ARGUMENTS
 git add -A
 git commit -m "test: add reproduction for #$ARGUMENTS
 
-Co-authored-by: Claude <noreply@anthropic.com>"
+Co-Authored-By: Claude <noreply@anthropic.com>"
 git push -u origin repro/issue-$ARGUMENTS
 gh pr create --title "test: reproduction for #$ARGUMENTS" --label "automated-fix" --body "## Context
 Adds a failing test that reproduces #$ARGUMENTS. The fix is not yet included — this PR captures the reproduction so a maintainer can investigate.

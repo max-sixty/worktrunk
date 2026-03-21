@@ -59,7 +59,7 @@ Debug steps:
 1. Run the command manually in the worktree to see errors
 2. Check for missing dependencies (npm packages, system tools)
 3. Verify template variables expand correctly (`wt hook show --verbose`)
-4. For background hooks, check `.git/wt-logs/` for output
+4. For background hooks, check `.git/wt/logs/` for output
 
 ### Slow blocking hooks
 

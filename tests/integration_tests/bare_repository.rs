@@ -437,7 +437,7 @@ fn test_bare_repo_merge_workflow() {
 #[test]
 fn test_bare_repo_background_logs_location() {
     // This test verifies that background operation logs go to the correct location
-    // in bare repos (bare_repo/wt-logs/ instead of worktree/.git/wt-logs/)
+    // in bare repos (bare_repo/wt/logs/ instead of worktree/.git/wt/logs/)
     let test = BareRepoTest::new();
 
     // Create main worktree
@@ -468,7 +468,7 @@ fn test_bare_repo_background_logs_location() {
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
     // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
-    let log_dir = test.bare_repo_path().join("wt-logs");
+    let log_dir = test.bare_repo_path().join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Verify the log file matches expected pattern (feature-*-remove.log)
@@ -489,7 +489,7 @@ fn test_bare_repo_background_logs_location() {
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
-    let wrong_dir = main_worktree.join(".git/wt-logs");
+    let wrong_dir = main_worktree.join(".git/wt/logs");
     assert!(
         !wrong_dir.exists()
             || std::fs::read_dir(&wrong_dir)
@@ -938,5 +938,51 @@ fn test_clone_bare_repo_list_no_status_errors() {
     assert!(
         !stderr.contains("git operations failed"),
         "Should not have git operation failures.\nstderr: {stderr}"
+    );
+}
+
+/// Regression test for #1618: `wt merge` must not remove the default branch
+/// worktree in a bare repo. In bare repos all worktrees are linked, so the
+/// `is_linked()` check alone can't protect the primary worktree.
+#[test]
+fn test_bare_repo_merge_preserves_default_branch_worktree() {
+    let test = BareRepoTest::new();
+
+    // Create main (default branch) worktree and a feature worktree at the same commit
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+
+    // Create feature branch at the same commit as main
+    let _feature_worktree = test.create_worktree("feature", "feature");
+
+    // Run `wt merge feature` from the main (default branch) worktree.
+    // This attempts to merge main into feature — the important thing is that
+    // the main worktree must NOT be removed even though is_linked() returns true.
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args([
+        "merge",
+        "feature",     // Target = feature branch
+        "--no-squash", // Skip squash to avoid LLM dependency
+        "--no-verify", // Skip hooks
+    ])
+    .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The merge itself may succeed or show "already up to date", but the key
+    // assertion is that the main worktree is preserved (not removed).
+    assert!(
+        main_worktree.exists(),
+        "Default branch worktree must not be removed.\nstderr: {stderr}"
+    );
+
+    // Should show "primary worktree" preservation message
+    assert!(
+        stderr.contains("primary worktree"),
+        "Should show primary worktree preservation message.\nstderr: {stderr}"
     );
 }

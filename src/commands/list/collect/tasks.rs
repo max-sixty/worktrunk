@@ -163,7 +163,7 @@ impl Task for AheadBehindTask {
         // Cache lookup has minor overhead (rev-parse for cache key + allocations),
         // but saves the expensive ahead_behind computation on cache hit.
         let (ahead, behind) = if let Some(branch) = ctx.branch_ref.branch.as_deref() {
-            if let Some(counts) = repo.get_cached_ahead_behind(&base, branch) {
+            if let Some(counts) = repo.cached_ahead_behind(&base, branch) {
                 counts
             } else {
                 repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)

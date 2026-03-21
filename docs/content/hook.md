@@ -18,8 +18,8 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | Hook | When | Blocking | Fail-fast |
 |------|------|----------|-----------|
 | `pre-switch` | Before every switch | Yes | Yes |
-| `post-start` | After worktree created | No | No |
 | `post-create` | After worktree created | Yes | No |
+| `post-start` | After worktree created | No | No |
 | `post-switch` | After every switch | No | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
@@ -49,16 +49,6 @@ fi
 """
 ```
 
-## post-start
-
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log`.
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
 ## post-create
 
 Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
@@ -69,9 +59,19 @@ install = "npm ci"
 env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 ```
 
+## post-start
+
+Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
 ## post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
 
 ```toml
 [post-switch]
@@ -117,7 +117,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ## post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt-logs/{branch}-{source}-post-remove-{name}.log`.
+Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
 
 ```toml
 [post-remove]
@@ -337,7 +337,13 @@ Git worktrees share the repository but not untracked files. [`wt step copy-ignor
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
+
+```toml
+[post-create]
+copy = "wt step copy-ignored"
+install = "pnpm install"
+```
 
 ## Dev servers
 
