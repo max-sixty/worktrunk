@@ -589,7 +589,7 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
 // - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
-// - PTY tests (especially skim-based select tests) need a TERM with valid terminfo
+// - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
 // - macOS CI doesn't have alacritty terminfo, causing skim to fail
 
 /// Null device path, platform-appropriate.
@@ -2924,7 +2924,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 // PTY Test Filters
 // =============================================================================
 //
-// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// PTY-based tests (shell wrappers, approval prompts, TUI picker) capture output
 // from pseudo-terminals. This output has platform-specific artifacts that need
 // normalization for stable snapshots.
 //

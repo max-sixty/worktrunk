@@ -42,7 +42,7 @@ pub(crate) use invocation::{
 pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
-use commands::handle_select;
+use commands::handle_picker;
 use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
@@ -469,9 +469,9 @@ fn handle_list_command(
 
 #[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
-    // Deprecated: show warning and delegate to handle_select
+    // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
-    handle_select(branches, remotes, None)
+    handle_picker(branches, remotes, None)
 }
 
 #[cfg(not(unix))]
@@ -507,7 +507,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, change_dir_flag);
+                    return handle_picker(spec.branches, spec.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]

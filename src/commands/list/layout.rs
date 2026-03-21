@@ -197,7 +197,7 @@ use crate::display::{shorten_path, terminal_width};
 use super::collect::{TaskKind, parse_port_from_url};
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
 
-// Re-export DiffVariant for external use (e.g., select command)
+// Re-export DiffVariant for external use (e.g., picker module)
 pub use super::columns::DiffVariant;
 
 /// Width of short commit hash display (first 8 hex characters)
@@ -312,7 +312,7 @@ impl DiffDisplayConfig {
     ///
     /// Numbers are right-aligned within a 3-digit column width.
     /// Returns empty spaces if both values are zero (unless `always_show_zeros` is set).
-    #[cfg(unix)] // Only used by select command which is unix-only
+    #[cfg(unix)] // Only used by picker module which is unix-only
     pub fn format_aligned(&self, positive: usize, negative: usize) -> String {
         const DIGITS: usize = 3;
         let positive_width = 1 + DIGITS; // symbol + digits
