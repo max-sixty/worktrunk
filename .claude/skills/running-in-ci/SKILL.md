@@ -120,25 +120,10 @@ pre-existing."
 
 ## Applying GitHub Suggestions
 
-When a reviewer posts a GitHub suggestion (`suggestion` code block), apply it
-with exact scope — change only the lines the suggestion covers. Do not
-reinterpret the suggestion's intent or extend it to adjacent lines.
-
-If the suggestion seems incomplete or you think more lines should change, apply
-the literal suggestion first and note the potential improvement in your reply.
+Apply the literal suggestion only — change the lines it covers, nothing more.
+If surrounding lines also need updating, note that in your reply.
 
 ## Replying to Comments
-
-Before posting a comment, check for recent bot comments on the same
-PR/issue to avoid duplicates from concurrent runs:
-
-```bash
-gh api repos/{owner}/{repo}/issues/{number}/comments \
-  --jq '.[] | select(.user.login == "{bot_login}") | {id, created_at, body: (.body | .[0:100])}'
-```
-
-If you already commented on the same topic within the last 5 minutes, do not
-post again.
 
 Reply in context rather than creating new top-level comments:
 
