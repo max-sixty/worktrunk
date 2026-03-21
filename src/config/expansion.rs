@@ -418,7 +418,10 @@ pub fn expand_template(
     // works in SemiStrict mode. Only look up kv data if the template references it (avoids a
     // git process spawn per expansion). JSON objects/arrays are parsed so dot access works
     // ({{ kv.config.port }}); plain strings and numbers stay as-is.
-    if template.contains("kv")
+    //
+    // Use "kv." to avoid false positives from branch names or URLs containing "kv"
+    // (e.g., "mkv.internal", "okv-service"). Template access is always `kv.<key>`.
+    if template.contains("kv.")
         && let Some(branch) = vars.get("branch")
     {
         let entries = repo.kv_entries(branch);
@@ -1312,7 +1315,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("branch", "main");
 
-        // kv not injected when no entries exist — use default filter
+        // kv injected as empty map when no entries exist — use default filter for missing keys
         assert_eq!(
             expand_template(
                 "{{ kv.env | default('dev') }}",

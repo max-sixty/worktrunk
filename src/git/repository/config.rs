@@ -77,6 +77,39 @@ impl Repository {
             .collect()
     }
 
+    /// Get all kv entries across all branches in a single git call.
+    ///
+    /// Returns a map of branch → (key → value). Uses one `git config --get-regexp`
+    /// instead of N per-branch calls, avoiding N+1 subprocess spawns in `wt list --format=json`.
+    pub fn all_kv_entries(
+        &self,
+    ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
+        let output = self
+            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.kv\."])
+            .unwrap_or_default();
+
+        let mut result: std::collections::HashMap<
+            String,
+            std::collections::BTreeMap<String, String>,
+        > = std::collections::HashMap::new();
+        for line in output.lines() {
+            let Some((config_key, value)) = line.split_once(' ') else {
+                continue;
+            };
+            let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
+                continue;
+            };
+            let Some((branch, key)) = rest.split_once(".kv.") else {
+                continue;
+            };
+            result
+                .entry(branch.to_string())
+                .or_default()
+                .insert(key.to_string(), value.to_string());
+        }
+        result
+    }
+
     /// Set the previous branch in worktrunk.history for `wt switch -` support.
     ///
     /// Stores the branch we're switching FROM, so `wt switch -` can return to it.

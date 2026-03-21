@@ -587,7 +587,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear all kv data
-    let kv_cleared = clear_all_kv(&repo);
+    let kv_cleared = clear_all_kv(&repo)?;
     if kv_cleared > 0 {
         cleared_any = true;
     }
@@ -927,14 +927,8 @@ pub fn handle_kv_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
     };
 
     let config_key = format!("worktrunk.state.{branch_name}.kv.{key}");
-    match repo.run_command(&["config", &config_key]) {
-        Ok(value) => {
-            let value = value.trim_end_matches('\n');
-            println!("{value}");
-        }
-        Err(_) => {
-            // Key not set — no output, success exit (like git config --get)
-        }
+    if let Some(value) = repo.config_value(&config_key)? {
+        println!("{value}");
     }
     Ok(())
 }
@@ -1040,17 +1034,17 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
 }
 
 /// Clear all kv entries across all branches (used by handle_state_clear_all).
-fn clear_all_kv(repo: &Repository) -> usize {
+fn clear_all_kv(repo: &Repository) -> anyhow::Result<usize> {
     let output = raw_kv_output(repo);
 
     let mut cleared = 0;
     for line in output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
-            let _ = repo.run_command(&["config", "--unset", config_key]);
+            repo.run_command(&["config", "--unset", config_key])?;
             cleared += 1;
         }
     }
-    cleared
+    Ok(cleared)
 }
 
 // ==================== Marker Helpers ====================
