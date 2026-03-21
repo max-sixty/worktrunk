@@ -52,6 +52,7 @@ Clears all stored state:
 - Default branch cache
 - Previous branch
 - All branch markers
+- All kv data
 - All CI status cache
 - All hints
 - All log files

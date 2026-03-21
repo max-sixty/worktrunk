@@ -190,6 +190,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
+| `kv` | object | Per-branch key-value data from `wt config state kv` (absent when empty) |
 
 ### Commit object
 
