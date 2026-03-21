@@ -7,6 +7,7 @@ use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
+use worktrunk::path::to_posix_path;
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_hooks;
@@ -36,8 +37,13 @@ pub struct SwitchOptions<'a> {
 
 /// Run pre-switch hooks before branch resolution or worktree creation.
 ///
-/// The hook context uses the **destination** branch argument as `{{ branch }}`,
-/// so hooks receive the user's raw input before resolution.
+/// Template variables point to the **destination** worktree when switching to an
+/// existing one: `{{ branch }}` is the target branch, `{{ worktree_path }}` is
+/// the target worktree path. `{{ source_worktree_path }}` provides the current
+/// (source) worktree path.
+///
+/// For creates (target doesn't exist yet), `{{ worktree_path }}` falls back to
+/// the current worktree since the destination hasn't been created.
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -45,14 +51,36 @@ pub(crate) fn run_pre_switch_hooks(
     yes: bool,
 ) -> anyhow::Result<()> {
     let current_path = repo.current_worktree().path().to_path_buf();
-    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
+    // Use the worktree root for a canonical absolute path (current_worktree().path()
+    // may be relative when the process cwd is the worktree root).
+    let source_abs = repo
+        .current_worktree()
+        .root()
+        .unwrap_or_else(|_| current_path.clone());
+    let source_path_str = to_posix_path(&source_abs.to_string_lossy());
+
+    // Resolve shorthand names (-, @, ^) then look up the target worktree.
+    let resolved = repo
+        .resolve_worktree_name(target_branch)
+        .unwrap_or_else(|_| target_branch.to_string());
+    let target_path = repo
+        .worktree_for_branch(&resolved)
+        .ok()
+        .flatten()
+        .filter(|p| p.exists());
+
+    // Point worktree_path to the target if it exists, otherwise fall back to current.
+    let hook_path = target_path.unwrap_or(current_path);
+    let extra_vars = [("source_worktree_path", source_path_str.as_str())];
+
+    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &hook_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
         execute_hook(
             &pre_ctx,
             HookType::PreSwitch,
-            &[],
+            &extra_vars,
             HookFailureStrategy::FailFast,
             None,
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),

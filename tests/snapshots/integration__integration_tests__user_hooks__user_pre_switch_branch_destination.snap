@@ -42,7 +42,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning pre-switch [1muser:check[22m[39m
+[36m◎[39m [36mRunning pre-switch [1muser:check[22m @ [1m_REPO_.feature-dest[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'feature-dest'[0m[2m [0m[2m[36m>[0m[2m pre_switch_branch.txt
 [0m[33m▲[39m [33mWorktree for [1mfeature-dest[22m @ [1m_REPO_.feature-dest[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

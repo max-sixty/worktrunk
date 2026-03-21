@@ -23,7 +23,7 @@ info:
     NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
-    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpJw8YUo/repo.feature
+    PWD: /tmp/.tmpvMprfu/repo.feature
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty

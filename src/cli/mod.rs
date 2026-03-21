@@ -1123,7 +1123,9 @@ The most common starting point is `post-start` — it runs background tasks (dev
 
 ## pre-switch
 
-Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
+Runs before every `wt switch` — before branch resolution or worktree creation. Template variables point to the **destination** worktree: `{{ branch }}` is the target branch (as the user typed it, before resolution), and `{{ worktree_path }}` is the target worktree path. `{{ source_worktree_path }}` provides the current (source) worktree path. Failure aborts the switch.
+
+When the destination worktree doesn't exist yet (creates), `{{ worktree_path }}` falls back to the current worktree since the target hasn't been created.
 
 ```toml
 [pre-switch]
@@ -1134,6 +1136,9 @@ if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ];
     git pull
 fi
 """
+
+# Copy .claude config to destination before switching
+copy-config = "cp -r {{ source_worktree_path }}/.claude {{ worktree_path }}/.claude 2>/dev/null || true"
 ```
 
 ## post-create
@@ -1306,8 +1311,9 @@ Hooks can use template variables that expand at runtime:
 | `{{ target }}` | Target branch (merge hooks only) |
 | `{{ base }}` | Base branch (creation hooks only) |
 | `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
+| `{{ source_worktree_path }}` | Source worktree path (pre-switch hooks only) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, `base_worktree_path`, and `source_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
 
 ```toml
 [post-create]
