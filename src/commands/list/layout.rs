@@ -112,12 +112,20 @@
 //!    - Within the visibility gate, follows normal two-tier priority
 //!      (BranchDiff: 6/16, CiStatus: 5/15)
 //!
-//! 2. **Summary** - Flexible sizing with post-allocation expansion
+//! 2. **No-data columns** yield to Summary
+//!    - After Summary's initial expansion, columns where `has_data()` is false
+//!      are dropped (lowest priority first) and their space reclaimed for Summary
+//!    - Currently only Path can be no-data in progressive mode (when all paths
+//!      are predictable from branch names, i.e., no branch-worktree mismatch)
+//!    - When Path has data (mismatch exists), it is kept at priority 7
+//!
+//! 3. **Summary** - Flexible sizing with post-allocation expansion
 //!    - Allocated at priority 10 with minimum width 10
 //!    - After all columns allocated, expands up to 70 using leftover space
+//!    - Reclaims no-data columns before Message drop
 //!    - Expands BEFORE Message, so Summary gets priority for space
 //!
-//! 3. **Message** - Flexible sizing, gated on Summary readability
+//! 4. **Message** - Flexible sizing, gated on Summary readability
 //!    - Allocated at priority 13 with minimum width 10
 //!    - **Only kept if Summary reaches 40 chars** — below that, Summary needs
 //!      all flexible space and Message is dropped (its space reclaimed for Summary)
@@ -767,6 +775,35 @@ fn allocate_columns_with_priority(
             remaining -= expansion;
         }
         max_summary_len = summary_col.width;
+    }
+
+    // Drop no-data columns if Summary hasn't reached its max. Columns without
+    // data are showing empty/redundant content (e.g., Path when all paths are
+    // predictable from branch names) and should yield space to Summary.
+    while max_summary_len > 0 && max_summary_len < MAX_SUMMARY {
+        // Find the lowest-priority no-data column (highest base_priority value)
+        let drop_pos = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, col)| !col.spec.kind.has_data(&metadata.data_flags))
+            .max_by_key(|(_, col)| col.spec.base_priority)
+            .map(|(i, _)| i);
+
+        let Some(pos) = drop_pos else { break };
+
+        let reclaimed = pending[pos].width + spacing;
+        pending.remove(pos);
+        remaining += reclaimed;
+
+        if let Some(summary_col) = pending
+            .iter_mut()
+            .find(|col| col.spec.kind == ColumnKind::Summary)
+        {
+            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
+            summary_col.width += expansion;
+            remaining -= expansion;
+            max_summary_len = summary_col.width;
+        }
     }
 
     // Drop Message if Summary didn't reach the readability threshold, reclaiming
@@ -1718,6 +1755,230 @@ mod tests {
             find_column(&layout, ColumnKind::Message).is_none(),
             "Message should not fit at 40 chars"
         );
+    }
+
+    /// Helper: create a test item with a specific worktree path and no mismatch.
+    fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
+        use crate::commands::list::model::{
+            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+        };
+        super::super::model::ListItem {
+            head: "abc12345".to_string(),
+            branch: Some(branch.to_string()),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            committed_trees_match: None,
+            has_file_changes: None,
+            would_merge_add: None,
+            is_ancestor: None,
+            is_orphan: None,
+            upstream: None,
+            pr_status: None,
+            url: None,
+            url_active: None,
+            summary: None,
+            status_symbols: None,
+            display: DisplayFields::default(),
+            kind: ItemKind::Worktree(Box::new(WorktreeData {
+                path: PathBuf::from(path),
+                detached: false,
+                locked: None,
+                prunable: None,
+                working_tree_diff: None,
+                git_operation: ActiveGitOperation::None,
+                is_main: false,
+                is_current: false,
+                is_previous: false,
+                branch_worktree_mismatch: false,
+                working_diff_display: None,
+            })),
+        }
+    }
+
+    /// When paths are consistent (no mismatch), Path should yield space to Summary.
+    ///
+    /// Scenario: 4 worktrees with `../agents.*` sibling paths (longest ~28 chars),
+    /// full mode, moderate terminal width. Path is redundant (paths are predictable
+    /// from branch names) and should not reduce Summary's readability.
+    ///
+    /// At very wide terminals both columns coexist. At moderate widths where space
+    /// is constrained, Summary should be preferred over Path.
+    #[test]
+    fn test_path_yields_to_summary_when_no_mismatch() {
+        // Mirrors the user's real setup: worktrees at sibling dirs with consistent naming
+        let items = vec![
+            {
+                let mut item = make_test_item_at("main", "/test/worktrunk");
+                if let super::super::model::ItemKind::Worktree(ref mut data) = item.kind {
+                    data.is_main = true;
+                }
+                item
+            },
+            make_test_item_at("hourly-maintenance", "/test/agents.hourly-maintenance"),
+            make_test_item_at("lab-continue", "/test/agents.lab-continue"),
+            make_test_item_at("dry-run-pager", "/test/agents.dry-run-pager"),
+        ];
+        let main_path = Path::new("/test/worktrunk");
+
+        // Full mode: all columns enabled
+        let skip = full_skip_tasks();
+
+        // At very wide terminals: both Path and Summary coexist
+        let layout_wide = calculate_layout_with_width(&items, &skip, 300, main_path, None);
+        assert!(
+            find_column(&layout_wide, ColumnKind::Summary).is_some(),
+            "Summary should be present at 300"
+        );
+        assert!(
+            find_column(&layout_wide, ColumnKind::Path).is_some(),
+            "Path should be present at 300 (infinite space → show everything)"
+        );
+
+        // At moderate widths (170): Summary should reach at least 50 chars.
+        // Currently Path eats ~30 chars from Summary's expansion budget,
+        // leaving Summary at ~48 and dropping Message entirely.
+        let layout_170 = calculate_layout_with_width(&items, &skip, 170, main_path, None);
+        let summary_170 = find_column(&layout_170, ColumnKind::Summary)
+            .expect("Summary should be present at 170")
+            .width;
+        assert!(
+            summary_170 >= 50,
+            "Summary should reach at least 50 at width 170 when paths are consistent: got {summary_170}"
+        );
+    }
+
+    /// Snapshot test rendering the motivating case: 4 worktrees with consistent
+    /// paths, full mode, 170-char terminal. Verifies Summary gets adequate space
+    /// by dropping redundant Path column.
+    #[test]
+    fn test_snapshot_path_yields_to_summary() {
+        use crate::commands::list::model::{
+            ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields,
+            ItemKind, StatusSymbols, UpstreamStatus, WorktreeData,
+        };
+        use worktrunk::git::LineDiff;
+
+        let ts = 1742500000; // fixed timestamp for reproducible "Age"
+
+        let make_item = |branch: &str,
+                         path: &str,
+                         is_main: bool,
+                         is_current: bool,
+                         ahead: usize,
+                         behind: usize,
+                         diff: Option<(usize, usize)>,
+                         summary: Option<&str>,
+                         upstream: bool|
+         -> super::super::model::ListItem {
+            let counts = if is_main {
+                None
+            } else {
+                Some(AheadBehind { ahead, behind })
+            };
+            let branch_diff = diff.map(|(a, d)| BranchDiffTotals {
+                diff: LineDiff::from((a, d)),
+            });
+            let upstream_status = upstream.then(|| UpstreamStatus {
+                remote: Some("origin".to_string()),
+                ahead: 0,
+                behind: 0,
+            });
+            super::super::model::ListItem {
+                head: "a620bcfe".to_string(),
+                branch: Some(branch.to_string()),
+                commit: Some(CommitDetails {
+                    timestamp: ts,
+                    commit_message: "Some commit message".to_string(),
+                }),
+                counts,
+                branch_diff,
+                committed_trees_match: None,
+                has_file_changes: None,
+                would_merge_add: None,
+                is_ancestor: None,
+                is_orphan: None,
+                upstream: upstream_status,
+                pr_status: Some(None), // loaded, no CI
+                url: None,
+                url_active: None,
+                summary: Some(summary.map(|s| s.to_string())),
+                status_symbols: Some(StatusSymbols::default()),
+                display: DisplayFields::default(),
+                kind: ItemKind::Worktree(Box::new(WorktreeData {
+                    path: PathBuf::from(path),
+                    detached: false,
+                    locked: None,
+                    prunable: None,
+                    working_tree_diff: Some(LineDiff::default()),
+                    git_operation: ActiveGitOperation::None,
+                    is_main,
+                    is_current,
+                    is_previous: false,
+                    branch_worktree_mismatch: false,
+                    working_diff_display: None,
+                })),
+            }
+        };
+
+        let items = vec![
+            make_item(
+                "main",
+                "/test/worktrunk",
+                true,
+                true,
+                0,
+                0,
+                None,
+                None,
+                true,
+            ),
+            make_item(
+                "hourly-maintenance",
+                "/test/agents.hourly-maintenance",
+                false,
+                false,
+                2,
+                0,
+                None,
+                None,
+                false,
+            ),
+            make_item(
+                "lab-continue",
+                "/test/agents.lab-continue",
+                false,
+                false,
+                1,
+                2,
+                Some((28, 1)),
+                Some("Add extend and block insert in Markdown parser"),
+                true,
+            ),
+            make_item(
+                "dry-run-pager",
+                "/test/agents.dry-run-pager",
+                false,
+                false,
+                3,
+                1,
+                None,
+                None,
+                true,
+            ),
+        ];
+        let main_path = Path::new("/test/worktrunk");
+        let skip = full_skip_tasks();
+
+        let layout = calculate_layout_with_width(&items, &skip, 170, main_path, None);
+
+        let mut lines = Vec::new();
+        lines.push(layout.render_header_line().plain_text());
+        for item in &items {
+            lines.push(layout.render_list_item_line(item).plain_text());
+        }
+        let table = lines.join("\n");
+        insta::assert_snapshot!(table);
     }
 
     #[test]

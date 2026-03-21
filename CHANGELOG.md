@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.30.1
+
+### Fixed
+
+- **Narrow terminal layout**: `wt switch` picker now uses vertical (Down) layout on terminals narrower than 80 columns, and the Branch column shrinks instead of being dropped — branch names are always visible. ([#1564](https://github.com/max-sixty/worktrunk/pull/1564), [#1626](https://github.com/max-sixty/worktrunk/pull/1626), thanks @armstrjare for reporting [#1563](https://github.com/max-sixty/worktrunk/issues/1563))
+
+- **Bash tab completion showed all branches**: `wt switch feat<TAB>` displayed every branch instead of filtering by prefix, prompting "Display all N possibilities?" for users with many branches. Fish and zsh still use their native substring/fuzzy matching. ([#1622](https://github.com/max-sixty/worktrunk/pull/1622), thanks @altruic for reporting [#1621](https://github.com/max-sixty/worktrunk/issues/1621))
+
+- **Hook command completion pre-filtered in all shells**: `HookCommandCompleter` filtered by prefix before returning candidates, preventing fish/zsh substring matching on hook command names. ([#1627](https://github.com/max-sixty/worktrunk/pull/1627))
+
+- **`wt merge` failed with `submodule.recurse=true`**: Users with `submodule.recurse=true` in their git config saw push errors during merge. Local push now passes `--recurse-submodules=no`. ([#1619](https://github.com/max-sixty/worktrunk/pull/1619), thanks @viicslen for reporting [#1604](https://github.com/max-sixty/worktrunk/issues/1604))
+
+- **Worktree sync uses safe `read-tree`**: Target worktree sync after `--no-ff` push uses `read-tree -m -u` instead of `reset --hard`, consistent with the project's norms. ([#1623](https://github.com/max-sixty/worktrunk/pull/1623))
+
+### Internal
+
+- Inlined `complete_branches` and `complete_hook_commands` into their respective completers. ([#1628](https://github.com/max-sixty/worktrunk/pull/1628), [#1627](https://github.com/max-sixty/worktrunk/pull/1627))
+
 ## 0.30.0
 
 ### Improved
