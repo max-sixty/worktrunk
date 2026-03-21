@@ -226,11 +226,17 @@ impl RepositoryCliExt for Repository {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
         }
 
-        // Compute main_path and changed_directory based on whether we're removing current
-        let (main_path, changed_directory) = if is_current {
-            (home_worktree_path, true)
+        // main_path: where post-remove hooks run from and background removal
+        // executes. Prefer the primary worktree for stability (the removed worktree
+        // is gone, and cwd may itself be a removal candidate during prune).
+        // Fall back to cwd when the primary worktree IS the one being removed
+        // (bare repo only — normal repos guard this in Phase 2 above).
+        // changed_directory: whether the user needs to cd away from cwd.
+        let changed_directory = is_current;
+        let main_path = if worktree_path == home_worktree_path {
+            current_path
         } else {
-            (current_path, false)
+            home_worktree_path
         };
 
         // Resolve target branch for integration reason display
