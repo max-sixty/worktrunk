@@ -87,9 +87,9 @@ exit 1
    fix, commit, push, repeat.
 3. After required checks pass, poll `codecov/patch` separately — it is
    mandatory despite being marked non-required. Use a polling loop (up to
-   ~5 minutes) since codecov often reports after the required checks finish:
+   ~10 minutes) since codecov often takes 10+ minutes on code-changing PRs:
    ```bash
-   for i in $(seq 1 5); do
+   for i in $(seq 1 10); do
      CODECOV=$(gh pr checks <number> 2>&1 | grep 'codecov/patch' || true)
      if echo "$CODECOV" | grep -q 'pass'; then
        echo "codecov/patch passed"; exit 0
@@ -98,7 +98,7 @@ exit 1
      fi
      sleep 60
    done
-   echo "codecov/patch not reported after 5 minutes"
+   echo "codecov/patch not reported after 10 minutes"
    exit 1
    ```
    If it fails, investigate with `task coverage` and
