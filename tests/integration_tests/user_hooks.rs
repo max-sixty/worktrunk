@@ -613,6 +613,29 @@ cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
     );
 }
 
+/// Post-remove hooks run at the primary worktree, not cwd. When removing a
+/// non-current worktree from a linked worktree, the output should show `@ [path]`
+/// pointing to the primary worktree where hooks execute.
+#[rstest]
+fn test_post_remove_hooks_run_at_primary_worktree(mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let other_wt = repo.add_worktree("other");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo done"
+"#,
+    );
+
+    // Remove feature from the "other" worktree (not primary)
+    snapshot_remove(
+        "post_remove_runs_at_primary",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(&other_wt),
+    );
+}
+
 /// Verify that post-remove hook template variables reference the removed worktree,
 /// not the worktree where the hook executes from.
 #[rstest]

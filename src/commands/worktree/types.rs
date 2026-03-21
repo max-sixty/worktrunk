@@ -176,8 +176,13 @@ impl BranchDeletionMode {
 
 /// Result of a worktree remove operation
 pub enum RemoveResult {
-    /// Removed worktree and returned to main (if needed)
+    /// Removed worktree and changed directory (if needed)
     RemovedWorktree {
+        /// Stable working directory for post-removal execution: hooks run here,
+        /// background removal spawns from here, and `cd` directs the shell here.
+        /// Usually the primary worktree; falls back to cwd when removing the
+        /// primary worktree itself (bare repo edge case), or the target branch's
+        /// worktree in `wt merge`.
         main_path: PathBuf,
         worktree_path: PathBuf,
         changed_directory: bool,
