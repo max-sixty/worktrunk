@@ -10,6 +10,7 @@ on:
   pull_request_review:
     types: [submitted]
 
+# --- CD extraction: project-specific build env (stays in caller) ---
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-C debuginfo=0"
@@ -17,6 +18,7 @@ env:
 
 jobs:
   claude:
+    # --- CD extraction: trigger conditions stay in caller (needs github.event) ---
     if: |
       (github.event_name == 'pull_request_target' &&
         github.event.pull_request.draft == false) ||
@@ -39,8 +41,18 @@ jobs:
       issues: write
       id-token: write
       actions: read
+
+    # --- CD extraction: these become workflow_call inputs ---
+    env:
+      CD_BOT_NAME: worktrunk-bot
+      CD_BOT_ID: "254187624"
+      CD_MODEL: opus
+      CD_ALLOWED_TOOLS: "Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill"
+      CD_SYSTEM_PROMPT: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
     steps:
-      - name: 📂 Checkout merge commit (initial review)
+      # --- CD extraction: checkout logic moves to reusable workflow ---
+      - name: Checkout merge commit (initial review)
         if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v6
         with:
@@ -48,7 +60,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 📂 Checkout code (review response)
+      - name: Checkout code (review response)
         if: github.event_name == 'pull_request_review'
         uses: actions/checkout@v6
         with:
@@ -58,25 +70,27 @@ jobs:
 
       # Setup build tools BEFORE checking out PR branch — the composite action
       # lives on main and won't exist on PR branches created before #1273.
-      - name: 🔧 Setup build tools
+      # --- CD extraction: project-specific setup (stays in caller or setup_command input) ---
+      - name: Setup build tools
         if: github.event_name == 'pull_request_review'
         uses: ./.github/actions/claude-setup
 
-      - name: 📌 Check out PR branch
+      - name: Check out PR branch
         if: github.event_name == 'pull_request_review'
         run: gh pr checkout ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - name: 🤖 Run Claude Code
+      # --- CD extraction: claude invocation moves to reusable workflow ---
+      - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           show_full_output: true
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-          bot_id: "254187624"
-          bot_name: "worktrunk-bot"
+          bot_id: ${{ env.CD_BOT_ID }}
+          bot_name: ${{ env.CD_BOT_NAME }}
           allowed_bots: "*"
           allowed_non_write_users: "*"
           additional_permissions: |
@@ -92,11 +106,12 @@ jobs:
                 github.event.review.html_url
               ) }}
           claude_args: |
-            --model opus
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
-            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+            --model ${{ env.CD_MODEL }}
+            --allowedTools ${{ env.CD_ALLOWED_TOOLS }}
+            --append-system-prompt "${{ env.CD_SYSTEM_PROMPT }}"
 
-      - name: 📋 Upload Claude Code session logs
+      # --- CD extraction: log upload moves to reusable workflow ---
+      - name: Upload Claude Code session logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
