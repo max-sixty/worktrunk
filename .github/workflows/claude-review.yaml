@@ -1,24 +1,19 @@
 name: claude-review
-# Runner versions pinned; see ci.yaml header comment for rationale.
-
-# Two modes in one job:
-# - pull_request_target: automatic code review on non-draft PRs.
-# - pull_request_review: respond to formal reviews on bot-authored PRs.
+# Two modes: automatic review on non-draft PRs, and responding to formal reviews
+# on bot-authored PRs. Delegates to max-sixty/continuous for execution.
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_ready, reopened]
   pull_request_review:
     types: [submitted]
 
-# --- CD extraction: project-specific build env (stays in caller) ---
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-C debuginfo=0"
   RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
-  claude:
-    # --- CD extraction: trigger conditions stay in caller (needs github.event) ---
+  review:
     if: |
       (github.event_name == 'pull_request_target' &&
         github.event.pull_request.draft == false) ||
@@ -26,96 +21,19 @@ jobs:
         github.event.pull_request.user.login == 'worktrunk-bot' &&
         github.event.review.user.login != 'worktrunk-bot' &&
         (github.event.review.state != 'approved' || github.event.review.body))
-    # Job-level concurrency (not workflow-level) so that runs skipped by the
-    # `if:` above don't enter the concurrency group. Workflow-level concurrency
-    # is evaluated before job-level `if:`, so a bot review that will be filtered
-    # out still cancels the in-progress run handling that review. See #1305.
     concurrency:
       group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
-
-    # --- CD extraction: these become workflow_call inputs ---
-    env:
-      CD_BOT_NAME: worktrunk-bot
-      CD_BOT_ID: "254187624"
-      CD_MODEL: opus
-      CD_ALLOWED_TOOLS: "Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill"
-      CD_SYSTEM_PROMPT: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
-
-    steps:
-      # --- CD extraction: checkout logic moves to reusable workflow ---
-      - name: Checkout merge commit (initial review)
-        if: github.event_name == 'pull_request_target'
-        uses: actions/checkout@v6
-        with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          fetch-depth: 0
-          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-
-      - name: Checkout code (review response)
-        if: github.event_name == 'pull_request_review'
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-
-      # Setup build tools BEFORE checking out PR branch — the composite action
-      # lives on main and won't exist on PR branches created before #1273.
-      # --- CD extraction: project-specific setup (stays in caller or setup_command input) ---
-      - name: Setup build tools
-        if: github.event_name == 'pull_request_review'
-        uses: ./.github/actions/claude-setup
-
-      - name: Check out PR branch
-        if: github.event_name == 'pull_request_review'
-        run: gh pr checkout ${{ github.event.pull_request.number }}
-        env:
-          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-
-      # --- CD extraction: claude invocation moves to reusable workflow ---
-      - name: Run Claude Code
-        id: claude
-        uses: anthropics/claude-code-action@v1
-        with:
-          show_full_output: true
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-          bot_id: ${{ env.CD_BOT_ID }}
-          bot_name: ${{ env.CD_BOT_NAME }}
-          allowed_bots: "*"
-          allowed_non_write_users: "*"
-          additional_permissions: |
-            actions: read
-          trigger_phrase: "@worktrunk-bot"
-          use_sticky_comment: ${{ github.event_name == 'pull_request_target' }}
-          prompt: >-
-            ${{ github.event_name == 'pull_request_target'
-              && format('/review-pr {0}', github.event.pull_request.number)
-              || format(
-                'A review was submitted on your PR #{0} ({1}). Read the review and full PR context (description, diff, comments, CI status), then respond appropriately. If changes were requested, make them, commit, and push. If questions were asked, answer them.',
-                github.event.pull_request.number,
-                github.event.review.html_url
-              ) }}
-          claude_args: |
-            --model ${{ env.CD_MODEL }}
-            --allowedTools ${{ env.CD_ALLOWED_TOOLS }}
-            --append-system-prompt "${{ env.CD_SYSTEM_PROMPT }}"
-
-      # --- CD extraction: log upload moves to reusable workflow ---
-      - name: Upload Claude Code session logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: claude-session-logs
-          path: /home/runner/.claude/projects/
-          retention-days: 30
-          if-no-files-found: warn
+    uses: max-sixty/continuous/.github/workflows/review.yaml@main
+    with:
+      bot_name: worktrunk-bot
+      bot_id: "254187624"
+      pr_number: ${{ github.event.pull_request.number }}
+      event_name: ${{ github.event_name }}
+      event_json: ${{ toJSON(github.event) }}
+      trigger_phrase: "@worktrunk-bot"
+      review_prompt: /review-pr ${{ github.event.pull_request.number }}
+      system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+    secrets:
+      bot_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+      claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

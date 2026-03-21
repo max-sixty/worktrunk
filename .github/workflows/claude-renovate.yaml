@@ -1,13 +1,11 @@
 name: claude-renovate
-
-# Weekly renovation check - reviews CI dependencies and creates PRs for updates
+# Weekly dependency update check. Uses the nightly workflow as the runner
+# since renovate is structurally similar (scheduled, runs on main, uses Claude).
 on:
   schedule:
-    # Run at 9:17 AM UTC every Sunday (off-peak minute)
     - cron: '17 9 * * 0'
   workflow_dispatch:
 
-# Consistent with ci.yaml for cache compatibility
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-C debuginfo=0"
@@ -15,124 +13,68 @@ env:
 
 jobs:
   renovate:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: read
-      id-token: write
-    steps:
-      - name: 📂 Checkout code
-        uses: actions/checkout@v6
-        with:
-          ref: main
-          fetch-depth: 0
-          fetch-tags: true
-          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+    uses: max-sixty/continuous/.github/workflows/nightly.yaml@main
+    with:
+      bot_name: worktrunk-bot
+      bot_id: "254187624"
+      # TODO: extract project-specific renovate checklist to a skill
+      prompt: |
+        You are running as part of a weekly renovation workflow. Your job is to check for updates to CI dependencies and create PRs if updates are available.
 
-      - name: 🔧 Setup build tools
-        uses: ./.github/actions/claude-setup
-        with:
-          install-cargo-tools: "false"
-          install-shells: "false"
+        ## What to check
 
-      - name: 🤖 Run Claude Code for renovation
-        id: claude
-        uses: anthropics/claude-code-action@v1
-        with:
-          show_full_output: true
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
-          bot_id: "254187624"
-          bot_name: "worktrunk-bot"
-          additional_permissions: |
-            actions: read
+        1. **GitHub Actions runner versions**:
+           - Check what the current `-latest` labels resolve to:
+             - `ubuntu-latest` - what Ubuntu version?
+             - `macos-latest` - what macOS version?
+             - `windows-latest` - what Windows version?
+           - Compare against what we have pinned in our workflow files
+           - Note: `windows-latest` has D: drive issues (actions/runner-images#12677), so stay on windows-2022
 
-          prompt: |
-            You are running as part of a weekly renovation workflow. Your job is to check for updates to CI dependencies and create PRs if updates are available.
+        2. **GitHub Actions versions**:
+           - Check for updates to actions we use (actions/checkout, actions/cache, etc.)
+           - Look at the current versions in .github/workflows/*.yaml
+           - Check if newer versions are available
 
-            ## What to check
+        3. **Rust stable toolchain** (in `rust-toolchain.toml`):
+           - Check the latest stable Rust release (use `curl -s https://static.rust-lang.org/dist/channel-rust-stable.toml | head -20` or similar)
+           - Compare against the channel in `rust-toolchain.toml`
+           - Always bump to the latest stable version
+           - After bumping, re-evaluate pinned cargo tool versions — newer tools may now be compatible
 
-            1. **GitHub Actions runner versions**:
-               - Check what the current `-latest` labels resolve to:
-                 - `ubuntu-latest` - what Ubuntu version?
-                 - `macos-latest` - what macOS version?
-                 - `windows-latest` - what Windows version?
-               - Compare against what we have pinned in our workflow files
-               - Note: `windows-latest` has D: drive issues (actions/runner-images#12677), so stay on windows-2022
+        4. **Rust nightly version** (in check-unused-dependencies job):
+           - We pin a specific nightly for cargo-udeps (check the actual version in ci.yaml)
+           - Periodically update to a recent nightly that works with cargo-udeps
 
-            2. **GitHub Actions versions**:
-               - Check for updates to actions we use (actions/checkout, actions/cache, etc.)
-               - Look at the current versions in .github/workflows/*.yaml
-               - Check if newer versions are available
+        5. **Pinned cargo tool versions**:
+           - All cargo tools are pinned with `version: "=X.Y.Z"` in workflow files to prevent surprise breakage from MSRV bumps
+           - Check if newer versions are available for: cargo-nextest, cargo-insta, lychee, worktrunk, cargo-msrv, cargo-udeps, cargo-llvm-cov
+           - To check: look up the tool's MSRV on crates.io or its repo and compare against the channel in `rust-toolchain.toml`
+           - Only update the pin if the new version is compatible with our rustc
+           - Update pins in ALL workflow files that use the tool (ci.yaml and .github/actions/claude-setup/action.yaml)
 
-            3. **Rust stable toolchain** (in `rust-toolchain.toml`):
-               - Check the latest stable Rust release (use `curl -s https://static.rust-lang.org/dist/channel-rust-stable.toml | head -20` or similar)
-               - Compare against the channel in `rust-toolchain.toml`
-               - Always bump to the latest stable version
-               - After bumping, re-evaluate pinned cargo tool versions — newer tools may now be compatible
+        ## How to check
 
-            4. **Rust nightly version** (in check-unused-dependencies job):
-               - We pin a specific nightly for cargo-udeps (check the actual version in ci.yaml)
-               - Periodically update to a recent nightly that works with cargo-udeps
+        - Use `gh api` and web searches to find current versions
+        - Read our workflow files to see what we currently use
+        - Check the actions/runner-images repository for runner version info
+        - Check individual action repos for version updates
 
-            5. **Pinned cargo tool versions**:
-               - All cargo tools are pinned with `version: "=X.Y.Z"` in workflow files to prevent surprise breakage from MSRV bumps
-               - Check if newer versions are available for: cargo-nextest, cargo-insta, lychee, worktrunk, cargo-msrv, cargo-udeps, cargo-llvm-cov
-               - To check: look up the tool's MSRV on crates.io or its repo and compare against the channel in `rust-toolchain.toml`
-               - Only update the pin if the new version is compatible with our rustc
-               - Update pins in ALL workflow files that use the tool (ci.yaml and .github/actions/claude-setup/action.yaml)
+        ## If updates are available
 
-            ## How to check
+        1. Create a new branch: `git checkout -b chore/renovate-$(date +%Y%m%d)`
+        2. Make the updates to workflow files
+        3. Commit with a clear message explaining what was updated
+        4. Push and create a PR
 
-            - Use `gh api` and web searches to find current versions
-            - Read our workflow files to see what we currently use
-            - Check the actions/runner-images repository for runner version info
-            - Check individual action repos for version updates
+        ## Clean up superseded PRs
 
-            ## If updates are available
+        After creating the renovation PR, close any dependabot or other automated PRs that are fully superseded by your changes.
 
-            1. Create a new branch: `git checkout -b chore/renovate-$(date +%Y%m%d)`
-            2. Make the updates to workflow files
-            3. Commit with a clear message explaining what was updated
-            4. Push and create a PR with:
+        ## If no updates are needed
 
-            ```
-            ## Summary
-            Weekly CI renovation check found the following updates:
-
-            - [List each update]
-
-            ## Changes
-            - [Describe each change]
-
-            ## Notes
-            - [Any caveats or things to watch for]
-
-            ---
-            🤖 Automated weekly renovation
-            ```
-
-            ## Clean up superseded PRs
-
-            After creating the renovation PR, close any dependabot or other automated PRs that are fully superseded by your changes. For each:
-            1. Leave a comment explaining the PR is superseded (e.g., "Superseded by #NNN which includes this update along with other renovations.")
-            2. Close the PR with `gh pr close <number>`
-
-            ## If no updates are needed
-
-            Simply report that all dependencies are up to date. Don't create a PR.
-
-          claude_args: |
-            --model opus
-            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch,Task,Skill
-            --append-system-prompt "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
-
-      - name: 📋 Upload Claude Code session logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: claude-session-logs
-          path: /home/runner/.claude/projects/
-          retention-days: 30
-          if-no-files-found: warn
+        Simply report that all dependencies are up to date. Don't create a PR.
+      system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+    secrets:
+      bot_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+      claude_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
