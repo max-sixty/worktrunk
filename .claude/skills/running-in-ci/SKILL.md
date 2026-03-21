@@ -122,7 +122,12 @@ pre-existing."
 
 Reply in context rather than creating new top-level comments:
 
-- **Inline review comments** (`#discussion_r`): Reply in the review thread:
+- **Inline review comments** (`#discussion_r`): To read a single review
+  comment, use the comment ID **without** the PR number in the path:
+  ```bash
+  gh api repos/{owner}/{repo}/pulls/comments/{comment_id}
+  ```
+  To reply:
   ```bash
   cat > /tmp/reply.md << 'EOF'
   Your response here
