@@ -498,3 +498,36 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
 
     process_command(cmd, true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_template() {
+        // Short template — returned as-is
+        assert_eq!(truncate_template("echo hello"), "echo hello");
+
+        // Multiline — only first line
+        assert_eq!(truncate_template("line one\nline two"), "line one");
+
+        // Leading/trailing whitespace trimmed
+        assert_eq!(truncate_template("  spaced  \n"), "spaced");
+
+        // Exactly 60 chars — no truncation
+        let s60 = "a".repeat(60);
+        assert_eq!(truncate_template(&s60), s60.as_str());
+
+        // 61 chars — truncated to 57
+        let s61 = "b".repeat(61);
+        assert_eq!(truncate_template(&s61), &"b".repeat(57));
+
+        // Multi-byte chars where byte 57 falls mid-character.
+        // 'a' (1 byte) × 56 + '€' (3 bytes) × 2 = 62 bytes, > 60.
+        // Byte 57 is the second byte of the first '€', so the loop backs up to 56.
+        let multi = "a".repeat(56) + "€€";
+        let result = truncate_template(&multi);
+        assert_eq!(result.len(), 56);
+        assert_eq!(result, "a".repeat(56));
+    }
+}
