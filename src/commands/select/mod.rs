@@ -127,16 +127,11 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // status_symbols is None only when no task results arrived for this item
-            // (budget truncation). collect() sets it for all other items: via drain
-            // callbacks for items that received results, and the post-drain loop for
-            // prunable worktrees. Each column also shows the placeholder independently
-            // when its own data field is None.
-            let rendered_line = if item.status_symbols.is_none() {
-                layout.render_list_item_stale(&item)
-            } else {
-                layout.render_list_item_line(&item)
-            };
+            // The picker doesn't update progressively, so any column whose data
+            // didn't arrive in time won't fill in later. Use the stale placeholder
+            // ("·") for all items — it signals "data not available" rather than the
+            // ellipsis ("⋯") which implies data is still loading.
+            let rendered_line = layout.render_list_item_stale(&item);
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 
