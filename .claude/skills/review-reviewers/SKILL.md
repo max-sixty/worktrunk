@@ -119,8 +119,18 @@ gates.
 ### Recording below-threshold findings
 
 After analysis, find **the bot's existing comment** on the tracking issue and
-**edit it** to include any new findings. If no bot comment exists yet, create
-one. This avoids notification spam from hourly runs.
+**append** new findings to it. If no bot comment exists yet, create one. This
+avoids notification spam from hourly runs.
+
+**IMPORTANT: Preserve existing content.** The tracking comment is a cumulative
+log across runs. When updating:
+
+1. Download the existing comment body first
+2. Append this run's new section below the existing content
+3. PATCH the comment with the combined body
+
+Never replace the existing body — prior entries contain per-run detail (run IDs,
+session files, evidence) that future runs need for accurate gate evaluation.
 
 ```bash
 # Find existing bot comment on the tracking issue
@@ -130,13 +140,22 @@ EXISTING_COMMENT=$(gh api "repos/$REPO/issues/$TRACKING_NUMBER/comments" \
   --jq "[.[] | select(.user.login == \"$BOT_LOGIN\")] | last | .id // empty")
 ```
 
-If `EXISTING_COMMENT` is non-empty, update it via
-`REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') && gh api repos/$REPO/issues/comments/$EXISTING_COMMENT -X PATCH -F body=@/tmp/findings.md`.
+If `EXISTING_COMMENT` is non-empty:
+
+```bash
+# Download existing body, append new findings, then PATCH
+gh api "repos/$REPO/issues/comments/$EXISTING_COMMENT" --jq '.body' > /tmp/existing.md
+cat /tmp/existing.md /tmp/findings.md > /tmp/combined.md
+gh api "repos/$REPO/issues/comments/$EXISTING_COMMENT" -X PATCH -F body=@/tmp/combined.md
+```
+
 Otherwise create a new comment.
 
 Format each finding in the comment body as:
 
 ```
+## Run <run-id> — <ISO timestamp>
+
 ### <short description>
 - **Evidence level**: Medium
 - **Occurrences this run**: 1
@@ -144,9 +163,15 @@ Format each finding in the comment body as:
 - **Workflow**: https://github.com/{owner}/{repo}/actions/runs/<run-id>
 - **Session**: <session file>
 - **Detail**: <brief description of what was observed>
+
+### Active tracked findings (cumulative)
+- <finding>: <N> total
 ```
 
-This lets future runs search for the description and count prior occurrences.
+Each run gets its own `## Run` heading. The cumulative summary at the bottom of
+each run's section should reflect updated totals. This lets future runs search
+for descriptions, count prior occurrences, and trace individual incidents back
+to their session logs.
 
 ## Step 1: Find recent runs
 
