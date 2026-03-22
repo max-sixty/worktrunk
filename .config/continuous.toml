@@ -1,5 +1,4 @@
 bot_name = "worktrunk-bot"
-bot_id = "254187624"
 system_prompt_append = "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
 [secrets]
