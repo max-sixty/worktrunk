@@ -37,7 +37,7 @@ jobs:
             exit 0
           fi
 
-          if [ -n "$COMMENT_BODY" ] && echo "$COMMENT_BODY" | grep -qF '@worktrunk-bot'; then
+          if [ -n "$COMMENT_BODY" ] && printf '%s\n' "$COMMENT_BODY" | grep -qF '@worktrunk-bot'; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
