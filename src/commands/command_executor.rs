@@ -134,7 +134,14 @@ pub fn build_hook_context(
         }
     }
 
-    // Add extra vars (e.g., target branch for merge)
+    // Execution directory — always where the hook command runs, even when
+    // worktree_path points to an Active identity that doesn't exist on disk.
+    map.insert(
+        "cwd".into(),
+        to_posix_path(&ctx.worktree_path.to_string_lossy()),
+    );
+
+    // Add extra vars (e.g., target branch for merge, base for switch)
     for (k, v) in extra_vars {
         map.insert((*k).into(), (*v).into());
     }

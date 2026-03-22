@@ -1084,10 +1084,22 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         } else {
             Some(worktree_path) // Show path when user is elsewhere
         };
+        // Target vars: where the user will end up after removal
+        let target_branch = repo
+            .worktree_at(main_path)
+            .branch()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
+        let extra_vars: Vec<(&str, &str)> = vec![
+            ("target", &target_branch),
+            ("target_worktree_path", &target_path_str),
+        ];
         execute_hook(
             &ctx,
             worktrunk::HookType::PreRemove,
-            &[],
+            &extra_vars,
             HookFailureStrategy::FailFast,
             None,
             display_path,

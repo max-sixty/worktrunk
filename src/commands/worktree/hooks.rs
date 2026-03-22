@@ -69,6 +69,11 @@ impl<'a> CommandContext<'a> {
         } else {
             commit
         };
+        // Target vars: where the user ends up after removal (primary worktree).
+        // self.worktree_path is the CommandContext's path, set to main_path by the caller.
+        let target_path_str = to_posix_path(&self.worktree_path.to_string_lossy());
+        let target_branch = self.branch_or_head();
+
         let extra_vars: Vec<(&str, &str)> = vec![
             ("branch", removed_branch),
             ("worktree_path", &worktree_path_str),
@@ -76,6 +81,8 @@ impl<'a> CommandContext<'a> {
             ("worktree_name", worktree_name),
             ("commit", commit),
             ("short_commit", short_commit),
+            ("target", target_branch),
+            ("target_worktree_path", &target_path_str),
         ];
 
         let user_hooks = self.config.hooks(self.project_id().as_deref());

@@ -214,14 +214,24 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false // Already rebased, no rebase occurred
     };
 
+    // Target worktree path for template variables (pre-merge and post-merge hooks).
+    // Computed once here so both hook sites can reference it.
+    let target_wt_path_str = target_worktree_path
+        .as_deref()
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
+        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
+        if let Some(ref p) = target_wt_path_str {
+            extra.push(("target_worktree_path", p));
+        }
         execute_hook(
             &ctx,
             HookType::PreMerge,
-            &[("target", target_branch.as_str())],
+            &extra,
             HookFailureStrategy::FailFast,
             None,
             crate::output::pre_hook_display_path(ctx.worktree_path),
@@ -312,10 +322,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // or worktree preserved so they stay in feature)
             crate::output::pre_hook_display_path(&destination_path)
         };
+        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
+        if let Some(ref p) = target_wt_path_str {
+            extra.push(("target_worktree_path", p));
+        }
         execute_hook(
             &ctx,
             HookType::PostMerge,
-            &[("target", target_branch.as_str())],
+            &extra,
             HookFailureStrategy::Warn,
             None,
             display_path,
