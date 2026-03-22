@@ -2925,8 +2925,10 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
     // Match the unique temp dir name with any path prefix (handles ~/AppData/... on Windows)
     if let Some(dir_name) = temp_path.file_name().and_then(|n| n.to_str()) {
-        // Match any path up to and including the temp dir name
-        let pattern = format!(r"[^\s]*{}", regex::escape(dir_name));
+        // Match any path up to and including the temp dir name, plus optional
+        // surrounding single quotes from shell_escape (format_path_for_display
+        // quotes paths that aren't under $HOME or contain special characters).
+        let pattern = format!(r"'?[^\s]*{}'?", regex::escape(dir_name));
         settings.add_filter(&pattern, "[TEMP]");
     }
     settings.add_filter(r"\\", "/");
