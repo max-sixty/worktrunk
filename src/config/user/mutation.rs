@@ -159,10 +159,7 @@ impl UserConfig {
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
-            let entry = config
-                .projects
-                .entry(project.to_string())
-                .or_default();
+            let entry = config.projects.entry(project.to_string()).or_default();
             if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
                 return false;
             }
