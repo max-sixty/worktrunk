@@ -204,6 +204,7 @@ jobs:
           bot_name: "worktrunk-bot"
           allowed_non_write_users: '*'
 
+          trigger_phrase: "@worktrunk-bot"
           additional_permissions: |
             actions: read
 
