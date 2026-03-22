@@ -1813,6 +1813,18 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
     ));
 }
 
+/// Reproduces #1661: the picker's Alt+R remove action was passing "(detached)" as
+/// a branch name for detached HEAD worktrees, which fails because no branch named
+/// "(detached)" exists. The fix makes the picker use path-based removal instead.
+#[rstest]
+fn test_remove_detached_by_name_fails(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    // This is what the picker was doing — treating "(detached)" as a branch name
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["(detached)"], None));
+}
+
 /// Test that resolve_worktree("@") works when the worktree is accessed via a symlink.
 ///
 /// This tests the path normalization fix where:

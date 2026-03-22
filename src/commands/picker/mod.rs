@@ -21,6 +21,7 @@ use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
+use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
     SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
 };
@@ -333,23 +334,39 @@ pub fn handle_picker(
 
         match action {
             PickerAction::Remove => {
-                // Get the selected worktree's branch name
-                let selected_name = out
-                    .selected_items
-                    .first()
-                    .map(|item| item.output().to_string());
-                let branch_name = resolve_identifier(&action, String::new(), selected_name)?;
+                let selected = out.selected_items.first().context("No worktree selected")?;
+
+                // Check if the selected item is a detached worktree by downcasting
+                // to access the underlying ListItem's worktree data.
+                let detached_path = selected
+                    .as_any()
+                    .downcast_ref::<WorktreeSkimItem>()
+                    .and_then(|skim_item| skim_item.item.worktree_data())
+                    .filter(|data| data.detached)
+                    .map(|data| data.path.clone());
 
                 let config = repo.user_config();
 
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
-                let result = handle_remove(
-                    &branch_name,
-                    false, // keep_branch: delete branch (default behavior)
-                    false, // force_delete: no -D
-                    false, // force_worktree: no -f
-                    config,
-                )
+                let result = if let Some(path) = detached_path {
+                    // Detached worktrees have no branch name — remove by path
+                    use super::worktree::BranchDeletionMode;
+                    repo.prepare_worktree_removal(
+                        RemoveTarget::Path(&path),
+                        BranchDeletionMode::SafeDelete,
+                        false, // force_worktree: no -f
+                        config,
+                    )
+                } else {
+                    let branch_name = selected.output().to_string();
+                    handle_remove(
+                        &branch_name,
+                        false, // keep_branch: delete branch (default behavior)
+                        false, // force_delete: no -D
+                        false, // force_worktree: no -f
+                        config,
+                    )
+                }
                 .context("Failed to remove worktree")?;
 
                 // Execute removal in foreground, no hooks, not quiet
