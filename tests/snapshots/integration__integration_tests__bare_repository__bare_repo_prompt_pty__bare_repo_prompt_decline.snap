@@ -4,7 +4,8 @@ assertion_line: 1177
 expression: "&output"
 ---
 
-[36m❯[39m Bare repo directory [1m.git[22m will appear in worktree paths — use branch-only paths instead? [1m[y/N/?][22m n
+[36m❯[39m Worktree paths will contain [1m.git[22m (e.g., [1m.git.feature-auth[22m)
+  Place at [1mfeature-auth[22m instead? [1m[y/N/?][22m n
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m/private[TEMP]/project/.git.feature[22m[39m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m
 [2m↳[22m [2mTo change directory, run [4mwt switch feature[24m[22m
