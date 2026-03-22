@@ -25,6 +25,7 @@ jobs:
       bot_name: worktrunk-bot
       bot_id: "254187624"
       issue_number: ${{ github.event.issue.number }}
+      setup_command: .github/scripts/ci-setup.sh
       prompt: "/triage-issue ${{ github.event.issue.number }}"
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
     secrets:

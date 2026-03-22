@@ -17,6 +17,7 @@ jobs:
     with:
       bot_name: worktrunk-bot
       bot_id: "254187624"
+      setup_command: .github/scripts/ci-setup.sh
       prompt: /nightly-cleaner
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
     secrets:

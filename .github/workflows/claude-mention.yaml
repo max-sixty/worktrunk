@@ -124,6 +124,7 @@ jobs:
       is_mention: ${{ contains(github.event.comment.body, '@worktrunk-bot') }}
       is_pr: ${{ github.event.issue.pull_request.url != '' }}
       issue_or_pr_number: ${{ github.event.issue.number }}
+      setup_command: .github/scripts/ci-setup.sh
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
     secrets:
       bot_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -150,6 +151,7 @@ jobs:
       comment_id: ${{ github.event.comment.id }}
       is_mention: ${{ contains(github.event.comment.body, '@worktrunk-bot') }}
       repository: ${{ github.repository }}
+      setup_command: .github/scripts/ci-setup.sh
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
     secrets:
       bot_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -173,6 +175,7 @@ jobs:
       bot_id: "254187624"
       issue_url: ${{ github.event.issue.html_url }}
       issue_number: ${{ github.event.issue.number }}
+      setup_command: .github/scripts/ci-setup.sh
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
     secrets:
       bot_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
