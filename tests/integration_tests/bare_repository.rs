@@ -986,3 +986,130 @@ fn test_bare_repo_merge_preserves_default_branch_worktree() {
         "Should show primary worktree preservation message.\nstderr: {stderr}"
     );
 }
+
+/// Helper: create a bare repo at project/.git with no worktree-path configured.
+///
+/// Returns (temp_dir, project_path, main_worktree, config_path, git_config_path).
+/// The default worktree-path template uses `{{ repo }}`, which resolves to `.git`.
+fn setup_unconfigured_nested_bare_repo() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, PathBuf)
+{
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_path = temp_dir.path().join("project");
+    fs::create_dir(&project_path).unwrap();
+
+    let bare_repo_path = project_path.join(".git");
+    let test_config_path = temp_dir.path().join("test-config.toml");
+    let git_config_path = temp_dir.path().join("test-gitconfig");
+
+    fs::write(
+        &git_config_path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+         [init]\n\tdefaultBranch = main\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::new("git");
+    configure_git_cmd(&mut cmd, &git_config_path);
+    cmd.args(["init", "--bare", "--initial-branch", "main"])
+        .arg(&bare_repo_path);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "Failed to init bare repo");
+
+    let bare_repo_path = canonicalize(&bare_repo_path).unwrap();
+    let project_path = canonicalize(&project_path).unwrap();
+
+    // No worktree-path set — uses the default template which references {{ repo }}
+    fs::write(&test_config_path, "# no worktree-path set\n").unwrap();
+
+    // Create main worktree
+    let mut cmd = Command::new("git");
+    configure_git_cmd(&mut cmd, &git_config_path);
+    cmd.args([
+        "worktree",
+        "add",
+        "-b",
+        "main",
+        project_path.join("main").to_str().unwrap(),
+    ])
+    .current_dir(&bare_repo_path);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "Failed to create main worktree");
+
+    // Initial commit so branch resolution works
+    let main_worktree = project_path.join("main");
+    let mut cmd = Command::new("git");
+    configure_git_cmd(&mut cmd, &git_config_path);
+    cmd.args(["commit", "--allow-empty", "-m", "Initial commit"])
+        .current_dir(&main_worktree);
+    cmd.output().unwrap();
+
+    (
+        temp_dir,
+        project_path,
+        main_worktree,
+        test_config_path,
+        git_config_path,
+    )
+}
+
+/// Test that --yes auto-accepts the bare repo worktree-path prompt.
+#[test]
+fn test_bare_repo_worktree_path_prompt_auto_accept() {
+    let (temp_dir, project_path, main_worktree, test_config_path, git_config_path) =
+        setup_unconfigured_nested_bare_repo();
+
+    let settings = setup_temp_snapshot_settings(temp_dir.path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        configure_git_cmd(&mut cmd, &git_config_path);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &test_config_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "--create", "feature", "--yes"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify config was written with project-level worktree-path
+    let config_content = fs::read_to_string(&test_config_path).unwrap();
+    assert!(
+        config_content.contains("worktree-path"),
+        "Config should contain worktree-path override.\nConfig: {config_content}"
+    );
+
+    // Verify worktree was created at the correct path (sibling of .git, not inside)
+    let expected_path = project_path.join("feature");
+    assert!(
+        expected_path.exists(),
+        "Worktree should be at {:?} (sibling to .git), not inside .git",
+        expected_path
+    );
+}
+
+/// Test that non-interactive (piped stdin) shows warning instead of prompt.
+#[test]
+fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
+    let (temp_dir, _project_path, main_worktree, test_config_path, git_config_path) =
+        setup_unconfigured_nested_bare_repo();
+
+    let settings = setup_temp_snapshot_settings(temp_dir.path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        configure_git_cmd(&mut cmd, &git_config_path);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &test_config_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+        configure_directive_file(&mut cmd, &directive_path);
+        // No --yes, but stdin is piped (non-interactive) since assert_cmd_snapshot
+        // doesn't attach a TTY
+        cmd.args(["switch", "--create", "feature"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}

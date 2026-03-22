@@ -2,6 +2,7 @@
 //!
 //! Functions for resolving worktree arguments and computing expected paths.
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use color_print::cformat;
@@ -10,6 +11,11 @@ use normalize_path::NormalizePath;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::path::format_path_for_display;
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, info_message, success_message, warning_message,
+};
+
+use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 use super::types::OperationMode;
 
@@ -297,6 +303,150 @@ pub(super) fn compute_clobber_backup(
     }
 }
 
+/// Suggested worktree-path template for bare repos with hidden directory names.
+///
+/// Places worktrees as siblings of the bare repo directory inside the parent,
+/// e.g., `myproject/.git` + branch `feature` → `myproject/feature`.
+const BARE_REPO_WORKTREE_PATH: &str = "../{{ branch | sanitize }}";
+
+/// Check whether a template string references `{{ repo }}` or `{{ main_worktree }}`.
+///
+/// Returns false for `{{ repo_path }}` and other variables that happen to contain "repo".
+fn template_references_repo_name(template: &str) -> bool {
+    for var_name in ["repo", "main_worktree"] {
+        for (idx, _) in template.match_indices(var_name) {
+            // Ensure not a prefix of a longer identifier (repo_path, repo_root)
+            let after_idx = idx + var_name.len();
+            if after_idx < template.len() {
+                let next = template.as_bytes()[after_idx];
+                if next == b'_' || next.is_ascii_alphanumeric() {
+                    continue;
+                }
+            }
+            // Ensure it's inside a template expression ({{ ... }})
+            let before = &template[..idx];
+            if let Some(open) = before.rfind("{{")
+                && !before[open..].contains("}}")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Offer to set a project-level `worktree-path` for bare repos with hidden directory names.
+///
+/// When a bare repo lives at a hidden path like `.git` or `.bare`, the `{{ repo }}`
+/// template variable resolves to that directory name, producing broken worktree paths.
+/// This function detects the situation and offers to set a project-level override.
+///
+/// Returns `true` if config was modified (caller should use the updated config).
+pub fn offer_bare_repo_worktree_path_fix(
+    repo: &Repository,
+    config: &mut UserConfig,
+    yes: bool,
+) -> anyhow::Result<bool> {
+    if !repo.is_bare()? {
+        return Ok(false);
+    }
+
+    let repo_path = repo.repo_path()?;
+    let repo_name = repo_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !repo_name.starts_with('.') {
+        return Ok(false);
+    }
+
+    if repo
+        .config_value("worktrunk.skip-bare-repo-prompt")
+        .unwrap_or(None)
+        .is_some()
+    {
+        return Ok(false);
+    }
+
+    let project_id = repo.project_identifier()?;
+    let template = config.worktree_path_for_project(&project_id);
+    if !template_references_repo_name(&template) {
+        return Ok(false);
+    }
+
+    // Auto-accept with --yes
+    if yes {
+        config.set_project_worktree_path(&project_id, BARE_REPO_WORKTREE_PATH.to_string(), None)?;
+        print_accepted_message(&project_id);
+        return Ok(true);
+    }
+
+    // Non-interactive: warn only
+    if !std::io::stdin().is_terminal() {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "{{{{ repo }}}} resolved to <bold>{repo_name}</> — worktree paths will use this as the project name"
+            ))
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To fix, run <underline>wt switch --create BRANCH --yes</> to auto-configure"
+            ))
+        );
+        return Ok(false);
+    }
+
+    // Interactive prompt
+    let config_path_display = worktrunk::config::config_path()
+        .map(|p| format_path_for_display(&p).to_string())
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+
+    let project_id_for_preview = project_id.clone();
+    match prompt_yes_no_preview(
+        &cformat!(
+            "{{{{ repo }}}} resolved to <bold>{repo_name}</> — set <bold>worktree-path</> for this project?"
+        ),
+        move || {
+            eprintln!(
+                "{}",
+                info_message(cformat!("Would add to <bold>{config_path_display}</>:"))
+            );
+            let preview = format!(
+                "[projects.\"{project_id_for_preview}\"]\nworktree-path = \"{BARE_REPO_WORKTREE_PATH}\""
+            );
+            eprintln!("{}", format_with_gutter(&preview, None));
+        },
+    )? {
+        PromptResponse::Accepted => {
+            config.set_project_worktree_path(
+                &project_id,
+                BARE_REPO_WORKTREE_PATH.to_string(),
+                None,
+            )?;
+            print_accepted_message(&project_id);
+            Ok(true)
+        }
+        PromptResponse::Declined => {
+            let _ = repo.set_config("worktrunk.skip-bare-repo-prompt", "true");
+            Ok(false)
+        }
+    }
+}
+
+fn print_accepted_message(project_id: &str) {
+    eprintln!(
+        "{}",
+        success_message(cformat!(
+            "Set <bold>worktree-path</> = <bold>{BARE_REPO_WORKTREE_PATH}</> for <bold>{project_id}</>"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To set for all projects, add to config: <underline>worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"</>"
+        ))
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +585,49 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&existing);
+    }
+
+    #[test]
+    fn test_template_references_repo_name_default() {
+        // Default template uses {{ repo }}
+        assert!(template_references_repo_name(
+            "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
+        ));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_with_filter() {
+        assert!(template_references_repo_name("{{ repo | sanitize }}"));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_deprecated_alias() {
+        assert!(template_references_repo_name(
+            "{{ main_worktree }}.{{ branch }}"
+        ));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_not_repo_path() {
+        // {{ repo_path }} should NOT match
+        assert!(!template_references_repo_name(
+            "{{ repo_path }}/../{{ branch | sanitize }}"
+        ));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_no_repo() {
+        assert!(!template_references_repo_name("../{{ branch | sanitize }}"));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_no_spaces() {
+        assert!(template_references_repo_name("{{repo}}.{{branch}}"));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_no_braces() {
+        // "repo" outside template expressions should not match
+        assert!(!template_references_repo_name("my-repo-path/{{ branch }}"));
     }
 }
