@@ -315,11 +315,17 @@ const BARE_REPO_WORKTREE_PATH: &str = "../{{ branch | sanitize }}";
 fn template_references_repo_name(template: &str) -> bool {
     for var_name in ["repo", "main_worktree"] {
         for (idx, _) in template.match_indices(var_name) {
-            // Ensure not a prefix of a longer identifier (repo_path, repo_root)
+            // Ensure not part of a longer identifier (repo_path, myrepo, etc.)
             let after_idx = idx + var_name.len();
             if after_idx < template.len() {
                 let next = template.as_bytes()[after_idx];
                 if next == b'_' || next.is_ascii_alphanumeric() {
+                    continue;
+                }
+            }
+            if idx > 0 {
+                let prev = template.as_bytes()[idx - 1];
+                if prev == b'_' || prev.is_ascii_alphanumeric() {
                     continue;
                 }
             }
@@ -426,7 +432,9 @@ pub fn offer_bare_repo_worktree_path_fix(
             Ok(true)
         }
         PromptResponse::Declined => {
-            let _ = repo.set_config("worktrunk.skip-bare-repo-prompt", "true");
+            if let Err(e) = repo.set_config("worktrunk.skip-bare-repo-prompt", "true") {
+                log::warn!("Failed to save skip-bare-repo-prompt to git config: {e}");
+            }
             Ok(false)
         }
     }
@@ -629,5 +637,12 @@ mod tests {
     fn test_template_references_repo_name_no_braces() {
         // "repo" outside template expressions should not match
         assert!(!template_references_repo_name("my-repo-path/{{ branch }}"));
+    }
+
+    #[test]
+    fn test_template_references_repo_name_substring_prefix() {
+        // "myrepo" should NOT match — "repo" is a suffix of a longer identifier
+        assert!(!template_references_repo_name("{{ myrepo }}"));
+        assert!(!template_references_repo_name("{{ norepo }}"));
     }
 }
