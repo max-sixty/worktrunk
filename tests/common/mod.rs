@@ -2909,8 +2909,11 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
-    // Filter temp paths in output — add canonical form first (longer match wins)
-    // On macOS, canonicalize adds /private prefix (e.g., /tmp → /private/tmp)
+    // Filter temp paths in output — multiple forms needed for cross-platform:
+    // 1. Canonical path (macOS: /private/tmp → /tmp needs both forms)
+    // 2. Raw path as provided
+    // 3. Tilde-prefixed path (Windows: ~/AppData/Local/Temp/... after format_path_for_display)
+    // Add longest matches first so they're preferred over shorter partial matches.
     if let Ok(canonical) = dunce::canonicalize(temp_path) {
         let canonical_str = canonical.to_str().unwrap();
         let temp_str = temp_path.to_str().unwrap();
@@ -2919,6 +2922,11 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
         }
     }
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
+    // format_path_for_display replaces $HOME with ~ — filter that form too
+    let tilde_path = worktrunk::path::format_path_for_display(temp_path).to_string();
+    if tilde_path != temp_path.to_str().unwrap_or("") {
+        settings.add_filter(&regex::escape(&tilde_path), "[TEMP]");
+    }
     settings.add_filter(r"\\", "/");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
