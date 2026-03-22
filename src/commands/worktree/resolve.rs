@@ -377,10 +377,16 @@ pub fn offer_bare_repo_worktree_path_fix(
         return Ok(false);
     }
 
+    // Display name for messages: use parent directory for hidden bare repos
+    let display_name = repo_path
+        .parent()
+        .map(|p| format_path_for_display(p).to_string())
+        .unwrap_or_else(|| format_path_for_display(repo_path).to_string());
+
     // Auto-accept with --yes
     if yes {
         config.set_project_worktree_path(&project_id, BARE_REPO_WORKTREE_PATH.to_string(), None)?;
-        print_accepted_message(&project_id);
+        print_accepted_message(&display_name);
         return Ok(true);
     }
 
@@ -389,7 +395,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "{{{{ repo }}}} resolved to <bold>{repo_name}</> — worktree paths will use this as the project name"
+                "Bare repo directory <bold>{repo_name}</> will appear in worktree paths"
             ))
         );
         eprintln!(
@@ -409,7 +415,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
         &cformat!(
-            "{{{{ repo }}}} resolved to <bold>{repo_name}</> — set <bold>worktree-path</> for this project?"
+            "Bare repo directory <bold>{repo_name}</> will appear in worktree paths — use branch-only paths instead?"
         ),
         move || {
             eprintln!(
@@ -428,7 +434,7 @@ pub fn offer_bare_repo_worktree_path_fix(
                 BARE_REPO_WORKTREE_PATH.to_string(),
                 None,
             )?;
-            print_accepted_message(&project_id);
+            print_accepted_message(&display_name);
             Ok(true)
         }
         PromptResponse::Declined => {
@@ -440,19 +446,19 @@ pub fn offer_bare_repo_worktree_path_fix(
     }
 }
 
-fn print_accepted_message(project_id: &str) {
+fn print_accepted_message(display_name: &str) {
     eprintln!(
         "{}",
         success_message(cformat!(
-            "Set <bold>worktree-path</> = <bold>{BARE_REPO_WORKTREE_PATH}</> for <bold>{project_id}</>"
+            "Set <bold>worktree-path</> for <bold>{display_name}</>"
         ))
     );
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "To set for all projects, add to config: <underline>worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"</>"
-        ))
+        hint_message("To set for all projects, add to config:")
     );
+    let global_config = format!("worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
+    eprintln!("{}", format_with_gutter(&global_config, None));
 }
 
 #[cfg(test)]
