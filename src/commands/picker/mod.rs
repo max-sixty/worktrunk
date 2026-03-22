@@ -377,7 +377,7 @@ pub fn handle_picker(
                 // Reload from disk so mutations are picked up by plan_switch.
                 let mut config =
                     worktrunk::config::UserConfig::load().context("Failed to load config")?;
-                offer_bare_repo_worktree_path_fix(&repo, &mut config, false)?;
+                offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 
                 // Run pre-switch hooks before branch resolution or worktree creation.
                 // {{ branch }} receives the raw user input (before resolution).

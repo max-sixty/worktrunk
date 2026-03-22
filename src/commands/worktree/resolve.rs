@@ -307,7 +307,8 @@ pub(super) fn compute_clobber_backup(
 ///
 /// Places worktrees as siblings of the bare repo directory inside the parent,
 /// e.g., `myproject/.git` + branch `feature` → `myproject/feature`.
-const BARE_REPO_WORKTREE_PATH: &str = "../{{ branch | sanitize }}";
+/// Uses an absolute path (`repo_path`/../) to avoid ambiguity with relative resolution.
+const BARE_REPO_WORKTREE_PATH: &str = "{{ repo_path }}/../{{ branch | sanitize }}";
 
 /// Check whether a template string references `{{ repo }}` or `{{ main_worktree }}`.
 fn template_references_repo_name(template: &str) -> bool {
@@ -329,7 +330,6 @@ fn template_references_repo_name(template: &str) -> bool {
 pub fn offer_bare_repo_worktree_path_fix(
     repo: &Repository,
     config: &mut UserConfig,
-    yes: bool,
 ) -> anyhow::Result<bool> {
     if !repo.is_bare()? {
         return Ok(false);
@@ -370,9 +370,12 @@ pub fn offer_bare_repo_worktree_path_fix(
     let example_bad = format!("{parent_name}/{repo_name}.feature-auth");
     let example_good = format!("{parent_name}/feature-auth");
 
-    // Non-interactive or --yes: warn only. Config changes require an interactive prompt —
-    // --yes confirms the branch/worktree creation, not a side-effect config modification.
-    if yes || !std::io::stdin().is_terminal() {
+    let config_path_display = worktrunk::config::config_path()
+        .map(|p| format_path_for_display(&p).to_string())
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+
+    // Non-interactive: warn and show the config to add.
+    if !std::io::stdin().is_terminal() {
         eprintln!(
             "{}",
             warning_message(cformat!(
@@ -382,16 +385,14 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "To fix, run <underline>wt switch --create BRANCH</> interactively"
+                "To place worktrees at <underline>{example_good}</>, add to <underline>{config_path_display}</>:"
             ))
         );
+        let config_snippet =
+            format!("[projects.\"{project_id}\"]\nworktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
+        eprintln!("{}", format_toml(&config_snippet));
         return Ok(false);
     }
-
-    // Resolve config path for display (used by preview and success hint)
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
 
     // Interactive: show diagnosis, then prompt
     eprintln!(

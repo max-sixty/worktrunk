@@ -246,7 +246,7 @@ pub fn handle_switch(
     }
 
     // Offer to fix worktree-path for bare repos with hidden directory names (.git, .bare).
-    offer_bare_repo_worktree_path_fix(&repo, config, yes)?;
+    offer_bare_repo_worktree_path_fix(&repo, config)?;
 
     // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {

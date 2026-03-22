@@ -6,7 +6,7 @@ expression: "&output"
 
 [36m❯[39m Configure worktree-path to place worktrees at [1mproject/feature-auth[22m? [1m[y/N/?][22m y
 [32m✓[39m [32mSet [1mworktree-path[22m for [1m[TEMP]/project[22m:[39m
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ branch | sanitize }}"[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
 [2m↳[22m [2mTo set globally, add to [4m[TEMP]/test-config.toml[24m[22m
 
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m[TEMP]/project/feature[22m[39m
