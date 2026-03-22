@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/bare_repository.rs
-assertion_line: 1110
+assertion_line: 1127
 info:
   program: wt
   args:
@@ -41,5 +41,5 @@ exit_code: 0
 ----- stderr -----
 ▲ Bare repo at .git — new worktrees will be at .git.feature-auth
 ↳ To fix, run wt switch --create BRANCH --yes to auto-configure
-✓ Created branch feature and worktree @ /private[TEMP]/project/.git.feature
+✓ Created branch feature and worktree @ [TEMP]/project/.git.feature
 [0m

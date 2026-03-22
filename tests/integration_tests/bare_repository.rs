@@ -671,6 +671,10 @@ impl NestedBareRepoTest {
             .map(|&(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
+        // HOME and XDG_CONFIG_HOME are needed for config lookups in env_clear'd PTY
+        let home = self.temp_dir.path().join("home");
+        std::fs::create_dir_all(&home).ok();
+
         vars.extend([
             (
                 "GIT_CONFIG_GLOBAL".to_string(),
@@ -686,10 +690,27 @@ impl NestedBareRepoTest {
                 "2025-01-01T00:00:00Z".to_string(),
             ),
             ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+            ("HOME".to_string(), home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                home.join(".config").display().to_string(),
+            ),
             ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
+                "/etc/xdg/worktrunk/config.toml".to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH".to_string(),
+                self.temp_dir
+                    .path()
+                    .join("test-approvals.toml")
+                    .display()
+                    .to_string(),
             ),
         ]);
 
@@ -1050,8 +1071,9 @@ fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Clear the config again — the --yes above may have set worktree-path
-    fs::write(test.config_path(), "# no worktree-path set\n").unwrap();
+    // Clear the config again — the --yes above may have set worktree-path.
+    // Skip shell integration prompt so it doesn't interfere (especially in PTY tests).
+    fs::write(test.config_path(), "skip-shell-integration-prompt = true\n").unwrap();
 
     test
 }

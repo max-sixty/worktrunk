@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/bare_repository.rs
+assertion_line: 1091
 info:
   program: wt
   args:
@@ -39,8 +40,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✓ Set worktree-path for /private[TEMP]/project
+✓ Set worktree-path for [TEMP]/project
 ↳ To set for all projects, add to config:
   worktree-path = "../{{ branch | sanitize }}"
-✓ Created branch feature and worktree @ /private[TEMP]/project/feature
+✓ Created branch feature and worktree @ [TEMP]/project/feature
 [0m

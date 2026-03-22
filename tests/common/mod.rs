@@ -2909,7 +2909,15 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
-    // Filter temp paths in output
+    // Filter temp paths in output — add canonical form first (longer match wins)
+    // On macOS, canonicalize adds /private prefix (e.g., /tmp → /private/tmp)
+    if let Ok(canonical) = dunce::canonicalize(temp_path) {
+        let canonical_str = canonical.to_str().unwrap();
+        let temp_str = temp_path.to_str().unwrap();
+        if canonical_str != temp_str {
+            settings.add_filter(&regex::escape(canonical_str), "[TEMP]");
+        }
+    }
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
     settings.add_filter(r"\\", "/");
     // Normalize Windows executable extension in help output
