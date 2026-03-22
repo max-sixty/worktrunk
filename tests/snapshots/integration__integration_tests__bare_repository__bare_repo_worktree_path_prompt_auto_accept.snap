@@ -41,6 +41,5 @@ exit_code: 0
 ----- stderr -----
 ✓ Set worktree-path = ../{{ branch | sanitize }} for /private[TEMP]/project/.git
 ↳ To set for all projects, add to config: worktree-path = "../{{ branch | sanitize }}"
-✓ Created branch feature from main and worktree @ /private[TEMP]/project/feature
-↳ To customize worktree locations, run wt config create
+✓ Created branch feature and worktree @ /private[TEMP]/project/feature
 [0m

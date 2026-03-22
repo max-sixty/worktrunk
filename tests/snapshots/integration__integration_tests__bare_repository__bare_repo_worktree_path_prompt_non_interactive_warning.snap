@@ -40,6 +40,5 @@ exit_code: 0
 ----- stderr -----
 ▲ {{ repo }} resolved to .git — worktree paths will use this as the project name
 ↳ To fix, run wt switch --create BRANCH --yes to auto-configure
-✓ Created branch feature from main and worktree @ /private[TEMP]/project/.git.feature
-↳ To customize worktree locations, run wt config create
+✓ Created branch feature and worktree @ /private[TEMP]/project/.git.feature
 [0m
