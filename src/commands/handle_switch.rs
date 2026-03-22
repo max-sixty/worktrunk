@@ -39,21 +39,60 @@ pub struct SwitchOptions<'a> {
 ///
 /// The hook context uses the **destination** branch argument as `{{ branch }}`,
 /// so hooks receive the user's raw input before resolution.
+///
+/// Directional vars:
+/// - `base` / `base_worktree_path`: current (source) branch and worktree
+/// - `target` / `target_worktree_path`: destination branch and worktree (if it exists)
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
     target_branch: &str,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let current_path = repo.current_worktree().path().to_path_buf();
+    let current_wt = repo.current_worktree();
+    let current_path = current_wt.path().to_path_buf();
     let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
+        // Base vars: source (where the user currently is)
+        let base_branch = current_wt.branch().ok().flatten().unwrap_or_default();
+        let base_path_str = worktrunk::path::to_posix_path(&current_path.to_string_lossy());
+
+        let mut extra_vars: Vec<(&str, &str)> = vec![
+            ("base", &base_branch),
+            ("base_worktree_path", &base_path_str),
+        ];
+
+        // Target vars and Active overrides: destination worktree.
+        // For existing worktrees: override bare vars (worktree_path, worktree_name,
+        // worktree) to point to the destination (Active), not the source.
+        let dest_path = repo.worktree_for_branch(target_branch).ok().flatten();
+        let dest_name = dest_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+        let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
+        extra_vars.push(("target", target_branch));
+        if let Some(ref p) = dest_path_str {
+            // Existing destination: override bare vars to Active (destination)
+            extra_vars.push(("target_worktree_path", p));
+            extra_vars.push(("worktree_path", p));
+            extra_vars.push(("worktree", p)); // deprecated alias
+            if let Some(ref name) = dest_name {
+                extra_vars.push(("worktree_name", name));
+            }
+        }
+        // For creates (dest_path_str is None): worktree_path keeps its default
+        // (the source worktree = cwd). The planned destination path is computed
+        // later during plan_switch, after pre-switch hooks complete.
+
         execute_hook(
             &pre_ctx,
             HookType::PreSwitch,
-            &[],
+            &extra_vars,
             HookFailureStrategy::FailFast,
             None,
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),

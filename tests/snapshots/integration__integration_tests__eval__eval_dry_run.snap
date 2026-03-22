@@ -46,6 +46,7 @@ exit_code: 0
 ----- stderr -----
 branch=main
 commit=05a4a45d0b981dad5c27db59dca482836d59f89e
+cwd=_REPO_
 default_branch=main
 main_worktree=repo
 main_worktree_path=_REPO_
