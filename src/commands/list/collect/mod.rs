@@ -433,7 +433,6 @@ pub fn collect(
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    // TODO: show ellipsis or indicator when default_branch is None and columns are empty
     let primary_path = repo.primary_worktree()?;
     let main_worktree = primary_path
         .as_ref()
