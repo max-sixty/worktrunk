@@ -258,6 +258,26 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         None => repo.home_path()?,
     };
 
+    // Capture feature worktree identity BEFORE removal for post-merge template vars.
+    // After removal the feature worktree is gone, but post-merge hooks need to
+    // reference it as the Active identity (branch, worktree_path, commit).
+    let feature_path_str = worktrunk::path::to_posix_path(&env.worktree_path.to_string_lossy());
+    let feature_name = env
+        .worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let feature_commit = repo
+        .current_worktree()
+        .run_command(&["rev-parse", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string());
+    let feature_short_commit = feature_commit
+        .as_ref()
+        .filter(|c| c.len() >= 7)
+        .map(|c| c[..7].to_string());
+
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
     // check_not_default_branch (Phase 3) are the same helpers both paths use.
@@ -310,22 +330,32 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     };
 
     if verify {
-        // Execute post-merge commands in the destination worktree
-        // This runs after cleanup so the context is clear to the user
+        // Post-merge hooks run in the destination worktree (target), but bare vars
+        // point to the Active (feature branch) per the template variable model.
+        // The destination worktree is the execution context (cwd).
         let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
-        // Show path when user's shell won't be in the destination directory where hooks run.
         let display_path = if removed {
-            // Worktree removed, user will cd to destination
             crate::output::post_hook_display_path(&destination_path)
         } else {
-            // No cd happens — user stays at cwd (either already at destination,
-            // or worktree preserved so they stay in feature)
             crate::output::pre_hook_display_path(&destination_path)
         };
+
+        // Override bare vars to Active (feature branch identity)
         let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
         if let Some(ref p) = target_wt_path_str {
             extra.push(("target_worktree_path", p));
         }
+        // Active = feature: override worktree_path and friends
+        extra.push(("worktree_path", &feature_path_str));
+        extra.push(("worktree", &feature_path_str)); // deprecated alias
+        extra.push(("worktree_name", &feature_name));
+        if let Some(ref c) = feature_commit {
+            extra.push(("commit", c));
+        }
+        if let Some(ref sc) = feature_short_commit {
+            extra.push(("short_commit", sc));
+        }
+
         execute_hook(
             &ctx,
             HookType::PostMerge,

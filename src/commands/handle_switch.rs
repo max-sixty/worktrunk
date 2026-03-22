@@ -63,13 +63,30 @@ pub(crate) fn run_pre_switch_hooks(
             ("base_worktree_path", &base_path_str),
         ];
 
-        // Target vars: destination (if the worktree already exists)
+        // Target vars and Active overrides: destination worktree.
+        // For existing worktrees: override bare vars (worktree_path, worktree_name,
+        // worktree) to point to the destination (Active), not the source.
         let dest_path = repo.worktree_for_branch(target_branch).ok().flatten();
+        let dest_name = dest_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
         let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
+        extra_vars.push(("target", target_branch));
         if let Some(ref p) = dest_path_str {
-            extra_vars.push(("target", target_branch));
+            // Existing destination: override bare vars to Active (destination)
             extra_vars.push(("target_worktree_path", p));
+            extra_vars.push(("worktree_path", p));
+            extra_vars.push(("worktree", p)); // deprecated alias
+            if let Some(ref name) = dest_name {
+                extra_vars.push(("worktree_name", name));
+            }
         }
+        // For creates (dest_path_str is None): worktree_path keeps its default
+        // (the source worktree = cwd). The planned destination path is computed
+        // later during plan_switch, after pre-switch hooks complete.
 
         execute_hook(
             &pre_ctx,
