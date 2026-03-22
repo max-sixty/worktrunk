@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/help.rs
-assertion_line: 40
 info:
   program: wt
   args:
@@ -9,6 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -117,7 +117,7 @@ Controls where new worktrees are created.
 
 [1mVariables:[0m
 
-- [2m{{ repo_path }}[0m — absolute path to the repository (e.g., [2m/Users/me/code/myproject[0m)
+- [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
@@ -136,8 +136,12 @@ Controls where new worktrees are created.
 [107m [0m [2m# Centralized worktrees directory[0m
 [107m [0m [2m# Creates: ~/worktrees/myproject/feature-auth[0m
 [107m [0m [2mworktree-path = [0m[2m[32m"~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+[107m [0m 
+[107m [0m [2m# Bare repository (git clone --bare <url> myproject/.git)[0m
+[107m [0m [2m# Creates: ~/code/myproject/feature-auth[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
 
-[2m~[0m expands to the home directory. Relative paths are relative to the repository root.
+[2m~[0m expands to the home directory. Relative paths resolve from [2mrepo_path[0m.
 
 [1m[32mLLM commit messages[0m
 
