@@ -308,10 +308,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             BranchDeletionMode::SafeDelete,
         );
         let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
-        let removed_commit = current_wt
-            .run_command(&["rev-parse", "HEAD"])
-            .ok()
-            .map(|s| s.trim().to_string());
 
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
@@ -323,7 +319,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             integration_reason,
             force_worktree: false,
             expected_path,
-            removed_commit,
+            removed_commit: feature_commit.clone(),
         };
         crate::output::handle_remove_output(&remove_result, false, verify, false)?;
         true
