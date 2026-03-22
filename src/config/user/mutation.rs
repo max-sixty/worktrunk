@@ -162,7 +162,7 @@ impl UserConfig {
             let entry = config
                 .projects
                 .entry(project.to_string())
-                .or_insert_with(UserProjectOverrides::default);
+                .or_default();
             if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
                 return false;
             }
