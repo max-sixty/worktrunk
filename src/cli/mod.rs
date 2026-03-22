@@ -1289,27 +1289,37 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Description |
 |----------|-------------|
+| `{{ branch }}` | Active branch name |
+| `{{ worktree_path }}` | Active worktree path |
+| `{{ worktree_name }}` | Active worktree directory name |
+| `{{ commit }}` | Active branch HEAD SHA |
+| `{{ short_commit }}` | Active branch HEAD SHA (7 chars) |
+| `{{ upstream }}` | Active branch upstream (if tracking a remote) |
+| `{{ base }}` | Base branch name |
+| `{{ base_worktree_path }}` | Base worktree path |
+| `{{ target }}` | Target branch name |
+| `{{ target_worktree_path }}` | Target worktree path |
+| `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
-| `{{ branch }}` | Branch name |
-| `{{ worktree_name }}` | Worktree directory name |
-| `{{ worktree_path }}` | Absolute worktree path |
-| `{{ primary_worktree_path }}` | Primary worktree path (main worktree for normal repos; default branch worktree for bare repos) |
+| `{{ primary_worktree_path }}` | Primary worktree path |
 | `{{ default_branch }}` | Default branch name |
-| `{{ commit }}` | Full HEAD commit SHA |
-| `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
-| `{{ upstream }}` | Upstream tracking branch (if set) |
 | `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ target }}` | Target branch (merge, remove, and switch hooks) |
-| `{{ target_worktree_path }}` | Target worktree path (merge, remove, and switch hooks) |
-| `{{ base }}` | Base/source branch (creation and switch hooks) |
-| `{{ base_worktree_path }}` | Base/source worktree path (creation and switch hooks) |
-| `{{ cwd }}` | Hook execution directory (always exists on disk) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; directional variables (`target`, `target_worktree_path`, `base`, `base_worktree_path`) are only available in two-worktree hooks. Using an undefined variable directly errors — use conditionals for optional behavior:
+Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
+
+| Operation | Bare vars | `base` | `target` |
+|-----------|-----------|--------|----------|
+| switch/create | destination | where you came from | = bare vars |
+| merge | feature being merged | = bare vars | merge target |
+| remove | branch being removed | = bare vars | where you end up |
+
+Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch (hook runs in the source, `worktree_path` is the destination), post-remove (active worktree is gone, hook runs in primary), and post-merge with removal (same — active is gone, hook runs in target).
+
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks. Undefined variables error — use conditionals:
 
 ```toml
 [post-create]
