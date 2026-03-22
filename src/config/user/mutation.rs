@@ -10,7 +10,7 @@ use crate::path::format_path_for_display;
 
 use super::UserConfig;
 use super::path;
-use super::sections::{CommitConfig, CommitGenerationConfig, UserProjectOverrides};
+use super::sections::{CommitConfig, CommitGenerationConfig};
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
