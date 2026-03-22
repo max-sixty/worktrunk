@@ -32,6 +32,7 @@ jobs:
       pr_number: ${{ github.event.pull_request.number }}
       event_name: ${{ github.event_name }}
       trigger_phrase: "@worktrunk-bot"
+      review_url: ${{ github.event.review.html_url }}
       setup_command: .github/scripts/ci-setup.sh
       review_prompt: /review-pr ${{ github.event.pull_request.number }}
       system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
