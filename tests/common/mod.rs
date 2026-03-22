@@ -573,7 +573,7 @@ const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 ///
 /// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
 /// are NOT included here because they depend on the TestRepo instance.
-const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
+pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
@@ -595,9 +595,9 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
-const NULL_DEVICE: &str = "NUL";
+pub const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
-const NULL_DEVICE: &str = "/dev/null";
+pub const NULL_DEVICE: &str = "/dev/null";
 
 /// Create a `wt` CLI command with standardized test environment settings.
 ///

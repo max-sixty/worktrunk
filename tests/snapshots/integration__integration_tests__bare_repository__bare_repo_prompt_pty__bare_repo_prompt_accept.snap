@@ -1,0 +1,11 @@
+---
+source: tests/integration_tests/bare_repository.rs
+expression: "&output"
+---
+
+[36m❯[39m {{ repo }} resolved to [1m.git[22m — set [1mworktree-path[22m for this project? [1m[y/N/?][22m y
+[32m✓[39m [32mSet [1mworktree-path[22m = [1m../{{ branch | sanitize }}[22m for [1m/private[TEMP]/project/.git[22m[39m
+[2m↳[22m [2mTo set for all projects, add to config: [4mworktree-path = "../{{ branch | sanitize }}"[24m[22m
+[32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m/private[TEMP]/project/feature[22m[39m
+[33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m
+[2m↳[22m [2mTo change directory, run [4mwt switch feature[24m[22m
