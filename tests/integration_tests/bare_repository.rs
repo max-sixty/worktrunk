@@ -1054,8 +1054,13 @@ fn test_bare_repo_merge_preserves_default_branch_worktree() {
 fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
     let test = NestedBareRepoTest::new();
 
-    // Clear worktree-path so the default template (which uses {{ repo }}) applies
-    fs::write(test.config_path(), "# no worktree-path set\n").unwrap();
+    // Temporarily set worktree-path so the main worktree lands at project/main
+    // (without this, the default {{ repo }} template produces .git.main).
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"../{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
 
     // Create main worktree with a commit (needed as a starting point for switch)
     let (directive_path, _guard) = directive_file();
@@ -1071,14 +1076,15 @@ fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Clear the config again — the --yes above may have set worktree-path.
+    // Clear config so the default template applies — the test subject is the bare repo prompt.
     // Skip shell integration prompt so it doesn't interfere (especially in PTY tests).
     fs::write(test.config_path(), "skip-shell-integration-prompt = true\n").unwrap();
 
     test
 }
 
-/// Test that --yes auto-accepts the bare repo worktree-path prompt.
+/// Test that --yes does NOT auto-accept the bare repo config change — it shows
+/// the warning and creates the worktree at the unconfigured (bad) path.
 #[test]
 fn test_bare_repo_worktree_path_prompt_auto_accept() {
     let test = setup_unconfigured_nested_bare_repo();
@@ -1096,19 +1102,19 @@ fn test_bare_repo_worktree_path_prompt_auto_accept() {
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify config was written with project-level worktree-path
+    // Config should NOT have worktree-path — --yes skips the config prompt
     let config_content = fs::read_to_string(test.config_path()).unwrap();
     assert!(
-        config_content.contains("worktree-path"),
-        "Config should contain worktree-path override.\nConfig: {config_content}"
+        !config_content.contains("worktree-path"),
+        "Config should NOT contain worktree-path — --yes should not auto-configure.\nConfig: {config_content}"
     );
 
-    // Verify worktree was created at the correct path (sibling of .git, not inside)
-    let expected_path = test.project_path().join("feature");
+    // Worktree created at the unconfigured path (bad but expected without config)
+    let bad_path = test.project_path().join(".git.feature");
     assert!(
-        expected_path.exists(),
-        "Worktree should be at {:?} (sibling to .git), not inside .git",
-        expected_path
+        bad_path.exists(),
+        "Worktree should be at {:?} (unconfigured default path)",
+        bad_path
     );
 }
 

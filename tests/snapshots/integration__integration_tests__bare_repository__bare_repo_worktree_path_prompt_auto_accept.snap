@@ -39,9 +39,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✓ Set worktree-path for [TEMP]/project:
-  worktree-path = "../{{ branch | sanitize }}"
-↳ To set globally, add to [TEMP]/test-config.toml
-
-✓ Created branch feature and worktree @ [TEMP]/project/feature
+▲ Bare repo at project/.git — worktrees will be at project/.git.feature-auth
+↳ To fix, run wt switch --create BRANCH interactively
+✓ Created branch feature and worktree @ [TEMP]/project/.git.feature
+↳ To customize worktree locations, run wt config create
 [0m

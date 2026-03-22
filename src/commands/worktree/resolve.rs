@@ -366,24 +366,13 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
-    // Resolve config path for display (used by preview and success hint)
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
-
-    // Auto-accept with --yes
-    if yes {
-        config.set_project_worktree_path(&project_id, BARE_REPO_WORKTREE_PATH.to_string(), None)?;
-        print_accepted_message(&display_path, &config_path_display);
-        return Ok(true);
-    }
-
     // Example paths to show the user what changes
     let example_bad = format!("{parent_name}/{repo_name}.feature-auth");
     let example_good = format!("{parent_name}/feature-auth");
 
-    // Non-interactive: warn only
-    if !std::io::stdin().is_terminal() {
+    // Non-interactive or --yes: warn only. Config changes require an interactive prompt —
+    // --yes confirms the branch/worktree creation, not a side-effect config modification.
+    if yes || !std::io::stdin().is_terminal() {
         eprintln!(
             "{}",
             warning_message(cformat!(
@@ -393,11 +382,16 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "To fix, run <underline>wt switch --create BRANCH --yes</>"
+                "To fix, run <underline>wt switch --create BRANCH</> interactively"
             ))
         );
         return Ok(false);
     }
+
+    // Resolve config path for display (used by preview and success hint)
+    let config_path_display = worktrunk::config::config_path()
+        .map(|p| format_path_for_display(&p).to_string())
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
 
     // Interactive: show diagnosis, then prompt
     eprintln!(
