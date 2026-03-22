@@ -1,0 +1,26 @@
+bot_name = "worktrunk-bot"
+bot_id = "254187624"
+system_prompt_append = "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
+
+[secrets]
+bot_token = "WORKTRUNK_BOT_TOKEN"
+claude_token = "CLAUDE_CODE_OAUTH_TOKEN"
+
+[workflows.review]
+prompt = "/review-pr ${{ github.event.pull_request.number }}"
+
+[workflows.mention]
+
+[workflows.triage]
+prompt = "/triage-issue ${{ github.event.issue.number }}"
+
+[workflows.ci-fix]
+watched_workflows = ["ci", "publish-docs"]
+prompt = "/fix-ci ${{ github.event.workflow_run.id }}"
+
+[workflows.nightly]
+cron = "17 6 * * *"
+prompt = "/nightly-cleaner"
+
+[workflows.renovate]
+cron = "17 9 * * 0"
