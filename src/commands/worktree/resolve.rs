@@ -379,7 +379,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     }
 
     // Example paths to show the user what changes
-    let example_bad = format!("{repo_name}.feature-auth");
+    let example_bad = format!("{parent_name}/{repo_name}.feature-auth");
     let example_good = format!("{parent_name}/feature-auth");
 
     // Non-interactive: warn only
@@ -387,7 +387,7 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>"
+                "Bare repo at <bold>{parent_name}/{repo_name}</> — worktrees will be at <bold>{example_bad}</>"
             ))
         );
         eprintln!(
@@ -403,14 +403,14 @@ pub fn offer_bare_repo_worktree_path_fix(
     eprintln!(
         "{}",
         warning_message(cformat!(
-            "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>"
+            "Bare repo at <bold>{parent_name}/{repo_name}</> — worktrees will be at <bold>{example_bad}</>"
         ))
     );
 
     let config_path_for_preview = config_path_display.clone();
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
-        &cformat!("Place at <bold>{example_good}</> instead?"),
+        &cformat!("Configure worktree-path to place worktrees at <bold>{example_good}</>?"),
         move || {
             eprintln!(
                 "{}",
