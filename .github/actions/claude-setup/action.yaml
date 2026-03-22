@@ -24,7 +24,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.130"
+        version: "=0.9.132"
 
     - name: "\U0001F4B0 Cache"
       uses: Swatinem/rust-cache@v2
