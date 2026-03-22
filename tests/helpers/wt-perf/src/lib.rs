@@ -101,7 +101,7 @@ impl RepoConfig {
     }
 
     /// Config for testing `wt switch` interactive picker (6 worktrees with varying commits).
-    pub const fn select_test() -> Self {
+    pub const fn picker_test() -> Self {
         Self {
             commits_on_main: 3,
             files: 3,
@@ -417,7 +417,7 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
 /// - `divergent` - many divergent branches (GH #461)
-/// - `select-test` - config for wt switch interactive picker testing
+/// - `picker-test` - config for wt switch interactive picker testing
 pub fn parse_config(s: &str) -> Option<RepoConfig> {
     if let Some(n) = s.strip_prefix("typical-") {
         let worktrees: usize = n.parse().ok()?;
@@ -442,7 +442,7 @@ pub fn parse_config(s: &str) -> Option<RepoConfig> {
 
     match s {
         "divergent" => Some(RepoConfig::many_divergent_branches()),
-        "select-test" => Some(RepoConfig::select_test()),
+        "picker-test" => Some(RepoConfig::picker_test()),
         _ => None,
     }
 }

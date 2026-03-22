@@ -88,7 +88,7 @@ The permission tests (`test_permission_error_prevents_save`, `test_approval_prom
 
 ### Shell/PTY Integration Tests
 
-PTY-based tests (approval prompts, TUI select, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
+PTY-based tests (approval prompts, TUI picker, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
 
 **IMPORTANT:** Tests that spawn interactive shells (`zsh -ic`, `bash -ic`) cause nextest's InputHandler to receive SIGTTOU when restoring terminal settings. This suspends the test process mid-run with `zsh: suspended (tty output)` or similar. See [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878) for details.
 
@@ -275,6 +275,8 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 ```
 
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
+
+**Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
 
 ## Benchmarks
 

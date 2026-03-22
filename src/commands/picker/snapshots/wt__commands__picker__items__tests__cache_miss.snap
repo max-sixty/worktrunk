@@ -1,5 +1,5 @@
 ---
-source: src/commands/select/items.rs
+source: src/commands/picker/items.rs
 expression: "cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)"
 ---
 [2m○[22m Generating summary...

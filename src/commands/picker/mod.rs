@@ -40,7 +40,7 @@ enum PickerAction {
     Remove,
 }
 
-pub fn handle_select(
+pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
@@ -62,7 +62,7 @@ pub fn handle_select(
     let state = PreviewState::new();
 
     // Gather list data using simplified collection (buffered mode)
-    // Skip expensive operations not needed for select UI
+    // Skip expensive operations not needed for picker UI
     let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
         collect::TaskKind::BranchDiff,
         collect::TaskKind::CiStatus,
@@ -87,7 +87,7 @@ pub fn handle_select(
             collect_deadline,
         },
         false, // show_progress (no progress bars)
-        false, // render_table (select renders its own UI)
+        false, // render_table (picker renders its own UI)
         true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
@@ -108,7 +108,7 @@ pub fn handle_select(
         &list_data.skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
-        None, // URL column not shown in select
+        None, // URL column not shown in picker
     );
 
     // Render header using layout system (need both plain and styled text for skim)

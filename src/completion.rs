@@ -164,7 +164,7 @@ pub(crate) fn branch_value_completer() -> ArgValueCompleter {
     })
 }
 
-/// Branch completion for positional arguments (switch, select).
+/// Branch completion for positional arguments (switch).
 /// Suppresses completions when --create flag is present.
 pub(crate) fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
