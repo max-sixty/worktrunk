@@ -207,11 +207,13 @@ Hooks can use template variables that expand at runtime:
 | `{{ upstream }}` | Upstream tracking branch (if set) |
 | `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ target }}` | Target branch (merge hooks only) |
-| `{{ base }}` | Base branch (creation hooks only) |
-| `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
+| `{{ target }}` | Target branch (merge, remove, and switch hooks) |
+| `{{ target_worktree_path }}` | Target worktree path (merge, remove, and switch hooks) |
+| `{{ base }}` | Base/source branch (creation and switch hooks) |
+| `{{ base_worktree_path }}` | Base/source worktree path (creation and switch hooks) |
+| `{{ cwd }}` | Hook execution directory (always exists on disk) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; directional variables (`target`, `target_worktree_path`, `base`, `base_worktree_path`) are only available in two-worktree hooks. Using an undefined variable directly errors — use conditionals for optional behavior:
 
 ```toml
 [post-create]
