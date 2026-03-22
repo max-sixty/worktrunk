@@ -88,7 +88,7 @@ The permission tests (`test_permission_error_prevents_save`, `test_approval_prom
 
 ### Shell/PTY Integration Tests
 
-PTY-based tests (approval prompts, TUI select, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
+PTY-based tests (approval prompts, TUI picker, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
 
 **IMPORTANT:** Tests that spawn interactive shells (`zsh -ic`, `bash -ic`) cause nextest's InputHandler to receive SIGTTOU when restoring terminal settings. This suspends the test process mid-run with `zsh: suspended (tty output)` or similar. See [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878) for details.
 
