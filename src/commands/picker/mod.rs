@@ -23,7 +23,8 @@ use super::handle_switch::{
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
+    BranchDeletionMode, SwitchBranchInfo, SwitchResult, execute_switch, handle_remove,
+    path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
 
@@ -350,7 +351,6 @@ pub fn handle_picker(
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
                 let result = if let Some(path) = detached_path {
                     // Detached worktrees have no branch name — remove by path
-                    use super::worktree::BranchDeletionMode;
                     repo.prepare_worktree_removal(
                         RemoveTarget::Path(&path),
                         BranchDeletionMode::SafeDelete,
