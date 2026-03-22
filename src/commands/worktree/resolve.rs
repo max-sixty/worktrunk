@@ -377,29 +377,34 @@ pub fn offer_bare_repo_worktree_path_fix(
         return Ok(false);
     }
 
-    // Display name for messages: use parent directory for hidden bare repos
-    let display_name = repo_path
+    // Display names for messages
+    let display_path = repo_path
         .parent()
         .map(|p| format_path_for_display(p).to_string())
         .unwrap_or_else(|| format_path_for_display(repo_path).to_string());
+    let parent_name = repo_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
 
     // Auto-accept with --yes
     if yes {
         config.set_project_worktree_path(&project_id, BARE_REPO_WORKTREE_PATH.to_string(), None)?;
-        print_accepted_message(&display_name);
+        print_accepted_message(&display_path);
         return Ok(true);
     }
 
     // Example paths to show the user what changes
     let example_bad = format!("{repo_name}.feature-auth");
-    let example_good = "feature-auth";
+    let example_good = format!("{parent_name}/feature-auth");
 
     // Non-interactive: warn only
     if !std::io::stdin().is_terminal() {
         eprintln!(
             "{}",
             warning_message(cformat!(
-                "Worktree paths will contain <bold>{repo_name}</> (e.g., <bold>{example_bad}</>)"
+                "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>"
             ))
         );
         eprintln!(
@@ -419,7 +424,7 @@ pub fn offer_bare_repo_worktree_path_fix(
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
         &cformat!(
-            "Worktree paths will contain <bold>{repo_name}</> (e.g., <bold>{example_bad}</>)\n  Place at <bold>{example_good}</> instead?"
+            "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>\n  Place at <bold>{example_good}</> instead?"
         ),
         move || {
             eprintln!(
@@ -438,7 +443,7 @@ pub fn offer_bare_repo_worktree_path_fix(
                 BARE_REPO_WORKTREE_PATH.to_string(),
                 None,
             )?;
-            print_accepted_message(&display_name);
+            print_accepted_message(&display_path);
             Ok(true)
         }
         PromptResponse::Declined => {

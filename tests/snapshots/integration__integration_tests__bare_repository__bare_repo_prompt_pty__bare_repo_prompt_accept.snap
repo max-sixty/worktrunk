@@ -4,8 +4,8 @@ assertion_line: 1149
 expression: "&output"
 ---
 
-[36m❯[39m Worktree paths will contain [1m.git[22m (e.g., [1m.git.feature-auth[22m)
-  Place at [1mfeature-auth[22m instead? [1m[y/N/?][22m y
+[36m❯[39m Bare repo at [1m.git[22m — new worktrees will be at [1m.git.feature-auth[22m
+  Place at [1mproject/feature-auth[22m instead? [1m[y/N/?][22m y
 [32m✓[39m [32mSet [1mworktree-path[22m for [1m/private[TEMP]/project[22m[39m
 [2m↳[22m [2mTo set for all projects, add to config:[22m
 [107m [0m worktree-path = "../{{ branch | sanitize }}"

@@ -39,7 +39,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-▲ Worktree paths will contain .git (e.g., .git.feature-auth)
+▲ Bare repo at .git — new worktrees will be at .git.feature-auth
 ↳ To fix, run wt switch --create BRANCH --yes to auto-configure
 ✓ Created branch feature and worktree @ /private[TEMP]/project/.git.feature
 [0m
