@@ -83,7 +83,7 @@ Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
@@ -103,9 +103,13 @@ worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 # Centralized worktrees directory
 # Creates: ~/worktrees/myproject/feature-auth
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+
+# Bare repository (git clone --bare <url> myproject/.git)
+# Creates: ~/code/myproject/feature-auth
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-`~` expands to the home directory. Relative paths are relative to the repository root.
+`~` expands to the home directory. Relative paths resolve from `repo_path`.
 
 ## LLM commit messages
 
