@@ -70,9 +70,17 @@ impl<'a> CommandContext<'a> {
             commit
         };
         // Target vars: where the user ends up after removal (primary worktree).
-        // self.worktree_path is the CommandContext's path, set to main_path by the caller.
+        // self.worktree_path is main_path (set by caller). Look up its branch
+        // rather than using self.branch (which is the removed branch).
         let target_path_str = to_posix_path(&self.worktree_path.to_string_lossy());
-        let target_branch = self.branch_or_head();
+        let target_branch_owned = self
+            .repo
+            .worktree_at(self.worktree_path)
+            .branch()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let target_branch = target_branch_owned.as_str();
 
         let extra_vars: Vec<(&str, &str)> = vec![
             ("branch", removed_branch),
