@@ -362,7 +362,16 @@ alias wtlog='f() { tail -f "$(wt config state logs get --hook="$1")"; }; f'
 
 ## Bare repository layout
 
-An alternative to the default sibling layout (`myproject.feature/`) uses a bare repository with worktrees as subdirectories:
+A [bare repository](https://git-scm.com/docs/gitrepository-layout) has no working tree, so all branches — including the default — are [linked worktrees](https://git-scm.com/docs/git-worktree) at equal paths. No branch gets special treatment.
+
+Cloning a bare repo into `<project>/.git` puts all worktrees under one directory:
+
+```bash
+git clone --bare <url> myproject/.git
+cd myproject
+```
+
+With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:
 
 ```
 myproject/
@@ -372,18 +381,11 @@ myproject/
 └── bugfix/     # bugfix branch
 ```
 
-Setup:
-
-```bash
-git clone --bare <url> myproject/.git
-cd myproject
-```
-
-Configure worktrunk to create worktrees as subdirectories:
+Configure worktrunk:
 
 ```toml
 # ~/.config/worktrunk/config.toml
-worktree-path = "../{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
 Create the first worktree:

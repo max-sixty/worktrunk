@@ -2002,3 +2002,173 @@ fn test_remove_current_worktree_fires_post_switch_hook(mut repo: TestRepo) {
         "Post-switch hook should run when removing current worktree, got: {content}"
     );
 }
+
+// ==========================================================================
+// Active model: directional template variables
+// ==========================================================================
+
+/// Pre-switch to existing worktree: worktree_path = destination (Active),
+/// base_worktree_path = source, cwd = source.
+#[rstest]
+fn test_pre_switch_vars_point_to_destination(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Hook captures worktree_path, base_worktree_path, and cwd
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'wt_path={{ worktree_path }} base={{ base }} base_wt={{ base_worktree_path }} cwd={{ cwd }}' > pre_switch_vars.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo.root_path().join("pre_switch_vars.txt");
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    let feature_name = feature_path.file_name().unwrap().to_string_lossy();
+    let main_name = repo
+        .root_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // worktree_path should be the destination (Active)
+    assert!(
+        content.contains(&format!("/{feature_name} "))
+            || content.contains(&format!("\\{feature_name} ")),
+        "worktree_path should point to destination '{feature_name}', got: {content}"
+    );
+
+    // base should be the source branch
+    assert!(
+        content.contains("base=main"),
+        "base should be source branch 'main', got: {content}"
+    );
+
+    // cwd should be the source (where the hook actually runs)
+    assert!(
+        content.contains(&format!("/{main_name}")) || content.contains(&format!("\\{main_name}")),
+        "cwd should point to source worktree '{main_name}', got: {content}"
+    );
+}
+
+/// Post-remove: target/target_worktree_path point to where user ends up.
+#[rstest]
+fn test_post_remove_has_target_vars(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch={{ branch }} target={{ target }} target_wt={{ target_worktree_path }}' > ../postremove_target.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_target.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    // branch should be the removed branch (Active)
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be removed branch 'feature', got: {content}"
+    );
+
+    // target should be the destination branch (where user ends up)
+    assert!(
+        content.contains("target=main"),
+        "target should be destination 'main', got: {content}"
+    );
+
+    // target_worktree_path should be the primary worktree
+    let main_name = repo
+        .root_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        content.contains(&main_name),
+        "target_worktree_path should contain primary worktree name '{main_name}', got: {content}"
+    );
+}
+
+/// Post-switch for existing switches: base vars reference the source worktree.
+#[rstest]
+fn test_post_switch_has_base_vars_for_existing(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Post-switch hooks run in the DESTINATION worktree (feature), so write
+    // to a path relative to the worktree that will exist after switch.
+    repo.write_test_config(
+        r#"[post-switch]
+capture = "echo 'branch={{ branch }} base={{ base }}' > post_switch_base.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // File is written in the destination (feature) worktree
+    let vars_file = feature_path.join("post_switch_base.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    // branch should be the destination (Active)
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be destination 'feature', got: {content}"
+    );
+
+    // base should be the source branch we switched from
+    assert!(
+        content.contains("base=main"),
+        "base should be source 'main', got: {content}"
+    );
+}
+
+/// cwd always exists on disk — even when worktree_path points to a deleted directory.
+#[rstest]
+fn test_cwd_always_exists_in_post_remove(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+check = "test -d {{ cwd }} && echo 'cwd_exists=true' > ../cwd_check.txt || echo 'cwd_exists=false' > ../cwd_check.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let check_file = repo.root_path().parent().unwrap().join("cwd_check.txt");
+    crate::common::wait_for_file_content(&check_file);
+
+    let content = fs::read_to_string(&check_file).unwrap();
+    assert!(
+        content.contains("cwd_exists=true"),
+        "cwd should point to an existing directory, got: {content}"
+    );
+}

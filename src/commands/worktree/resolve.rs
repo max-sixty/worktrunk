@@ -187,7 +187,7 @@ pub(crate) fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
 /// Returns the expected path if `actual_path` differs from the template-computed path.
 ///
 /// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
-/// Used to show path mismatch warnings in switch, select, remove, and merge.
+/// Used to show path mismatch warnings in switch, picker, remove, and merge.
 pub fn path_mismatch(
     repo: &Repository,
     branch: &str,

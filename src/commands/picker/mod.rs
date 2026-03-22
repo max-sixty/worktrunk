@@ -39,7 +39,7 @@ enum PickerAction {
     Remove,
 }
 
-pub fn handle_select(
+pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
@@ -61,7 +61,7 @@ pub fn handle_select(
     let state = PreviewState::new();
 
     // Gather list data using simplified collection (buffered mode)
-    // Skip expensive operations not needed for select UI
+    // Skip expensive operations not needed for picker UI
     let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
         collect::TaskKind::BranchDiff,
         collect::TaskKind::CiStatus,
@@ -86,7 +86,7 @@ pub fn handle_select(
             collect_deadline,
         },
         false, // show_progress (no progress bars)
-        false, // render_table (select renders its own UI)
+        false, // render_table (picker renders its own UI)
         true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
@@ -107,7 +107,7 @@ pub fn handle_select(
         &list_data.skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
-        None, // URL column not shown in select
+        None, // URL column not shown in picker
     );
 
     // Render header using layout system (need both plain and styled text for skim)
@@ -127,16 +127,11 @@ pub fn handle_select(
         .map(|item| {
             let branch_name = item.branch_name().to_string();
 
-            // status_symbols is None only when no task results arrived for this item
-            // (budget truncation). collect() sets it for all other items: via drain
-            // callbacks for items that received results, and the post-drain loop for
-            // prunable worktrees. Each column also shows the placeholder independently
-            // when its own data field is None.
-            let rendered_line = if item.status_symbols.is_none() {
-                layout.render_list_item_stale(&item)
-            } else {
-                layout.render_list_item_line(&item)
-            };
+            // The picker doesn't update progressively, so any column whose data
+            // didn't arrive in time won't fill in later. Use the stale placeholder
+            // ("·") for all items — it signals "data not available" rather than the
+            // ellipsis ("⋯") which implies data is still loading.
+            let rendered_line = layout.render_list_item_stale(&item);
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();
 

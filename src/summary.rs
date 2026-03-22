@@ -236,7 +236,7 @@ pub(crate) fn generate_summary_core(
 ///
 /// This is the TUI-friendly wrapper that returns a formatted string for all cases,
 /// including errors and "no changes" — suitable for `wt switch` preview pane.
-#[cfg_attr(windows, allow(dead_code))] // Called from select module (unix-only)
+#[cfg_attr(windows, allow(dead_code))] // Called from picker module (unix-only)
 pub(crate) fn generate_summary(
     branch: &str,
     head: &str,

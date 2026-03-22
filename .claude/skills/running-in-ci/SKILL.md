@@ -42,3 +42,8 @@ CI runs on Linux, Windows, and macOS.
 
 Session log artifact paths follow the pattern:
 `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
+
+## Applying GitHub Suggestions
+
+Apply the literal suggestion only — change the lines it covers, nothing more.
+If surrounding lines also need updating, note that in your reply.
