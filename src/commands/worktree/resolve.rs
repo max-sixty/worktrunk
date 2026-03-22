@@ -12,7 +12,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, success_message, warning_message,
+    eprintln, format_toml, hint_message, info_message, success_message, warning_message,
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -310,35 +310,13 @@ pub(super) fn compute_clobber_backup(
 const BARE_REPO_WORKTREE_PATH: &str = "../{{ branch | sanitize }}";
 
 /// Check whether a template string references `{{ repo }}` or `{{ main_worktree }}`.
-///
-/// Returns false for `{{ repo_path }}` and other variables that happen to contain "repo".
 fn template_references_repo_name(template: &str) -> bool {
-    for var_name in ["repo", "main_worktree"] {
-        for (idx, _) in template.match_indices(var_name) {
-            // Ensure not part of a longer identifier (repo_path, myrepo, etc.)
-            let after_idx = idx + var_name.len();
-            if after_idx < template.len() {
-                let next = template.as_bytes()[after_idx];
-                if next == b'_' || next.is_ascii_alphanumeric() {
-                    continue;
-                }
-            }
-            if idx > 0 {
-                let prev = template.as_bytes()[idx - 1];
-                if prev == b'_' || prev.is_ascii_alphanumeric() {
-                    continue;
-                }
-            }
-            // Ensure it's inside a template expression ({{ ... }})
-            let before = &template[..idx];
-            if let Some(open) = before.rfind("{{")
-                && !before[open..].contains("}}")
-            {
-                return true;
-            }
-        }
-    }
-    false
+    let env = minijinja::Environment::new();
+    let Ok(tmpl) = env.template_from_str(template) else {
+        return false;
+    };
+    let vars = tmpl.undeclared_variables(false);
+    vars.contains("repo") || vars.contains("main_worktree")
 }
 
 /// Offer to set a project-level `worktree-path` for bare repos with hidden directory names.
@@ -388,10 +366,15 @@ pub fn offer_bare_repo_worktree_path_fix(
         .and_then(|n| n.to_str())
         .unwrap_or("project");
 
+    // Resolve config path for display (used by preview and success hint)
+    let config_path_display = worktrunk::config::config_path()
+        .map(|p| format_path_for_display(&p).to_string())
+        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+
     // Auto-accept with --yes
     if yes {
         config.set_project_worktree_path(&project_id, BARE_REPO_WORKTREE_PATH.to_string(), None)?;
-        print_accepted_message(&display_path);
+        print_accepted_message(&display_path, &config_path_display);
         return Ok(true);
     }
 
@@ -410,31 +393,34 @@ pub fn offer_bare_repo_worktree_path_fix(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "To fix, run <underline>wt switch --create BRANCH --yes</> to auto-configure"
+                "To fix, run <underline>wt switch --create BRANCH --yes</>"
             ))
         );
         return Ok(false);
     }
 
-    // Interactive prompt
-    let config_path_display = worktrunk::config::config_path()
-        .map(|p| format_path_for_display(&p).to_string())
-        .unwrap_or_else(|| "~/.config/worktrunk/config.toml".to_string());
+    // Interactive: show diagnosis, then prompt
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>"
+        ))
+    );
 
+    let config_path_for_preview = config_path_display.clone();
     let project_id_for_preview = project_id.clone();
     match prompt_yes_no_preview(
-        &cformat!(
-            "Bare repo at <bold>{repo_name}</> — new worktrees will be at <bold>{example_bad}</>\n  Place at <bold>{example_good}</> instead?"
-        ),
+        &cformat!("Place at <bold>{example_good}</> instead?"),
         move || {
             eprintln!(
                 "{}",
-                info_message(cformat!("Would add to <bold>{config_path_display}</>:"))
+                info_message(cformat!("Would add to <bold>{config_path_for_preview}</>:"))
             );
             let preview = format!(
                 "[projects.\"{project_id_for_preview}\"]\nworktree-path = \"{BARE_REPO_WORKTREE_PATH}\""
             );
-            eprintln!("{}", format_with_gutter(&preview, None));
+            eprintln!("{}", format_toml(&preview));
+            eprintln!();
         },
     )? {
         PromptResponse::Accepted => {
@@ -443,7 +429,7 @@ pub fn offer_bare_repo_worktree_path_fix(
                 BARE_REPO_WORKTREE_PATH.to_string(),
                 None,
             )?;
-            print_accepted_message(&display_path);
+            print_accepted_message(&display_path, &config_path_display);
             Ok(true)
         }
         PromptResponse::Declined => {
@@ -455,19 +441,24 @@ pub fn offer_bare_repo_worktree_path_fix(
     }
 }
 
-fn print_accepted_message(display_name: &str) {
+fn print_accepted_message(display_path: &str, config_path: &str) {
     eprintln!(
         "{}",
         success_message(cformat!(
-            "Set <bold>worktree-path</> for <bold>{display_name}</>"
+            "Set <bold>worktree-path</> for <bold>{display_path}</>:"
         ))
     );
+    let global_config = format!("worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
+    eprintln!("{}", format_toml(&global_config));
     eprintln!(
         "{}",
-        hint_message("To set for all projects, add to config:")
+        hint_message(cformat!(
+            "To set globally, add to <underline>{config_path}</>"
+        ))
     );
-    let global_config = format!("worktree-path = \"{BARE_REPO_WORKTREE_PATH}\"");
-    eprintln!("{}", format_with_gutter(&global_config, None));
+
+    // Blank line separates this setup phase from the main operation that follows
+    eprintln!();
 }
 
 #[cfg(test)]
