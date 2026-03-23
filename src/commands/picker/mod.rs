@@ -23,11 +23,11 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
+use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::branch_deletion::delete_branch_if_safe;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
     BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
@@ -133,12 +133,7 @@ impl CommandCollector for PickerCollector {
                 };
                 let removal = self
                     .repo
-                    .prepare_worktree_removal(
-                        target,
-                        BranchDeletionMode::SafeDelete,
-                        false,
-                        config,
-                    )
+                    .prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, config)
                     .and_then(|result| {
                         Self::execute_removal(&result)?;
                         Ok(result)
