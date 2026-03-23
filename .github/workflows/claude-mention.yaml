@@ -240,7 +240,7 @@ jobs:
                   github.event.comment.html_url
                 )
                 || format(
-                  'A user commented on an issue/PR where you previously participated ({0}). Read the full context (description, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding. When suggesting code changes on a PR, use the review-pr skill for inline suggestions.',
+                  'A user commented on an issue/PR where you previously participated ({0}). Read the full context (description, recent comments, CI status). Only respond if the comment is directed at you, asks a question you can help with, or requests changes you can make. A comment that responds to concerns you raised in a review is directed at you — briefly acknowledge that the concerns are resolved (or explain why they aren''t). If the conversation is between humans and doesn''t need your input, exit silently without commenting. Note: if you are the author of the PR or issue, commenters are probably expecting the author to engage — lean toward responding. When suggesting code changes on a PR, use the review-pr skill for inline suggestions.',
                   github.event.comment.html_url
                 ))
               || format(
