@@ -56,11 +56,11 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 Apply the literal suggestion only — change the lines it covers, nothing more.
 If surrounding lines also need updating, note that in your reply.
 
+## Issue Triage
+
+When a bug may already be fixed, ask the reporter: `wt --version`
+
 ## Per-Workflow References
 
-Load the relevant reference file for workflow-specific guidance:
-
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search
-- **Issue triage**: `@references/triage-issue.md` — version checks, test reproduction
 - **Nightly sweep**: `@references/nightly-cleaner.md` — survey script, branch naming
-- **CI fix**: `@references/fix-ci.md` — test commands, labels
