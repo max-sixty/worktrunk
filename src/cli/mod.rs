@@ -765,6 +765,12 @@ wt remove feature-branch
 wt remove old-feature another-branch
 ```
 
+Remove a detached HEAD worktree by path:
+
+```console
+wt remove /tmp/my-detached-worktree
+```
+
 Keep the branch:
 
 ```console
@@ -824,7 +830,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 - [`wt list`](@/list.md) — View all worktrees
 "#)]
     Remove {
-        /// Branch name [default: current]
+        /// Branch name or path [default: current]
         #[arg(add = crate::completion::local_branches_completer())]
         branches: Vec<String>,
 
