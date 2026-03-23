@@ -818,13 +818,17 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
 
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: `wt remove /path/to/worktree`.
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
 - [`wt list`](@/list.md) — View all worktrees
 "#)]
     Remove {
-        /// Branch name [default: current]
+        /// Branch name or path [default: current]
         #[arg(add = crate::completion::local_branches_completer())]
         branches: Vec<String>,
 
