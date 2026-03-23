@@ -47,9 +47,10 @@ jobs:
 
       - name: Check out PR branch (review response)
         if: github.event_name == 'pull_request_review'
-        run: gh pr checkout ${{ github.event.pull_request.number }}
+        run: gh pr checkout "$PR_NUMBER"
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - uses: ./.github/actions/claude-setup
 
