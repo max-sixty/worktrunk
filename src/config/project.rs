@@ -154,9 +154,7 @@ impl ProjectConfig {
             let repo_root = repo
                 .current_worktree()
                 .root()
-                .map_err(|e| {
-                    ConfigError::Message(format!("Failed to get worktree root: {}", e))
-                })?;
+                .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
             let config_path = repo_root.join(".config").join("wt.toml");
             if config_path.exists() {
                 config_path
