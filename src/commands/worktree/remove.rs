@@ -116,7 +116,7 @@ mod tests {
 
         // Create a repo with an initial commit
         Cmd::new("git")
-            .args(["init", repo_path.to_str().unwrap()])
+            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
             .run()
             .unwrap();
         std::fs::write(repo_path.join("file.txt"), "hello").unwrap();
