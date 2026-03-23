@@ -1290,7 +1290,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "pre-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
@@ -1300,7 +1300,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No post-create hook configured"),
+        stderr.contains("No pre-start hook configured"),
         "Error should mention no hook configured, got: {stderr}"
     );
 }

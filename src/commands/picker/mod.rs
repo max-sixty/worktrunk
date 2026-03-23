@@ -408,11 +408,14 @@ pub fn handle_picker(
                 let (result, branch_info) =
                     execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
-                // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+                // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
+                // Skip for detached HEAD worktrees (branch is None).
                 let branch_info = match &result {
                     SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                        let expected_path =
-                            path_mismatch(&repo, &branch_info.branch, path, &config);
+                        let expected_path = branch_info
+                            .branch
+                            .as_deref()
+                            .and_then(|b| path_mismatch(&repo, b, path, &config));
                         SwitchBranchInfo {
                             expected_path,
                             ..branch_info
@@ -441,7 +444,7 @@ pub fn handle_picker(
                         &repo,
                         &config,
                         &result,
-                        &branch_info.branch,
+                        branch_info.branch.as_deref(),
                         false,
                         &extra_vars,
                         hooks_display_path.as_deref(),

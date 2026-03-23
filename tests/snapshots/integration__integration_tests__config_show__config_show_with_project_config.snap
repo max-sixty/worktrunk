@@ -47,6 +47,20 @@ exit_code: 0
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
+[33m▲[39m [33mProject config uses deprecated hook name: post-create → pre-start[39m
+[2m↳[22m [2mTo apply:[22m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
+[107m [0m [1mindex 13d6ba3..6ccc26d 100644[m
+[107m [0m [1m--- a_REPO_/.config/wt.toml[m
+[107m [0m [1m+++ b_REPO_/.config/wt.toml.new[m
+[107m [0m [36m@@ -1,4 +1,4 @@[m
+[107m [0m [31m-post-create = "npm install"[m
+[107m [0m [32m+[m[32mpre-start = "npm install"[m
+[107m [0m  [m
+[107m [0m  [post-start][m
+[107m [0m  server = "npm run dev"[m
+[2m○[22m Current config:
 [107m [0m [2mpost-create = [0m[2m[32m"npm install"
 [107m [0m 
 [107m [0m [2m[36m[post-start]

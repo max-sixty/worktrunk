@@ -103,12 +103,12 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger post-create + post-start + post-switch hooks;
+/// Creates trigger pre-start + post-start + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PostCreate,
+            HookType::PreStart,
             HookType::PostStart,
             HookType::PostSwitch,
         ]
@@ -132,7 +132,7 @@ pub(crate) fn approve_switch_hooks(
         return Ok(false);
     }
 
-    let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
+    let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
     let approved = approve_hooks(&ctx, switch_post_hook_types(plan.is_create()))?;
 
     if !approved {
@@ -176,12 +176,12 @@ pub(crate) fn spawn_switch_background_hooks(
     repo: &Repository,
     config: &UserConfig,
     result: &SwitchResult,
-    branch: &str,
+    branch: Option<&str>,
     yes: bool,
     extra_vars: &[(&str, &str)],
     hooks_display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let ctx = CommandContext::new(repo, config, Some(branch), result.path(), yes);
+    let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
     let mut hooks = super::hooks::prepare_background_hooks(
         &ctx,
@@ -296,10 +296,14 @@ pub fn handle_switch(
         return Ok(());
     }
 
-    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
+    // Skip for detached HEAD worktrees (branch is None) — no branch to compute expected path from.
     let branch_info = match &result {
         SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
+            let expected_path = branch_info
+                .branch
+                .as_deref()
+                .and_then(|b| path_mismatch(&repo, b, path, config));
             SwitchBranchInfo {
                 expected_path,
                 ..branch_info
@@ -356,7 +360,7 @@ pub fn handle_switch(
             &repo,
             config,
             &result,
-            &branch_info.branch,
+            branch_info.branch.as_deref(),
             yes,
             &extra_vars,
             hooks_display_path.as_deref(),
@@ -367,7 +371,13 @@ pub fn handle_switch(
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
-        let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
+        let ctx = CommandContext::new(
+            &repo,
+            config,
+            branch_info.branch.as_deref(),
+            result.path(),
+            yes,
+        );
         let template_vars = build_hook_context(&ctx, &extra_vars)?;
         let vars: HashMap<&str, &str> = template_vars
             .iter()

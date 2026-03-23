@@ -72,7 +72,7 @@ pre-merge = "cargo test"
     #[test]
     fn test_collect_commands_for_hooks_single_hook() {
         let config = make_project_config_with_hooks();
-        let commands = collect_commands_for_hooks(&config, &[HookType::PostCreate]);
+        let commands = collect_commands_for_hooks(&config, &[HookType::PreStart]);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command.template, "npm install");
     }
@@ -81,7 +81,7 @@ pre-merge = "cargo test"
     fn test_collect_commands_for_hooks_multiple_hooks() {
         let config = make_project_config_with_hooks();
         let commands =
-            collect_commands_for_hooks(&config, &[HookType::PostCreate, HookType::PreMerge]);
+            collect_commands_for_hooks(&config, &[HookType::PreStart, HookType::PreMerge]);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command.template, "npm install");
         assert_eq!(commands[1].command.template, "cargo test");
@@ -99,7 +99,7 @@ pre-merge = "cargo test"
         let config = make_project_config_with_hooks();
         // Order should match the order of hooks provided
         let commands =
-            collect_commands_for_hooks(&config, &[HookType::PreMerge, HookType::PostCreate]);
+            collect_commands_for_hooks(&config, &[HookType::PreMerge, HookType::PreStart]);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].command.template, "cargo test");
         assert_eq!(commands[1].command.template, "npm install");
@@ -124,7 +124,7 @@ install = "npm install"
 build = "npm run build"
 "#;
         let config: ProjectConfig = toml::from_str(toml_content).unwrap();
-        let commands = collect_commands_for_hooks(&config, &[HookType::PostCreate]);
+        let commands = collect_commands_for_hooks(&config, &[HookType::PreStart]);
         assert_eq!(commands.len(), 2);
         // Named commands preserve order from TOML
         assert_eq!(commands[0].command.name, Some("install".to_string()));
@@ -134,11 +134,8 @@ build = "npm run build"
     #[test]
     fn test_collect_commands_for_hooks_phase_is_set() {
         let config = make_project_config_with_hooks();
-        let commands = collect_commands_for_hooks(&config, &[HookType::PostCreate]);
+        let commands = collect_commands_for_hooks(&config, &[HookType::PreStart]);
         assert_eq!(commands.len(), 1);
-        assert!(matches!(
-            commands[0].phase,
-            Phase::Hook(HookType::PostCreate)
-        ));
+        assert!(matches!(commands[0].phase, Phase::Hook(HookType::PreStart)));
     }
 }
