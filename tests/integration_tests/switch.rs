@@ -1000,15 +1000,20 @@ fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
 
-    let worktree_path = repo
+    // Use a relative path (from the main worktree root) so the snapshot args
+    // section doesn't contain a volatile temp directory path.
+    let dir_name = repo
         .worktree_path("feature-detached")
+        .file_name()
+        .unwrap()
         .to_string_lossy()
         .to_string();
+    let relative_path = format!("../{dir_name}");
 
     snapshot_switch_with_directive_file(
         "switch_detached_worktree_by_path",
         &repo,
-        &[&worktree_path],
+        &[&relative_path],
     );
 }
 
