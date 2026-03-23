@@ -1,7 +1,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
     configure_git_cmd, directive_file, repo, setup_temp_snapshot_settings, wait_for,
-    wait_for_file_count, wt_command,
+    wait_for_file_content, wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -497,6 +497,69 @@ fn test_bare_repo_background_logs_location() {
                 .unwrap_or(0)
                 == 0,
         "Log should NOT be in worktree's .git directory"
+    );
+}
+
+#[test]
+fn test_bare_repo_project_config_found_from_bare_root() {
+    // Regression test for #1691: project config in the primary worktree should be
+    // found when running from the bare repo root directory, not just from within
+    // a worktree that contains the config.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Use a marker file to prove the hook ran
+    let marker_path = test.bare_repo_path().join("hook-ran.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Now run `wt switch --create feature` from the bare repo root (NOT from main worktree)
+    // This is the scenario described in #1691
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The hook from the primary worktree's config should have executed
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Hook from primary worktree config should run when command is invoked from bare root. \
+         Marker file content: {:?}",
+        content
     );
 }
 
