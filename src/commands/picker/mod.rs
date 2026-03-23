@@ -625,8 +625,10 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, resolve_identifier};
+    use super::{PickerAction, PickerCollector, resolve_identifier};
+    use crate::commands::worktree::{BranchDeletionMode, RemoveResult};
     use std::fs;
+    use worktrunk::shell_exec::Cmd;
 
     #[test]
     fn test_preview_state_data_roundtrip() {
@@ -695,5 +697,73 @@ pub mod tests {
         // Create with empty query is an error
         let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
+    }
+
+    #[test]
+    fn test_execute_removal_removes_worktree_and_branch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = tmp.path().join("repo");
+        let wt_path = tmp.path().join("repo.feature");
+
+        Cmd::new("git")
+            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        fs::write(repo_path.join("file.txt"), "hello").unwrap();
+        Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                wt_path.to_str().unwrap(),
+            ])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        assert!(wt_path.exists());
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: repo_path.clone(),
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+
+        PickerCollector::execute_removal(&result).unwrap();
+        assert!(!wt_path.exists(), "worktree should be removed");
+
+        let output = Cmd::new("git")
+            .args(["branch", "--list", "feature"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        assert!(output.stdout.is_empty(), "branch should be deleted");
+    }
+
+    #[test]
+    fn test_execute_removal_branch_only_is_noop() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "gone".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+        };
+        PickerCollector::execute_removal(&result).unwrap();
     }
 }
