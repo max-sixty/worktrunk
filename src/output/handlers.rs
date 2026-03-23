@@ -469,17 +469,10 @@ pub fn handle_switch_output(
     // The cd directive (above) handles its own translation internally.
     let path = super::to_logical_path(result.path());
     let path_display = format_path_for_display(&path);
-    // For detached HEAD worktrees, derive the display name from the path directory name.
-    let dir_name;
+    // For detached HEAD worktrees, use a static label since the path already appears after @.
     let branch: &str = match &branch_info.branch {
         Some(b) => b,
-        None => {
-            dir_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "(detached)".to_string());
-            &dir_name
-        }
+        None => "detached worktree",
     };
 
     // Check if shell integration is active (directive file set)
