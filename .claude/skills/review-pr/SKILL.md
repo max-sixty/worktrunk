@@ -34,7 +34,7 @@ PR_AUTHOR=$(gh pr view <number> --json author --jq '.author.login')
 # IMPORTANT: `gh pr view --json reviews` returns `.commit.oid` (NOT `.commit_id`).
 # The REST API (`gh api .../reviews`) uses `.commit_id` — don't confuse the two.
 LAST_REVIEW_SHA=$(gh pr view <number> --json reviews \
-  --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and (.body | length > 0 or .state == \"APPROVED\"))] | last | .commit.oid // empty")
+  --jq "[.reviews[] | select(.author.login == \"$BOT_LOGIN\" and ((.body | length) > 0 or .state == \"APPROVED\"))] | last | .commit.oid // empty")
 ```
 
 If `LAST_REVIEW_SHA == HEAD_SHA`, this commit has already been reviewed — exit
