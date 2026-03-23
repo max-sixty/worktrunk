@@ -21,8 +21,9 @@ use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
+use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, handle_remove_path,
+    BranchDeletionMode, SwitchBranchInfo, SwitchResult, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
@@ -345,26 +346,18 @@ pub fn handle_picker(
                 let config = repo.user_config();
 
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
-                let result = if let Some(data) = worktree_data.filter(|d| d.detached) {
+                let branch_name;
+                let target = if let Some(data) = worktree_data.filter(|d| d.detached) {
                     // Detached worktrees have no branch name — remove by path
                     // (same as `wt remove /path/to/worktree` from the CLI)
-                    handle_remove_path(
-                        &data.path, false, // keep_branch: delete branch (default behavior)
-                        false, // force_delete: no -D
-                        false, // force_worktree: no -f
-                        config,
-                    )
+                    RemoveTarget::Path(&data.path)
                 } else {
-                    let branch_name = selected.output().to_string();
-                    handle_remove(
-                        &branch_name,
-                        false, // keep_branch: delete branch (default behavior)
-                        false, // force_delete: no -D
-                        false, // force_worktree: no -f
-                        config,
-                    )
-                }
-                .context("Failed to remove worktree")?;
+                    branch_name = selected.output().to_string();
+                    RemoveTarget::Branch(&branch_name)
+                };
+                let result = repo
+                    .prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, config)
+                    .context("Failed to remove worktree")?;
 
                 // Execute removal in foreground, no hooks, not quiet
                 handle_remove_output(&result, true, false, false)?;
