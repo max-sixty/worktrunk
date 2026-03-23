@@ -8,6 +8,8 @@ use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 #[test]
 fn test_bare_repo_list_worktrees() {
@@ -629,6 +631,52 @@ fn test_bare_repo_project_config_found_with_dash_c_flag() {
         "Hook from primary worktree config should run when using -C flag. \
          Marker file content: {:?}",
         content
+    );
+}
+
+#[test]
+fn test_bare_repo_ignores_config_in_bare_root() {
+    // Regression test for #1691: a `.config/wt.toml` placed in the bare repo root
+    // directory should NOT be picked up. Only the primary worktree's config matters.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos) — no config here
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place config in the bare repo root (NOT in a worktree)
+    let config_dir = test.bare_repo_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    let marker_path = test.bare_repo_path().join("hook-should-not-run.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo bad > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Run `wt switch --create feature` from the bare repo root
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hook from the bare root config should NOT have executed
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !marker_path.exists(),
+        "Config in bare repo root should be ignored — only primary worktree config should be used"
     );
 }
 
