@@ -81,6 +81,83 @@ pub fn handle_remove_path(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_execute_removal_removes_worktree_and_branch() {
+        let tmp = TempDir::new().unwrap();
+        let repo_path = tmp.path().join("repo");
+        let wt_path = tmp.path().join("repo.feature");
+
+        // Create a repo with an initial commit
+        std::process::Command::new("git")
+            .args(["init", repo_path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::fs::write(repo_path.join("file.txt"), "hello").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+
+        // Add a worktree
+        std::process::Command::new("git")
+            .args(["worktree", "add", "-b", "feature", wt_path.to_str().unwrap()])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        assert!(wt_path.exists());
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: repo_path.clone(),
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+
+        execute_removal(&result).unwrap();
+
+        assert!(!wt_path.exists(), "worktree directory should be removed");
+
+        // Branch should be deleted
+        let output = std::process::Command::new("git")
+            .args(["branch", "--list", "feature"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.stdout.is_empty(),
+            "branch should be deleted after removal"
+        );
+    }
+
+    #[test]
+    fn test_execute_removal_branch_only_is_noop() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "gone".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+        };
+        // Should return Ok without doing anything
+        execute_removal(&result).unwrap();
+    }
+}
+
 /// Handle removing the current worktree (supports detached HEAD state).
 ///
 /// This is the path-based removal that handles the "@" shorthand, including
