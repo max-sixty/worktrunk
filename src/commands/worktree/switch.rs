@@ -613,6 +613,38 @@ pub fn plan_switch(
         None => {}
     }
 
+    // Phase 2b: Path-based fallback for detached worktrees.
+    // If the argument looks like a path (not a branch name), try to find a worktree there.
+    if !create {
+        let candidate = Path::new(branch);
+        let abs_path = if candidate.is_absolute() {
+            Some(candidate.to_path_buf())
+        } else if candidate.components().count() > 1 {
+            // Relative path with directory separators (e.g., "../repo.feature").
+            // Single-component names are ambiguous with branch names (already tried in Phase 2).
+            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
+        } else {
+            None
+        };
+        if let Some(abs_path) = abs_path
+            && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
+        {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            // For detached worktrees, use the directory name as the branch identifier
+            let branch = wt_branch.unwrap_or_else(|| {
+                canonical
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "(detached)".to_string())
+            });
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch,
+                new_previous,
+            });
+        }
+    }
+
     // Phase 3: Compute expected path (only needed for create)
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 

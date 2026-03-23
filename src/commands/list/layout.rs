@@ -112,22 +112,22 @@
 //!    - Within the visibility gate, follows normal two-tier priority
 //!      (BranchDiff: 6/16, CiStatus: 5/15)
 //!
-//! 2. **No-data columns** yield to Summary
-//!    - After Summary's initial expansion, columns where `has_data()` is false
-//!      are dropped (lowest priority first) and their space reclaimed for Summary
-//!    - Currently only Path can be no-data in progressive mode (when all paths
-//!      are predictable from branch names, i.e., no branch-worktree mismatch)
-//!    - When Path has data (mismatch exists), it is kept at priority 7
+//! 2. **Low-priority columns** yield to Summary
+//!    - Columns with effective priority > Summary's (10) are dropped to reclaim
+//!      space, with thresholds based on priority distance:
+//!      - Within 4 levels (Commit 11, Time 12, Message 13): Summary < 50
+//!      - Beyond 4 levels (e.g., no-data Path 7+10=17): Summary < 70 (MAX)
+//!    - Highest priority value drops first; no-data columns qualify via EMPTY_PENALTY
 //!
 //! 3. **Summary** - Flexible sizing with post-allocation expansion
 //!    - Allocated at priority 10 with minimum width 10
 //!    - After all columns allocated, expands up to 70 using leftover space
-//!    - Reclaims no-data columns before Message drop
+//!    - Reclaims no-data and low-priority columns as needed
 //!    - Expands BEFORE Message, so Summary gets priority for space
 //!
 //! 4. **Message** - Flexible sizing, gated on Summary readability
 //!    - Allocated at priority 13 with minimum width 10
-//!    - **Only kept if Summary reaches 40 chars** — below that, Summary needs
+//!    - **Only kept if Summary reaches 50 chars** — below that, Summary needs
 //!      all flexible space and Message is dropped (its space reclaimed for Summary)
 //!    - After Summary expansion, expands up to max 100 using remaining leftover space
 //!
@@ -528,6 +528,7 @@ struct ColumnCandidate<'a> {
 #[derive(Clone, Copy)]
 struct PendingColumn<'a> {
     spec: &'a ColumnSpec,
+    priority: u8,
     width: usize,
     format: ColumnFormat,
 }
@@ -684,19 +685,16 @@ fn allocate_columns_with_priority(
 
     candidates.sort_by_key(|candidate| candidate.priority);
 
-    // Store which candidates have data for later calculation of hidden columns
-    let candidates_with_data: Vec<_> = candidates
-        .iter()
-        .map(|c| (c.spec.kind, c.spec.kind.has_data(&metadata.data_flags)))
-        .collect();
+    // Store candidate kinds for later calculation of hidden columns
+    let candidate_kinds: Vec<_> = candidates.iter().map(|c| c.spec.kind).collect();
 
     const MIN_SUMMARY: usize = 10;
     const MAX_SUMMARY: usize = 70;
     const MIN_MESSAGE: usize = 10;
     const MAX_MESSAGE: usize = 100;
-    // Message is only shown when Summary reaches this width — below this,
-    // Summary needs all the flexible space to be readable.
-    const SUMMARY_THRESHOLD_FOR_MESSAGE: usize = 40;
+    // Low-priority columns (Commit, Time, Message) are only shown when Summary
+    // reaches this width — below that, Summary needs the space to be readable.
+    const SUMMARY_THRESHOLD_FOR_LOW_PRIORITY: usize = 50;
 
     let mut pending: Vec<PendingColumn> = Vec::new();
 
@@ -729,6 +727,7 @@ fn allocate_columns_with_priority(
                     remaining = remaining.saturating_sub(min_width + spacing_cost);
                     pending.push(PendingColumn {
                         spec,
+                        priority: candidate.priority,
                         width: min_width,
                         format: ColumnFormat::Text,
                     });
@@ -755,6 +754,7 @@ fn allocate_columns_with_priority(
         if allocated > 0 {
             pending.push(PendingColumn {
                 spec,
+                priority: candidate.priority,
                 width: allocated,
                 format,
             });
@@ -762,8 +762,8 @@ fn allocate_columns_with_priority(
     }
 
     // Post-allocation expansion: Summary first, then Message with leftovers.
-    // Message is only kept if Summary reaches SUMMARY_THRESHOLD_FOR_MESSAGE (40);
-    // below that, Summary needs all the flexible space to be readable.
+    // Low-priority columns (Commit, Time, Message) are dropped when Summary
+    // hasn't reached SUMMARY_THRESHOLD_FOR_LOW_PRIORITY (50).
     let mut max_summary_len = 0;
     if let Some(summary_col) = pending
         .iter_mut()
@@ -777,16 +777,29 @@ fn allocate_columns_with_priority(
         max_summary_len = summary_col.width;
     }
 
-    // Drop no-data columns if Summary hasn't reached its max. Columns without
-    // data are showing empty/redundant content (e.g., Path when all paths are
-    // predictable from branch names) and should yield space to Summary.
+    // Drop low-priority columns to give Summary more space. Columns with
+    // effective priority > Summary's (10) are dropped based on priority distance:
+    // - Within 4 levels (Commit 11, Time 12, Message 13): dropped when Summary < 50
+    // - Beyond 4 levels (e.g., no-data Path 17): dropped when Summary < MAX_SUMMARY
+    // No-data columns naturally qualify via EMPTY_PENALTY (e.g., Path 7+10=17).
+    let summary_priority = ColumnKind::Summary.priority();
     while max_summary_len > 0 && max_summary_len < MAX_SUMMARY {
-        // Find the lowest-priority no-data column (highest base_priority value)
         let drop_pos = pending
             .iter()
             .enumerate()
-            .filter(|(_, col)| !col.spec.kind.has_data(&metadata.data_flags))
-            .max_by_key(|(_, col)| col.spec.base_priority)
+            .filter(|(_, col)| {
+                if col.spec.kind == ColumnKind::Summary || col.priority <= summary_priority {
+                    return false;
+                }
+                let gap = col.priority - summary_priority;
+                let threshold = if gap <= 4 {
+                    SUMMARY_THRESHOLD_FOR_LOW_PRIORITY
+                } else {
+                    MAX_SUMMARY
+                };
+                max_summary_len < threshold
+            })
+            .max_by_key(|(_, col)| col.priority)
             .map(|(i, _)| i);
 
         let Some(pos) = drop_pos else { break };
@@ -795,30 +808,6 @@ fn allocate_columns_with_priority(
         pending.remove(pos);
         remaining += reclaimed;
 
-        if let Some(summary_col) = pending
-            .iter_mut()
-            .find(|col| col.spec.kind == ColumnKind::Summary)
-        {
-            let expansion = remaining.min(MAX_SUMMARY - summary_col.width);
-            summary_col.width += expansion;
-            remaining -= expansion;
-            max_summary_len = summary_col.width;
-        }
-    }
-
-    // Drop Message if Summary didn't reach the readability threshold, reclaiming
-    // its width (+ spacing) so Summary can expand further.
-    if max_summary_len > 0
-        && max_summary_len < SUMMARY_THRESHOLD_FOR_MESSAGE
-        && let Some(pos) = pending
-            .iter()
-            .position(|col| col.spec.kind == ColumnKind::Message)
-    {
-        let reclaimed = pending[pos].width + spacing;
-        pending.remove(pos);
-        remaining += reclaimed;
-
-        // Give reclaimed space back to Summary.
         if let Some(summary_col) = pending
             .iter_mut()
             .find(|col| col.spec.kind == ColumnKind::Summary)
@@ -880,9 +869,9 @@ fn allocate_columns_with_priority(
     // This includes both data columns and empty columns that could show with more width.
     let allocated_kinds: std::collections::HashSet<_> =
         columns.iter().map(|col| col.kind).collect();
-    let hidden_column_count = candidates_with_data
+    let hidden_column_count = candidate_kinds
         .iter()
-        .filter(|(kind, _has_data)| !allocated_kinds.contains(kind))
+        .filter(|kind| !allocated_kinds.contains(kind))
         .count();
 
     LayoutConfig {
@@ -1719,24 +1708,40 @@ mod tests {
     }
 
     #[test]
-    fn test_message_gated_on_summary_threshold() {
-        // Probe widths: when Summary is present but < 40, Message must be absent.
-        // At wide widths where Summary >= 40, Message can appear.
+    fn test_low_priority_columns_gated_on_summary_threshold() {
+        // Probe widths: when Summary is present but < 50, Commit/Time/Message must be absent.
+        // At wide widths where Summary >= 50, they can appear.
         let mut found_below = false;
         for width in 80..200 {
             let l = layout_at_width(width, &full_skip_tasks());
             if let Some(s) = find_column(&l, ColumnKind::Summary)
-                && s.width < 40
+                && s.width < 50
             {
                 found_below = true;
-                assert!(find_column(&l, ColumnKind::Message).is_none());
+                assert!(
+                    find_column(&l, ColumnKind::Commit).is_none(),
+                    "Commit present at width {width} with Summary {}",
+                    s.width
+                );
+                assert!(
+                    find_column(&l, ColumnKind::Time).is_none(),
+                    "Time present at width {width} with Summary {}",
+                    s.width
+                );
+                assert!(
+                    find_column(&l, ColumnKind::Message).is_none(),
+                    "Message present at width {width} with Summary {}",
+                    s.width
+                );
             }
         }
-        assert!(found_below, "no width produced Summary < 40");
+        assert!(found_below, "no width produced Summary < 50");
 
-        // At 200, Summary is well above threshold and Message appears.
+        // At 200, Summary is well above threshold and all columns appear.
         let l = layout_at_width(200, &full_skip_tasks());
-        assert!(find_column(&l, ColumnKind::Summary).unwrap().width >= 40);
+        assert!(find_column(&l, ColumnKind::Summary).unwrap().width >= 50);
+        assert!(find_column(&l, ColumnKind::Commit).is_some());
+        assert!(find_column(&l, ColumnKind::Time).is_some());
         assert!(find_column(&l, ColumnKind::Message).is_some());
     }
 

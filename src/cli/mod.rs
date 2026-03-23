@@ -820,7 +820,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Detached HEAD worktrees
 
-Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: `wt remove /path/to/worktree`.
+Detached worktrees have no branch name. Pass the worktree path instead: `wt remove /path/to/worktree`. `wt switch /path/to/worktree` also works.
 
 ## See also
 
@@ -828,7 +828,7 @@ Detached worktrees have no branch name, so they can't be removed by branch. Pass
 - [`wt list`](@/list.md) — View all worktrees
 "#)]
     Remove {
-        /// Branch name or path [default: current]
+        /// Branch name [default: current]
         #[arg(add = crate::completion::local_branches_completer())]
         branches: Vec<String>,
 

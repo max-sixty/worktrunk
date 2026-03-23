@@ -36,7 +36,7 @@ wt remove - Remove worktree; delete branch if merged
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mArguments:[0m
-  [36m[BRANCHES]...[0m  Branch name or path [default: current]
+  [36m[BRANCHES]...[0m  Branch name [default: current]
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m  Keep branch after removal
