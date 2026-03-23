@@ -205,7 +205,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m# list.full = true[0m
 [107m [0m [2m# merge.squash = false[0m
-[107m [0m [2m# post-create.env = "cp .env.example .env"[0m
+[107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Custom prompt templates[0m
