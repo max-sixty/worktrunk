@@ -49,7 +49,7 @@ jobs:
               if [ "$ISSUE_AUTHOR" = "worktrunk-bot" ]; then
                 echo "should_run=true" >> "$GITHUB_OUTPUT"; exit 0
               fi
-              if echo "$ISSUE_BODY" | grep -qF '@worktrunk-bot'; then
+              if printf '%s\n' "$ISSUE_BODY" | grep -qF '@worktrunk-bot'; then
                 echo "should_run=true" >> "$GITHUB_OUTPUT"; exit 0
               fi
               BOT_COMMENTS=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
