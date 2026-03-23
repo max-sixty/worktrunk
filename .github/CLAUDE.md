@@ -52,7 +52,7 @@ environment has a deployment branch policy restricting to `v*` tags.
 
 ## Triage ↔ mention handoff
 
-New issues are always handled by `claude-issue-triage` — `claude-mention` only
+New issues are always handled by `continuous-triage` — `continuous-mention` only
 triggers on issue **edits** (not opens) to avoid two workflows racing to create
 fix PRs for the same bug.
 
@@ -66,12 +66,12 @@ restriction is the safety boundary, not access control on the workflow.
 ## Bot-engaged auto-response
 
 **Triggers a response:**
-- Non-draft PR opened or updated → automatic code review (`claude-review`)
-- Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `claude-review` responds
-- `@worktrunk-bot` mentioned in a new issue body → `claude-issue-triage` handles it
-- `@worktrunk-bot` mentioned via issue edit → `claude-mention` responds
-- `@worktrunk-bot` mentioned in any comment → `claude-mention` responds
-- Comment on a PR/issue where `worktrunk-bot` has engaged → `claude-mention` runs, responds only if helpful
+- Non-draft PR opened or updated → automatic code review (`continuous-review`)
+- Formal review submitted on a `worktrunk-bot`-authored PR, with body or non-approval → `continuous-review` responds
+- `@worktrunk-bot` mentioned in a new issue body → `continuous-triage` handles it
+- `@worktrunk-bot` mentioned via issue edit → `continuous-mention` responds
+- `@worktrunk-bot` mentioned in any comment → `continuous-mention` responds
+- Comment on a PR/issue where `worktrunk-bot` has engaged → `continuous-mention` runs, responds only if helpful
 - Editing a comment or issue body re-triggers the mention workflow
 
 **Does not trigger:**
@@ -82,6 +82,6 @@ restriction is the safety boundary, not access control on the workflow.
 - Inline review comments from `worktrunk-bot` itself
 - Draft PRs
 
-**Routing:** Formal reviews (`pull_request_review`) → `claude-review`. Inline
+**Routing:** Formal reviews (`pull_request_review`) → `continuous-review`. Inline
 comments (`pull_request_review_comment`) and conversation comments
-(`issue_comment`) → `claude-mention`.
+(`issue_comment`) → `continuous-mention`.
