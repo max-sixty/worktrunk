@@ -325,7 +325,7 @@ fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     // Run the hook with --yes to skip approval
     let output = repo
         .wt_command()
-        .args(["hook", "post-merge", "--yes"])
+        .args(["hook", "post-merge", "--yes", "--foreground"])
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to run wt hook post-merge");
