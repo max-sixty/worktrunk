@@ -1843,6 +1843,23 @@ fn test_remove_detached_worktree_by_path(mut repo: TestRepo) {
     ));
 }
 
+/// Verify that detached worktrees can be removed by relative path.
+/// This tests resolve_worktree_arg's CWD-relative path resolution for Remove context.
+#[rstest]
+fn test_remove_detached_worktree_by_relative_path(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    // From the main worktree (repo/), the relative path resolves against CWD
+    let relative_path = "../repo.feature-detached";
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[relative_path, "--foreground", "--yes"],
+        None,
+    ));
+}
+
 /// Test that resolve_worktree("@") works when the worktree is accessed via a symlink.
 ///
 /// This tests the path normalization fix where:
