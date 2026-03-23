@@ -120,8 +120,6 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
-
       - name: Check out PR branch
         if: |
           (github.event_name == 'issue_comment' && github.event.issue.pull_request.url != '') ||
@@ -136,6 +134,8 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - uses: ./.github/actions/claude-setup
 
       - uses: max-sixty/continuous@v1
         with:

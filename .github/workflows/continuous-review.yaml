@@ -45,13 +45,13 @@ jobs:
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
-      - uses: ./.github/actions/claude-setup
-
       - name: Check out PR branch (review response)
         if: github.event_name == 'pull_request_review'
         run: gh pr checkout ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
+      - uses: ./.github/actions/claude-setup
 
       - uses: max-sixty/continuous@v1
         with:
