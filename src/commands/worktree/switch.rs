@@ -600,7 +600,7 @@ pub fn plan_switch(
         Some(existing_path) if existing_path.exists() => {
             return Ok(SwitchPlan::Existing {
                 path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: target.branch,
+                branch: Some(target.branch),
                 new_previous,
             });
         }
@@ -630,16 +630,9 @@ pub fn plan_switch(
             && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
         {
             let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
-            // For detached worktrees, use the directory name as the branch identifier
-            let branch = wt_branch.unwrap_or_else(|| {
-                canonical
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "(detached)".to_string())
-            });
             return Ok(SwitchPlan::Existing {
                 path: canonical,
-                branch,
+                branch: wt_branch,
                 new_previous,
             });
         }
@@ -938,7 +931,7 @@ pub fn execute_switch(
                     from_remote,
                 },
                 SwitchBranchInfo {
-                    branch,
+                    branch: Some(branch),
                     expected_path: None,
                 },
             ))
