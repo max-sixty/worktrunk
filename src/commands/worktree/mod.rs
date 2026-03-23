@@ -87,6 +87,7 @@ mod types;
 
 // Re-export public types and functions
 pub use push::{handle_no_ff_merge, handle_push};
+#[cfg_attr(windows, allow(unused_imports))]
 pub use remove::{execute_removal, handle_remove, handle_remove_current, handle_remove_path};
 pub(crate) use resolve::paths_match;
 pub use resolve::{

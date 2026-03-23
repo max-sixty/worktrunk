@@ -31,6 +31,7 @@ pub fn handle_remove(
 /// Core removal logic without output, hooks, or cd directives. Used by the
 /// picker (which runs inside skim's TUI). Performs the same core steps as
 /// `handle_removed_worktree_output`, which adds progress messages and hooks.
+#[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
 pub fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
     let RemoveResult::RemovedWorktree {
         main_path,
