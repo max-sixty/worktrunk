@@ -126,11 +126,19 @@ impl Merge for HooksConfig {
     /// Merge two hook configs using append semantics.
     ///
     /// Both global and per-project hooks run (global first, then per-project).
+    /// Deprecated `post_create` from either source is folded into `pre_start`
+    /// so hooks aren't silently dropped when one config uses the old name and
+    /// another uses the new name.
     fn merge_with(&self, other: &Self) -> Self {
+        // Fold post_create into pre_start for each source before merging,
+        // so cross-config old/new name combinations work correctly.
+        let self_pre_start = merge_append_hooks(&self.pre_start, &self.post_create);
+        let other_pre_start = merge_append_hooks(&other.pre_start, &other.post_create);
+
         Self {
             pre_switch: merge_append_hooks(&self.pre_switch, &other.pre_switch),
-            pre_start: merge_append_hooks(&self.pre_start, &other.pre_start),
-            post_create: merge_append_hooks(&self.post_create, &other.post_create),
+            pre_start: merge_append_hooks(&self_pre_start, &other_pre_start),
+            post_create: None, // folded into pre_start above
             post_start: merge_append_hooks(&self.post_start, &other.post_start),
             post_switch: merge_append_hooks(&self.post_switch, &other.post_switch),
             pre_commit: merge_append_hooks(&self.pre_commit, &other.pre_commit),

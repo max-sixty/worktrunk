@@ -518,21 +518,22 @@ pub fn find_select_deprecation(content: &str) -> bool {
 ///
 /// Checks both top-level hooks (`post-create = "..."`) and project hooks
 /// (`[projects."...".hooks] post-create = "..."`). This handles both user config
-/// and project config formats.
+/// and project config formats. Empty tables are ignored (no-op configs don't
+/// need migration warnings).
 pub fn find_post_create_deprecation(content: &str) -> bool {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return false;
     };
 
     // Check top-level hooks section (project config: `post-create = "..."`)
-    if doc.get("pre-start").is_none() && doc.get("post-create").is_some() {
+    if doc.get("pre-start").is_none() && doc.get("post-create").is_some_and(is_non_empty_item) {
         return true;
     }
 
     // Check [hooks] section (user config: `[hooks] post-create = "..."`)
     if let Some(hooks) = doc.get("hooks").and_then(|h| h.as_table())
         && hooks.get("pre-start").is_none()
-        && hooks.get("post-create").is_some()
+        && hooks.get("post-create").is_some_and(is_non_empty_item)
     {
         return true;
     }
@@ -543,7 +544,7 @@ pub fn find_post_create_deprecation(content: &str) -> bool {
             if let Some(project_table) = project_value.as_table()
                 && let Some(hooks) = project_table.get("hooks").and_then(|h| h.as_table())
                 && hooks.get("pre-start").is_none()
-                && hooks.get("post-create").is_some()
+                && hooks.get("post-create").is_some_and(is_non_empty_item)
             {
                 return true;
             }
@@ -551,6 +552,15 @@ pub fn find_post_create_deprecation(content: &str) -> bool {
     }
 
     false
+}
+
+/// Check if a TOML item is non-empty (strings are always non-empty, tables must have entries).
+fn is_non_empty_item(item: &toml_edit::Item) -> bool {
+    match item {
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => !t.is_empty(),
+        toml_edit::Item::Table(t) => !t.is_empty(),
+        _ => true, // strings and other values are always "non-empty"
+    }
 }
 
 /// Migrate `post-create` hooks to `pre-start`.
@@ -2477,6 +2487,289 @@ pager = "delta --paging=never"
         assert!(
             !migrated.contains("[select]"),
             "Migrated content should not have [select]: {migrated}"
+        );
+    }
+
+    // --- post-create → pre-start deprecation tests ---
+
+    #[test]
+    fn test_find_post_create_deprecation_none() {
+        // No post-create, no deprecation
+        let content = r#"
+pre-start = "npm install"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_top_level() {
+        // Project config format: bare key
+        let content = r#"
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_hooks_section() {
+        // User config format: under [hooks]
+        let content = r#"
+[hooks]
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_project_level() {
+        // User config format: under [projects."...".hooks]
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_named_commands() {
+        // Named command table format
+        let content = r#"
+[post-create]
+lint = "npm run lint"
+build = "npm run build"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_empty_table_not_flagged() {
+        // Empty [post-create] table is a no-op — don't warn
+        let content = r#"
+[post-create]
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_top_level() {
+        // Both present at top level — don't flag
+        let content = r#"
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_hooks() {
+        // Both present in [hooks] — don't flag
+        let content = r#"
+[hooks]
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_project() {
+        // Both present in project hooks — don't flag
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_migrate_post_create_top_level() {
+        let content = r#"
+post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+        assert!(
+            result.contains("[post-start]"),
+            "Should preserve other sections: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_hooks_section() {
+        let content = r#"
+[hooks]
+post-create = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_project_level() {
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_named_commands() {
+        let content = r#"
+[post-create]
+lint = "npm run lint"
+build = "npm run build"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("[pre-start]"),
+            "Should rename section header: {result}"
+        );
+        assert!(
+            !result.contains("[post-create]"),
+            "Should not have old section header: {result}"
+        );
+        assert!(
+            result.contains("lint = \"npm run lint\""),
+            "Should preserve named commands: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_skips_when_pre_start_exists() {
+        let content = r#"
+post-create = "old"
+pre-start = "new"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(
+            result, content,
+            "Should not migrate when pre-start already exists"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_migrate_post_create_no_post_create() {
+        let content = r#"
+pre-start = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(result, content, "No post-create means no migration");
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_post_create() {
+        let content = r#"
+post-create = "npm install"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.post_create);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn snapshot_migrate_post_create_to_pre_start() {
+        let content = r#"post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_format_deprecation_details_post_create() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: false,
+                post_create: true,
+            },
+            label: "Project config".to_string(),
+            main_worktree_path: None,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("post-create"),
+            "Should mention post-create: {output}"
+        );
+        assert!(
+            output.contains("pre-start"),
+            "Should mention pre-start: {output}"
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_post_create() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("wt.toml");
+        let content = r#"post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: false,
+            select: false,
+            post_create: true,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(
+            result.is_some(),
+            "Should write migration file for post_create"
+        );
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(
+            migrated.contains("pre-start"),
+            "Migrated content should have pre-start: {migrated}"
+        );
+        assert!(
+            !migrated.contains("post-create"),
+            "Migrated content should not have post-create: {migrated}"
         );
     }
 }
