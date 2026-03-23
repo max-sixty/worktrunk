@@ -27,9 +27,11 @@ use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
+use super::branch_deletion::delete_branch_if_safe;
+use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal, execute_switch, handle_remove,
-    handle_remove_path, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::handle_switch_output;
 
@@ -62,6 +64,41 @@ struct PickerCollector {
     repo: Repository,
 }
 
+impl PickerCollector {
+    /// Execute worktree removal silently: stop fsmonitor, remove worktree, delete branch.
+    ///
+    /// No output, no hooks, no cd directives — we're inside skim's TUI.
+    fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
+        let RemoveResult::RemovedWorktree {
+            main_path,
+            worktree_path,
+            branch_name,
+            deletion_mode,
+            target_branch,
+            force_worktree,
+            ..
+        } = result
+        else {
+            return Ok(());
+        };
+
+        let repo = Repository::at(main_path)?;
+        let _ = repo
+            .worktree_at(worktree_path)
+            .run_command(&["fsmonitor--daemon", "stop"]);
+        repo.remove_worktree(worktree_path, *force_worktree)?;
+
+        if let Some(branch) = branch_name
+            && !deletion_mode.should_keep()
+        {
+            let target = target_branch.as_deref().unwrap_or("HEAD");
+            let _ = delete_branch_if_safe(&repo, branch, target, deletion_mode.is_force());
+        }
+
+        Ok(())
+    }
+}
+
 impl CommandCollector for PickerCollector {
     fn invoke(
         &mut self,
@@ -87,41 +124,49 @@ impl CommandCollector for PickerCollector {
                         .map(|data| data.path.clone())
                 };
 
-                // Safe removal: no force-delete (-D), no force-worktree (-f)
-                let result = if let Some(path) = &detached_path {
-                    handle_remove_path(path, false, false, false, config)
+                // Safe removal via prepare + execute (no output, no hooks,
+                // no cd directive — we're inside skim's TUI).
+                let target = if let Some(path) = &detached_path {
+                    RemoveTarget::Path(path)
                 } else {
-                    handle_remove(&selected_output, false, false, false, config)
+                    RemoveTarget::Branch(&selected_output)
                 };
-                match result {
+                let removal = self
+                    .repo
+                    .prepare_worktree_removal(
+                        target,
+                        BranchDeletionMode::SafeDelete,
+                        false,
+                        config,
+                    )
+                    .and_then(|result| {
+                        Self::execute_removal(&result)?;
+                        Ok(result)
+                    });
+                match removal {
                     Ok(result) => {
-                        if let Err(e) = execute_removal(&result) {
-                            log::warn!("picker: removal failed for '{selected_output}': {e:#}");
-                            // Fall through to stream items unchanged
+                        // If we removed the current worktree, update process CWD
+                        // so skim and git commands continue to work.
+                        if let RemoveResult::RemovedWorktree {
+                            changed_directory: true,
+                            main_path,
+                            ..
+                        } = &result
+                        {
+                            let _ = std::env::set_current_dir(main_path);
+                        }
+                        let mut items = self.items.lock().unwrap();
+                        if let Some(path) = &detached_path {
+                            // Detached items all share output "(detached)" —
+                            // match by worktree path to remove only this one.
+                            items.retain(|item| {
+                                item.as_any()
+                                    .downcast_ref::<WorktreeSkimItem>()
+                                    .and_then(|s| s.item.worktree_data())
+                                    .is_none_or(|d| d.path != *path)
+                            });
                         } else {
-                            // If we removed the current worktree, update process CWD
-                            // so skim and git commands continue to work.
-                            if let RemoveResult::RemovedWorktree {
-                                changed_directory: true,
-                                main_path,
-                                ..
-                            } = &result
-                            {
-                                let _ = std::env::set_current_dir(main_path);
-                            }
-                            let mut items = self.items.lock().unwrap();
-                            if let Some(path) = &detached_path {
-                                // Detached items all share output "(detached)" —
-                                // match by worktree path to remove only this one.
-                                items.retain(|item| {
-                                    item.as_any()
-                                        .downcast_ref::<WorktreeSkimItem>()
-                                        .and_then(|s| s.item.worktree_data())
-                                        .is_none_or(|d| d.path != *path)
-                                });
-                            } else {
-                                items.retain(|item| item.output().as_ref() != selected_output);
-                            }
+                            items.retain(|item| item.output().as_ref() != selected_output);
                         }
                     }
                     Err(e) => {

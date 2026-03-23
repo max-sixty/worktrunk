@@ -80,15 +80,12 @@
 
 mod hooks;
 mod push;
-mod remove;
 mod resolve;
 mod switch;
 mod types;
 
 // Re-export public types and functions
 pub use push::{handle_no_ff_merge, handle_push};
-#[cfg_attr(windows, allow(unused_imports))]
-pub use remove::{execute_removal, handle_remove, handle_remove_current, handle_remove_path};
 pub(crate) use resolve::paths_match;
 pub use resolve::{
     compute_worktree_path, is_worktree_at_expected_path, offer_bare_repo_worktree_path_fix,
