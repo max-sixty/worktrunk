@@ -1,24 +1,6 @@
----
-name: review-pr
-description: Reviews a pull request for idiomatic Rust, project conventions, and code quality. Use when asked to review a PR or when running as an automated PR reviewer.
-argument-hint: "[PR number]"
-metadata:
-  internal: true
----
+# PR Review — Worktrunk Specifics
 
-# Worktrunk PR Review
-
-Load `/review` for the generic review workflow (pre-flight, posting
-mechanics, inline suggestions, thread resolution, CI monitoring). This file
-adds worktrunk-specific review criteria.
-
-Review a pull request to worktrunk, a Rust CLI tool for managing git worktrees.
-
-**PR to review:** $ARGUMENTS
-
-## Worktrunk Review Criteria
-
-In addition to the generic review checks, evaluate:
+## Review Criteria
 
 **Idiomatic Rust and project conventions:**
 
@@ -53,11 +35,6 @@ rg "fn detect.*provider|fn get.*platform|fn .*_provider" --type rust
 rg "all_remote_urls|remote_url|GitRemoteUrl::parse" --type rust
 ```
 
-## CI Monitoring
-
-After approving or staying silent, monitor CI using `/continuous-running-in-ci` (includes
-worktrunk-specific codecov/patch polling).
-
 ## Flake Tracking
 
 When reporting flakes, use `worktrunk-bot` as the bot login for comment
@@ -67,8 +44,3 @@ deduplication:
 LAST_COMMENT=$(gh issue view <issue-number> --json comments \
   --jq '[.comments[] | select(.author.login == "worktrunk-bot")] | last | {id: .url, createdAt: .createdAt}')
 ```
-
-## Token Assignment
-
-All actions use `WORKTRUNK_BOT_TOKEN` for consistent identity. The merge
-restriction (ruleset) is the security boundary, not token scoping.

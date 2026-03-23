@@ -1,21 +1,21 @@
 ---
-name: running-in-ci
-description: CI environment rules for GitHub Actions workflows. Use when operating in CI — covers security, CI monitoring, comment formatting, and investigating session logs from other runs.
+name: running-continuous
+description: Worktrunk-specific guidance for continuous CI workflows. Adds codecov polling, Rust test commands, labels, and review criteria on top of the generic continuous-* skills. Use when operating in CI.
 metadata:
   internal: true
 ---
 
-# Running in CI
+# Worktrunk Continuous CI
 
-Load `/continuous-running-in-ci` for generic CI environment rules (security, comment
-formatting, shell quoting, session log analysis, grounded analysis). This file
-adds worktrunk-specific CI monitoring.
+Project-specific guidance for continuous workflows running on worktrunk (a Rust
+CLI for managing git worktrees). The generic skills (`continuous-running-in-ci`,
+`continuous-review`, `continuous-triage`, etc.) provide the workflow framework;
+this skill adds worktrunk conventions.
 
-## CI Monitoring — Additional Required Checks
+## Codecov Monitoring
 
-After required checks pass, poll `codecov/patch` separately — it is mandatory
-despite being marked non-required. Use a polling loop (up to ~5 minutes) since
-codecov often reports after the required checks finish:
+After required CI checks pass, poll `codecov/patch` — it is mandatory despite
+being marked non-required:
 
 ```bash
 for i in $(seq 1 5); do
@@ -27,23 +27,40 @@ for i in $(seq 1 5); do
   fi
   sleep 60
 done
-echo "codecov/patch not reported after 5 minutes"
-exit 1
 ```
 
 If codecov fails, investigate with `task coverage` and
 `cargo llvm-cov report --show-missing-lines | grep <file>`.
 
-Report completion only after all required checks **and** `codecov/patch` pass.
+## Test Commands
+
+```bash
+cargo run -- hook pre-merge --yes   # full suite + lints
+cargo test --lib --bins             # unit tests only
+cargo test --test integration       # integration tests only
+```
 
 CI runs on Linux, Windows, and macOS.
 
 ## Session Log Paths
 
-Session log artifact paths follow the pattern:
-`-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
+Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
+
+## Labels
+
+- `automated-fix` — fix PRs from triage and ci-fix workflows
+- `nightly-cleanup` — nightly sweep issues and PRs
 
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
 If surrounding lines also need updating, note that in your reply.
+
+## Per-Workflow References
+
+Load the relevant reference file for workflow-specific guidance:
+
+- **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search
+- **Issue triage**: `@references/triage-issue.md` — version checks, test reproduction
+- **Nightly sweep**: `@references/nightly-cleaner.md` — survey script, branch naming
+- **CI fix**: `@references/fix-ci.md` — test commands, labels
