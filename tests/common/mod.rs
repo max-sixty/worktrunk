@@ -573,7 +573,7 @@ const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 ///
 /// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
 /// are NOT included here because they depend on the TestRepo instance.
-const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
+pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
@@ -595,9 +595,9 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
-const NULL_DEVICE: &str = "NUL";
+pub const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
-const NULL_DEVICE: &str = "/dev/null";
+pub const NULL_DEVICE: &str = "/dev/null";
 
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
@@ -2909,9 +2909,32 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
-    // Filter temp paths in output
+    // Filter temp paths in output — multiple forms needed for cross-platform:
+    // 1. Canonical path (macOS: /private/tmp needs the canonical /private form)
+    // 2. Raw path as provided
+    // 3. Regex matching the unique temp dir name with any prefix (Windows:
+    //    format_path_for_display replaces $HOME with ~, producing ~/AppData/...
+    //    which doesn't match the raw path. Match by unique dir name instead.)
+    if let Ok(canonical) = dunce::canonicalize(temp_path) {
+        let canonical_str = canonical.to_str().unwrap();
+        let temp_str = temp_path.to_str().unwrap();
+        if canonical_str != temp_str {
+            settings.add_filter(&regex::escape(canonical_str), "[TEMP]");
+        }
+    }
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
+    // Match the unique temp dir name with any path prefix (handles ~/AppData/... on Windows)
+    if let Some(dir_name) = temp_path.file_name().and_then(|n| n.to_str()) {
+        // Consume optional leading quote from shell_escape (format_path_for_display
+        // wraps non-home paths in single quotes on Windows).
+        let pattern = format!(r"'?[^\s]*{}", regex::escape(dir_name));
+        settings.add_filter(&pattern, "[TEMP]");
+    }
     settings.add_filter(r"\\", "/");
+    // Clean up trailing shell-escape quote after [TEMP] replacement — the leading
+    // quote is consumed by the dir-name regex, but the trailing one remains after
+    // the file name (e.g., [TEMP]/test-config.toml' → [TEMP]/test-config.toml).
+    settings.add_filter(r"(\[TEMP\]/[^\s]*)'", "$1");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 

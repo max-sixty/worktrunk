@@ -818,6 +818,10 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
 
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name. Pass the worktree path instead: `wt remove /path/to/worktree`. `wt switch /path/to/worktree` also works.
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Remove worktree after merging
@@ -1326,6 +1330,15 @@ Some variables are conditional: `upstream` requires remote tracking; `base`/`tar
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
+
+### Migration from earlier versions
+
+`worktree_path` changed meaning in two hook types:
+
+- **pre-switch** (existing worktrees): previously the source worktree, now the destination. Use `{{ base_worktree_path }}` or `{{ cwd }}` for the source.
+- **post-merge**: previously the merge target worktree, now the feature worktree (active). Use `{{ target_worktree_path }}` or `{{ cwd }}` for where code landed.
+
+New variables `cwd`, `target_worktree_path`, `base`, and `base_worktree_path` are available in more hook types than before.
 
 ## Worktrunk filters
 

@@ -22,7 +22,8 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, handle_remove_path,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
 
@@ -333,23 +334,36 @@ pub fn handle_picker(
 
         match action {
             PickerAction::Remove => {
-                // Get the selected worktree's branch name
-                let selected_name = out
-                    .selected_items
-                    .first()
-                    .map(|item| item.output().to_string());
-                let branch_name = resolve_identifier(&action, String::new(), selected_name)?;
+                let selected = out.selected_items.first().context("No worktree selected")?;
+
+                // Access the underlying worktree data to determine removal strategy
+                let worktree_data = selected
+                    .as_any()
+                    .downcast_ref::<WorktreeSkimItem>()
+                    .and_then(|skim_item| skim_item.item.worktree_data());
 
                 let config = repo.user_config();
 
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
-                let result = handle_remove(
-                    &branch_name,
-                    false, // keep_branch: delete branch (default behavior)
-                    false, // force_delete: no -D
-                    false, // force_worktree: no -f
-                    config,
-                )
+                let result = if let Some(data) = worktree_data.filter(|d| d.detached) {
+                    // Detached worktrees have no branch name — remove by path
+                    // (same as `wt remove /path/to/worktree` from the CLI)
+                    handle_remove_path(
+                        &data.path, false, // keep_branch: delete branch (default behavior)
+                        false, // force_delete: no -D
+                        false, // force_worktree: no -f
+                        config,
+                    )
+                } else {
+                    let branch_name = selected.output().to_string();
+                    handle_remove(
+                        &branch_name,
+                        false, // keep_branch: delete branch (default behavior)
+                        false, // force_delete: no -D
+                        false, // force_worktree: no -f
+                        config,
+                    )
+                }
                 .context("Failed to remove worktree")?;
 
                 // Execute removal in foreground, no hooks, not quiet
@@ -358,11 +372,21 @@ pub fn handle_picker(
             PickerAction::Create | PickerAction::Switch => {
                 let should_create = matches!(action, PickerAction::Create);
 
-                // Get branch name: from query if creating new, from selected item if switching
-                let selected_name = out
-                    .selected_items
-                    .first()
-                    .map(|item| item.output().to_string());
+                // Get branch name: from query if creating new, from selected item if switching.
+                // For detached worktrees, use the path (same as `wt switch /path` from CLI).
+                let selected = out.selected_items.first();
+                let selected_name = selected.map(|item| {
+                    if !should_create
+                        && let Some(data) = item
+                            .as_any()
+                            .downcast_ref::<WorktreeSkimItem>()
+                            .and_then(|s| s.item.worktree_data())
+                            .filter(|d| d.detached)
+                    {
+                        return data.path.to_string_lossy().into_owned();
+                    }
+                    item.output().to_string()
+                });
                 let query = out.query.trim().to_string();
                 let identifier = resolve_identifier(&action, query, selected_name)?;
 
@@ -372,25 +396,30 @@ pub fn handle_picker(
                 } else {
                     Repository::current().context("Failed to switch worktree")?
                 };
-                let config = repo.user_config();
+                // Load config, offering bare repo worktree-path fix if needed.
+                // Reload from disk so mutations are picked up by plan_switch.
+                let mut config =
+                    worktrunk::config::UserConfig::load().context("Failed to load config")?;
+                offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 
                 // Run pre-switch hooks before branch resolution or worktree creation.
                 // {{ branch }} receives the raw user input (before resolution).
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, &identifier, true)?;
+                    run_pre_switch_hooks(&repo, &config, &identifier, true)?;
                 }
 
                 // Switch to existing worktree or create new one
-                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
-                let hooks_approved = approve_switch_hooks(&repo, config, &plan, false, true)?;
+                let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
+                let hooks_approved = approve_switch_hooks(&repo, &config, &plan, false, true)?;
                 let (result, branch_info) =
-                    execute_switch(&repo, plan, config, false, hooks_approved)?;
+                    execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
                     SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                        let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
+                        let expected_path =
+                            path_mismatch(&repo, &branch_info.branch, path, &config);
                         SwitchBranchInfo {
                             expected_path,
                             ..branch_info
@@ -417,7 +446,7 @@ pub fn handle_picker(
                     let extra_vars = switch_extra_vars(&result);
                     spawn_switch_background_hooks(
                         &repo,
-                        config,
+                        &config,
                         &result,
                         &branch_info.branch,
                         false,

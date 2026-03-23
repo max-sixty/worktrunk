@@ -92,11 +92,51 @@ fn run_post_hook(
     )
 }
 
-fn build_target_vars<'a>(
-    target: Option<&'a str>,
+/// Build best-effort directional vars for manual `wt hook` invocation.
+///
+/// When hooks run during real operations (switch, merge, remove), each call site
+/// builds precise extra_vars from the actual source/destination context. When
+/// invoked manually via `wt hook <type>`, we only have the current worktree —
+/// so we provide reasonable defaults: the current branch as both base and target,
+/// and the current worktree path for directional path vars.
+///
+/// This is the single source of truth for manual hook context — both `run_hook`
+/// (execution + dry-run) and `expand_command_template` (hook show --expanded)
+/// use this function.
+fn build_manual_hook_extra_vars<'a>(
+    ctx: &'a CommandContext,
+    hook_type: HookType,
     custom_vars: &'a [(&'a str, &'a str)],
+    default_branch: Option<&'a str>,
+    worktree_path_str: &'a str,
 ) -> Vec<(&'a str, &'a str)> {
-    let mut vars: Vec<(&str, &str)> = target.into_iter().map(|t| ("target", t)).collect();
+    let branch = ctx.branch_or_head();
+    let mut vars: Vec<(&str, &str)> = match hook_type {
+        // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
+        HookType::PreCommit => default_branch.into_iter().map(|t| ("target", t)).collect(),
+        HookType::PreMerge | HookType::PostMerge => {
+            vec![
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+        // Switch hooks: base = current (we're "switching from" here)
+        HookType::PreSwitch | HookType::PostCreate | HookType::PostStart | HookType::PostSwitch => {
+            vec![
+                ("base", branch),
+                ("base_worktree_path", worktree_path_str),
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+        // Remove hooks: target = where user ends up (current worktree is the best guess)
+        HookType::PreRemove | HookType::PostRemove => {
+            vec![
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+    };
     vars.extend(custom_vars.iter().copied());
     vars
 }
@@ -174,13 +214,14 @@ pub fn run_hook(
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
-    let extra_vars: Vec<(&str, &str)> = match hook_type {
-        HookType::PreCommit => build_target_vars(default_branch.as_deref(), &custom_vars_refs),
-        HookType::PreMerge | HookType::PostMerge => {
-            build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs)
-        }
-        _ => custom_vars_refs.to_vec(),
-    };
+    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
+    let extra_vars = build_manual_hook_extra_vars(
+        &ctx,
+        hook_type,
+        &custom_vars_refs,
+        default_branch.as_deref(),
+        &worktree_path_str,
+    );
 
     if dry_run {
         let commands = prepare_hook_commands(
@@ -611,23 +652,15 @@ fn expand_command_template(
     hook_type: HookType,
     hook_name: Option<&str>,
 ) -> anyhow::Result<String> {
-    // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
-    let extra_vars: Vec<(&str, &str)> = match hook_type {
-        HookType::PreCommit => {
-            // Pre-commit uses default branch as target (for comparison context)
-            default_branch
-                .as_deref()
-                .into_iter()
-                .map(|t| ("target", t))
-                .collect()
-        }
-        HookType::PreMerge | HookType::PostMerge => {
-            // Pre-merge and post-merge use current branch as target
-            vec![("target", ctx.branch_or_head())]
-        }
-        _ => Vec::new(),
-    };
+    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
+    let extra_vars = build_manual_hook_extra_vars(
+        ctx,
+        hook_type,
+        &[],
+        default_branch.as_deref(),
+        &worktree_path_str,
+    );
     let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {

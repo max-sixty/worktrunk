@@ -48,8 +48,8 @@ pub(crate) use step_commands::{
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
-    resolve_worktree_arg, worktree_display_name,
+    OperationMode, handle_remove, handle_remove_current, handle_remove_path,
+    is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

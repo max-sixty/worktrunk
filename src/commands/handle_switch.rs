@@ -13,7 +13,8 @@ use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
-    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
+    path_mismatch, plan_switch,
 };
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
@@ -243,6 +244,9 @@ pub fn handle_switch(
     if verify && !is_recovered {
         run_pre_switch_hooks(&repo, config, branch, yes)?;
     }
+
+    // Offer to fix worktree-path for bare repos with hidden directory names (.git, .bare).
+    offer_bare_repo_worktree_path_fix(&repo, config)?;
 
     // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
