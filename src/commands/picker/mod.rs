@@ -110,7 +110,20 @@ impl CommandCollector for PickerCollector {
                                 let _ = std::env::set_current_dir(main_path);
                             }
                             let mut items = self.items.lock().unwrap();
-                            items.retain(|item| item.output().as_ref() != selected_output);
+                            if let Some(path) = &detached_path {
+                                // Detached items all share output "(detached)" —
+                                // match by worktree path to remove only this one.
+                                items.retain(|item| {
+                                    item.as_any()
+                                        .downcast_ref::<WorktreeSkimItem>()
+                                        .and_then(|s| s.item.worktree_data())
+                                        .is_none_or(|d| d.path != *path)
+                                });
+                            } else {
+                                items.retain(|item| {
+                                    item.output().as_ref() != selected_output
+                                });
+                            }
                         }
                     }
                     Err(e) => {
