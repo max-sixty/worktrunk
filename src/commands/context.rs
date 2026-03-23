@@ -12,7 +12,7 @@ use super::command_executor::CommandContext;
 ///
 /// This helper is used for commands that explicitly act on "where the user is standing"
 /// (e.g., `beta` and `merge`) and therefore need all of these pieces together. Commands that
-/// inspect multiple worktrees or run without a config/branch requirement (`list`, `select`,
+/// inspect multiple worktrees or run without a config/branch requirement (`list`, the picker,
 /// some `worktree` helpers) still call `Repository::current()` directly so they can operate in
 /// broader contexts without forcing config loads or branch resolution.
 pub struct CommandEnv {

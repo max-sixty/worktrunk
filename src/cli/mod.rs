@@ -1289,31 +1289,52 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Description |
 |----------|-------------|
+| `{{ branch }}` | Active branch name |
+| `{{ worktree_path }}` | Active worktree path |
+| `{{ worktree_name }}` | Active worktree directory name |
+| `{{ commit }}` | Active branch HEAD SHA |
+| `{{ short_commit }}` | Active branch HEAD SHA (7 chars) |
+| `{{ upstream }}` | Active branch upstream (if tracking a remote) |
+| `{{ base }}` | Base branch name |
+| `{{ base_worktree_path }}` | Base worktree path |
+| `{{ target }}` | Target branch name |
+| `{{ target_worktree_path }}` | Target worktree path |
+| `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
-| `{{ branch }}` | Branch name |
-| `{{ worktree_name }}` | Worktree directory name |
-| `{{ worktree_path }}` | Absolute worktree path |
-| `{{ primary_worktree_path }}` | Primary worktree path (main worktree for normal repos; default branch worktree for bare repos) |
+| `{{ primary_worktree_path }}` | Primary worktree path |
 | `{{ default_branch }}` | Default branch name |
-| `{{ commit }}` | Full HEAD commit SHA |
-| `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
-| `{{ upstream }}` | Upstream tracking branch (if set) |
 | `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ target }}` | Target branch (merge hooks only) |
-| `{{ base }}` | Base branch (creation hooks only) |
-| `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific. Using an undefined variable directly errors — use conditionals for optional behavior:
+Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
+
+| Operation | Bare vars | `base` | `target` |
+|-----------|-----------|--------|----------|
+| switch/create | destination | where you came from | = bare vars |
+| merge | feature being merged | = bare vars | merge target |
+| remove | branch being removed | = bare vars | where you end up |
+
+Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch (hook runs in the source, `worktree_path` is the destination), post-remove (active worktree is gone, hook runs in primary), and post-merge with removal (same — active is gone, hook runs in target).
+
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks. Undefined variables error — use conditionals:
 
 ```toml
 [post-create]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
+
+### Migration from earlier versions
+
+`worktree_path` changed meaning in two hook types:
+
+- **pre-switch** (existing worktrees): previously the source worktree, now the destination. Use `{{ base_worktree_path }}` or `{{ cwd }}` for the source.
+- **post-merge**: previously the merge target worktree, now the feature worktree (active). Use `{{ target_worktree_path }}` or `{{ cwd }}` for where code landed.
+
+New variables `cwd`, `target_worktree_path`, `base`, and `base_worktree_path` are available in more hook types than before.
 
 ## Worktrunk filters
 
@@ -1614,7 +1635,7 @@ Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
@@ -1634,9 +1655,13 @@ worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 # Centralized worktrees directory
 # Creates: ~/worktrees/myproject/feature-auth
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+
+# Bare repository (git clone --bare <url> myproject/.git)
+# Creates: ~/code/myproject/feature-auth
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-`~` expands to the home directory. Relative paths are relative to the repository root.
+`~` expands to the home directory. Relative paths resolve from `repo_path`.
 
 ## LLM commit messages
 

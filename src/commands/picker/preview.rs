@@ -163,7 +163,7 @@ pub(super) struct PreviewStateData;
 impl PreviewStateData {
     pub(super) fn state_path() -> PathBuf {
         // Use per-process temp file to avoid race conditions when running multiple instances
-        std::env::temp_dir().join(format!("wt-select-state-{}", std::process::id()))
+        std::env::temp_dir().join(format!("wt-picker-state-{}", std::process::id()))
     }
 
     /// Read current preview mode from state file

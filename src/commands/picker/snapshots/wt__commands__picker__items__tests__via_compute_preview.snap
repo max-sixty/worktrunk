@@ -1,5 +1,5 @@
 ---
-source: src/commands/select/items.rs
+source: src/commands/picker/items.rs
 expression: "WorktreeSkimItem::compute_preview(&feature_item, PreviewMode::Summary, 80, 40)"
 ---
 [2m○[22m Generating summary...
