@@ -564,6 +564,75 @@ fn test_bare_repo_project_config_found_from_bare_root() {
 }
 
 #[test]
+fn test_bare_repo_project_config_found_with_dash_c_flag() {
+    // Regression test for #1691 (comment): project config in the primary worktree
+    // should be found when using `-C <repo>` from an unrelated directory.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Use a marker file to prove the hook ran
+    let marker_path = test.bare_repo_path().join("hook-ran-c-flag.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Run from a completely unrelated directory using -C to point at the bare repo
+    let unrelated_dir = tempfile::tempdir().unwrap();
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args([
+        "-C",
+        test.bare_repo_path().to_str().unwrap(),
+        "switch",
+        "--create",
+        "feature-c-flag",
+        "--yes",
+    ])
+    .current_dir(unrelated_dir.path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch -C failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The hook from the primary worktree's config should have executed
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Hook from primary worktree config should run when using -C flag. \
+         Marker file content: {:?}",
+        content
+    );
+}
+
+#[test]
 fn test_bare_repo_slashed_branch_with_sanitize() {
     // Test that slashed branch names work with bare repos and the sanitize filter
     // This matches the documented workflow in tips-patterns.md
