@@ -457,10 +457,11 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>show</span></b>         Show configured hooks
   <b><span class=c>pre-switch</span></b>   Run pre-switch hooks
-  <b><span class=c>post-create</span></b>  Run post-create hooks
+  <b><span class=c>pre-start</span></b>    Run pre-start hooks
   <b><span class=c>post-start</span></b>   Run post-start hooks
   <b><span class=c>post-switch</span></b>  Run post-switch hooks
   <b><span class=c>pre-commit</span></b>   Run pre-commit hooks
+  <b><span class=c>post-commit</span></b>  Run post-commit hooks
   <b><span class=c>pre-merge</span></b>    Run pre-merge hooks
   <b><span class=c>post-merge</span></b>   Run post-merge hooks
   <b><span class=c>pre-remove</span></b>   Run pre-remove hooks

@@ -8,7 +8,10 @@ use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, execute_hook};
+use super::hooks::{
+    HookCommandSpec, HookFailureStrategy, execute_hook, prepare_hook_commands,
+    spawn_background_hooks,
+};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -63,6 +66,7 @@ fn collect_merge_commands(
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
     if commit && verify && will_create_commit {
         hooks.push(HookType::PreCommit);
+        hooks.push(HookType::PostCommit);
     }
 
     if verify {
@@ -352,14 +356,25 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        execute_hook(
-            &ctx,
+        let project_config = ctx.repo.load_project_config()?;
+        let user_hooks_cfg = ctx.config.hooks(ctx.project_id().as_deref());
+        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+            &user_hooks_cfg,
+            project_config.as_ref(),
             HookType::PostMerge,
-            &extra,
-            HookFailureStrategy::Warn,
-            None,
-            display_path,
+        );
+        let commands = prepare_hook_commands(
+            &ctx,
+            HookCommandSpec {
+                user_config: user_cfg,
+                project_config: proj_cfg,
+                hook_type: HookType::PostMerge,
+                extra_vars: &extra,
+                name_filter: None,
+                display_path,
+            },
         )?;
+        spawn_background_hooks(&ctx, commands)?;
     }
 
     Ok(())

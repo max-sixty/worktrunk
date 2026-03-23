@@ -44,6 +44,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [2m○[22m Expanding [1mworktree-path[22m
 [107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
 [107m [0m [2m→[22m
@@ -52,7 +53,7 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up {{ branch | sanitize }} in {{ worktree_path }}'[0m[2m
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up verbose-hooks in _REPO_.verbose-hooks'[0m[2m
-[36m◎[39m [36mRunning post-create [1mproject:setup[22m @ [1m_REPO_.verbose-hooks[22m[39m
+[36m◎[39m [36mRunning pre-start [1mproject:setup[22m @ [1m_REPO_.verbose-hooks[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up verbose-hooks in _REPO_.verbose-hooks'[0m[2m
 [0mSetting up verbose-hooks in _REPO_.verbose-hooks
 [32m✓[39m [32mCreated branch [1mverbose-hooks[22m from [1mmain[22m and worktree @ [1m_REPO_.verbose-hooks[22m[39m

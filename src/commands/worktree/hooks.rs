@@ -1,6 +1,6 @@
 //! Hook execution for worktree operations.
 //!
-//! CommandContext implementations for post-create and post-remove hooks.
+//! CommandContext implementations for pre-start and post-remove hooks.
 
 use std::path::Path;
 
@@ -13,17 +13,17 @@ use crate::commands::hooks::{
 };
 
 impl<'a> CommandContext<'a> {
-    /// Execute post-create commands sequentially (blocking)
+    /// Execute pre-start commands sequentially (blocking)
     ///
     /// Runs user hooks first, then project hooks.
     /// Shows path in hook announcements when shell integration isn't active (user's shell
     /// won't cd to the new worktree, so they need to know where hooks ran).
     ///
     /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
-    pub fn execute_post_create_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
+    pub fn execute_pre_start_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
         execute_hook(
             self,
-            HookType::PostCreate,
+            HookType::PreStart,
             extra_vars,
             HookFailureStrategy::Warn,
             None,

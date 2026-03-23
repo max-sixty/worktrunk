@@ -198,6 +198,8 @@ pub struct Deprecations {
     pub approved_commands: bool,
     /// Has `[select]` section (moved to `[switch.picker]`)
     pub select: bool,
+    /// Has `[hooks.post-create]` (renamed to `[hooks.pre-start]`)
+    pub post_create: bool,
 }
 
 impl Deprecations {
@@ -207,6 +209,7 @@ impl Deprecations {
             && self.commit_gen.is_empty()
             && !self.approved_commands
             && !self.select
+            && !self.post_create
     }
 }
 
@@ -220,6 +223,7 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         commit_gen: find_commit_generation_deprecations(content),
         approved_commands: find_approved_commands_deprecation(content),
         select: find_select_deprecation(content),
+        post_create: find_post_create_deprecation(content),
     }
 }
 
@@ -508,6 +512,95 @@ pub fn find_select_deprecation(content: &str) -> bool {
     }
 
     false
+}
+
+/// Check if config has a deprecated `post-create` hook without a corresponding `pre-start`.
+///
+/// Checks both top-level hooks (`post-create = "..."`) and project hooks
+/// (`[projects."...".hooks] post-create = "..."`). This handles both user config
+/// and project config formats.
+pub fn find_post_create_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Check top-level hooks section (project config: `post-create = "..."`)
+    if doc.get("pre-start").is_none() && doc.get("post-create").is_some() {
+        return true;
+    }
+
+    // Check [hooks] section (user config: `[hooks] post-create = "..."`)
+    if let Some(hooks) = doc.get("hooks").and_then(|h| h.as_table())
+        && hooks.get("pre-start").is_none()
+        && hooks.get("post-create").is_some()
+    {
+        return true;
+    }
+
+    // Check project-level hooks
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && let Some(hooks) = project_table.get("hooks").and_then(|h| h.as_table())
+                && hooks.get("pre-start").is_none()
+                && hooks.get("post-create").is_some()
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Migrate `post-create` hooks to `pre-start`.
+///
+/// Renames `post-create` to `pre-start` in hooks sections. Skips if `pre-start` already exists.
+pub fn migrate_post_create_to_pre_start(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    let mut modified = false;
+
+    // Top-level (project config format)
+    if doc.get("pre-start").is_none()
+        && let Some(value) = doc.remove("post-create")
+    {
+        doc.insert("pre-start", value);
+        modified = true;
+    }
+
+    // [hooks] section (user config format)
+    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_table_mut())
+        && hooks.get("pre-start").is_none()
+        && let Some(value) = hooks.remove("post-create")
+    {
+        hooks.insert("pre-start", value);
+        modified = true;
+    }
+
+    // Project-level hooks
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut()
+                && let Some(hooks) = project_table
+                    .get_mut("hooks")
+                    .and_then(|h| h.as_table_mut())
+                && hooks.get("pre-start").is_none()
+                && let Some(value) = hooks.remove("post-create")
+            {
+                hooks.insert("pre-start", value);
+                modified = true;
+            }
+        }
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
 }
 
 /// Migrate `[select]` section to `[switch.picker]`.
@@ -849,6 +942,9 @@ pub fn write_migration_file(
     if deprecations.select {
         new_content = migrate_select_to_switch_picker(&new_content);
     }
+    if deprecations.post_create {
+        new_content = migrate_post_create_to_pre_start(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -963,6 +1059,17 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             "{}",
             warning_message(format!(
                 "{} uses deprecated config section: [select] → [switch.picker]",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.post_create {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated hook name: post-create → pre-start",
                 info.label
             ))
         );
@@ -2006,6 +2113,7 @@ approved-commands = ["npm install"]
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2034,6 +2142,7 @@ approved-commands = ["npm install"]
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2063,6 +2172,7 @@ approved-commands = ["npm install"]
             commit_gen: CommitGenerationDeprecations::default(),
             approved_commands: true,
             select: false,
+            post_create: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
@@ -2321,6 +2431,7 @@ branches = true
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: true,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2353,6 +2464,7 @@ pager = "delta --paging=never"
             commit_gen: CommitGenerationDeprecations::default(),
             approved_commands: false,
             select: true,
+            post_create: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(result.is_some(), "Should write migration file for select");
