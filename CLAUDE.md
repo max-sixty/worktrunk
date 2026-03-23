@@ -310,6 +310,7 @@ Never hand-roll utilities that already exist as crate dependencies. Check `Cargo
 | Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
 | Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
 | ANSI colors | `color_print::cformat!()` | Raw escape codes |
+| Template variable detection | `minijinja::undeclared_variables(false)` | Regex or substring matching for `{{ var }}` |
 
 ### Don't Suppress Warnings
 

@@ -113,7 +113,11 @@ pub fn build_hook_context(
         map.insert("main_worktree_path".into(), path_str);
     }
 
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
+    // Resolve commit from the Active branch, not HEAD at discovery path.
+    // This ensures {{ commit }} follows the Active branch even when the
+    // CommandContext points to a different worktree than where we're running.
+    let commit_ref = ctx.branch.unwrap_or("HEAD");
+    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", commit_ref]) {
         let commit = commit.trim();
         map.insert("commit".into(), commit.into());
         if commit.len() >= 7 {

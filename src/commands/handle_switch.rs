@@ -13,7 +13,8 @@ use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
-    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
+    path_mismatch, plan_switch,
 };
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
@@ -244,6 +245,9 @@ pub fn handle_switch(
         run_pre_switch_hooks(&repo, config, branch, yes)?;
     }
 
+    // Offer to fix worktree-path for bare repos with hidden directory names (.git, .bare).
+    offer_bare_repo_worktree_path_fix(&repo, config)?;
+
     // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
@@ -268,6 +272,21 @@ pub fn handle_switch(
     // Catches syntax errors and undefined variables early so a broken template
     // doesn't leave behind a half-created worktree that blocks re-running.
     validate_switch_templates(&repo, config, &plan, execute, execute_args, hooks_approved)?;
+
+    // Capture source (base) worktree identity BEFORE the switch, so post-switch
+    // hooks can reference where the user came from via {{ base }} / {{ base_worktree_path }}.
+    let source_branch = repo
+        .current_worktree()
+        .branch()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let source_path = repo
+        .current_worktree()
+        .root()
+        .ok()
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
+        .unwrap_or_default();
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
@@ -311,10 +330,22 @@ pub fn handle_switch(
         let _ = prompt_shell_integration(config, binary_name, skip_prompt);
     }
 
-    // Build extra vars for base branch context (used by both hooks and --execute)
-    // "base" is the branch we branched from when creating a new worktree.
-    // For existing worktrees, there's no base concept.
-    let extra_vars = switch_extra_vars(&result);
+    // Build extra vars for base/target context (used by both hooks and --execute).
+    // "base" is the source worktree the user switched from (all switches),
+    // or the branch they branched from (creates).
+    let mut extra_vars = switch_extra_vars(&result);
+    // For existing switches, add source worktree as base
+    if matches!(
+        result,
+        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_)
+    ) {
+        if !source_branch.is_empty() {
+            extra_vars.push(("base", &source_branch));
+        }
+        if !source_path.is_empty() {
+            extra_vars.push(("base_worktree_path", &source_path));
+        }
+    }
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)

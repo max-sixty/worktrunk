@@ -514,6 +514,32 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     assert!(!config.skip_shell_integration_prompt);
 }
 
+#[test]
+fn test_set_project_worktree_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# empty config\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_project_worktree_path(
+            "github.com/user/repo",
+            "../{{ branch | sanitize }}".to_string(),
+            Some(&config_path),
+        )
+        .unwrap();
+
+    assert_eq!(
+        config.worktree_path_for_project("github.com/user/repo"),
+        "../{{ branch | sanitize }}"
+    );
+
+    // Verify it was saved to disk
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("[projects.\"github.com/user/repo\"]"));
+    assert!(content.contains("worktree-path"));
+}
+
 // =========================================================================
 // Merge trait tests
 // =========================================================================
