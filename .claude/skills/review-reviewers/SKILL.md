@@ -164,7 +164,7 @@ trace incidents to session logs.
 Run `.github/scripts/list-recent-runs.sh` for recently completed Claude CI runs.
 If empty, report "no runs to review" and exit.
 
-Include `claude-hourly-review-reviewers` runs — self-analysis is intentional so
+Include `review-reviewers` runs — self-analysis is intentional so
 we can catch bugs in the reviewer itself.
 
 ## Step 2: Download and analyze session logs
@@ -190,7 +190,7 @@ was the outcome?
 
 ## Step 3: Cross-check review sessions
 
-For `claude-review` runs, compare what the bot said against what happened next:
+For `continuous-review` runs, compare what the bot said against what happened next:
 
 ```bash
 HEAD_BRANCH=$(gh run view <run-id> --json headBranch --jq '.headBranch')
