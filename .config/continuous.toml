@@ -1,5 +1,4 @@
 bot_name = "worktrunk-bot"
-system_prompt_append = "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
 
 [secrets]
 bot_token = "WORKTRUNK_BOT_TOKEN"
@@ -7,11 +6,6 @@ claude_token = "CLAUDE_CODE_OAUTH_TOKEN"
 
 [setup]
 uses = ["./.github/actions/claude-setup"]
-run = [
-    'echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"',
-    'echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"',
-    'echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"',
-]
 
 [workflows.review]
 prompt = "/review-pr {pr_number}"

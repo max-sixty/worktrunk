@@ -7,7 +7,7 @@ metadata:
 
 # Running in CI
 
-Load `/cd-running-in-ci` for generic CI environment rules (security, comment
+Load `/continuous-running-in-ci` for generic CI environment rules (security, comment
 formatting, shell quoting, session log analysis, grounded analysis). This file
 adds worktrunk-specific CI monitoring.
 

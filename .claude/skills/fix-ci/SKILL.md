@@ -8,7 +8,7 @@ metadata:
 
 # Worktrunk CI Fix
 
-Load `/cd-ci-fix` for the generic CI fix workflow (diagnose, fix, create PR,
+Load `/ci-fix` for the generic CI fix workflow (diagnose, fix, create PR,
 monitor CI). This file adds worktrunk-specific configuration.
 
 **Failed run:** $ARGUMENTS
@@ -30,5 +30,5 @@ Use `automated-fix` label on fix PRs.
 
 ## CI Monitoring
 
-After creating a PR, monitor CI using `/running-in-ci` (includes codecov/patch
+After creating a PR, monitor CI using `/continuous-running-in-ci` (includes codecov/patch
 polling).

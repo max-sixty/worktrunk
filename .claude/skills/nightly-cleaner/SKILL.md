@@ -7,7 +7,7 @@ metadata:
 
 # Worktrunk Nightly Sweep
 
-Load `/cd-nightly` for the generic nightly sweep workflow (conflict resolution,
+Load `/nightly` for the generic nightly sweep workflow (conflict resolution,
 commit review, issue closing, survey methodology, findings reporting). This file
 adds worktrunk-specific configuration.
 
@@ -34,5 +34,5 @@ cargo run -- hook pre-merge --yes
 
 ## CI Monitoring
 
-After creating a PR, monitor CI using `/running-in-ci` (includes codecov/patch
+After creating a PR, monitor CI using `/continuous-running-in-ci` (includes codecov/patch
 polling).

@@ -8,7 +8,7 @@ metadata:
 
 # Worktrunk Issue Triage
 
-Load `/cd-triage` for the generic triage workflow (classification, duplicate
+Load `/triage` for the generic triage workflow (classification, duplicate
 search, investigation, reproduction, fix, comment templates). This file adds
 worktrunk-specific commands and conventions.
 
@@ -30,7 +30,7 @@ cargo run -- hook pre-merge --yes
 
 ## CI Monitoring
 
-After creating a PR, monitor CI using `/running-in-ci` (includes codecov/patch
+After creating a PR, monitor CI using `/continuous-running-in-ci` (includes codecov/patch
 polling).
 
 ## Version Check

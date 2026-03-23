@@ -121,9 +121,6 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - uses: ./.github/actions/claude-setup
-      - run: echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
-      - run: echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
-      - run: echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"
 
       - name: Check out PR branch
         if: |
@@ -145,7 +142,6 @@ jobs:
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           bot_name: worktrunk-bot
-          system_prompt_append: "You are operating in a GitHub Actions CI environment. Use /running-in-ci before starting work."
           prompt: >-
             ${{ github.event_name == 'issues'
               && format('An issue was updated with a mention of you ({0}). Read it and respond.', github.event.issue.html_url)

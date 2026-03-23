@@ -8,7 +8,7 @@ metadata:
 
 # Worktrunk PR Review
 
-Load `/cd-review` for the generic review workflow (pre-flight, posting
+Load `/review` for the generic review workflow (pre-flight, posting
 mechanics, inline suggestions, thread resolution, CI monitoring). This file
 adds worktrunk-specific review criteria.
 
@@ -55,7 +55,7 @@ rg "all_remote_urls|remote_url|GitRemoteUrl::parse" --type rust
 
 ## CI Monitoring
 
-After approving or staying silent, monitor CI using `/running-in-ci` (includes
+After approving or staying silent, monitor CI using `/continuous-running-in-ci` (includes
 worktrunk-specific codecov/patch polling).
 
 ## Flake Tracking

@@ -1,6 +1,6 @@
 # CI Automation Security Model — Worktrunk
 
-See [cd-security-model.md](cd-security-model.md) for the generic security model
+See [continuous-security-model.md](continuous-security-model.md) for the generic security model
 (security layers, token management, prompt injection, event types, workflow
 modification rules). This file documents worktrunk-specific configuration.
 
