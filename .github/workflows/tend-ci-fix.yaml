@@ -33,7 +33,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           bot_name: worktrunk-bot
           prompt: |
-            /tend-ci-fix ${{ github.event.workflow_run.id }}
+            /tend:tend-ci-fix ${{ github.event.workflow_run.id }}
             - Run URL: ${{ github.event.workflow_run.html_url }}
             - Commit: ${{ github.event.workflow_run.head_sha }}
             - Commit message: ${{ github.event.workflow_run.head_commit.message }}

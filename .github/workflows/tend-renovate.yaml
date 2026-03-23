@@ -32,4 +32,4 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           bot_name: worktrunk-bot
           prompt: |
-            /tend-renovate
+            /tend:tend-renovate
