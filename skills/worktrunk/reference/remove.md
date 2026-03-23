@@ -17,12 +17,6 @@ wt remove feature-branch
 wt remove old-feature another-branch
 ```
 
-Remove a detached HEAD worktree by path:
-
-```bash
-wt remove /tmp/my-detached-worktree
-```
-
 Keep the branch:
 
 ```bash
@@ -75,6 +69,10 @@ Removal runs in the background by default (returns immediately). Logs are writte
 ## Hooks
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](https://worktrunk.dev/hook/) for configuration.
+
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: `wt remove /path/to/worktree`.
 
 ## Command reference
 
