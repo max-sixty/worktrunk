@@ -62,6 +62,24 @@ pub fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove a worktree by path (supports detached HEAD worktrees).
+pub fn handle_remove_path(
+    path: &std::path::Path,
+    keep_branch: bool,
+    force_delete: bool,
+    force_worktree: bool,
+    config: &UserConfig,
+) -> anyhow::Result<RemoveResult> {
+    let repo = Repository::current()?;
+
+    repo.prepare_worktree_removal(
+        RemoveTarget::Path(path),
+        BranchDeletionMode::from_flags(keep_branch, force_delete),
+        force_worktree,
+        config,
+    )
+}
+
 /// Handle removing the current worktree (supports detached HEAD state).
 ///
 /// This is the path-based removal that handles the "@" shorthand, including

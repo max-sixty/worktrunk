@@ -5,6 +5,7 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
 use normalize_path::NormalizePath;
@@ -25,13 +26,15 @@ use super::types::OperationMode;
 /// 1. Special symbols ("@", "-", "^") are handled specially
 /// 2. Resolve argument as branch name
 /// 3. If branch has a worktree, return it
-/// 4. Otherwise, return branch-only (no worktree)
+/// 4. For `Remove`: fall back to path-based lookup (supports detached worktrees)
+/// 5. Otherwise, return branch-only (no worktree)
 ///
 /// For `CreateOrSwitch` context: If the branch has no worktree but expected
 /// path is occupied by another branch's worktree, an error is raised.
 ///
-/// For `Remove` context: Path occupation is ignored since we're not creating
-/// a worktree - we just return `BranchOnly` if no worktree exists.
+/// For `Remove` context: If branch lookup fails to find a worktree, the
+/// argument is tried as a filesystem path (absolute or relative to CWD).
+/// This supports removing detached HEAD worktrees which have no branch name.
 pub fn resolve_worktree_arg(
     repo: &Repository,
     name: &str,
@@ -68,6 +71,25 @@ pub fn resolve_worktree_arg(
                 occupant: occupant_branch,
             }
             .into());
+        }
+    }
+
+    // For Remove: fall back to path-based lookup (supports detached worktrees)
+    if context == OperationMode::Remove {
+        let candidate = Path::new(name);
+        // Try as absolute path, or resolve relative to CWD
+        let abs_path = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .context("Failed to determine current directory")?
+                .join(candidate)
+        };
+        if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: wt_branch,
+            });
         }
     }
 

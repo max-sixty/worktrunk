@@ -70,6 +70,10 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](https://worktrunk.dev/hook/) for configuration.
 
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: `wt remove /path/to/worktree`.
+
 ## Command reference
 
 wt remove - Remove worktree; delete branch if merged
@@ -80,7 +84,7 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCHES]...</span>
-          Branch name [default: current]
+          Branch name or path [default: current]
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--no-delete-branch</span></b>
