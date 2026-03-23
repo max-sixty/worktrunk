@@ -72,7 +72,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Detached HEAD worktrees
 
-Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: `wt remove /path/to/worktree`.
+Detached worktrees have no branch name. Pass the worktree path instead: `wt remove /path/to/worktree`. `wt switch /path/to/worktree` also works.
 
 ## Command reference
 
@@ -84,7 +84,7 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>[BRANCHES]...</span>
-          Branch name or path [default: current]
+          Branch name [default: current]
 
 <b><span class=g>Options:</span></b>
       <b><span class=c>--no-delete-branch</span></b>

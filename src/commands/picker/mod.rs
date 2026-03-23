@@ -372,11 +372,21 @@ pub fn handle_picker(
             PickerAction::Create | PickerAction::Switch => {
                 let should_create = matches!(action, PickerAction::Create);
 
-                // Get branch name: from query if creating new, from selected item if switching
-                let selected_name = out
-                    .selected_items
-                    .first()
-                    .map(|item| item.output().to_string());
+                // Get branch name: from query if creating new, from selected item if switching.
+                // For detached worktrees, use the path (same as `wt switch /path` from CLI).
+                let selected = out.selected_items.first();
+                let selected_name = selected.map(|item| {
+                    if !should_create
+                        && let Some(data) = item
+                            .as_any()
+                            .downcast_ref::<WorktreeSkimItem>()
+                            .and_then(|s| s.item.worktree_data())
+                            .filter(|d| d.detached)
+                    {
+                        return data.path.to_string_lossy().into_owned();
+                    }
+                    item.output().to_string()
+                });
                 let query = out.query.trim().to_string();
                 let identifier = resolve_identifier(&action, query, selected_name)?;
 

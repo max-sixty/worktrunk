@@ -39,7 +39,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 
 [1m[32mArguments:[0m
   [36m[BRANCHES]...[0m
-          Branch name or path [default: current]
+          Branch name [default: current]
 
 [1m[32mOptions:[0m
       [1m[36m--no-delete-branch[0m
@@ -136,7 +136,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 [1m[32mDetached HEAD worktrees[0m
 
-Detached worktrees have no branch name, so they can't be removed by branch. Pass the worktree path instead: [2mwt remove /path/to/worktree[0m.
+Detached worktrees have no branch name. Pass the worktree path instead: [2mwt remove /path/to/worktree[0m. [2mwt switch /path/to/worktree[0m also works.
 
 [1m[32mSee also[0m
 
