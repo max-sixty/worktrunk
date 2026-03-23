@@ -103,12 +103,12 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger post-create + post-start + post-switch hooks;
+/// Creates trigger pre-start + post-start + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PostCreate,
+            HookType::PreStart,
             HookType::PostStart,
             HookType::PostSwitch,
         ]

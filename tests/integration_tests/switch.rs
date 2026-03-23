@@ -994,6 +994,26 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
 }
 
+/// Switch to a detached worktree by absolute path (#1661).
+#[rstest]
+fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let worktree_str = worktree_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["switch", &worktree_str])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Switch to a detached worktree by relative path (#1661).
 /// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
 #[rstest]

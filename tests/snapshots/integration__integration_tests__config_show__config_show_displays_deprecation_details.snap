@@ -44,17 +44,18 @@ exit_code: 0
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
+[33m▲[39m [33mUser config uses deprecated hook name: post-create → pre-start[39m
 [2m↳[22m [2mTo apply:[22m
 [107m [0m [2m[0m[2m[34mwt[0m[2m config update
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
-[107m [0m [1mindex d95d100..ceb381d 100644[m
+[107m [0m [1mindex d95d100..5eef8a6 100644[m
 [107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
 [107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
 [107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules"[m
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m [32m+[m[32mpost-create = "ln -sf {{ repo_path }}/node_modules"[m
+[107m [0m [32m+[m[32mpre-start = "ln -sf {{ repo_path }}/node_modules"[m
 [2m○[22m Current config:
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ main_worktree }}.{{ branch }}"
 [107m [0m [2mpost-create = [0m[2m[32m"ln -sf {{ repo_root }}/node_modules"

@@ -43,7 +43,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1muser:failing[22m @ [1m_REPO_.feature[22m[39m
+[33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
+[36m◎[39m [36mRunning pre-start [1muser:failing[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[31m✗[39m [31mCommand [1mfailing[22m failed: exit status: 1[39m
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m

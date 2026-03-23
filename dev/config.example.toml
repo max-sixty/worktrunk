@@ -146,7 +146,7 @@
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
-# post-create.env = "cp .env.example .env"
+# pre-start.env = "cp .env.example .env"
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
 # ### Custom prompt templates

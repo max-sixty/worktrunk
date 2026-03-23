@@ -43,7 +43,7 @@ When creating a worktree, worktrunk:
 1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [post-create hooks](@/hook.md#post-create) (blocking)
+4. Runs [pre-start hooks](@/hook.md#pre-start) (blocking)
 5. Spawns [post-start hooks](@/hook.md#post-start) (background)
 6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
 

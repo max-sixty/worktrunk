@@ -1053,7 +1053,7 @@ mod unix_tests {
         );
     }
 
-    /// Test switch --create with post-create (blocking) and post-start (background)
+    /// Test switch --create with pre-start (blocking) and post-start (background)
     /// Note: bash and fish disabled due to flaky PTY buffering race conditions
     ///
     /// TODO: Fix timing/race condition in bash where "Building project..." output appears
@@ -1064,13 +1064,13 @@ mod unix_tests {
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_switch_with_hooks(#[case] shell: &str, repo: TestRepo) {
-        // Create project config with both post-create and post-start hooks
+        // Create project config with both pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
             r#"# Blocking commands that run before worktree is ready
-[post-create]
+[pre-start]
 install = "echo 'Installing dependencies...'"
 build = "echo 'Building project...'"
 
@@ -2620,10 +2620,10 @@ command = "{}"
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    /// README example: Creating worktree with post-create and post-start hooks
+    /// README example: Creating worktree with pre-start and post-start hooks
     ///
     /// This test demonstrates:
-    /// - Post-create hooks (install dependencies)
+    /// - Pre-start hooks (install dependencies)
     /// - Post-start hooks (start dev server)
     ///
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
@@ -2631,7 +2631,7 @@ command = "{}"
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
     #[rstest]
     fn test_readme_example_hooks_post_create(repo: TestRepo) {
-        // Create project config with post-create and post-start hooks
+        // Create project config with pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
 
@@ -2667,7 +2667,7 @@ fi
         }
 
         let config_content = r#"
-[post-create]
+[pre-start]
 "install" = "uv sync"
 
 [post-start]
@@ -2700,7 +2700,7 @@ fi
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    /// README example: approval prompt for post-create commands
+    /// README example: approval prompt for pre-start commands
     /// This test captures just the prompt (before responding) to show what users see.
     ///
     /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
@@ -2714,9 +2714,9 @@ fi
         // Remove origin so worktrunk uses directory name as project identifier
         repo.run_git(&["remote", "remove", "origin"]);
 
-        // Create project config with named post-create commands
+        // Create project config with named pre-start commands
         repo.write_project_config(
-            r#"[post-create]
+            r#"[pre-start]
 install = "echo 'Installing dependencies...'"
 build = "echo 'Building project...'"
 test = "echo 'Running tests...'"
