@@ -29,7 +29,7 @@ use super::handle_switch::{
 use super::list::collect;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal, execute_switch, handle_remove,
-    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    handle_remove_path, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::handle_switch_output;
 
@@ -68,17 +68,35 @@ impl CommandCollector for PickerCollector {
         _cmd: &str,
         components_to_stop: Arc<AtomicUsize>,
     ) -> (SkimItemReceiver, Sender<i32>) {
-        // Read the removal signal (branch name written by execute-silent)
+        // Read the removal signal (item output text written by execute-silent)
         if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
-            let branch_name = signal.trim().to_string();
-            if !branch_name.is_empty() {
+            let selected_output = signal.trim().to_string();
+            if !selected_output.is_empty() {
                 let config = self.repo.user_config();
 
+                // Check if this is a detached HEAD worktree — these have no branch
+                // name, so we need to remove by path instead.
+                let detached_path = {
+                    let items = self.items.lock().unwrap();
+                    items
+                        .iter()
+                        .find(|item| item.output().as_ref() == selected_output)
+                        .and_then(|item| item.as_any().downcast_ref::<WorktreeSkimItem>())
+                        .and_then(|skim_item| skim_item.item.worktree_data())
+                        .filter(|data| data.detached)
+                        .map(|data| data.path.clone())
+                };
+
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
-                match handle_remove(&branch_name, false, false, false, config) {
+                let result = if let Some(path) = &detached_path {
+                    handle_remove_path(path, false, false, false, config)
+                } else {
+                    handle_remove(&selected_output, false, false, false, config)
+                };
+                match result {
                     Ok(result) => {
                         if let Err(e) = execute_removal(&result) {
-                            log::warn!("picker: removal failed for '{branch_name}': {e:#}");
+                            log::warn!("picker: removal failed for '{selected_output}': {e:#}");
                             // Fall through to stream items unchanged
                         } else {
                             // If we removed the current worktree, update process CWD
@@ -92,11 +110,11 @@ impl CommandCollector for PickerCollector {
                                 let _ = std::env::set_current_dir(main_path);
                             }
                             let mut items = self.items.lock().unwrap();
-                            items.retain(|item| item.output().as_ref() != branch_name);
+                            items.retain(|item| item.output().as_ref() != selected_output);
                         }
                     }
                     Err(e) => {
-                        log::warn!("picker: failed to remove '{branch_name}': {e:#}");
+                        log::warn!("picker: failed to remove '{selected_output}': {e:#}");
                     }
                 }
 

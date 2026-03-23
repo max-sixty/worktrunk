@@ -29,8 +29,8 @@ pub fn handle_remove(
 /// Execute worktree removal: stop fsmonitor, remove worktree, delete branch.
 ///
 /// Core removal logic without output, hooks, or cd directives. Used by the
-/// picker (which runs inside skim's TUI) and `handle_removed_worktree_output`
-/// (which wraps this with progress messages and hook execution).
+/// picker (which runs inside skim's TUI). Performs the same core steps as
+/// `handle_removed_worktree_output`, which adds progress messages and hooks.
 pub fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
     let RemoveResult::RemovedWorktree {
         main_path,
