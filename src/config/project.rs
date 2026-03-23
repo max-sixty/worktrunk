@@ -144,29 +144,21 @@ impl ProjectConfig {
         // fall back to the primary worktree (default branch worktree). This
         // handles the common case where the user runs commands from the bare
         // repo root but the config lives in the primary worktree (#1691).
-        let config_path = if !config_path.exists() {
-            let is_bare = repo
-                .is_bare()
-                .map_err(|e| ConfigError::Message(format!("Failed to check bare status: {}", e)))?;
-            if is_bare {
-                let primary = repo.primary_worktree().map_err(|e| {
-                    ConfigError::Message(format!("Failed to get primary worktree: {}", e))
-                })?;
-                if let Some(primary_path) = primary {
-                    let candidate = primary_path.join(".config").join("wt.toml");
-                    if candidate.exists() {
-                        candidate
-                    } else {
-                        return Ok(None);
-                    }
-                } else {
-                    return Ok(None);
-                }
-            } else {
-                return Ok(None);
+        let config_path = if config_path.exists() {
+            config_path
+        } else if repo.is_bare().unwrap_or(false) {
+            let primary = repo
+                .primary_worktree()
+                .ok()
+                .flatten()
+                .map(|p| p.join(".config").join("wt.toml"))
+                .filter(|p| p.exists());
+            match primary {
+                Some(path) => path,
+                None => return Ok(None),
             }
         } else {
-            config_path
+            return Ok(None);
         };
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
