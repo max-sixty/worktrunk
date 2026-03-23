@@ -994,30 +994,7 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
 }
 
-/// Switch to a detached worktree by path (#1661).
-#[rstest]
-fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
-    repo.add_worktree("feature-detached");
-    repo.detach_head_in_worktree("feature-detached");
-
-    // Use a relative path (from the main worktree root) so the snapshot args
-    // section doesn't contain a volatile temp directory path.
-    let dir_name = repo
-        .worktree_path("feature-detached")
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-    let relative_path = format!("../{dir_name}");
-
-    snapshot_switch_with_directive_file(
-        "switch_detached_worktree_by_path",
-        &repo,
-        &[&relative_path],
-    );
-}
-
-/// Switch to a detached worktree by relative path.
+/// Switch to a detached worktree by relative path (#1661).
 /// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
 #[rstest]
 fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
