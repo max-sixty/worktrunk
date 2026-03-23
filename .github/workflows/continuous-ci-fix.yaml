@@ -3,7 +3,7 @@
 name: continuous-ci-fix
 on:
   workflow_run:
-    workflows: [ci, publish-docs]
+    workflows: ["ci", "publish-docs"]
     types: [completed]
     branches: [main]
 
