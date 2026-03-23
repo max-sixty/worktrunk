@@ -228,6 +228,10 @@ impl ValueCompleter for HookCommandCompleter {
                         return Some(*hook);
                     }
                 }
+                // Deprecated alias: post-create → pre-start
+                if ctx.contains("post-create") {
+                    return Some("pre-start");
+                }
                 None
             })
         });
