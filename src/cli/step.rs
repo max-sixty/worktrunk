@@ -254,6 +254,15 @@ node_modules/
 target/
 ```
 
+After `.worktreeinclude` selects entries, you can exclude matches with gitignore-style patterns in user config, per-project user overrides, or project config:
+
+```toml
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+```
+
+User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+
 ## Common patterns
 
 | Type | Patterns |

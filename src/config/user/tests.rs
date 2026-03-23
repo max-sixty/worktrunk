@@ -96,6 +96,9 @@ stage = "all"
 [merge]
 squash = true
 
+[step.copy-ignored]
+exclude = [".conductor/"]
+
 [post-create]
 run = "npm install"
 
@@ -1553,6 +1556,38 @@ squash = false
 
     let effective_merge = config.merge(Some("github.com/user/repo")).unwrap();
     assert_eq!(effective_merge.squash, Some(false));
+}
+
+#[test]
+fn test_copy_ignored_config_merges_global_and_project() {
+    let project_id = "github.com/user/repo";
+    let config = UserConfig::load_from_str(
+        r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+
+[projects."github.com/user/repo".step.copy-ignored]
+exclude = [".repo-local/", ".entire/"]
+"#,
+    )
+    .unwrap();
+
+    let expected_global = vec![".conductor/".to_string(), ".entire/".to_string()];
+    let expected_merged = vec![
+        ".conductor/".to_string(),
+        ".entire/".to_string(),
+        ".repo-local/".to_string(),
+    ];
+
+    assert_eq!(config.copy_ignored(None).exclude, expected_global);
+    assert_eq!(
+        config.copy_ignored(Some(project_id)).exclude,
+        expected_merged.clone()
+    );
+    assert_eq!(
+        config.resolved(Some(project_id)).copy_ignored.exclude,
+        expected_merged
+    );
 }
 
 #[test]

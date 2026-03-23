@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::merge::Merge;
+use super::merge::{Merge, merge_optional};
 use crate::config::HooksConfig;
 
 /// What to stage before committing
@@ -420,6 +420,52 @@ impl Merge for SwitchConfig {
     }
 }
 
+/// Configuration for `wt step copy-ignored`
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct CopyIgnoredConfig {
+    /// Gitignore-style patterns to exclude from `wt step copy-ignored`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
+impl CopyIgnoredConfig {
+    pub fn merged_with(&self, other: &Self) -> Self {
+        let mut exclude = self.exclude.clone();
+        for pattern in &other.exclude {
+            if !exclude.contains(pattern) {
+                exclude.push(pattern.clone());
+            }
+        }
+        Self { exclude }
+    }
+}
+
+impl Merge for CopyIgnoredConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        self.merged_with(other)
+    }
+}
+
+/// Configuration for `wt step` subcommands.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct StepConfig {
+    /// Configuration for `wt step copy-ignored`.
+    #[serde(
+        default,
+        rename = "copy-ignored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub copy_ignored: Option<CopyIgnoredConfig>,
+}
+
+impl Merge for StepConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            copy_ignored: merge_optional(self.copy_ignored.as_ref(), other.copy_ignored.as_ref()),
+        }
+    }
+}
+
 /// Settings that can be set globally or per-project.
 ///
 /// This struct is flattened into both `UserConfig` (global) and `UserProjectOverrides`
@@ -463,6 +509,10 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchConfig>,
 
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
     /// **DEPRECATED**: Use `[switch.picker]` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
@@ -492,6 +542,7 @@ impl OverridableConfig {
             && self.commit.is_none()
             && self.merge.is_none()
             && self.switch.is_none()
+            && self.step.is_none()
             && self.select.is_none()
             && self.aliases.is_none()
     }
@@ -511,6 +562,7 @@ impl Merge for OverridableConfig {
             commit: merge_optional(self.commit.as_ref(), other.commit.as_ref()),
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
             switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
+            step: merge_optional(self.step.as_ref(), other.step.as_ref()),
             select: merge_optional(self.select.as_ref(), other.select.as_ref()),
             aliases: merge_alias_maps(&self.aliases, &other.aliases),
         }
@@ -575,7 +627,7 @@ pub struct UserProjectOverrides {
     )]
     pub commit_generation: Option<CommitGenerationConfig>,
 
-    /// Per-project overrides (worktree-path, list, commit, merge, switch, select)
+    /// Per-project overrides (worktree-path, list, commit, merge, switch, step, select)
     #[serde(flatten, default)]
     pub overrides: OverridableConfig,
 }

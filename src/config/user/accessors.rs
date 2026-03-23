@@ -11,8 +11,8 @@ use crate::config::expansion::expand_template;
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig, SwitchConfig,
-    SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, SelectConfig,
+    StepConfig, SwitchConfig, SwitchPickerConfig,
 };
 
 /// Default worktree path template
@@ -122,6 +122,21 @@ impl UserConfig {
             .and_then(|p| self.projects.get(p))
             .and_then(|c| c.overrides.switch.as_ref());
         merge_optional(self.configs.switch.as_ref(), project_config)
+    }
+
+    /// Returns the `wt step` config for a specific project.
+    pub fn step(&self, project: Option<&str>) -> Option<StepConfig> {
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.overrides.step.as_ref());
+        merge_optional(self.configs.step.as_ref(), project_config)
+    }
+
+    /// Returns the `wt step copy-ignored` config for a specific project.
+    pub fn copy_ignored(&self, project: Option<&str>) -> CopyIgnoredConfig {
+        self.step(project)
+            .and_then(|step| step.copy_ignored)
+            .unwrap_or_default()
     }
 
     /// Returns the select config for a specific project (deprecated path).

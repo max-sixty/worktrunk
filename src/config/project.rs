@@ -8,7 +8,7 @@ use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::HooksConfig;
+use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
 ///
@@ -67,6 +67,13 @@ impl ProjectConfig {
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
     }
+
+    /// Get `wt step copy-ignored` configuration if configured.
+    pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
+        self.step
+            .as_ref()
+            .and_then(|step| step.copy_ignored.as_ref())
+    }
 }
 
 /// Project-specific configuration with hooks.
@@ -110,6 +117,10 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
+
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
 
     /// \[experimental\] Command aliases for `wt step <name>`.
     ///
@@ -274,6 +285,19 @@ url = "http://localhost:{{ branch | hash_port }}"
         assert!(!list.is_configured());
     }
 
+    #[test]
+    fn test_deserialize_step_copy_ignored() {
+        let contents = r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(
+            config.copy_ignored().unwrap().exclude,
+            vec![".conductor/".to_string(), ".entire/".to_string()]
+        );
+    }
+
     // ============================================================================
     // CiConfig Tests
     // ============================================================================
@@ -335,6 +359,9 @@ platform = "gitlab"
         let contents = r#"
 post-create = "npm install"
 pre-merge = "cargo test"
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 "#;
         let keys = find_unknown_keys(contents);
         assert!(keys.is_empty());

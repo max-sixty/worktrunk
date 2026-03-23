@@ -1735,6 +1735,15 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 # timeout-ms = 500
 ```
 
+### Step
+
+```toml
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]  # Exclude matches after .worktreeinclude
+```
+
+Project config and user config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+
 ### Aliases
 
 Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
@@ -1759,7 +1768,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides [experimental]
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision. `step.copy-ignored.exclude` appends too, preserving global exclusions.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -1767,6 +1776,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 post-create.env = "cp .env.example .env"
+step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
@@ -1883,6 +1893,10 @@ url = "http://localhost:{{ branch | hash_port }}"
 # Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
+
+# Exclude gitignored entries from wt step copy-ignored
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
 
 # Command aliases (run with wt step <name>)
 [aliases]
