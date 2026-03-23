@@ -9,9 +9,3 @@ uses = ["./.github/actions/claude-setup"]
 
 [workflows.ci-fix]
 watched_workflows = ["ci", "publish-docs"]
-
-[workflows.nightly]
-cron = "17 6 * * *"
-
-[workflows.renovate]
-cron = "17 9 * * 0"
