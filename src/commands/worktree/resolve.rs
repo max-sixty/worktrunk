@@ -65,6 +65,23 @@ pub fn resolve_worktree_arg(
         }
     }
 
+    // For Remove: fall back to path-based lookup (supports detached worktrees)
+    if context == OperationMode::Remove {
+        let candidate = Path::new(name);
+        // Try as absolute path, or resolve relative to CWD
+        let abs_path = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(candidate)
+        };
+        if let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)? {
+            return Ok(ResolvedWorktree::Worktree {
+                path,
+                branch: wt_branch,
+            });
+        }
+    }
+
     // No worktree for branch (and path not occupied, or we don't care about path)
     Ok(ResolvedWorktree::BranchOnly { branch })
 }

@@ -21,9 +21,8 @@ use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
-use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
-    BranchDeletionMode, SwitchBranchInfo, SwitchResult, execute_switch, handle_remove,
+    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, handle_remove_path,
     path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
@@ -337,23 +336,21 @@ pub fn handle_picker(
             PickerAction::Remove => {
                 let selected = out.selected_items.first().context("No worktree selected")?;
 
-                // Check if the selected item is a detached worktree by downcasting
-                // to access the underlying ListItem's worktree data.
-                let detached_path = selected
+                // Access the underlying worktree data to determine removal strategy
+                let worktree_data = selected
                     .as_any()
                     .downcast_ref::<WorktreeSkimItem>()
-                    .and_then(|skim_item| skim_item.item.worktree_data())
-                    .filter(|data| data.detached)
-                    .map(|data| data.path.clone());
+                    .and_then(|skim_item| skim_item.item.worktree_data());
 
                 let config = repo.user_config();
 
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
-                let result = if let Some(path) = detached_path {
+                let result = if let Some(data) = worktree_data.filter(|d| d.detached) {
                     // Detached worktrees have no branch name — remove by path
-                    repo.prepare_worktree_removal(
-                        RemoveTarget::Path(&path),
-                        BranchDeletionMode::SafeDelete,
+                    // (same as `wt remove /path/to/worktree` from the CLI)
+                    handle_remove_path(
+                        &data.path, false, // keep_branch: delete branch (default behavior)
+                        false, // force_delete: no -D
                         false, // force_worktree: no -f
                         config,
                     )

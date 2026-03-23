@@ -1813,16 +1813,34 @@ fn test_remove_detached_worktree_in_multi(mut repo: TestRepo) {
     ));
 }
 
-/// Reproduces #1661: the picker's Alt+R remove action was passing "(detached)" as
-/// a branch name for detached HEAD worktrees, which fails because no branch named
-/// "(detached)" exists. The fix makes the picker use path-based removal instead.
+/// Reproduces #1661: "(detached)" is not a valid branch name — verify it fails.
 #[rstest]
 fn test_remove_detached_by_name_fails(mut repo: TestRepo) {
     repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
 
-    // This is what the picker was doing — treating "(detached)" as a branch name
+    // "(detached)" is not a branch name — this should fail
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["(detached)"], None));
+}
+
+/// Verify that detached worktrees can be removed by path (#1661).
+/// This ensures the CLI supports the same operation the picker uses.
+#[rstest]
+fn test_remove_detached_worktree_by_path(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let worktree_path = repo
+        .worktree_path("feature-detached")
+        .to_string_lossy()
+        .to_string();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[&worktree_path, "--foreground", "--yes"],
+        None,
+    ));
 }
 
 /// Test that resolve_worktree("@") works when the worktree is accessed via a symlink.
