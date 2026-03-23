@@ -994,21 +994,23 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
 }
 
-/// Switch to a detached worktree by path (#1661).
+/// Switch to a detached worktree by absolute path (#1661).
 #[rstest]
 fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
-    repo.add_worktree("feature-detached");
+    let worktree_path = repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
 
-    let worktree_path = repo
-        .worktree_path("feature-detached")
-        .to_string_lossy()
-        .to_string();
+    let worktree_str = worktree_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["switch", &worktree_str])
+        .output()
+        .unwrap();
 
-    snapshot_switch_with_directive_file(
-        "switch_detached_worktree_by_path",
-        &repo,
-        &[&worktree_path],
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

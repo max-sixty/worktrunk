@@ -899,7 +899,7 @@ pub fn execute_switch(
                         .into_iter()
                         .flatten()
                         .collect();
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                     CreationMethod::ForkRef {
                         ref_type,
@@ -914,7 +914,7 @@ pub fn execute_switch(
                         };
                         let extra_vars: Vec<(&str, &str)> =
                             vec![(num_key, &num_str), (url_key, ref_url)];
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
             }

@@ -27,7 +27,7 @@ When creating a worktree, worktrunk:
 1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#pre-switch) (blocking, fail-fast)
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [post-create hooks](https://worktrunk.dev/hook/#post-create) (blocking)
+4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start) (blocking)
 5. Spawns [post-start hooks](https://worktrunk.dev/hook/#post-start) (background)
 6. Spawns [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background)
 

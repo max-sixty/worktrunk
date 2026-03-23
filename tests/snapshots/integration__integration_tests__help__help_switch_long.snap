@@ -131,7 +131,7 @@ When creating a worktree, worktrunk:
 1. Runs pre-switch hooks (blocking, fail-fast)
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs post-create hooks (blocking)
+4. Runs pre-start hooks (blocking)
 5. Spawns post-start hooks (background)
 6. Spawns post-switch hooks (background)
 

@@ -6,12 +6,13 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [33m▲[39m [33m[1morigin[22m needs approval to execute [1m3[22m commands:[39m
-[2m○[22m post-create [1minstall[22m:
+[2m○[22m pre-start [1minstall[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m
-[2m○[22m post-create [1mbuild[22m:
+[2m○[22m pre-start [1mbuild[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
-[2m○[22m post-create [1mtest[22m:
+[2m○[22m pre-start [1mtest[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 [2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt hook approvals add[24m[22m

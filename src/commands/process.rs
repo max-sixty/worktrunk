@@ -626,10 +626,10 @@ mod tests {
         // Suffix includes sanitized name with hash for collision avoidance
         // Constructor and parse produce identical suffixes
         assert_snapshot!(HookLog::hook(HookSource::User, HookType::PostStart, "server").suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PostCreate, "build").suffix(), @"project-post-create-build-seq");
+        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PreStart, "build").suffix(), @"project-pre-start-build-seq");
         assert_snapshot!(HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup").suffix(), @"user-pre-remove-cleanup-non");
         assert_snapshot!(HookLog::parse("user:post-start:server").unwrap().suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::parse("project:post-create:build").unwrap().suffix(), @"project-post-create-build-seq");
+        assert_snapshot!(HookLog::parse("project:pre-start:build").unwrap().suffix(), @"project-pre-start-build-seq");
 
         // Internal operation suffix
         assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
@@ -660,7 +660,7 @@ mod tests {
         assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
         // Unknown hook type
-        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-create, post-start, post-switch, pre-commit, pre-merge, post-merge, pre-remove, post-remove");
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, pre-start, post-start, post-switch, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
         // Unknown internal operation
         assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");
