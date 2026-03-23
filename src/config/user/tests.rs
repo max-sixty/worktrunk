@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::HooksConfig;
-use crate::git::Repository;
+use crate::git::{HookType, Repository};
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -2029,7 +2029,6 @@ fn test_hooks_in_overridable_config_is_empty() {
 /// which matches the serde field names.
 #[test]
 fn test_valid_user_config_keys_includes_all_hook_types() {
-    use crate::git::HookType;
     use strum::IntoEnumIterator;
 
     let valid_keys = valid_user_config_keys();
@@ -2336,6 +2335,61 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "global-lint"); // Global first
     assert_eq!(commands[1].template, "project-lint"); // Project second
+}
+
+#[test]
+fn test_hooks_merge_folds_post_create_into_pre_start() {
+    // User config uses deprecated `post-create`, project uses `pre-start`.
+    // merge_with should combine them so the user's hook isn't silently dropped.
+    let user_hooks = parse_hooks("post-create = \"npm install\"");
+    let project_hooks = parse_hooks("pre-start = \"cargo test\"");
+
+    let merged = user_hooks.merge_with(&project_hooks);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands = pre_start.commands();
+    assert_eq!(commands.len(), 2, "Both hooks should be present");
+    assert_eq!(commands[0].template, "npm install"); // User's post-create first
+    assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
+}
+
+#[test]
+fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
+    // Single config with both fields — merge_with folds post_create into pre_start.
+    // This is an unusual config (user wrote both), but if it goes through merge
+    // both commands should run rather than silently dropping one.
+    let both = parse_hooks("pre-start = \"npm install\"\npost-create = \"cargo build\"");
+    let empty = HooksConfig::default();
+
+    let merged = both.merge_with(&empty);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands = pre_start.commands();
+    assert_eq!(
+        commands.len(),
+        2,
+        "Both commands from same source should be present"
+    );
+    assert_eq!(commands[0].template, "npm install"); // pre-start first
+    assert_eq!(commands[1].template, "cargo build"); // post-create second
+}
+
+#[test]
+fn test_hooks_merge_post_create_both_sides() {
+    // Both configs use deprecated `post-create` — should still combine
+    let global = parse_hooks("post-create = \"npm install\"");
+    let project = parse_hooks("post-create = \"cargo build\"");
+
+    let merged = global.merge_with(&project);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands = pre_start.commands();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].template, "npm install");
+    assert_eq!(commands[1].template, "cargo build");
 }
 
 /// Test that reload_projects_from handles permission errors

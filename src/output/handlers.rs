@@ -469,7 +469,11 @@ pub fn handle_switch_output(
     // The cd directive (above) handles its own translation internally.
     let path = super::to_logical_path(result.path());
     let path_display = format_path_for_display(&path);
-    let branch = &branch_info.branch;
+    // For detached HEAD worktrees, use a static label since the path already appears after @.
+    let branch: &str = match &branch_info.branch {
+        Some(b) => b,
+        None => "detached worktree",
+    };
 
     // Check if shell integration is active (directive file set)
     let is_shell_integration_active = super::is_shell_integration_active();
@@ -494,7 +498,7 @@ pub fn handle_switch_output(
     let branch_worktree_mismatch_warning = branch_info
         .expected_path
         .as_ref()
-        .map(|expected| format_path_mismatch_warning(&branch_info.branch, &path, expected));
+        .map(|expected| format_path_mismatch_warning(branch, &path, expected));
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {

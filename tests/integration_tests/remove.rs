@@ -1823,24 +1823,31 @@ fn test_remove_detached_by_name_fails(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["(detached)"], None));
 }
 
-/// Verify that detached worktrees can be removed by path (#1661).
+/// Verify that detached worktrees can be removed by absolute path (#1661).
 /// This ensures the CLI supports the same operation the picker uses.
 #[rstest]
 fn test_remove_detached_worktree_by_path(mut repo: TestRepo) {
-    repo.add_worktree("feature-detached");
+    let worktree_path = repo.add_worktree("feature-detached");
     repo.detach_head_in_worktree("feature-detached");
 
-    let worktree_path = repo
-        .worktree_path("feature-detached")
-        .to_string_lossy()
-        .to_string();
+    assert!(worktree_path.exists());
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "remove",
-        &[&worktree_path, "--foreground", "--yes"],
-        None,
-    ));
+    let worktree_str = worktree_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["remove", &worktree_str, "--foreground", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree directory should be removed"
+    );
 }
 
 /// Verify that detached worktrees can be removed by relative path.

@@ -150,12 +150,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, name.as_deref(), &vars),
-        HookCommand::PostCreate {
+        HookCommand::PreStart {
             name,
             yes,
             dry_run,
             vars,
-        } => run_non_toggle_hook(HookType::PostCreate, yes, dry_run, name.as_deref(), &vars),
+        } => run_non_toggle_hook(HookType::PreStart, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostStart {
             name,
             yes,
@@ -196,12 +196,34 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PostCommit {
+            name,
+            yes,
+            dry_run,
+            foreground,
+            vars,
+        } => run_toggleable_hook(
+            HookType::PostCommit,
+            yes,
+            dry_run,
+            foreground,
+            name.as_deref(),
+            &vars,
+        ),
         HookCommand::PostMerge {
             name,
             yes,
             dry_run,
+            foreground,
             vars,
-        } => run_non_toggle_hook(HookType::PostMerge, yes, dry_run, name.as_deref(), &vars),
+        } => run_toggleable_hook(
+            HookType::PostMerge,
+            yes,
+            dry_run,
+            foreground,
+            name.as_deref(),
+            &vars,
+        ),
         HookCommand::PreRemove {
             name,
             yes,

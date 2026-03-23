@@ -60,7 +60,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 
 ```toml
 # .config/wt.toml
-[post-create]
+[pre-start]
 deps = "npm ci"
 
 [pre-merge]
@@ -239,7 +239,7 @@ Override global user config for a specific project. Scalar values (like `worktre
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
-post-create.env = "cp .env.example .env"
+pre-start.env = "cp .env.example .env"
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 

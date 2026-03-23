@@ -34,7 +34,7 @@ impl SourcedCommand {
 
     /// Announce this command before execution.
     ///
-    /// Format: "Running pre-merge user:foo" for named, "Running post-create user hook" for unnamed
+    /// Format: "Running pre-merge user:foo" for named, "Running pre-start user hook" for unnamed
     /// When display_path is set, appends "@ path" to show where the command runs.
     fn announce(&self) -> anyhow::Result<()> {
         // Named: "Running post-switch user:foo" with "user:foo" bold
@@ -68,7 +68,6 @@ pub enum HookFailureStrategy {
     /// Stop on first failure and surface a `HookCommandFailed` error.
     FailFast,
     /// Log warnings and continue executing remaining commands.
-    /// For PostMerge hooks, propagates exit code after all commands complete.
     Warn,
 }
 
@@ -348,8 +347,6 @@ pub fn run_hook_with_filter(
     }
 
     // Track first failure's exit code for Warn strategy (to propagate after all commands run)
-    let mut first_failure_exit_code: Option<i32> = None;
-
     for cmd in commands {
         cmd.announce()?;
 
@@ -388,21 +385,9 @@ pub fn run_hook_with_filter(
                         None => format!("Command failed: {err_msg}"),
                     };
                     eprintln!("{}", error_message(message));
-
-                    // Track first failure to propagate exit code later (only for PostMerge)
-                    if first_failure_exit_code.is_none() && hook_type == HookType::PostMerge {
-                        first_failure_exit_code = Some(exit_code.unwrap_or(1));
-                    }
                 }
             }
         }
-    }
-
-    // For Warn strategy with PostMerge: if any command failed, propagate the exit code
-    // This matches git's behavior: post-hooks can't stop the operation but affect exit status
-    // Don't show another error message — warnings were already printed inline
-    if let Some(exit_code) = first_failure_exit_code {
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
     }
 
     Ok(())

@@ -7,7 +7,9 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{HookCommandSpec, HookFailureStrategy};
+use super::hooks::{
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_background_hooks,
+};
 use super::repository_ext::RepositoryCliExt;
 
 // Re-export StageMode from config for use by CLI
@@ -227,7 +229,21 @@ impl CommitOptions<'_> {
             true, // show_progress
             self.show_no_squash_note,
             self.stage_mode,
-        )
+        )?;
+
+        // Spawn post-commit hooks in background (respects --no-verify)
+        if self.verify {
+            let extra_vars: Vec<(&str, &str)> = self
+                .target_branch
+                .into_iter()
+                .map(|target| ("target", target))
+                .collect();
+            let hooks =
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            spawn_background_hooks(self.ctx, hooks)?;
+        }
+
+        Ok(())
     }
 }
 

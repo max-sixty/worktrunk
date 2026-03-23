@@ -183,7 +183,7 @@ pub fn approve_alias(
 ///
 /// ```ignore
 /// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, yes);
-/// let approved = approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?;
+/// let approved = approve_hooks(&ctx, &[HookType::PreStart, HookType::PostStart])?;
 /// ```
 pub fn approve_hooks(
     ctx: &super::command_executor::CommandContext<'_>,

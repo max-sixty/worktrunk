@@ -96,7 +96,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 [1mProject config[0m — shared team settings:
 
 [107m [0m [2m# .config/wt.toml[0m
-[107m [0m [2m[36m[post-create][0m
+[107m [0m [2m[36m[pre-start][0m
 [107m [0m [2mdeps = [0m[2m[32m"npm ci"[0m
 [107m [0m 
 [107m [0m [2m[36m[pre-merge][0m
@@ -250,7 +250,7 @@ Override global user config for a specific project. Scalar values (like [2mwork
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2mlist.full = [0m[2m[33mtrue[0m
 [107m [0m [2mmerge.squash = [0m[2m[33mfalse[0m
-[107m [0m [2mpost-create.env = [0m[2m[32m"cp .env.example .env"[0m
+[107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 
 [32mCustom prompt templates[0m
