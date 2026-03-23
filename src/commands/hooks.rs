@@ -34,7 +34,7 @@ impl SourcedCommand {
 
     /// Announce this command before execution.
     ///
-    /// Format: "Running pre-merge user:foo" for named, "Running post-create user hook" for unnamed
+    /// Format: "Running pre-merge user:foo" for named, "Running pre-start user hook" for unnamed
     /// When display_path is set, appends "@ path" to show where the command runs.
     fn announce(&self) -> anyhow::Result<()> {
         // Named: "Running post-switch user:foo" with "user:foo" bold
