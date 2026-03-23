@@ -202,6 +202,8 @@ impl PreviewState {
 impl Drop for PreviewState {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+        // Clean up the removal signal file used by alt-r (see PickerCollector)
+        let _ = fs::remove_file(self.path.with_extension("remove"));
     }
 }
 

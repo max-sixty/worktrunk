@@ -4,6 +4,7 @@ use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::types::{BranchDeletionMode, RemoveResult};
+use crate::commands::branch_deletion::delete_branch_if_safe;
 use crate::commands::repository_ext::{RemoveTarget, RepositoryCliExt};
 
 /// Remove a worktree by branch name.
@@ -23,6 +24,42 @@ pub fn handle_remove(
         force_worktree,
         config,
     )
+}
+
+/// Execute worktree removal: stop fsmonitor, remove worktree, delete branch.
+///
+/// Core removal logic without output, hooks, or cd directives. Used by the
+/// picker (which runs inside skim's TUI) and `handle_removed_worktree_output`
+/// (which wraps this with progress messages and hook execution).
+pub fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
+    let RemoveResult::RemovedWorktree {
+        main_path,
+        worktree_path,
+        branch_name,
+        deletion_mode,
+        target_branch,
+        force_worktree,
+        ..
+    } = result
+    else {
+        // BranchOnly: no worktree to remove
+        return Ok(());
+    };
+
+    let repo = Repository::at(main_path)?;
+    let _ = repo
+        .worktree_at(worktree_path)
+        .run_command(&["fsmonitor--daemon", "stop"]);
+    repo.remove_worktree(worktree_path, *force_worktree)?;
+
+    if let Some(branch) = branch_name
+        && !deletion_mode.should_keep()
+    {
+        let target = target_branch.as_deref().unwrap_or("HEAD");
+        let _ = delete_branch_if_safe(&repo, branch, target, deletion_mode.is_force());
+    }
+
+    Ok(())
 }
 
 /// Handle removing the current worktree (supports detached HEAD state).

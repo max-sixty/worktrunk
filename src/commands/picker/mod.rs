@@ -28,7 +28,7 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch, handle_remove,
+    RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal, execute_switch, handle_remove,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::handle_switch_output;
@@ -50,6 +50,12 @@ enum PickerAction {
 /// name to a signal file, then `reload` invokes this collector. The collector reads
 /// the signal file, performs the worktree removal, filters the item from the list,
 /// and streams the remaining items back to skim — all without leaving the picker.
+///
+/// Cursor position resets to the first item after reload. This is a skim 0.20
+/// limitation: `act_reload` clears the selection, then `restart_matcher` races
+/// the reader thread — if items aren't in the pool yet, the empty matcher result
+/// clamps `line_cursor` to 0. The fix is skim 4.0's `Action::Custom(ActionCallback)`
+/// which gives `&mut App` access to manipulate `item_list` directly without `reload`.
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     signal_path: PathBuf,
@@ -71,27 +77,25 @@ impl CommandCollector for PickerCollector {
                 // Safe removal: no force-delete (-D), no force-worktree (-f)
                 match handle_remove(&branch_name, false, false, false, config) {
                     Ok(result) => {
-                        // If we just removed the current worktree, the process CWD
-                        // is gone. Move to the primary worktree so skim and git
-                        // commands continue to work.
-                        if let RemoveResult::RemovedWorktree {
-                            changed_directory: true,
-                            main_path,
-                            ..
-                        } = &result
-                        {
-                            let _ = std::env::set_current_dir(main_path);
+                        if let Err(e) = execute_removal(&result) {
+                            log::warn!("picker: removal failed for '{branch_name}': {e:#}");
+                            // Fall through to stream items unchanged
+                        } else {
+                            // If we removed the current worktree, update process CWD
+                            // so skim and git commands continue to work.
+                            if let RemoveResult::RemovedWorktree {
+                                changed_directory: true,
+                                main_path,
+                                ..
+                            } = &result
+                            {
+                                let _ = std::env::set_current_dir(main_path);
+                            }
+                            let mut items = self.items.lock().unwrap();
+                            items.retain(|item| item.output().as_ref() != branch_name);
                         }
-
-                        // Remove the item from the shared list.
-                        // unwrap: mutex is only locked here (model thread) and during
-                        // initial send (main thread, before skim starts) — no panic path.
-                        let mut items = self.items.lock().unwrap();
-                        items.retain(|item| item.output().as_ref() != branch_name);
                     }
                     Err(e) => {
-                        // Removal failed (dirty worktree, unmerged branch, etc.).
-                        // The item stays in the list, signaling the failure visually.
                         log::warn!("picker: failed to remove '{branch_name}': {e:#}");
                     }
                 }
@@ -252,7 +256,7 @@ pub fn handle_picker(
     let preview_window_spec = state.initial_layout.to_preview_window_spec(num_items);
 
     // Signal file for alt-r removal communication. execute-silent writes the branch
-    // name here; the PickerCollector reads it on reload. Cleaned up with PreviewState.
+    // name here; the PickerCollector reads it on reload. Cleaned up in PreviewState::Drop.
     let signal_path = state.path.with_extension("remove");
 
     // Shared items list: the PickerCollector reads and modifies this on reload.
@@ -414,10 +418,7 @@ pub fn handle_picker(
     // Run skim (single invocation — alt-r uses reload, not re-launch)
     let output = Skim::run_with(&options, Some(rx));
 
-    // Clean up signal file
-    let _ = std::fs::remove_file(&signal_path);
-
-    // Handle selection
+    // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
         && !out.is_abort
     {
