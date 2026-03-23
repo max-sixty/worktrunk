@@ -118,6 +118,13 @@
 # # Tasks still running when the budget expires are abandoned; 0 disables
 # # timeout-ms = 500
 #
+# ### Step
+#
+# [step.copy-ignored]
+# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+#
+# Built-in excludes like `.conductor/`, `.entire/`, `.jj/`, `.pi/`, and `.worktrees/` always apply. User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+#
 # ### Aliases
 #
 # Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.
@@ -140,13 +147,14 @@
 #
 # #### Setting overrides [experimental]
 #
-# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision. `step.copy-ignored.exclude` appends too, preserving global exclusions.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
 # post-create.env = "cp .env.example .env"
+# step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
 # ### Custom prompt templates
