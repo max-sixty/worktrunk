@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **Hook template variable `worktree_path` changed meaning** in two hook types: in **pre-switch** (existing worktrees), `{{ worktree_path }}` now points to the destination worktree instead of the source; in **post-merge**, it now points to the feature worktree (active) instead of the merge target. Use `{{ base_worktree_path }}` or `{{ cwd }}` for the previous behavior. ([#1655](https://github.com/max-sixty/worktrunk/pull/1655), [#1660](https://github.com/max-sixty/worktrunk/pull/1660))
+
+### Improved
+
+- **Directional template variables for hooks**: New `{{ base }}`, `{{ base_worktree_path }}`, `{{ target }}`, `{{ target_worktree_path }}`, and `{{ cwd }}` variables give hooks explicit access to both sides of two-worktree operations (switch, merge, remove). Bare variables (`branch`, `worktree_path`, `commit`) consistently point to the active branch — the destination for switch/create, the source for merge/remove. ([#1655](https://github.com/max-sixty/worktrunk/pull/1655), [#1660](https://github.com/max-sixty/worktrunk/pull/1660), [#1663](https://github.com/max-sixty/worktrunk/pull/1663))
+
 ## 0.30.1
 
 ### Fixed

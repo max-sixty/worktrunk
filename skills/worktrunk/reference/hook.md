@@ -231,6 +231,15 @@ Some variables are conditional: `upstream` requires remote tracking; `base`/`tar
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
+### Migration from earlier versions
+
+`worktree_path` changed meaning in two hook types:
+
+- **pre-switch** (existing worktrees): previously the source worktree, now the destination. Use `{{ base_worktree_path }}` or `{{ cwd }}` for the source.
+- **post-merge**: previously the merge target worktree, now the feature worktree (active). Use `{{ target_worktree_path }}` or `{{ cwd }}` for where code landed.
+
+New variables `cwd`, `target_worktree_path`, `base`, and `base_worktree_path` are available in more hook types than before.
+
 ## Worktrunk filters
 
 Templates support Jinja2 filters for transforming values:

@@ -645,6 +645,10 @@ impl NestedBareRepoTest {
         &self.bare_repo_path
     }
 
+    fn config_path(&self) -> &Path {
+        &self.test_config_path
+    }
+
     fn temp_path(&self) -> &Path {
         self.temp_dir.path()
     }
@@ -655,6 +659,62 @@ impl NestedBareRepoTest {
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
+    }
+
+    /// Get test environment variables as a vector for PTY tests.
+    #[cfg(all(unix, feature = "shell-integration-tests"))]
+    fn test_env_vars(&self) -> Vec<(String, String)> {
+        use crate::common::{NULL_DEVICE, STATIC_TEST_ENV_VARS, TEST_EPOCH};
+
+        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        // HOME and XDG_CONFIG_HOME are needed for config lookups in env_clear'd PTY
+        let home = self.temp_dir.path().join("home");
+        std::fs::create_dir_all(&home).ok();
+
+        vars.extend([
+            (
+                "GIT_CONFIG_GLOBAL".to_string(),
+                self.git_config_path.display().to_string(),
+            ),
+            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
+            (
+                "GIT_AUTHOR_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            (
+                "GIT_COMMITTER_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+            ("HOME".to_string(), home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                home.join(".config").display().to_string(),
+            ),
+            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            (
+                "WORKTRUNK_CONFIG_PATH".to_string(),
+                self.test_config_path.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
+                "/etc/xdg/worktrunk/config.toml".to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH".to_string(),
+                self.temp_dir
+                    .path()
+                    .join("test-approvals.toml")
+                    .display()
+                    .to_string(),
+            ),
+        ]);
+
+        vars
     }
 }
 
@@ -985,4 +1045,200 @@ fn test_bare_repo_merge_preserves_default_branch_worktree() {
         stderr.contains("primary worktree"),
         "Should show primary worktree preservation message.\nstderr: {stderr}"
     );
+}
+
+/// Helper: create a NestedBareRepoTest with no worktree-path configured and a main worktree.
+///
+/// Reuses NestedBareRepoTest's bare repo setup but clears the worktree-path config,
+/// so the default template (which references `{{ repo }}`) triggers the bare repo prompt.
+fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
+    let test = NestedBareRepoTest::new();
+
+    // Temporarily set worktree-path so the main worktree lands at project/main
+    // (without this, the default {{ repo }} template produces .git.main).
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"../{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    // Create main worktree with a commit (needed as a starting point for switch)
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to create main worktree:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Clear config so the default template applies — the test subject is the bare repo prompt.
+    // Skip shell integration prompt so it doesn't interfere (especially in PTY tests).
+    fs::write(test.config_path(), "skip-shell-integration-prompt = true\n").unwrap();
+
+    test
+}
+
+/// Test that --yes does NOT auto-accept the bare repo config change — it shows
+/// the warning and creates the worktree at the unconfigured (bad) path.
+#[test]
+fn test_bare_repo_worktree_path_prompt_auto_accept() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "--create", "feature", "--yes"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Config should NOT have worktree-path — --yes skips the config prompt
+    let config_content = fs::read_to_string(test.config_path()).unwrap();
+    assert!(
+        !config_content.contains("worktree-path"),
+        "Config should NOT contain worktree-path — --yes should not auto-configure.\nConfig: {config_content}"
+    );
+
+    // Worktree created at the unconfigured path (bad but expected without config)
+    let bad_path = test.project_path().join(".git.feature");
+    assert!(
+        bad_path.exists(),
+        "Worktree should be at {:?} (unconfigured default path)",
+        bad_path
+    );
+}
+
+/// Test that non-interactive (piped stdin) shows warning instead of prompt.
+#[test]
+fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        // No --yes, but stdin is piped (non-interactive) since assert_cmd_snapshot
+        // doesn't attach a TTY
+        cmd.args(["switch", "--create", "feature"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// =============================================================================
+// PTY-based interactive prompt tests
+// =============================================================================
+
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod bare_repo_prompt_pty {
+    use super::*;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+    use crate::common::{add_pty_binary_path_filters, add_pty_filters, wt_bin};
+    use insta::assert_snapshot;
+
+    fn prompt_pty_settings(temp_path: &Path) -> insta::Settings {
+        let mut settings = setup_temp_snapshot_settings(temp_path);
+        add_pty_filters(&mut settings);
+        add_pty_binary_path_filters(&mut settings);
+        settings
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_accept_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_accept", &output);
+        });
+
+        // Verify config was written
+        let config_content = fs::read_to_string(test.config_path()).unwrap();
+        assert!(
+            config_content.contains("worktree-path"),
+            "Config should contain worktree-path override.\nConfig: {config_content}"
+        );
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_decline_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_decline", &output);
+        });
+
+        // Verify skip flag was saved in git config
+        let git_config_output = Command::new("git")
+            .args(["config", "worktrunk.skip-bare-repo-prompt"])
+            .current_dir(&main_worktree)
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
+            .output()
+            .unwrap();
+        let value = String::from_utf8_lossy(&git_config_output.stdout);
+        assert_eq!(
+            value.trim(),
+            "true",
+            "Skip flag should be saved in git config"
+        );
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_preview_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        // Send ? first to see preview, then n to decline
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_preview", &output);
+        });
+    }
 }
