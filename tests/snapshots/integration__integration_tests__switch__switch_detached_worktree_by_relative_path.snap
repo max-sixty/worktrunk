@@ -43,5 +43,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch-worktree mismatch: [1mrepo.feature-detached[22m @ [1m_REPO_.feature-detached[22m, expected @ [1m_REPO_.repo.feature-detached[22m [31m⚑[39m[39m
-[2m○[22m Switched to worktree for [1mrepo.feature-detached[22m @ [1m_REPO_.feature-detached[22m
+[2m○[22m Switched to worktree for [1mdetached worktree[22m @ [1m_REPO_.feature-detached[22m
