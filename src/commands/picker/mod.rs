@@ -120,9 +120,7 @@ impl CommandCollector for PickerCollector {
                                         .is_none_or(|d| d.path != *path)
                                 });
                             } else {
-                                items.retain(|item| {
-                                    item.output().as_ref() != selected_output
-                                });
+                                items.retain(|item| item.output().as_ref() != selected_output);
                             }
                         }
                     }
