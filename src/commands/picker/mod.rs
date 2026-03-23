@@ -22,7 +22,8 @@ use super::handle_switch::{
 };
 use super::list::collect;
 use super::worktree::{
-    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove, path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchResult, execute_switch, handle_remove,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::{handle_remove_output, handle_switch_output};
 
@@ -372,25 +373,30 @@ pub fn handle_picker(
                 } else {
                     Repository::current().context("Failed to switch worktree")?
                 };
-                let config = repo.user_config();
+                // Load config, offering bare repo worktree-path fix if needed.
+                // Reload from disk so mutations are picked up by plan_switch.
+                let mut config =
+                    worktrunk::config::UserConfig::load().context("Failed to load config")?;
+                offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 
                 // Run pre-switch hooks before branch resolution or worktree creation.
                 // {{ branch }} receives the raw user input (before resolution).
                 // Skip when recovered — the source worktree is gone, nothing to run hooks against.
                 if !is_recovered {
-                    run_pre_switch_hooks(&repo, config, &identifier, true)?;
+                    run_pre_switch_hooks(&repo, &config, &identifier, true)?;
                 }
 
                 // Switch to existing worktree or create new one
-                let plan = plan_switch(&repo, &identifier, should_create, None, false, config)?;
-                let hooks_approved = approve_switch_hooks(&repo, config, &plan, false, true)?;
+                let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
+                let hooks_approved = approve_switch_hooks(&repo, &config, &plan, false, true)?;
                 let (result, branch_info) =
-                    execute_switch(&repo, plan, config, false, hooks_approved)?;
+                    execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
                 // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
                 let branch_info = match &result {
                     SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                        let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
+                        let expected_path =
+                            path_mismatch(&repo, &branch_info.branch, path, &config);
                         SwitchBranchInfo {
                             expected_path,
                             ..branch_info
@@ -417,7 +423,7 @@ pub fn handle_picker(
                     let extra_vars = switch_extra_vars(&result);
                     spawn_switch_background_hooks(
                         &repo,
-                        config,
+                        &config,
                         &result,
                         &branch_info.branch,
                         false,
