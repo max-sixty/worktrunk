@@ -81,10 +81,32 @@ pub fn handle_remove_path(
     )
 }
 
+/// Handle removing the current worktree (supports detached HEAD state).
+///
+/// This is the path-based removal that handles the "@" shorthand, including
+/// when HEAD is detached.
+pub fn handle_remove_current(
+    keep_branch: bool,
+    force_delete: bool,
+    force_worktree: bool,
+    config: &UserConfig,
+) -> anyhow::Result<RemoveResult> {
+    let repo = Repository::current()?;
+
+    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
+    repo.prepare_worktree_removal(
+        RemoveTarget::Current,
+        BranchDeletionMode::from_flags(keep_branch, force_delete),
+        force_worktree,
+        config,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use worktrunk::shell_exec::Cmd;
 
     #[test]
     fn test_execute_removal_removes_worktree_and_branch() {
@@ -93,27 +115,33 @@ mod tests {
         let wt_path = tmp.path().join("repo.feature");
 
         // Create a repo with an initial commit
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["init", repo_path.to_str().unwrap()])
-            .output()
+            .run()
             .unwrap();
         std::fs::write(repo_path.join("file.txt"), "hello").unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["add", "."])
             .current_dir(&repo_path)
-            .output()
+            .run()
             .unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["commit", "-m", "init"])
             .current_dir(&repo_path)
-            .output()
+            .run()
             .unwrap();
 
         // Add a worktree
-        std::process::Command::new("git")
-            .args(["worktree", "add", "-b", "feature", wt_path.to_str().unwrap()])
+        Cmd::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                wt_path.to_str().unwrap(),
+            ])
             .current_dir(&repo_path)
-            .output()
+            .run()
             .unwrap();
         assert!(wt_path.exists());
 
@@ -135,10 +163,10 @@ mod tests {
         assert!(!wt_path.exists(), "worktree directory should be removed");
 
         // Branch should be deleted
-        let output = std::process::Command::new("git")
+        let output = Cmd::new("git")
             .args(["branch", "--list", "feature"])
             .current_dir(&repo_path)
-            .output()
+            .run()
             .unwrap();
         assert!(
             output.stdout.is_empty(),
@@ -156,25 +184,4 @@ mod tests {
         // Should return Ok without doing anything
         execute_removal(&result).unwrap();
     }
-}
-
-/// Handle removing the current worktree (supports detached HEAD state).
-///
-/// This is the path-based removal that handles the "@" shorthand, including
-/// when HEAD is detached.
-pub fn handle_remove_current(
-    keep_branch: bool,
-    force_delete: bool,
-    force_worktree: bool,
-    config: &UserConfig,
-) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current()?;
-
-    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
-    repo.prepare_worktree_removal(
-        RemoveTarget::Current,
-        BranchDeletionMode::from_flags(keep_branch, force_delete),
-        force_worktree,
-        config,
-    )
 }
