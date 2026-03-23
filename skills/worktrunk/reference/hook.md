@@ -14,13 +14,13 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation (except `pre-start`, which warns and continues). `post-*` hooks run in the background. Use `-v` to see expanded command details for background hooks.
+`pre-*` hooks block — failure aborts the operation (except `pre-start`, which warns and continues). `post-*` hooks run in the background with output logged to `.git/wt/logs/{branch}-{source}-{hook}-{name}.log`. Use `-v` to see expanded command details for background hooks.
 
 The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
 ## pre-switch
 
-Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
+Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution).
 
 ```toml
 [pre-switch]
@@ -45,7 +45,7 @@ env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 
 ## post-start
 
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
+Dev servers, long builds, file watchers, copying caches.
 
 ```toml
 [post-start]
@@ -55,7 +55,7 @@ server = "npm run dev -- --port {{ branch | hash_port }}"
 
 ## post-switch
 
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
 
 ```toml
 [post-switch]
@@ -74,7 +74,7 @@ lint = "cargo clippy -- -D warnings"
 
 ## post-commit
 
-Background tasks after a successful commit: CI triggers, notifications, background linting. Output logged to `.git/wt/logs/{branch}-{source}-post-commit-{name}.log`. Respects `--no-verify`.
+CI triggers, notifications, background linting.
 
 ```toml
 [post-commit]
@@ -93,7 +93,7 @@ build = "cargo build --release"
 
 ## post-merge
 
-Deployment, notifications, installing updated binaries. Runs in background in the target branch worktree if it exists, otherwise the main worktree. Output logged to `.git/wt/logs/{branch}-{source}-post-merge-{name}.log`.
+Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree.
 
 ```toml
 post-merge = "cargo install --path ."
@@ -110,7 +110,7 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 
 ## post-remove
 
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
+Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree, so cleanup scripts can identify resources to tear down.
 
 ```toml
 [post-remove]
