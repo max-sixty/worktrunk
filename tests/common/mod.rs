@@ -2925,13 +2925,16 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
     // Match the unique temp dir name with any path prefix (handles ~/AppData/... on Windows)
     if let Some(dir_name) = temp_path.file_name().and_then(|n| n.to_str()) {
-        // Match any path up to and including the temp dir name, plus optional
-        // surrounding single quotes from shell_escape (format_path_for_display
-        // quotes paths that aren't under $HOME or contain special characters).
-        let pattern = format!(r"'?[^\s]*{}'?", regex::escape(dir_name));
+        // Consume optional leading quote from shell_escape (format_path_for_display
+        // wraps non-home paths in single quotes on Windows).
+        let pattern = format!(r"'?[^\s]*{}", regex::escape(dir_name));
         settings.add_filter(&pattern, "[TEMP]");
     }
     settings.add_filter(r"\\", "/");
+    // Clean up trailing shell-escape quote after [TEMP] replacement — the leading
+    // quote is consumed by the dir-name regex, but the trailing one remains after
+    // the file name (e.g., [TEMP]/test-config.toml' → [TEMP]/test-config.toml).
+    settings.add_filter(r"(\[TEMP\]/[^\s]*)'", "$1");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 
