@@ -143,7 +143,7 @@ Individual inline comments from a review also fire as separate
 - **Adding `allowed_non_write_users`** to a workflow with user-controlled
   prompts requires security review.
 - **All Claude workflows** must include
-  `--append-system-prompt "You are operating in a GitHub Actions CI environment. Use /continuous-running-in-ci before starting work."`.
+  `--append-system-prompt "You are operating in a GitHub Actions CI environment. Use /tend-running-in-ci before starting work."`.
 - **Token choice**: All Claude workflows use the bot token for consistent
   identity.
 - **`permissions:` block**: Set `contents: read` for read-only workflows.

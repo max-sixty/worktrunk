@@ -1,15 +1,15 @@
 ---
-name: running-continuous
-description: Worktrunk-specific guidance for continuous CI workflows. Adds codecov polling, Rust test commands, labels, and review criteria on top of the generic continuous-* skills. Use when operating in CI.
+name: running-tend
+description: Worktrunk-specific guidance for tend CI workflows. Adds codecov polling, Rust test commands, labels, and review criteria on top of the generic tend-* skills. Use when operating in CI.
 metadata:
   internal: true
 ---
 
-# Worktrunk Continuous CI
+# Worktrunk Tend CI
 
-Project-specific guidance for continuous workflows running on worktrunk (a Rust
-CLI for managing git worktrees). The generic skills (`continuous-running-in-ci`,
-`continuous-review`, `continuous-triage`, etc.) provide the workflow framework;
+Project-specific guidance for tend workflows running on worktrunk (a Rust
+CLI for managing git worktrees). The generic skills (`tend-running-in-ci`,
+`tend-review`, `tend-triage`, etc.) provide the workflow framework;
 this skill adds worktrunk conventions.
 
 ## Codecov Monitoring
