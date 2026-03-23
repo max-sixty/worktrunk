@@ -5,8 +5,8 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
-const COPY_IGNORED_EXCLUDE_CONFIG: &str = r#"[step.copy-ignored]
-exclude = [".conductor/"]
+const CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG: &str = r#"[step.copy-ignored]
+exclude = [".custom-cache/"]
 "#;
 
 fn run_copy_ignored(repo: &TestRepo, feature_path: &Path) -> std::process::Output {
@@ -40,29 +40,35 @@ fn write_worktree_project_config(worktree_path: &Path, contents: &str) {
     fs::write(config_dir.join("wt.toml"), contents).unwrap();
 }
 
-fn assert_copy_ignored_excluded(feature_path: &Path, source: &str) {
+fn assert_copy_ignored_excluded(feature_path: &Path, excluded_dirs: &[&str], source: &str) {
     assert!(
         feature_path.join(".env").exists(),
         ".env should still be copied"
     );
-    assert!(
-        !feature_path.join(".conductor").exists(),
-        ".conductor should be excluded by {source}"
-    );
+    for excluded_dir in excluded_dirs {
+        assert!(
+            !feature_path.join(excluded_dir).exists(),
+            "{} should be excluded by {}",
+            excluded_dir,
+            source
+        );
+    }
 }
 
 fn setup_copy_ignored_exclude_fixture(repo: &mut TestRepo) -> PathBuf {
     let feature_path = repo.add_worktree("feature");
 
-    fs::create_dir_all(repo.root_path().join(".conductor")).unwrap();
+    let ignored_entries = ".env\n.custom-cache/\n";
+
+    fs::create_dir_all(repo.root_path().join(".custom-cache")).unwrap();
     fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
-    fs::write(repo.root_path().join(".conductor").join("state.json"), "{}").unwrap();
-    fs::write(repo.root_path().join(".gitignore"), ".env\n.conductor/\n").unwrap();
     fs::write(
-        repo.root_path().join(".worktreeinclude"),
-        ".env\n.conductor/\n",
+        repo.root_path().join(".custom-cache").join("state.json"),
+        "{}",
     )
     .unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
 
     feature_path
 }
@@ -112,22 +118,44 @@ fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
 #[rstest]
 fn test_copy_ignored_excludes_project_config(mut repo: TestRepo) {
     let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
-    repo.write_project_config(COPY_IGNORED_EXCLUDE_CONFIG);
-    write_worktree_project_config(&feature_path, COPY_IGNORED_EXCLUDE_CONFIG);
+    repo.write_project_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+    write_worktree_project_config(&feature_path, CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
 
     run_copy_ignored_single_entry(&repo, &feature_path);
 
-    assert_copy_ignored_excluded(&feature_path, "project config");
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "project config");
 }
 
 #[rstest]
 fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
     let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
-    repo.write_test_config(COPY_IGNORED_EXCLUDE_CONFIG);
+    repo.write_test_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
 
     run_copy_ignored_single_entry(&repo, &feature_path);
 
-    assert_copy_ignored_excluded(&feature_path, "user config");
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "user config");
+}
+
+#[rstest]
+fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let ignored_entries = ".conductor/\n.entire/\n.pi/\n.env\n";
+
+    for dir in [".conductor", ".entire", ".pi"] {
+        fs::create_dir_all(repo.root_path().join(dir)).unwrap();
+        fs::write(repo.root_path().join(dir).join("state.json"), dir).unwrap();
+    }
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(
+        &feature_path,
+        &[".conductor", ".entire", ".pi"],
+        "built-in excludes",
+    );
 }
 
 /// Test error handling when .worktreeinclude has invalid syntax

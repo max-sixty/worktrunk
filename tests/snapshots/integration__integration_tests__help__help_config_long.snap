@@ -228,9 +228,9 @@ Most flags are on by default. Set to false to change default behavior.
 [32mStep[0m
 
 [107m [0m [2m[36m[step.copy-ignored][0m
-[107m [0m [2mexclude = [[0m[2m[32m".conductor/"[0m[2m, [0m[2m[32m".entire/"[0m[2m]  [0m[2m# Exclude matches after .worktreeinclude[0m
+[107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m]  [0m[2m# Add more excludes after built-in defaults and .worktreeinclude[0m
 
-Project config and user config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+Built-in excludes like [2m.conductor/[0m, [2m.entire/[0m, [2m.jj/[0m, [2m.pi/[0m, and [2m.worktrees/[0m always apply. User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
 
 [32mAliases[0m
 
@@ -368,9 +368,9 @@ See [2mwt hook[0m for hook types, execution order, template variables, and exa
 [107m [0m [2m[36m[ci][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
 [107m [0m 
-[107m [0m [2m# Exclude gitignored entries from wt step copy-ignored[0m
+[107m [0m [2m# Add more gitignored excludes for wt step copy-ignored[0m
 [107m [0m [2m[36m[step.copy-ignored][0m
-[107m [0m [2mexclude = [[0m[2m[32m".conductor/"[0m[2m, [0m[2m[32m".entire/"[0m[2m][0m
+[107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
 [107m [0m 
 [107m [0m [2m# Command aliases (run with wt step <name>)[0m
 [107m [0m [2m[36m[aliases][0m

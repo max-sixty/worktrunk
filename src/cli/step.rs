@@ -243,9 +243,9 @@ copy = "wt step copy-ignored"
 
 ## What gets copied
 
-All gitignored files are copied by default. Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories like `.conductor/`, `.entire/`, `.jj/`, `.pi/`, and `.worktrees/`. Tracked files are never touched.
 
-To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```text
 # .worktreeinclude
@@ -254,14 +254,14 @@ node_modules/
 target/
 ```
 
-After `.worktreeinclude` selects entries, you can exclude matches with gitignore-style patterns in user config, per-project user overrides, or project config:
+After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
 
 ```toml
 [step.copy-ignored]
-exclude = [".conductor/", ".entire/"]
+exclude = [".cache/", ".turbo/"]
 ```
 
-User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+Built-in excludes always apply. User config and project config exclusions are combined, and per-project user exclusions append to global user exclusions.
 
 ## Common patterns
 
@@ -278,7 +278,7 @@ User config and project config exclusions are combined. In user config, per-proj
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
+- Always skips built-in excluded directories like `.conductor/`, `.entire/`, `.jj/`, `.pi/`, `.worktrees/`, other VCS metadata directories, and nested worktrees
 
 ## Performance
 

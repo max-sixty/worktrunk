@@ -1764,10 +1764,10 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 
 ```toml
 [step.copy-ignored]
-exclude = [".conductor/", ".entire/"]  # Exclude matches after .worktreeinclude
+exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
 ```
 
-Project config and user config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+Built-in excludes like `.conductor/`, `.entire/`, `.jj/`, `.pi/`, and `.worktrees/` always apply. User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
 
 ### Aliases
 
@@ -1919,9 +1919,9 @@ url = "http://localhost:{{ branch | hash_port }}"
 [ci]
 platform = "github"  # or "gitlab"
 
-# Exclude gitignored entries from wt step copy-ignored
+# Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]
-exclude = [".conductor/", ".entire/"]
+exclude = [".cache/", ".turbo/"]
 
 # Command aliases (run with wt step <name>)
 [aliases]

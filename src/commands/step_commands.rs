@@ -21,7 +21,7 @@ use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -549,6 +549,20 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
 /// other VCS tools colocated with git need explicit exclusion.
 const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
 
+/// Tool-specific directories that are always excluded from `wt step copy-ignored`.
+const DEFAULT_COPY_IGNORED_EXCLUDE_DIRS: &[&str] = &[".conductor", ".entire", ".pi", ".worktrees"];
+
+fn default_copy_ignored_config() -> CopyIgnoredConfig {
+    let mut exclude: Vec<String> = VCS_METADATA_DIRS
+        .iter()
+        .chain(DEFAULT_COPY_IGNORED_EXCLUDE_DIRS.iter())
+        .map(|dir| format!("{dir}/"))
+        .collect();
+    exclude.sort();
+    exclude.dedup();
+    CopyIgnoredConfig { exclude }
+}
+
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
 /// VCS metadata directories and entries that contain nested worktrees.
 ///
@@ -655,8 +669,9 @@ pub fn step_copy_ignored(
         .load_project_config()?
         .and_then(|config| config.copy_ignored().cloned())
         .unwrap_or_default();
-    let copy_ignored_config =
-        project_copy_ignored.merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    let copy_ignored_config = default_copy_ignored_config()
+        .merged_with(&project_copy_ignored)
+        .merged_with(&user_config.copy_ignored(project_id.as_deref()));
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
