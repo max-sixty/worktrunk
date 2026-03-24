@@ -191,6 +191,13 @@ impl MainState {
         }
     }
 
+    /// Whether the branch can be safely removed (integrated into default branch).
+    ///
+    /// True for `Empty` (same commit, clean) and `Integrated(...)`.
+    pub fn is_removable(&self) -> bool {
+        matches!(self, Self::Empty | Self::Integrated(_))
+    }
+
     /// Returns the integration reason if this is an integrated state, None otherwise.
     pub fn integration_reason(&self) -> Option<IntegrationReason> {
         match self {

@@ -121,39 +121,16 @@ impl CommandCollector for PickerCollector {
         if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
             let selected_output = signal.trim().to_string();
             if !selected_output.is_empty() {
-                // Look up worktree data from the item list. For detached worktrees,
-                // we need the path since they have no unique branch name.
-                let worktree_info = {
-                    let items = self.items.lock().unwrap();
-                    items
-                        .iter()
-                        .find(|item| item.output().as_ref() == selected_output)
-                        .and_then(|item| item.as_any().downcast_ref::<WorktreeSkimItem>())
-                        .and_then(|skim_item| skim_item.item.worktree_data())
-                        .map(|data| (data.path.clone(), data.detached))
-                };
-
-                let detached_path = worktree_info
-                    .as_ref()
-                    .filter(|(_, d)| *d)
-                    .map(|(p, _)| p.clone());
-
                 // Remove item from the list immediately so the TUI updates fast.
                 // Git operations run in the background after we return.
+                //
+                // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails
+                // at runtime (TypeId mismatch between reader thread and main thread
+                // compilation units in skim 0.20). All item lookups use output()
+                // matching instead.
                 {
                     let mut items = self.items.lock().unwrap();
-                    if let Some(path) = &detached_path {
-                        // Detached items all share output "(detached)" —
-                        // match by worktree path to remove only this one.
-                        items.retain(|item| {
-                            item.as_any()
-                                .downcast_ref::<WorktreeSkimItem>()
-                                .and_then(|s| s.item.worktree_data())
-                                .is_none_or(|d| d.path != *path)
-                        });
-                    } else {
-                        items.retain(|item| item.output().as_ref() != selected_output);
-                    }
+                    items.retain(|item| item.output().as_ref() != selected_output);
                 }
 
                 // Capture current worktree path before CWD changes — the
@@ -162,11 +139,13 @@ impl CommandCollector for PickerCollector {
                 let caller_path = self.repo.current_worktree().root().ok();
 
                 // If removing the current worktree, update process CWD so skim
-                // and git commands continue to work. Use starts_with to handle
-                // CWD being a subdirectory of the worktree root.
-                if let Some((path, _)) = &worktree_info
-                    && let (Some(current), Some(canon_path)) =
-                        (std::env::current_dir().ok(), dunce::canonicalize(path).ok())
+                // and git commands continue to work.
+                if let Ok(worktrees) = self.repo.list_worktrees()
+                    && let Some(wt) = worktrees
+                        .iter()
+                        .find(|wt| wt.branch.as_deref() == Some(&selected_output))
+                    && let (Some(current), Ok(canon_path)) =
+                        (std::env::current_dir().ok(), dunce::canonicalize(&wt.path))
                     && current.starts_with(&canon_path)
                     && let Ok(home) = self.repo.home_path()
                 {
@@ -181,14 +160,9 @@ impl CommandCollector for PickerCollector {
                     .name(format!("picker-remove-{selected_output}"))
                     .spawn(move || {
                         let config = repo.user_config();
-                        let target = if let Some(path) = &detached_path {
-                            RemoveTarget::Path(path)
-                        } else {
-                            RemoveTarget::Branch(&selected_output)
-                        };
                         let removal = repo
                             .prepare_worktree_removal(
-                                target,
+                                RemoveTarget::Branch(&selected_output),
                                 BranchDeletionMode::SafeDelete,
                                 false,
                                 config,
@@ -917,4 +891,10 @@ pub mod tests {
             "unmerged branch should be retained with SafeDelete"
         );
     }
+
+    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at
+    // runtime due to TypeId mismatch between skim's reader thread and the main
+    // compilation unit (skim 0.20 bug). The invoke() code path uses output()
+    // matching instead. Full invoke() tests require interactive skim — verified
+    // via tmux-cli during development.
 }
