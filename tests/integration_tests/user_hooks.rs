@@ -165,14 +165,16 @@ failing = "exit 1"
 "#,
     );
 
-    // Failing user hook should produce warning but not block creation
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast.
+    // The worktree is already created before pre-start runs (it was renamed from
+    // post-create), so the worktree exists but the command exits non-zero.
     snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
 
-    // Worktree should still be created despite hook failure
+    // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.exists(),
-        "Worktree should be created even if post-create hook fails"
+        "Worktree should exist — it was created before pre-start ran"
     );
 }
 
@@ -1126,10 +1128,9 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_pre_start_warns_on_failure(repo: TestRepo) {
-    // pre-start hooks should warn on failure, not fail-fast (exit 0, not exit 1).
-    // This matches the behavior during worktree creation (execute_pre_start_commands
-    // uses HookFailureStrategy::Warn).
+fn test_standalone_hook_pre_start_fails_on_failure(repo: TestRepo) {
+    // pre-start hooks use FailFast like all other pre-* hooks — consistent with
+    // the symmetric pre (blocking, fail-fast) / post (background, warn) pattern.
     repo.write_project_config(r#"pre-start = "exit 1""#);
 
     let output = repo
@@ -1139,14 +1140,8 @@ fn test_standalone_hook_pre_start_warns_on_failure(repo: TestRepo) {
         .unwrap();
 
     assert!(
-        output.status.success(),
-        "wt hook pre-start should exit 0 even when the hook fails (warn, not fail-fast)"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("failed") || stderr.contains("warning") || stderr.contains("exited"),
-        "stderr should contain a warning about the failure, got: {stderr}"
+        !output.status.success(),
+        "wt hook pre-start should exit non-zero when the hook fails (fail-fast, like all pre-* hooks)"
     );
 }
 
