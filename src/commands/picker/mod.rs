@@ -146,16 +146,15 @@ impl CommandCollector for PickerCollector {
                 }
 
                 // If removing the current worktree, update process CWD so skim
-                // and git commands continue to work.
-                if let Some((path, _)) = &worktree_info {
-                    let current = std::env::current_dir().ok();
-                    let canon_path = dunce::canonicalize(path).ok();
-                    if current.is_some()
-                        && current == canon_path
-                        && let Ok(home) = self.repo.home_path()
-                    {
-                        let _ = std::env::set_current_dir(&home);
-                    }
+                // and git commands continue to work. Use starts_with to handle
+                // CWD being a subdirectory of the worktree root.
+                if let Some((path, _)) = &worktree_info
+                    && let (Some(current), Some(canon_path)) =
+                        (std::env::current_dir().ok(), dunce::canonicalize(path).ok())
+                    && current.starts_with(&canon_path)
+                    && let Ok(home) = self.repo.home_path()
+                {
+                    let _ = std::env::set_current_dir(&home);
                 }
 
                 // Defer git operations to a background thread so skim's event
