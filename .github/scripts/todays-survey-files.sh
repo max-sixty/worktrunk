@@ -9,10 +9,19 @@
 
 set -euo pipefail
 
+# File extensions to survey. Override via arguments:
+#   ./todays-survey-files.sh '*.py' '*.md' '*.yaml'
+# Defaults to common code/config extensions if no arguments given.
+if [ $# -gt 0 ]; then
+  PATTERNS=("$@")
+else
+  PATTERNS=('*.rs' '*.md' '*.toml' '*.yaml' '*.yml' '*.sh')
+fi
+
 CYCLE_LENGTH=28
 TODAY_BUCKET=$(( $(date +%s) / 86400 % CYCLE_LENGTH ))
 
-git ls-files -- '*.rs' '*.md' '*.toml' '*.yaml' '*.yml' '*.sh' | while read -r f; do
+git ls-files -- "${PATTERNS[@]}" | while read -r f; do
   hash=$(echo -n "$f" | cksum | awk '{print $1}')
   bucket=$(( hash % CYCLE_LENGTH ))
   if [ "$bucket" -eq "$TODAY_BUCKET" ]; then
