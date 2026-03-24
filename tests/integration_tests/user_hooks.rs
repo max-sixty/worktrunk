@@ -1126,6 +1126,31 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_pre_start_warns_on_failure(repo: TestRepo) {
+    // pre-start hooks should warn on failure, not fail-fast (exit 0, not exit 1).
+    // This matches the behavior during worktree creation (execute_pre_start_commands
+    // uses HookFailureStrategy::Warn).
+    repo.write_project_config(r#"pre-start = "exit 1""#);
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-start should exit 0 even when the hook fails (warn, not fail-fast)"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed") || stderr.contains("warning") || stderr.contains("exited"),
+        "stderr should contain a warning about the failure, got: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_post_start(repo: TestRepo) {
     // Write project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'STANDALONE_POST_START' > hook_ran.txt""#);

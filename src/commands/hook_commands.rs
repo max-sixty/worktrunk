@@ -260,19 +260,27 @@ pub fn run_hook(
 
     // Execute the hook based on type
     // pre-* hooks are blocking (fail-fast), post-* hooks run in background
+    // Exception: pre-start is blocking but warns on failure (matches worktree creation behavior)
     match hook_type {
-        HookType::PreSwitch
-        | HookType::PreStart
-        | HookType::PreRemove
-        | HookType::PreCommit
-        | HookType::PreMerge => run_filtered_hook(
+        HookType::PreSwitch | HookType::PreRemove | HookType::PreCommit | HookType::PreMerge => {
+            run_filtered_hook(
+                &ctx,
+                user_config,
+                proj_config,
+                hook_type,
+                &extra_vars,
+                name_filter,
+                HookFailureStrategy::FailFast,
+            )
+        }
+        HookType::PreStart => run_filtered_hook(
             &ctx,
             user_config,
             proj_config,
             hook_type,
             &extra_vars,
             name_filter,
-            HookFailureStrategy::FailFast,
+            HookFailureStrategy::Warn,
         ),
         HookType::PostStart
         | HookType::PostSwitch
