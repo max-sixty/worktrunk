@@ -504,10 +504,7 @@ pub fn run_hooks_silently(
                     .unwrap_or("(unnamed)")
                     .to_string();
                 let code = s.code().unwrap_or(-1);
-                anyhow::bail!(
-                    "{} hook {name} failed (exit code {code})",
-                    cmd.hook_type
-                );
+                anyhow::bail!("{} hook {name} failed (exit code {code})", cmd.hook_type);
             }
             Err(e) => {
                 let name = cmd
