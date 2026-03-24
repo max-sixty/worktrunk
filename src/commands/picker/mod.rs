@@ -50,14 +50,15 @@ enum PickerAction {
 ///
 /// When alt-r is pressed, skim runs `execute-silent` to write the selected branch
 /// name to a signal file, then `reload` invokes this collector. The collector reads
-/// the signal file, performs the worktree removal, filters the item from the list,
-/// and streams the remaining items back to skim — all without leaving the picker.
+/// the signal file, removes the item from the list, and streams the remaining items
+/// back to skim — all without leaving the picker.
 ///
-/// Cursor position resets to the first item after reload. This is a skim 0.20
-/// limitation: `act_reload` clears the selection, then `restart_matcher` races
-/// the reader thread — if items aren't in the pool yet, the empty matcher result
-/// clamps `line_cursor` to 0. The fix is skim 4.0's `Action::Custom(ActionCallback)`
-/// which gives `&mut App` access to manipulate `item_list` directly without `reload`.
+/// Git operations (worktree removal, branch deletion) are deferred to a background
+/// thread because skim 0.20 calls `invoke()` on the main event loop thread.
+/// Blocking it freezes the TUI.
+///
+/// Cursor position resets to the first item after reload (skim 0.20 limitation,
+/// tracked in #1695).
 struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     signal_path: PathBuf,
@@ -109,65 +110,82 @@ impl CommandCollector for PickerCollector {
         if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
             let selected_output = signal.trim().to_string();
             if !selected_output.is_empty() {
-                let config = self.repo.user_config();
-
-                // Check if this is a detached HEAD worktree — these have no branch
-                // name, so we need to remove by path instead.
-                let detached_path = {
+                // Look up worktree data from the item list. For detached worktrees,
+                // we need the path since they have no unique branch name.
+                let worktree_info = {
                     let items = self.items.lock().unwrap();
                     items
                         .iter()
                         .find(|item| item.output().as_ref() == selected_output)
                         .and_then(|item| item.as_any().downcast_ref::<WorktreeSkimItem>())
                         .and_then(|skim_item| skim_item.item.worktree_data())
-                        .filter(|data| data.detached)
-                        .map(|data| data.path.clone())
+                        .map(|data| (data.path.clone(), data.detached))
                 };
 
-                // Safe removal via prepare + execute (no output, no hooks,
-                // no cd directive — we're inside skim's TUI).
-                let target = if let Some(path) = &detached_path {
-                    RemoveTarget::Path(path)
-                } else {
-                    RemoveTarget::Branch(&selected_output)
-                };
-                let removal = self
-                    .repo
-                    .prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, config)
-                    .and_then(|result| {
-                        Self::execute_removal(&result)?;
-                        Ok(result)
-                    });
-                match removal {
-                    Ok(result) => {
-                        // If we removed the current worktree, update process CWD
-                        // so skim and git commands continue to work.
-                        if let RemoveResult::RemovedWorktree {
-                            changed_directory: true,
-                            main_path,
-                            ..
-                        } = &result
-                        {
-                            let _ = std::env::set_current_dir(main_path);
-                        }
-                        let mut items = self.items.lock().unwrap();
-                        if let Some(path) = &detached_path {
-                            // Detached items all share output "(detached)" —
-                            // match by worktree path to remove only this one.
-                            items.retain(|item| {
-                                item.as_any()
-                                    .downcast_ref::<WorktreeSkimItem>()
-                                    .and_then(|s| s.item.worktree_data())
-                                    .is_none_or(|d| d.path != *path)
-                            });
-                        } else {
-                            items.retain(|item| item.output().as_ref() != selected_output);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("picker: failed to remove '{selected_output}': {e:#}");
+                let detached_path = worktree_info
+                    .as_ref()
+                    .filter(|(_, d)| *d)
+                    .map(|(p, _)| p.clone());
+
+                // Remove item from the list immediately so the TUI updates fast.
+                // Git operations run in the background after we return.
+                {
+                    let mut items = self.items.lock().unwrap();
+                    if let Some(path) = &detached_path {
+                        // Detached items all share output "(detached)" —
+                        // match by worktree path to remove only this one.
+                        items.retain(|item| {
+                            item.as_any()
+                                .downcast_ref::<WorktreeSkimItem>()
+                                .and_then(|s| s.item.worktree_data())
+                                .is_none_or(|d| d.path != *path)
+                        });
+                    } else {
+                        items.retain(|item| item.output().as_ref() != selected_output);
                     }
                 }
+
+                // If removing the current worktree, update process CWD so skim
+                // and git commands continue to work.
+                if let Some((path, _)) = &worktree_info {
+                    let current = std::env::current_dir().ok();
+                    let canon_path = dunce::canonicalize(path).ok();
+                    if current.is_some()
+                        && current == canon_path
+                        && let Ok(home) = self.repo.home_path()
+                    {
+                        let _ = std::env::set_current_dir(&home);
+                    }
+                }
+
+                // Defer git operations to a background thread so skim's event
+                // loop stays responsive. invoke() is called on skim's main
+                // thread — blocking it freezes the TUI.
+                let repo = self.repo.clone();
+                let _ = std::thread::Builder::new()
+                    .name(format!("picker-remove-{selected_output}"))
+                    .spawn(move || {
+                        let config = repo.user_config();
+                        let target = if let Some(path) = &detached_path {
+                            RemoveTarget::Path(path)
+                        } else {
+                            RemoveTarget::Branch(&selected_output)
+                        };
+                        let removal = repo
+                            .prepare_worktree_removal(
+                                target,
+                                BranchDeletionMode::SafeDelete,
+                                false,
+                                config,
+                            )
+                            .and_then(|result| {
+                                Self::execute_removal(&result)?;
+                                Ok(result)
+                            });
+                        if let Err(e) = removal {
+                            log::warn!("picker: failed to remove '{selected_output}': {e:#}");
+                        }
+                    });
 
                 // Clear signal for next removal
                 let _ = std::fs::write(&self.signal_path, "");
