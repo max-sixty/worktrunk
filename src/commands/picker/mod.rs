@@ -23,15 +23,14 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
-use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
-    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
-    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
+    execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::output::handle_switch_output;
 
@@ -68,7 +67,7 @@ impl PickerCollector {
     /// Execute worktree removal silently: stop fsmonitor, remove worktree, delete branch.
     ///
     /// No output, no hooks, no cd directives — we're inside skim's TUI.
-    fn execute_removal(result: &RemoveResult) -> anyhow::Result<()> {
+    fn do_removal(result: &RemoveResult) -> anyhow::Result<()> {
         let RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -83,18 +82,15 @@ impl PickerCollector {
         };
 
         let repo = Repository::at(main_path)?;
-        let _ = repo
-            .worktree_at(worktree_path)
-            .run_command(&["fsmonitor--daemon", "stop"]);
-        repo.remove_worktree(worktree_path, *force_worktree)?;
-
-        if let Some(branch) = branch_name
-            && !deletion_mode.should_keep()
-        {
-            let target = target_branch.as_deref().unwrap_or("HEAD");
-            let _ = delete_branch_if_safe(&repo, branch, target, deletion_mode.is_force());
-        }
-
+        // Branch deletion result intentionally ignored — best-effort in TUI context.
+        execute_removal(
+            &repo,
+            worktree_path,
+            branch_name.as_deref(),
+            *deletion_mode,
+            target_branch.as_deref(),
+            *force_worktree,
+        )?;
         Ok(())
     }
 }
@@ -135,7 +131,7 @@ impl CommandCollector for PickerCollector {
                     .repo
                     .prepare_worktree_removal(target, BranchDeletionMode::SafeDelete, false, config)
                     .and_then(|result| {
-                        Self::execute_removal(&result)?;
+                        Self::do_removal(&result)?;
                         Ok(result)
                     });
                 match removal {
@@ -750,7 +746,7 @@ pub mod tests {
             removed_commit: None,
         };
 
-        PickerCollector::execute_removal(&result).unwrap();
+        PickerCollector::do_removal(&result).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
 
         let output = Cmd::new("git")
@@ -768,6 +764,6 @@ pub mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
         };
-        PickerCollector::execute_removal(&result).unwrap();
+        PickerCollector::do_removal(&result).unwrap();
     }
 }

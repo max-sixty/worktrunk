@@ -84,6 +84,11 @@ mod resolve;
 mod switch;
 mod types;
 
+use std::path::Path;
+
+use super::branch_deletion::{BranchDeletionResult, delete_branch_if_safe};
+use worktrunk::git::Repository;
+
 // Re-export public types and functions
 pub use push::{handle_no_ff_merge, handle_push};
 pub(crate) use resolve::paths_match;
@@ -96,3 +101,51 @@ pub use types::{
     BranchDeletionMode, MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchPlan,
     SwitchResult,
 };
+
+/// Execute core worktree removal: stop fsmonitor, remove worktree, delete branch.
+///
+/// Performs the three git operations that constitute worktree removal:
+/// 1. Stop fsmonitor daemon (best effort — prevents zombie daemons)
+/// 2. Remove the git worktree
+/// 3. Delete the branch if safe (conditional on `deletion_mode` and `branch_name`)
+///
+/// The outer `Result` covers worktree removal failures. The inner
+/// `Option<Result<BranchDeletionResult>>` is the raw `delete_branch_if_safe` result,
+/// preserved so callers can handle branch deletion failures independently:
+/// - The picker ignores it (best-effort in TUI context)
+/// - The output handler processes it for user-facing display
+///
+/// Returns `Ok(None)` when branch deletion was not attempted (no branch name,
+/// or `deletion_mode.should_keep()`).
+pub fn execute_removal(
+    repo: &Repository,
+    worktree_path: &Path,
+    branch_name: Option<&str>,
+    deletion_mode: BranchDeletionMode,
+    target_branch: Option<&str>,
+    force_worktree: bool,
+) -> anyhow::Result<Option<anyhow::Result<BranchDeletionResult>>> {
+    // Stop fsmonitor daemon (best effort — prevents zombie daemons when using
+    // builtin fsmonitor). Must happen while the worktree path still exists.
+    let _ = repo
+        .worktree_at(worktree_path)
+        .run_command(&["fsmonitor--daemon", "stop"]);
+
+    // Remove the worktree
+    repo.remove_worktree(worktree_path, force_worktree)?;
+
+    // Delete branch if safe
+    if let Some(branch) = branch_name
+        && !deletion_mode.should_keep()
+    {
+        let target = target_branch.unwrap_or("HEAD");
+        Ok(Some(delete_branch_if_safe(
+            repo,
+            branch,
+            target,
+            deletion_mode.is_force(),
+        )))
+    } else {
+        Ok(None)
+    }
+}
