@@ -475,6 +475,56 @@ pub(crate) fn prepare_background_hooks(
     )
 }
 
+/// Run prepared hook commands silently (no terminal output).
+///
+/// For use in TUI contexts (e.g., picker) where writing to stderr would corrupt the display.
+/// Commands run with stdout/stderr suppressed. On failure, returns an error with the
+/// command name and exit code — the caller decides how to handle it (typically log + skip).
+pub fn run_hooks_silently(
+    commands: Vec<SourcedCommand>,
+    worktree_path: &Path,
+) -> anyhow::Result<()> {
+    use std::process::{Command, Stdio};
+
+    for cmd in commands {
+        let status = Command::new("sh")
+            .args(["-c", &cmd.prepared.expanded])
+            .current_dir(worktree_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if !s.success() => {
+                let name = cmd
+                    .prepared
+                    .name
+                    .as_deref()
+                    .unwrap_or("(unnamed)")
+                    .to_string();
+                let code = s.code().unwrap_or(-1);
+                anyhow::bail!(
+                    "{} hook {name} failed (exit code {code})",
+                    cmd.hook_type
+                );
+            }
+            Err(e) => {
+                let name = cmd
+                    .prepared
+                    .name
+                    .as_deref()
+                    .unwrap_or("(unnamed)")
+                    .to_string();
+                anyhow::bail!("{} hook {name} failed to execute: {e}", cmd.hook_type);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

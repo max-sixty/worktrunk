@@ -26,12 +26,16 @@ use worktrunk::git::{Repository, current_or_recover};
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
+use super::hooks::{
+    HookCommandSpec, prepare_hook_commands, run_hooks_silently, spawn_background_hooks,
+};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
     BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
     execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
+use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
@@ -65,9 +69,11 @@ struct PickerCollector {
 }
 
 impl PickerCollector {
-    /// Execute worktree removal silently: stop fsmonitor, remove worktree, delete branch.
+    /// Execute worktree removal silently: run pre-remove hooks, remove worktree,
+    /// delete branch, spawn post-remove hooks.
     ///
-    /// No output, no hooks, no cd directives — we're inside skim's TUI.
+    /// No terminal output — we're inside skim's TUI. Hooks run with suppressed
+    /// stdout/stderr. Pre-remove hooks abort removal on failure.
     fn do_removal(result: &RemoveResult) -> anyhow::Result<()> {
         let RemoveResult::RemovedWorktree {
             main_path,
@@ -76,6 +82,7 @@ impl PickerCollector {
             deletion_mode,
             target_branch,
             force_worktree,
+            removed_commit,
             ..
         } = result
         else {
@@ -83,6 +90,45 @@ impl PickerCollector {
         };
 
         let repo = Repository::at(main_path)?;
+        let config = repo.user_config();
+        let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
+
+        // Run pre-remove hooks silently. Non-zero exit aborts removal.
+        let pre_ctx = CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
+        let target_branch_for_hook = repo
+            .worktree_at(main_path)
+            .branch()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
+        let pre_extra_vars: Vec<(&str, &str)> = vec![
+            ("target", &target_branch_for_hook),
+            ("target_worktree_path", &target_path_str),
+        ];
+
+        let pre_remove_commands = {
+            let project_config = pre_ctx.repo.load_project_config()?;
+            let user_hooks = pre_ctx.config.hooks(pre_ctx.project_id().as_deref());
+            let (user_cfg, proj_cfg) = crate::commands::hooks::lookup_hook_configs(
+                &user_hooks,
+                project_config.as_ref(),
+                worktrunk::HookType::PreRemove,
+            );
+            prepare_hook_commands(
+                &pre_ctx,
+                HookCommandSpec {
+                    user_config: user_cfg,
+                    project_config: proj_cfg,
+                    hook_type: worktrunk::HookType::PreRemove,
+                    extra_vars: &pre_extra_vars,
+                    name_filter: None,
+                    display_path: None,
+                },
+            )?
+        };
+        run_hooks_silently(pre_remove_commands, worktree_path)?;
+
         // Branch deletion result intentionally ignored — best-effort in TUI context.
         execute_removal(
             &repo,
@@ -92,6 +138,19 @@ impl PickerCollector {
             target_branch.as_deref(),
             *force_worktree,
         )?;
+
+        // Spawn post-remove hooks in background (log to files, no terminal output).
+        let post_ctx = CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
+        let post_hooks = post_ctx.prepare_post_remove_commands(
+            hook_branch,
+            worktree_path,
+            removed_commit.as_deref(),
+            None, // no display path in TUI context
+        )?;
+        if !post_hooks.is_empty() {
+            spawn_background_hooks(&post_ctx, post_hooks)?;
+        }
+
         Ok(())
     }
 }
