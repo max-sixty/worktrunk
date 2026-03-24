@@ -779,6 +779,17 @@ pub mod tests {
             .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
             .run()
             .unwrap();
+        // Configure git user for CI environments where HOME is overridden
+        Cmd::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
         fs::write(repo_path.join("file.txt"), "hello").unwrap();
         Cmd::new("git")
             .args(["add", "."])
@@ -835,6 +846,16 @@ pub mod tests {
 
         Cmd::new("git")
             .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&repo_path)
             .run()
             .unwrap();
         fs::write(repo_path.join("file.txt"), "hello").unwrap();
