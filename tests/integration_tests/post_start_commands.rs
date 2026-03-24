@@ -108,7 +108,7 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Should show warning but continue (worktree should still be created)
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast
     snapshot_switch(
         "post_create_failing_command",
         &repo,
