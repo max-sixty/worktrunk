@@ -580,4 +580,66 @@ mod tests {
         assert_eq!(f.source, Some(HookSource::Project));
         assert_eq!(f.name, "");
     }
+
+    #[cfg(unix)]
+    mod silent_hooks {
+        use super::super::*;
+        use crate::commands::command_executor::PreparedCommand;
+
+        fn make_cmd(name: Option<&str>, command: &str) -> SourcedCommand {
+            SourcedCommand {
+                prepared: PreparedCommand {
+                    name: name.map(String::from),
+                    expanded: command.to_string(),
+                    context_json: "{}".to_string(),
+                },
+                source: HookSource::User,
+                hook_type: worktrunk::HookType::PreRemove,
+                display_path: None,
+            }
+        }
+
+        #[test]
+        fn test_run_hooks_silently_empty() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            assert!(run_hooks_silently(vec![], tmp.path()).is_ok());
+        }
+
+        #[test]
+        fn test_run_hooks_silently_success() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cmds = vec![make_cmd(Some("check"), "true")];
+            assert!(run_hooks_silently(cmds, tmp.path()).is_ok());
+        }
+
+        #[test]
+        fn test_run_hooks_silently_failure_aborts() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cmds = vec![
+                make_cmd(Some("ok"), "true"),
+                make_cmd(Some("fail"), "exit 1"),
+                make_cmd(Some("never"), "true"),
+            ];
+            let err = run_hooks_silently(cmds, tmp.path()).unwrap_err();
+            assert!(
+                err.to_string().contains("fail"),
+                "error should name the failing hook: {err}"
+            );
+            assert!(
+                err.to_string().contains("exit code 1"),
+                "error should include exit code: {err}"
+            );
+        }
+
+        #[test]
+        fn test_run_hooks_silently_unnamed_hook() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cmds = vec![make_cmd(None, "exit 2")];
+            let err = run_hooks_silently(cmds, tmp.path()).unwrap_err();
+            assert!(
+                err.to_string().contains("(unnamed)"),
+                "unnamed hook should show placeholder: {err}"
+            );
+        }
+    }
 }
