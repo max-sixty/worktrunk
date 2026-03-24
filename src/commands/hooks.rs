@@ -480,7 +480,7 @@ pub(crate) fn prepare_background_hooks(
 /// For use in TUI contexts (e.g., picker) where writing to stderr would corrupt the display.
 /// Commands run with stdout/stderr suppressed. On failure, returns an error with the
 /// command name and exit code — the caller decides how to handle it (typically log + skip).
-pub fn run_hooks_silently(
+pub(crate) fn run_hooks_silently(
     commands: Vec<SourcedCommand>,
     worktree_path: &Path,
 ) -> anyhow::Result<()> {
