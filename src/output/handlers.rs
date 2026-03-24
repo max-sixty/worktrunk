@@ -39,8 +39,40 @@ use super::shell_integration::{
 };
 
 // ============================================================================
-// Background Removal Helper
+// Background Removal Helpers
 // ============================================================================
+
+/// Spawn background worktree removal: stop fsmonitor, rename-then-prune, spawn detached rm.
+///
+/// Shared sequence for both detached HEAD and branch background removal paths.
+/// The caller is responsible for output messages before this call, and hooks after.
+fn spawn_background_removal(
+    repo: &Repository,
+    main_path: &Path,
+    worktree_path: &Path,
+    branch_to_delete: Option<&str>,
+    force_worktree: bool,
+    log_label: &str,
+) -> anyhow::Result<()> {
+    // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
+    // Best effort — prevents zombie daemons from accumulating.
+    let _ = repo
+        .worktree_at(worktree_path)
+        .run_command(&["fsmonitor--daemon", "stop"]);
+
+    let remove_command =
+        execute_instant_removal_or_fallback(repo, worktree_path, branch_to_delete, force_worktree);
+
+    spawn_detached(
+        repo,
+        main_path,
+        &remove_command,
+        log_label,
+        &HookLog::internal(InternalOp::Remove),
+        None,
+    )?;
+    Ok(())
+}
 
 /// Execute instant worktree removal via rename-then-prune, returning the background command.
 ///
@@ -1161,21 +1193,13 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
                 ))
             );
 
-            // Stop fsmonitor daemon BEFORE rename (must happen while path still exists)
-            let _ = repo
-                .worktree_at(worktree_path)
-                .run_command(&["fsmonitor--daemon", "stop"]);
-
-            let remove_command =
-                execute_instant_removal_or_fallback(&repo, worktree_path, None, force_worktree);
-
-            spawn_detached(
+            spawn_background_removal(
                 &repo,
                 main_path,
-                &remove_command,
-                "detached",
-                &HookLog::internal(InternalOp::Remove),
+                worktree_path,
                 None,
+                force_worktree,
+                "detached",
             )?;
         }
         // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
@@ -1268,27 +1292,13 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
         print_switch_message_if_changed(changed_directory, main_path)?;
 
-        // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
-        // Best effort - ignore errors. This prevents zombie daemons from accumulating.
-        let _ = repo
-            .worktree_at(worktree_path)
-            .run_command(&["fsmonitor--daemon", "stop"]);
-
-        let remove_command = execute_instant_removal_or_fallback(
+        spawn_background_removal(
             &repo,
+            main_path,
             worktree_path,
             display_info.branch_deleted().then_some(branch_name),
             force_worktree,
-        );
-
-        // Spawn the removal in background - runs from main_path (where we cd'd to)
-        spawn_detached(
-            &repo,
-            main_path,
-            &remove_command,
             branch_name,
-            &HookLog::internal(InternalOp::Remove),
-            None,
         )?;
 
         spawn_hooks_after_remove(
