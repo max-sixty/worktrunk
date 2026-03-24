@@ -145,7 +145,7 @@ impl WorktreeSkimItem {
 
         // Controls use dim yellow to distinguish from dimmed (white) tabs
         let controls = cformat!(
-            "<dim,yellow>Enter: switch | alt-c: create | alt-r: remove | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
+            "<dim,yellow>Enter: switch | alt-c: create | Esc: cancel | ctrl-u/d: scroll | alt-p: toggle</>"
         );
 
         // End each tab and controls with full reset to prevent style bleeding

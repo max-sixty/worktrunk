@@ -19,7 +19,9 @@ use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, generate_removing_path,
     spawn_detached,
 };
-use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
+use crate::commands::worktree::{
+    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
+};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
@@ -902,30 +904,28 @@ impl RemovalDisplayInfo {
     }
 
     /// Build display info from actual deletion result (foreground mode).
-    fn from_actual(
-        repo: &Repository,
+    fn from_branch_result(
+        branch_deletion: Option<anyhow::Result<BranchDeletionResult>>,
         branch_name: &str,
-        deletion_mode: BranchDeletionMode,
         pre_computed_integration: Option<IntegrationReason>,
         target_branch: Option<&str>,
         force_worktree: bool,
     ) -> anyhow::Result<Self> {
         let branch_was_integrated = pre_computed_integration.is_some();
 
-        let (outcome, integration_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
-            let check_target = target_branch.unwrap_or("HEAD");
-            let result =
-                delete_branch_if_safe(repo, branch_name, check_target, deletion_mode.is_force());
-            let (deletion, needs_hint) = handle_branch_deletion_result(result, branch_name, true)?;
-            // Only use integration_target for display if we had a real target (not "HEAD" fallback)
-            let display_target = target_branch.map(|_| deletion.integration_target);
-            (deletion.outcome, display_target, needs_hint)
-        } else {
-            (
+        let (outcome, integration_target, show_unmerged_hint) = match branch_deletion {
+            Some(result) => {
+                let (deletion, needs_hint) =
+                    handle_branch_deletion_result(result, branch_name, true)?;
+                // Only use integration_target for display if we had a real target (not "HEAD" fallback)
+                let display_target = target_branch.map(|_| deletion.integration_target);
+                (deletion.outcome, display_target, needs_hint)
+            }
+            None => (
                 BranchDeletionOutcome::NotDeleted,
                 target_branch.map(String::from),
                 false,
-            )
+            ),
         };
 
         Ok(Self {
@@ -1131,18 +1131,20 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
                     format_path_for_display(worktree_path)
                 ))
             );
-            let _ = repo
-                .worktree_at(worktree_path)
-                .run_command(&["fsmonitor--daemon", "stop"]);
-            if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
-                return Err(GitError::WorktreeRemovalFailed {
-                    branch: path_dir_name(worktree_path).to_string(),
-                    path: worktree_path.to_path_buf(),
-                    remaining_entries: list_remaining_entries(worktree_path),
-                    error: err.to_string(),
-                }
-                .into());
-            }
+            execute_removal(
+                &repo,
+                worktree_path,
+                None,
+                deletion_mode,
+                target_branch,
+                force_worktree,
+            )
+            .map_err(|err| GitError::WorktreeRemovalFailed {
+                branch: path_dir_name(worktree_path).to_string(),
+                path: worktree_path.to_path_buf(),
+                remaining_entries: list_remaining_entries(worktree_path),
+                error: err.to_string(),
+            })?;
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -1207,26 +1209,24 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
             );
         }
 
-        // Stop fsmonitor daemon first (best effort - ignore errors)
-        // This prevents zombie daemons from accumulating when using builtin fsmonitor
-        let _ = repo
-            .worktree_at(worktree_path)
-            .run_command(&["fsmonitor--daemon", "stop"]);
-
-        if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
-            return Err(GitError::WorktreeRemovalFailed {
-                branch: branch_name.into(),
-                path: worktree_path.to_path_buf(),
-                remaining_entries: list_remaining_entries(worktree_path),
-                error: err.to_string(),
-            }
-            .into());
-        }
-
-        let display_info = RemovalDisplayInfo::from_actual(
+        let branch_result = execute_removal(
             &repo,
-            branch_name,
+            worktree_path,
+            Some(branch_name),
             deletion_mode,
+            target_branch,
+            force_worktree,
+        )
+        .map_err(|err| GitError::WorktreeRemovalFailed {
+            branch: branch_name.into(),
+            path: worktree_path.to_path_buf(),
+            remaining_entries: list_remaining_entries(worktree_path),
+            error: err.to_string(),
+        })?;
+
+        let display_info = RemovalDisplayInfo::from_branch_result(
+            branch_result,
+            branch_name,
             pre_computed_integration,
             target_branch,
             force_worktree,
