@@ -917,6 +917,116 @@ lint = "exit 1"
 }
 
 // ============================================================================
+// User Post-Commit Hook Tests (Background, via `wt step commit`)
+// ============================================================================
+
+/// Helper for step commit snapshots
+fn snapshot_step_commit(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("commit");
+        cmd.args(args);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: test commit'",
+        );
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[rstest]
+fn test_user_post_commit_hook_executes(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_executes", &repo, &[], Some(&feature_wt));
+
+    // Post-commit runs in background in the worktree where the commit happened
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    wait_for_file_content(&marker_file);
+
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("USER_POST_COMMIT_RAN"),
+        "User post-commit hook should have run, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit(
+        "user_post_commit_skipped_no_verify",
+        &repo,
+        &["--no-verify"],
+        Some(&feature_wt),
+    );
+
+    // Wait to ensure background hook would have had time to run
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    assert!(
+        !marker_file.exists(),
+        "User post-commit hook should be skipped with --no-verify"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_failure_does_not_block_commit(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with failing post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+failing = "exit 1"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_failure", &repo, &[], Some(&feature_wt));
+
+    // The commit should have succeeded despite post-commit hook failure
+    // (post-commit runs in background and doesn't affect exit code)
+    let output = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["log", "--oneline", "-1"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feat: test commit"),
+        "Commit should have succeeded despite post-commit hook failure, got: {stdout}"
+    );
+}
+
+// ============================================================================
 // Template Variable Tests
 // ============================================================================
 
