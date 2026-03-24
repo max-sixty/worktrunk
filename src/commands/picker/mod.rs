@@ -23,6 +23,7 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
+use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
@@ -65,33 +66,47 @@ struct PickerCollector {
 }
 
 impl PickerCollector {
-    /// Execute worktree removal silently: stop fsmonitor, remove worktree, delete branch.
+    /// Execute removal silently: worktree + branch, or branch-only.
     ///
     /// No output, no hooks, no cd directives — we're inside skim's TUI.
-    fn do_removal(result: &RemoveResult) -> anyhow::Result<()> {
-        let RemoveResult::RemovedWorktree {
-            main_path,
-            worktree_path,
-            branch_name,
-            deletion_mode,
-            target_branch,
-            force_worktree,
-            ..
-        } = result
-        else {
-            return Ok(());
-        };
-
-        let repo = Repository::at(main_path)?;
-        // Branch deletion result intentionally ignored — best-effort in TUI context.
-        execute_removal(
-            &repo,
-            worktree_path,
-            branch_name.as_deref(),
-            *deletion_mode,
-            target_branch.as_deref(),
-            *force_worktree,
-        )?;
+    /// `repo` is used for `BranchOnly` deletion; `RemovedWorktree` constructs
+    /// its own from `main_path`.
+    fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
+        match result {
+            RemoveResult::RemovedWorktree {
+                main_path,
+                worktree_path,
+                branch_name,
+                deletion_mode,
+                target_branch,
+                force_worktree,
+                ..
+            } => {
+                let repo = Repository::at(main_path)?;
+                // Branch deletion result intentionally ignored — best-effort in TUI context.
+                execute_removal(
+                    &repo,
+                    worktree_path,
+                    branch_name.as_deref(),
+                    *deletion_mode,
+                    target_branch.as_deref(),
+                    *force_worktree,
+                )?;
+            }
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                ..
+            } => {
+                if !deletion_mode.should_keep() {
+                    let default_branch = repo.default_branch();
+                    let target = default_branch.as_deref().unwrap_or("HEAD");
+                    // Best-effort: ignore result (branch may not be integrated)
+                    let _ =
+                        delete_branch_if_safe(repo, branch_name, target, deletion_mode.is_force());
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -180,7 +195,7 @@ impl CommandCollector for PickerCollector {
                                 caller_path,
                             )
                             .and_then(|result| {
-                                Self::do_removal(&result)?;
+                                Self::do_removal(&repo, &result)?;
                                 Ok(result)
                             });
                         if let Err(e) = removal {
@@ -769,7 +784,8 @@ pub mod tests {
             removed_commit: None,
         };
 
-        PickerCollector::do_removal(&result).unwrap();
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        PickerCollector::do_removal(&repo, &result).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
 
         let output = Cmd::new("git")
@@ -781,12 +797,124 @@ pub mod tests {
     }
 
     #[test]
-    fn test_execute_removal_branch_only_is_noop() {
+    fn test_do_removal_branch_only_deletes_integrated_branch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = tmp.path().join("repo");
+
+        Cmd::new("git")
+            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        fs::write(repo_path.join("file.txt"), "hello").unwrap();
+        Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+
+        // Create a branch at the same commit (fully integrated into main)
+        Cmd::new("git")
+            .args(["branch", "feature"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+
+        // Verify branch exists
+        let output = Cmd::new("git")
+            .args(["branch", "--list", "feature"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        assert!(
+            !output.stdout.is_empty(),
+            "branch should exist before removal"
+        );
+
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
         let result = RemoveResult::BranchOnly {
-            branch_name: "gone".to_string(),
+            branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
         };
-        PickerCollector::do_removal(&result).unwrap();
+        PickerCollector::do_removal(&repo, &result).unwrap();
+
+        let output = Cmd::new("git")
+            .args(["branch", "--list", "feature"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        assert!(
+            output.stdout.is_empty(),
+            "integrated branch should be deleted"
+        );
+    }
+
+    #[test]
+    fn test_do_removal_branch_only_retains_unmerged_branch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = tmp.path().join("repo");
+
+        Cmd::new("git")
+            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        fs::write(repo_path.join("file.txt"), "hello").unwrap();
+        Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+
+        // Create a branch with an unmerged commit
+        Cmd::new("git")
+            .args(["checkout", "-b", "unmerged"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        fs::write(repo_path.join("new.txt"), "unmerged work").unwrap();
+        Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["commit", "-m", "unmerged work"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["checkout", "main"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let result = RemoveResult::BranchOnly {
+            branch_name: "unmerged".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+        };
+        PickerCollector::do_removal(&repo, &result).unwrap();
+
+        // Branch should be retained — SafeDelete won't delete unmerged branches
+        let output = Cmd::new("git")
+            .args(["branch", "--list", "unmerged"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        assert!(
+            !output.stdout.is_empty(),
+            "unmerged branch should be retained with SafeDelete"
+        );
     }
 }
