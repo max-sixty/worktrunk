@@ -126,6 +126,7 @@ schemars = { version = "1.2.1", features = ["derive"] }
 
 tempfile = "3.27"
 wait-timeout = "0.2"
+glob = "0.3.3"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
