@@ -141,6 +141,11 @@ impl CommandCollector for PickerCollector {
                     }
                 }
 
+                // Capture current worktree path before CWD changes — the
+                // background thread needs it for prepare_worktree_removal's
+                // is_current check (CWD may point elsewhere by then).
+                let caller_path = self.repo.current_worktree().root().ok();
+
                 // If removing the current worktree, update process CWD so skim
                 // and git commands continue to work. Use starts_with to handle
                 // CWD being a subdirectory of the worktree root.
@@ -172,6 +177,7 @@ impl CommandCollector for PickerCollector {
                                 BranchDeletionMode::SafeDelete,
                                 false,
                                 config,
+                                caller_path,
                             )
                             .and_then(|result| {
                                 Self::do_removal(&result)?;
