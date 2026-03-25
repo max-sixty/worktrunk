@@ -761,4 +761,101 @@ mod tests {
         assert_eq!(f.source, Some(HookSource::Project));
         assert_eq!(f.name, "");
     }
+
+    fn make_sourced_step(step: PreparedStep) -> SourcedStep {
+        SourcedStep {
+            step,
+            source: HookSource::User,
+            hook_type: worktrunk::HookType::PostStart,
+            display_path: None,
+        }
+    }
+
+    fn make_cmd(name: Option<&str>, expanded: &str) -> PreparedCommand {
+        PreparedCommand {
+            name: name.map(String::from),
+            expanded: expanded.to_string(),
+            context_json: "{}".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_build_pipeline_command_serial_only() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
+            make_sourced_step(PreparedStep::Single(make_cmd(
+                Some("build"),
+                "npm run build",
+            ))),
+        ];
+        let cmd = build_pipeline_command(&steps);
+        assert_eq!(cmd, "{ npm install; } && { npm run build; }");
+    }
+
+    #[test]
+    fn test_build_pipeline_command_serial_then_concurrent() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_cmd(Some("build"), "npm run build"),
+                make_cmd(Some("lint"), "npm run lint"),
+            ])),
+        ];
+        let cmd = build_pipeline_command(&steps);
+        assert_eq!(
+            cmd,
+            "{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }"
+        );
+    }
+
+    #[test]
+    fn test_build_pipeline_command_single_concurrent() {
+        let steps = vec![make_sourced_step(PreparedStep::Concurrent(vec![make_cmd(
+            Some("only"),
+            "echo hi",
+        )]))];
+        let cmd = build_pipeline_command(&steps);
+        // Single-entry concurrent group doesn't need background/wait
+        assert_eq!(cmd, "{ { echo hi; } & wait; }");
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_named() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(
+                Some("install"),
+                "npm install",
+            ))),
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_cmd(Some("build"), "npm run build"),
+                make_cmd(Some("lint"), "npm run lint"),
+            ])),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        // Contains arrow and names (stripped of ANSI for assertion)
+        assert!(summary.contains("→"));
+        assert!(summary.contains("install"));
+        assert!(summary.contains("build"));
+        assert!(summary.contains("lint"));
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_unnamed() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm run build"))),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        assert!(summary.contains("cmd-0"));
+        assert!(summary.contains("cmd-1"));
+    }
+
+    #[test]
+    fn test_config_has_pipeline() {
+        use worktrunk::config::CommandConfig;
+
+        // Single step → not a pipeline
+        let single = CommandConfig::single("npm install");
+        assert!(!config_has_pipeline(&single));
+    }
 }
