@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::config::HooksConfig;
+use crate::config::commands::CommandConfig;
 use crate::config::expansion::expand_template;
 
 use super::UserConfig;
@@ -198,14 +199,20 @@ impl UserConfig {
 
     /// Returns effective aliases for a specific project.
     ///
-    /// Merges global user aliases with per-project user aliases (per-project overrides on collision).
-    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, String> {
+    /// Merges global user aliases with per-project user aliases using append
+    /// semantics: both run on name collision (global first, then per-project).
+    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, CommandConfig> {
         let mut result = self.configs.aliases.clone().unwrap_or_default();
         if let Some(proj_aliases) = project
             .and_then(|p| self.projects.get(p))
             .and_then(|proj| proj.overrides.aliases.as_ref())
         {
-            result.extend(proj_aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+            for (k, v) in proj_aliases {
+                result
+                    .entry(k.clone())
+                    .and_modify(|existing| *existing = existing.merge_append(v))
+                    .or_insert_with(|| v.clone());
+            }
         }
         result
     }
