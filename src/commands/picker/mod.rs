@@ -132,12 +132,12 @@ impl CommandCollector for PickerCollector {
                 // branched and detached worktrees). Branch-only items won't
                 // match any worktree path, so they fall through to Branch.
                 let worktree_path = self.repo.list_worktrees().ok().and_then(|wts| {
-                    wts.into_iter()
-                        .find(|wt| {
-                            wt.branch.as_deref() == Some(selected_output.as_str())
-                                || wt.branch.is_none()
-                        })
-                        .map(|wt| wt.path)
+                    // Match by branch first, then fall back to detached (branch: None).
+                    let by_branch = wts
+                        .iter()
+                        .find(|wt| wt.branch.as_deref() == Some(selected_output.as_str()));
+                    let matched = by_branch.or_else(|| wts.iter().find(|wt| wt.branch.is_none()));
+                    matched.map(|wt| wt.path.clone())
                 });
                 let target = match &worktree_path {
                     Some(path) => RemoveTarget::Path(path),
