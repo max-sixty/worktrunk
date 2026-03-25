@@ -170,7 +170,7 @@ fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -226,7 +226,7 @@ fn test_merge_rebase_conflict(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1395,7 +1395,7 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1455,7 +1455,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "-d", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     // Verify the deletion failed (non-zero exit code)
@@ -1476,7 +1476,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "--list", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1499,7 +1499,7 @@ fn test_merge_to_non_default_target(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1585,7 +1585,7 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     let output = repo
         .git_command()
         .args(["reflog", "show", "refs/wt-backup/feature"])
-        .output()
+        .run()
         .unwrap();
 
     let reflog = String::from_utf8_lossy(&output.stdout);
@@ -1627,7 +1627,7 @@ fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, 
     let after = repo
         .git_command()
         .args(["config", "receive.denyCurrentBranch"])
-        .output()
+        .run()
         .unwrap();
     let after_value = String::from_utf8_lossy(&after.stdout).trim().to_string();
 
@@ -1982,7 +1982,7 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
         .git_command()
         .current_dir(&feature_wt)
         .args(["merge", "main", "-m", "Merge main into feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -2359,7 +2359,7 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&main_wt)
-        .output()
+        .run()
         .unwrap();
     let wt_head = String::from_utf8_lossy(&wt_head_output.stdout)
         .trim()
@@ -2401,7 +2401,7 @@ fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo
     );
 
     // Verify autostash cleaned up (no leftover stash entries)
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -2450,7 +2450,7 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 
     // Verify no stash was created
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()

@@ -13,7 +13,7 @@ fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(dir)
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -364,14 +364,14 @@ fn test_promote_detached_head_main(mut repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(repo.root_path())
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
 
     repo.git_command()
         .args(["checkout", "--detach", &sha])
         .current_dir(repo.root_path())
-        .output()
+        .run()
         .unwrap();
 
     // Promote should fail due to detached HEAD
@@ -905,14 +905,14 @@ fn test_promote_detached_head_linked(mut repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
 
     repo.git_command()
         .args(["checkout", "--detach", &sha])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     // No-arg promote from linked worktree should fail due to detached HEAD

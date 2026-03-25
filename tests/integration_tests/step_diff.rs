@@ -147,7 +147,7 @@ fn git_status(repo: &TestRepo, dir: &Path) -> String {
         .git_command()
         .args(["status", "--porcelain"])
         .current_dir(dir)
-        .output()
+        .run()
         .unwrap();
     String::from_utf8_lossy(&output.stdout).to_string()
 }

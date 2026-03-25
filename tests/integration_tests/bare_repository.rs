@@ -1,7 +1,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
-    configure_git_cmd, directive_file, repo, setup_temp_snapshot_settings, wait_for,
-    wait_for_file_content, wait_for_file_count, wt_command,
+    configure_git_cmd, configure_git_env, directive_file, repo, setup_temp_snapshot_settings,
+    wait_for, wait_for_file_content, wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+use worktrunk::shell_exec::Cmd;
 
 #[test]
 fn test_bare_repo_list_worktrees() {
@@ -93,7 +94,7 @@ fn test_bare_repo_switch_creates_worktree() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["worktree", "list"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -303,7 +304,7 @@ fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output()
+                .run()
                 .unwrap();
         }
     }
@@ -426,7 +427,7 @@ fn test_bare_repo_merge_workflow() {
     let log_output = test
         .git_command(&main_worktree)
         .args(["log", "--oneline"])
-        .output()
+        .run()
         .unwrap();
 
     let log = String::from_utf8_lossy(&log_output.stdout);
@@ -530,7 +531,7 @@ fn test_bare_repo_project_config_found_from_bare_root() {
     let output = test
         .git_command(&main_worktree)
         .args(["add", ".config/wt.toml"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success());
     test.commit_in(&main_worktree, "Add project config");
@@ -592,7 +593,7 @@ fn test_bare_repo_project_config_found_with_dash_c_flag() {
     let output = test
         .git_command(&main_worktree)
         .args(["add", ".config/wt.toml"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success());
     test.commit_in(&main_worktree, "Add project config");
@@ -734,7 +735,7 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
     let branch_output = test
         .git_command(&expected_path)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&branch_output.stdout).trim(),
@@ -787,11 +788,11 @@ impl NestedBareRepoTest {
         };
 
         // Create bare repository at project/.git
-        let mut cmd = Command::new("git");
-        cmd.args(["init", "--bare", "--initial-branch", "main"])
-            .arg(&test.bare_repo_path);
-        test.configure_git_cmd(&mut cmd);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
+            .args(["init", "--bare", "--initial-branch", "main"])
+            .arg(test.bare_repo_path.to_str().unwrap())
+            .run()
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -1078,7 +1079,7 @@ fn test_bare_repo_bootstrap_first_worktree() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["worktree", "list"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -1111,10 +1112,11 @@ fn test_clone_bare_repo_list_no_status_errors() {
     fs::write(&test_config_path, "").unwrap();
 
     let run_git = |dir: &Path, args: &[&str]| {
-        let mut cmd = Command::new("git");
-        cmd.args(args).current_dir(dir);
-        configure_git_cmd(&mut cmd, &git_config_path);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &git_config_path)
+            .args(args.iter().copied())
+            .current_dir(dir)
+            .run()
+            .unwrap();
         assert!(
             output.status.success(),
             "git {} failed: {}",
@@ -1386,11 +1388,14 @@ mod bare_repo_prompt_pty {
         });
 
         // Verify skip flag was saved in git config
-        let git_config_output = Command::new("git")
+        let git_config_output = Cmd::new("git")
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
-            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
-            .output()
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                test.git_config_path().to_str().unwrap(),
+            )
+            .run()
             .unwrap();
         let value = String::from_utf8_lossy(&git_config_output.stdout);
         assert_eq!(

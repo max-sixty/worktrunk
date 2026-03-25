@@ -280,7 +280,7 @@ fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestR
     // Set up an upstream tracking branch
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push");
 
     // Create project config with git-related template variables
@@ -353,7 +353,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push main");
 
     // Create project config with upstream template variable
@@ -387,7 +387,7 @@ fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRep
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push main");
 
     // Create project config with conditional upstream check

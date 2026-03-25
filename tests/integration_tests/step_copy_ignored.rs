@@ -492,7 +492,7 @@ fn test_copy_ignored_from_nonexistent_worktree(repo: TestRepo) {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     // Try to copy from a branch with no worktree
@@ -510,7 +510,7 @@ fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     // Setup a file to copy
@@ -1233,7 +1233,7 @@ fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
             "feature-nested",
             nested_worktree_path.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Add .worktrees to .gitignore (typical for this setup)
