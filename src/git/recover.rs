@@ -218,6 +218,12 @@ mod tests {
             .unwrap();
     }
 
+    fn configure_test_identity(repo: &Repository) {
+        repo.run_command(&["config", "user.name", "Test"]).unwrap();
+        repo.run_command(&["config", "user.email", "test@test.com"])
+            .unwrap();
+    }
+
     #[test]
     fn test_try_repo_at_rejects_git_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -282,6 +288,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         // Create an initial commit so worktree add works
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
@@ -300,6 +307,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
         let repo = Repository::at(tmp.path()).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -325,6 +333,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -349,6 +358,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -372,6 +382,7 @@ mod tests {
         let repo_a_handle = Repository::at(&repo_a).unwrap();
         let repo_b_handle = Repository::at(&repo_b).unwrap();
         for repo in [&repo_a_handle, &repo_b_handle] {
+            configure_test_identity(repo);
             repo.run_command(&["commit", "--allow-empty", "-m", "init"])
                 .unwrap();
         }
@@ -408,6 +419,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -433,6 +445,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -456,6 +469,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
         let repo = Repository::at(tmp.path()).unwrap();
+        configure_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
         let hint = hint_for_repo(&repo);
