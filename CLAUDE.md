@@ -148,7 +148,7 @@ Help text renders in three contexts — check all three when editing:
 2. **Web docs** (`docs/content/`): `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` — they appear as consecutive paragraphs.
 3. **Skill reference** (`skills/worktrunk/reference/`): mirrors web docs.
 
-Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition.
+Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
 
 After any doc changes, run tests to sync:
 
