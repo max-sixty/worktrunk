@@ -3,9 +3,9 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -886,8 +886,25 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Show potential false negatives (lines containing cmd but not detected)
     // Skip files that have valid integration detected (matched_lines) - those are fine,
     // and the other lines containing cmd are just part of the integration script.
+    // Also skip files already confirmed as integration by scan_shell_configs (e.g., Nushell/Fish
+    // wrapper files that ARE the integration, not config files that source it).
+    let confirmed_paths: HashSet<&Path> = scan_result
+        .configured
+        .iter()
+        .filter(|r| {
+            // For shells with standalone wrapper files (Fish, Nushell), the file at the
+            // path IS the integration — any action means it was recognized. For eval-based
+            // shells (Bash, Zsh), only AlreadyExists means the config line was found.
+            matches!(r.shell, Shell::Fish | Shell::Nushell)
+                || matches!(r.action, ConfigAction::AlreadyExists)
+        })
+        .map(|r| r.path.as_path())
+        .collect();
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
+        if !detection.unmatched_candidates.is_empty()
+            && detection.matched_lines.is_empty()
+            && !confirmed_paths.contains(detection.path.as_path())
+        {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
