@@ -2342,11 +2342,12 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
 /// `git worktree remove` fails because a directory can't be deleted.
 ///
 /// Uses Unix permissions (non-writable directory) to prevent deletion of
-/// a gitignored directory, triggering the `WorktreeRemovalFailed` error path
-/// that lists remaining entries.
+/// a gitignored directory with a non-writable subdirectory. The fast path
+/// (rename to trash) handles this gracefully — the entire worktree directory
+/// is renamed atomically regardless of internal permissions.
 #[rstest]
 #[cfg(unix)]
-fn test_remove_foreground_failure_shows_remaining_entries(mut repo: TestRepo) {
+fn test_remove_foreground_succeeds_with_stuck_directory(mut repo: TestRepo) {
     use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
 
@@ -2357,12 +2358,10 @@ fn test_remove_foreground_failure_shows_remaining_entries(mut repo: TestRepo) {
     repo.run_git_in(&worktree_path, &["add", ".gitignore"]);
     repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
 
-    // Create gitignored directory with a file inside
+    // Create gitignored directory with a non-writable file inside
     let stuck_dir = worktree_path.join("stuck");
     fs::create_dir_all(&stuck_dir).unwrap();
     fs::write(stuck_dir.join("file.txt"), "content").unwrap();
-
-    // Make directory non-writable so git can't unlink the file inside
     fs::set_permissions(&stuck_dir, Permissions::from_mode(0o555)).unwrap();
 
     // Check if permissions actually restrict us (skip if running as root)
@@ -2382,27 +2381,26 @@ fn test_remove_foreground_failure_shows_remaining_entries(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Restore permissions before assertions so TempDir cleanup works
-    restore_dir_permissions(&stuck_dir);
+    // Restore permissions in trash dir so TempDir cleanup works
+    let git_dir = repo.root_path().join(".git");
+    let trash_dir = git_dir.join("wt").join("trash");
+    if trash_dir.exists() {
+        for entry in fs::read_dir(&trash_dir).unwrap().flatten() {
+            restore_dir_permissions(&entry.path());
+        }
+    }
 
     assert!(
-        !output.status.success(),
-        "Remove should have failed, got: {stderr}"
+        output.status.success(),
+        "Remove should succeed via fast path, got: {stderr}"
     );
-    assert!(
-        stderr.contains("Remaining in directory:"),
-        "Error should show remaining entries, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("stuck/"),
-        "Error should list the stuck directory, got: {stderr}"
-    );
+    assert!(!worktree_path.exists(), "Worktree directory should be gone");
 }
 
 /// Same as above but for the detached HEAD code path.
 #[rstest]
 #[cfg(unix)]
-fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: TestRepo) {
+fn test_remove_foreground_succeeds_with_stuck_directory_detached(mut repo: TestRepo) {
     use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
 
@@ -2414,7 +2412,7 @@ fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: Tes
     repo.run_git_in(&worktree_path, &["commit", "-m", "Add gitignore"]);
     repo.detach_head_in_worktree("feature-stuck-detached");
 
-    // Create gitignored directory with a file inside
+    // Create gitignored directory with a non-writable file inside
     let stuck_dir = worktree_path.join("stuck");
     fs::create_dir_all(&stuck_dir).unwrap();
     fs::write(stuck_dir.join("file.txt"), "content").unwrap();
@@ -2438,16 +2436,20 @@ fn test_remove_foreground_failure_shows_remaining_entries_detached(mut repo: Tes
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    restore_dir_permissions(&stuck_dir);
+    // Restore permissions in trash dir so TempDir cleanup works
+    let git_dir = repo.root_path().join(".git");
+    let trash_dir = git_dir.join("wt").join("trash");
+    if trash_dir.exists() {
+        for entry in fs::read_dir(&trash_dir).unwrap().flatten() {
+            restore_dir_permissions(&entry.path());
+        }
+    }
 
     assert!(
-        !output.status.success(),
-        "Remove should have failed, got: {stderr}"
+        output.status.success(),
+        "Remove should succeed via fast path, got: {stderr}"
     );
-    assert!(
-        stderr.contains("Remaining in directory:"),
-        "Error should show remaining entries, got: {stderr}"
-    );
+    assert!(!worktree_path.exists(), "Worktree directory should be gone");
 }
 
 /// Worktrees with initialized git submodules should be removable.
