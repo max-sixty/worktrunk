@@ -15,11 +15,13 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
+use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
@@ -691,7 +693,7 @@ pub fn step_copy_ignored(
     }
 
     let verbose = verbosity();
-    let mut copied_count = 0;
+    let copied_count = AtomicUsize::new(0);
 
     // Show entries in verbose or dry-run mode
     if verbose >= 1 || dry_run {
@@ -721,66 +723,71 @@ pub fn step_copy_ignored(
         }
     }
 
-    // Copy entries
-    for (src_entry, is_dir) in &entries_to_copy {
-        // Paths from git ls-files are always under source_path
-        let relative = src_entry
-            .strip_prefix(&source_path)
-            .expect("git ls-files path under worktree");
-        let dest_entry = dest_path.join(relative);
+    // Copy entries in parallel — each entry has a distinct destination path
+    entries_to_copy
+        .par_iter()
+        .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
+            // Paths from git ls-files are always under source_path
+            let relative = src_entry
+                .strip_prefix(&source_path)
+                .expect("git ls-files path under worktree");
+            let dest_entry = dest_path.join(relative);
 
-        if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
-                format!("copying directory {}", format_path_for_display(relative))
-            })?;
-            copied_count += 1;
-        } else {
-            if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "creating directory for {}",
-                        format_path_for_display(relative)
-                    )
+            if *is_dir {
+                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                    format!("copying directory {}", format_path_for_display(relative))
                 })?;
-            }
-            if force {
-                remove_if_exists(&dest_entry)?;
-            }
-            // Check if source is a symlink — preserve it instead of following it
-            let display_path = format_path_for_display(relative);
-            let source_is_symlink = fs::symlink_metadata(src_entry)
-                .context(format!("reading metadata for {display_path}"))?
-                .file_type()
-                .is_symlink();
-            if source_is_symlink {
-                // Skip existing symlinks for idempotent hook usage
-                if dest_entry.symlink_metadata().is_err() {
-                    let target = fs::read_link(src_entry)
-                        .context(format!("reading symlink {display_path}"))?;
-                    create_symlink(&target, src_entry, &dest_entry)?;
-                    copied_count += 1;
-                }
+                copied_count.fetch_add(1, Ordering::Relaxed);
             } else {
-                // Skip existing entries (files or symlinks) for idempotent hook usage.
-                // Check symlink_metadata (not exists()) because exists() follows symlinks
-                // and returns false for broken ones, which would cause reflink_or_copy to
-                // fail with ENOENT on some platforms when copying through the broken symlink.
-                if dest_entry.symlink_metadata().is_err() {
-                    match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                        Ok(_) => copied_count += 1,
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                        Err(e) => {
-                            return Err(
-                                anyhow::Error::from(e).context(format!("copying {display_path}"))
-                            );
+                if let Some(parent) = dest_entry.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!(
+                            "creating directory for {}",
+                            format_path_for_display(relative)
+                        )
+                    })?;
+                }
+                if force {
+                    remove_if_exists(&dest_entry)?;
+                }
+                // Check if source is a symlink — preserve it instead of following it
+                let display_path = format_path_for_display(relative);
+                let source_is_symlink = fs::symlink_metadata(src_entry)
+                    .context(format!("reading metadata for {display_path}"))?
+                    .file_type()
+                    .is_symlink();
+                if source_is_symlink {
+                    // Skip existing symlinks for idempotent hook usage
+                    if dest_entry.symlink_metadata().is_err() {
+                        let target = fs::read_link(src_entry)
+                            .context(format!("reading symlink {display_path}"))?;
+                        create_symlink(&target, src_entry, &dest_entry)?;
+                        copied_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    // Skip existing entries (files or symlinks) for idempotent hook usage.
+                    // Check symlink_metadata (not exists()) because exists() follows symlinks
+                    // and returns false for broken ones, which would cause reflink_or_copy to
+                    // fail with ENOENT on some platforms when copying through the broken symlink.
+                    if dest_entry.symlink_metadata().is_err() {
+                        match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                            Ok(_) => {
+                                copied_count.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                            Err(e) => {
+                                return Err(anyhow::Error::from(e)
+                                    .context(format!("copying {display_path}")));
+                            }
                         }
                     }
                 }
             }
-        }
-    }
+            Ok(())
+        })?;
 
     // Show summary
+    let copied_count = copied_count.load(Ordering::Relaxed);
     let entry_word = if copied_count == 1 {
         "entry"
     } else {
@@ -873,8 +880,9 @@ fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()
 fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
+    let entries: Vec<_> = fs::read_dir(src)?.collect::<Result<Vec<_>, _>>()?;
+
+    entries.into_par_iter().try_for_each(|entry| {
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
@@ -915,7 +923,8 @@ fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::
                 }
             }
         }
-    }
+        Ok(())
+    })?;
 
     // Preserve source directory permissions AFTER copying contents.
     // Must be done after the loop — if the source lacks write permission (e.g., 0o555),
