@@ -6,8 +6,6 @@
 
 - **Hooks rationalized**: Every lifecycle event now has a symmetric `pre-` (blocking) / `post-` (background) pair. This required one rename: `post-create` → `pre-start`, reflecting that it runs *before* `post-start` as a blocking dependency step. A new `post-commit` hook fires in the background after commits (including squash commits during merge). `post-merge` is now background instead of blocking, consistent with all other `post-*` hooks. Configs using `post-create` get a deprecation warning on any `wt` command; run `wt config update` to rename automatically. The old name continues to work during the deprecation period. [Docs](https://worktrunk.dev/hook/) ([#1679](https://github.com/max-sixty/worktrunk/pull/1679), closes [#1670](https://github.com/max-sixty/worktrunk/issues/1670), thanks @ortonomy for reporting [#1571](https://github.com/max-sixty/worktrunk/issues/1571))
 
-- **Hook template variables consolidated**: Bare variables (`branch`, `worktree_path`, `commit`) now consistently point to the Active worktree — the destination for switch/create, the source for merge/remove. New directional variables (`{{ base }}`, `{{ base_worktree_path }}`, `{{ target_worktree_path }}`, `{{ cwd }}`) give hooks explicit access to both sides of two-worktree operations. (Breaking: `{{ worktree_path }}` changed in pre-switch for existing worktrees and in post-merge — use `{{ cwd }}` or `{{ base_worktree_path }}` for the previous behavior.) [Docs](https://worktrunk.dev/hook/) ([#1655](https://github.com/max-sixty/worktrunk/pull/1655), [#1660](https://github.com/max-sixty/worktrunk/pull/1660), [#1663](https://github.com/max-sixty/worktrunk/pull/1663), thanks @sysradium for reporting [#1543](https://github.com/max-sixty/worktrunk/issues/1543))
-
 - **Detached worktree support**: Detached HEAD worktrees can now be removed via `wt remove /path/to/worktree` and switched to via `wt switch /path/to/worktree`. The interactive picker also handles detached worktrees for both operations. ([#1665](https://github.com/max-sixty/worktrunk/pull/1665), [#1680](https://github.com/max-sixty/worktrunk/pull/1680), thanks @mjakl for reporting [#1661](https://github.com/max-sixty/worktrunk/issues/1661))
 
 - **In-place worktree removal in picker**: Press `alt-r` in the `wt switch` picker to remove the selected worktree without leaving the picker. Currently hidden from picker legend and help text pending a cursor-reset issue ([#1695](https://github.com/max-sixty/worktrunk/issues/1695)). ([#1677](https://github.com/max-sixty/worktrunk/pull/1677), [#1696](https://github.com/max-sixty/worktrunk/pull/1696))
@@ -28,7 +26,7 @@
 
 ### Documentation
 
-- Migration guide for hook rationalization and template variable changes. ([#1666](https://github.com/max-sixty/worktrunk/pull/1666), [#1693](https://github.com/max-sixty/worktrunk/pull/1693))
+- Changelog and migration guide for hook rationalization. ([#1693](https://github.com/max-sixty/worktrunk/pull/1693))
 
 ### Internal
 
@@ -40,7 +38,7 @@
 
 ### Improved
 
-- **Hook template variables consolidated**: Bare variables (`branch`, `worktree_path`, `commit`) now consistently point to the Active worktree — the destination for switch/create, the source for merge/remove. New directional variables (`{{ base }}`, `{{ base_worktree_path }}`, `{{ target_worktree_path }}`, `{{ cwd }}`) give hooks explicit access to both sides of two-worktree operations. (Breaking: `{{ worktree_path }}` changed in pre-switch for existing worktrees and in post-merge — use `{{ cwd }}` or `{{ base_worktree_path }}` for the previous behavior.) [Docs](https://worktrunk.dev/hook/) ([#1655](https://github.com/max-sixty/worktrunk/pull/1655), [#1660](https://github.com/max-sixty/worktrunk/pull/1660), [#1663](https://github.com/max-sixty/worktrunk/pull/1663))
+- **Hook template variables consolidated**: Bare variables (`branch`, `worktree_path`, `commit`) now consistently point to the Active worktree — the destination for switch/create, the source for merge/remove. New directional variables (`{{ base }}`, `{{ base_worktree_path }}`, `{{ target_worktree_path }}`, `{{ cwd }}`) give hooks explicit access to both sides of two-worktree operations. (Breaking: `{{ worktree_path }}` changed in pre-switch for existing worktrees and in post-merge — use `{{ cwd }}` or `{{ base_worktree_path }}` for the previous behavior.) [Docs](https://worktrunk.dev/hook/) ([#1655](https://github.com/max-sixty/worktrunk/pull/1655), [#1660](https://github.com/max-sixty/worktrunk/pull/1660), [#1663](https://github.com/max-sixty/worktrunk/pull/1663), thanks @sysradium for reporting [#1543](https://github.com/max-sixty/worktrunk/issues/1543))
 
 - **Bare repo worktree-path prompt**: When a bare repo lives at a hidden path like `.git` or `.bare`, `wt switch` now detects that worktrees would get awkward names (e.g., `project/.git.feature`) and offers to configure a `worktree-path` override. Non-interactive environments show the config to add manually. ([#1656](https://github.com/max-sixty/worktrunk/pull/1656), thanks @seakayone for reporting [#1279](https://github.com/max-sixty/worktrunk/issues/1279))
 
