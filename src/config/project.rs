@@ -8,8 +8,8 @@ use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 use super::commands::CommandConfig;
+use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
 ///
