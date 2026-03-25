@@ -1015,6 +1015,52 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     );
 }
 
+/// Test that nested file copy errors mention the parent directory creation failure
+///
+/// Exercises the `create_dir_all(parent)` error path in the top-level file copy loop.
+/// The existing `test_copy_ignored_error_includes_path_file` test uses a top-level file,
+/// so it doesn't reach `create_dir_all`.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_error_nested_file_parent_creation(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a nested file that's individually gitignored (not as a directory)
+    let cache_dir = repo.root_path().join("cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(cache_dir.join("data.json"), "content").unwrap();
+
+    // Gitignore the specific file (not the directory) so git ls-files returns it as a file
+    fs::write(repo.root_path().join(".gitignore"), "cache/data.json\n").unwrap();
+    fs::write(
+        repo.root_path().join(".worktreeinclude"),
+        "cache/data.json\n",
+    )
+    .unwrap();
+
+    // Make feature worktree root read-only so create_dir_all("cache/") fails
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Restore permissions for cleanup
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("creating directory for") && stderr.contains("cache"),
+        "Error should mention parent directory creation, got: {stderr}"
+    );
+}
+
 /// Test that broken symlinks at the destination don't prevent copying regular files (GitHub #1547)
 ///
 /// When copy-ignored runs and the destination already has a broken symlink where a
