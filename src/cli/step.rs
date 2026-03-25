@@ -6,7 +6,7 @@ use clap::Subcommand;
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -68,7 +68,7 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     ///
     /// Stages changes and generates message with LLM.
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -228,10 +228,7 @@ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default
     /// Copy gitignored files to another worktree
     ///
     /// Eliminates cold starts by copying build caches and dependencies.
-    #[command(
-        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
-
-## Setup
+    #[command(after_long_help = r#"## Setup
 
 Add to the project config:
 
@@ -317,8 +314,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 - worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
-"#
-    )]
+"#)]
     CopyIgnored {
         /// Source worktree branch
         ///
@@ -345,9 +341,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     ///
     /// Prints the result to stdout for use in scripts and shell substitutions.
     #[command(
-        after_long_help = r#"Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
-
-Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+        after_long_help = r#"All [hook template variables and filters](@/hook.md#template-variables) are available.
 
 ## Examples
 
@@ -404,9 +398,7 @@ Note: This command is experimental and may change in future versions.
     ///
     /// Executes sequentially with real-time output; continues on failure.
     #[command(
-        after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
-
-Context JSON is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
 ## Template variables
 
@@ -553,10 +545,7 @@ wt step prune
     /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.
-    #[command(
-        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
-
-## Examples
+    #[command(after_long_help = r#"## Examples
 
 Preview what would be moved:
 
@@ -607,8 +596,7 @@ expected path. Untracked and gitignored files remain at the original location.
 - **Detached HEAD** — no branch to compute expected path
 
 Note: This command is experimental and may change in future versions.
-"#
-    )]
+"#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
         #[arg(add = crate::completion::worktree_only_completer())]

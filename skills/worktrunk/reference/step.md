@@ -76,7 +76,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
 Stage and commit with LLM-generated message.
 
-Stages all changes (including untracked files) and commits with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
+See [LLM-generated commit messages](https://worktrunk.dev/llm-commits/) for configuration and prompt customization.
 
 ### Options
 
@@ -158,7 +158,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 Squash commits since branching. Stages changes and generates message with LLM.
 
-Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](https://worktrunk.dev/llm-commits/).
+See [LLM-generated commit messages](https://worktrunk.dev/llm-commits/) for configuration and prompt customization.
 
 ### Options
 
@@ -309,8 +309,6 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
 
 Copy gitignored files to another worktree. Eliminates cold starts by copying build caches and dependencies.
 
-Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
-
 ### Setup
 
 Add to the project config:
@@ -440,9 +438,7 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
-Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](https://worktrunk.dev/hook/#template-variables) are available.
-
-Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+All [hook template variables and filters](https://worktrunk.dev/hook/#template-variables) are available.
 
 ### Examples
 
@@ -518,9 +514,7 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
 
 Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
-Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
-
-Context JSON is piped to stdin for scripts that need structured data.
+A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
 ### Template variables
 
@@ -723,8 +717,6 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 ## wt step relocate [experimental]
 
 Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
-
-Moves worktrees to match the configured `worktree-path` template.
 
 ### Examples
 

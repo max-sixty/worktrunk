@@ -140,6 +140,16 @@ Documentation has three categories:
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
 
+### Help text authoring
+
+Help text renders in three contexts — check all three when editing:
+
+1. **Terminal** (`wt step X --help`): `about` and `subtitle` appear at the top, `after_long_help` appears below the Options block — separated by distance.
+2. **Web docs** (`docs/content/`): `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` — they appear as consecutive paragraphs.
+3. **Skill reference** (`skills/worktrunk/reference/`): mirrors web docs.
+
+Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition.
+
 After any doc changes, run tests to sync:
 
 ```bash
