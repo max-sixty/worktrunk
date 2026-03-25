@@ -627,10 +627,9 @@ fn format_subcommand_section(
     section.push_str("\n```\n");
 
     // Expand nested subdocs after the command reference.
-    // post_process_for_html is already applied inside format_subcommand_section,
-    // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
-        let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &full_command);
+        let subdocs = post_process_for_html(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command);
         section.push('\n');
         section.push_str(subdocs_expanded.trim());
         section.push('\n');
