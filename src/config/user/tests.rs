@@ -1611,7 +1611,11 @@ exclude = [".repo-local/", ".entire/"]
         expected_merged.clone()
     );
     assert_eq!(
-        config.resolved(Some(project_id)).copy_ignored.exclude,
+        config
+            .resolved(Some(project_id))
+            .step
+            .copy_ignored()
+            .exclude,
         expected_merged
     );
 }

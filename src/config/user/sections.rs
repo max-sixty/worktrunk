@@ -458,6 +458,13 @@ pub struct StepConfig {
     pub copy_ignored: Option<CopyIgnoredConfig>,
 }
 
+impl StepConfig {
+    /// Returns the resolved copy-ignored config, defaulting to empty if unset.
+    pub fn copy_ignored(&self) -> CopyIgnoredConfig {
+        self.copy_ignored.clone().unwrap_or_default()
+    }
+}
+
 impl Merge for StepConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {

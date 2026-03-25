@@ -206,7 +206,7 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
 ```
 
-Built-in excludes like `.conductor/`, `.entire/`, `.jj/`, `.pi/`, and `.worktrees/` always apply. User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
 
 ### Aliases
 

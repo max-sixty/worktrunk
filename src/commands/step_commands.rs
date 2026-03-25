@@ -552,7 +552,7 @@ const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".piju
 /// Tool-specific directories that are always excluded from `wt step copy-ignored`.
 const DEFAULT_COPY_IGNORED_EXCLUDE_DIRS: &[&str] = &[".conductor", ".entire", ".pi", ".worktrees"];
 
-fn default_copy_ignored_config() -> CopyIgnoredConfig {
+fn default_copy_ignored_excludes() -> Vec<String> {
     let mut exclude: Vec<String> = VCS_METADATA_DIRS
         .iter()
         .chain(DEFAULT_COPY_IGNORED_EXCLUDE_DIRS.iter())
@@ -560,17 +560,35 @@ fn default_copy_ignored_config() -> CopyIgnoredConfig {
         .collect();
     exclude.sort();
     exclude.dedup();
-    CopyIgnoredConfig { exclude }
+    exclude
+}
+
+/// Resolve the full copy-ignored config by merging built-in defaults, project
+/// config (`.config/wt.toml`), and user config (global + per-project overrides).
+fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredConfig> {
+    let mut config = CopyIgnoredConfig {
+        exclude: default_copy_ignored_excludes(),
+    };
+    if let Some(project_config) = repo.load_project_config()?
+        && let Some(project_copy_ignored) = project_config.copy_ignored()
+    {
+        config = config.merged_with(project_copy_ignored);
+    }
+    let user_config = UserConfig::load().context("Failed to load config")?;
+    let project_id = repo.project_identifier().ok();
+    config = config.merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    Ok(config)
 }
 
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// VCS metadata directories and entries that contain nested worktrees.
+/// configured patterns, VCS metadata directories, and entries that contain nested worktrees.
 ///
-/// Combines four steps:
+/// Combines five steps:
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. VCS metadata filtering — exclude directories like `.jj`, `.hg`
-/// 4. Nested worktree filtering — exclude entries containing other worktrees
+/// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
+/// 4. VCS metadata filtering — exclude directories like `.jj`, `.hg`
+/// 5. Nested worktree filtering — exclude entries containing other worktrees
 fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
@@ -600,8 +618,9 @@ fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    let filtered = if exclude_patterns.is_empty() {
-        filtered
+    // Build exclude matcher for configured patterns (if any)
+    let exclude_matcher = if exclude_patterns.is_empty() {
+        None
     } else {
         let mut builder = GitignoreBuilder::new(worktree_path);
         for pattern in exclude_patterns {
@@ -613,38 +632,38 @@ fn list_and_filter_ignored_entries(
                 )
             })?;
         }
-        let exclude_matcher = builder
-            .build()
-            .context("Failed to build copy-ignored exclude matcher")?;
-        filtered
-            .into_iter()
-            .filter(|(path, is_dir)| {
-                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
-                !exclude_matcher.matched(relative, *is_dir).is_ignore()
-            })
-            .collect()
+        Some(
+            builder
+                .build()
+                .context("Failed to build copy-ignored exclude matcher")?,
+        )
     };
 
-    // Filter out VCS metadata directories and entries that contain other worktrees
+    // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
-        .filter(|(entry_path, is_dir)| {
+        .filter(|(path, is_dir)| {
+            // Skip entries matching configured exclude patterns
+            if let Some(ref matcher) = exclude_matcher {
+                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
+                if matcher.matched(relative, *is_dir).is_ignore() {
+                    return false;
+                }
+            }
             // Skip VCS metadata directories (.jj, .hg, etc.) — these contain
             // internal state tied to a specific working directory
             if *is_dir
-                && entry_path
+                && path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|name| VCS_METADATA_DIRS.contains(&name))
             {
                 return false;
             }
-            true
-        })
-        .filter(|(entry_path, _)| {
+            // Skip entries that contain other worktrees
             !worktree_paths
                 .iter()
-                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(entry_path))
+                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
         })
         .collect())
 }
@@ -663,15 +682,7 @@ pub fn step_copy_ignored(
     force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load().context("Failed to load config")?;
-    let project_id = repo.project_identifier().ok();
-    let project_copy_ignored = repo
-        .load_project_config()?
-        .and_then(|config| config.copy_ignored().cloned())
-        .unwrap_or_default();
-    let copy_ignored_config = default_copy_ignored_config()
-        .merged_with(&project_copy_ignored)
-        .merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
