@@ -12,13 +12,13 @@ use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{ProjectConfig, UserConfig, expand_template};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
 };
 
-use crate::commands::command_approval::approve_alias;
+use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::for_each::{CommandError, run_command_streaming};
 
@@ -111,14 +111,14 @@ fn alias_needs_approval(
     project_config: &Option<ProjectConfig>,
     user_config: &UserConfig,
     project_id: Option<&str>,
-) -> Option<String> {
+) -> Option<CommandConfig> {
     // Check if alias exists in project config
-    let project_template = project_config
+    let project_commands = project_config
         .as_ref()
         .and_then(|pc| pc.aliases.as_ref())
         .and_then(|a| a.get(alias_name));
 
-    let project_template = project_template?;
+    let project_commands = project_commands?;
 
     // Check if user config overrides this alias (user overrides are trusted)
     let user_aliases = user_config.aliases(project_id);
@@ -126,7 +126,7 @@ fn alias_needs_approval(
         return None;
     }
 
-    Some(project_template.clone())
+    Some(project_commands.clone())
 }
 
 /// Find the closest match for `input` among `candidates` using Jaro similarity.
@@ -146,16 +146,17 @@ fn find_closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str
 /// Run a configured alias by name.
 ///
 /// Looks up the alias in merged config (project config + user config),
-/// expands the template, and executes it. Project-config aliases require
-/// command approval before execution.
+/// expands each command template, and executes them in order. Project-config
+/// aliases require command approval before execution.
 pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
     let project_id = repo.project_identifier().ok();
     let project_config = ProjectConfig::load(&repo, true)?;
 
-    // Merge aliases: project config first, then user config overrides
-    let mut aliases: BTreeMap<String, String> = project_config
+    // Merge aliases: start with project config, user config replaces on collision
+    // (user aliases are trusted; project aliases need approval)
+    let mut aliases: BTreeMap<String, CommandConfig> = project_config
         .as_ref()
         .and_then(|pc| pc.aliases.clone())
         .unwrap_or_default();
@@ -183,7 +184,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         );
     }
 
-    let Some(template) = aliases.get(&opts.name) else {
+    let Some(cmd_config) = aliases.get(&opts.name) else {
         // Check for typos against both built-in commands and aliases
         let mut all_candidates: Vec<&str> = BUILTIN_STEP_COMMANDS.to_vec();
         // Only include non-shadowed aliases as candidates
@@ -226,7 +227,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // project_id is required for approval — re-derive with error propagation
     // rather than using the .ok() from above.
     if !opts.dry_run
-        && let Some(project_template) = alias_needs_approval(
+        && let Some(project_commands) = alias_needs_approval(
             &opts.name,
             &project_config,
             &user_config,
@@ -236,7 +237,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         let project_id = repo
             .project_identifier()
             .context("Cannot determine project identifier for alias approval")?;
-        let approved = approve_alias(&project_template, &opts.name, &project_id, opts.yes)?;
+        let approved =
+            approve_alias_commands(&project_commands, &opts.name, &project_id, opts.yes)?;
         if !approved {
             return Ok(());
         }
@@ -261,15 +263,27 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let command = expand_template(template, &vars, true, &repo, &opts.name)?;
+    // Build JSON context for stdin
+    let context_json = serde_json::to_string(&context_map)
+        .expect("HashMap<String, String> serialization should never fail");
+
+    let commands = cmd_config.commands();
 
     if opts.dry_run {
+        let expanded: Vec<_> = commands
+            .iter()
+            .map(|cmd| expand_template(&cmd.template, &vars, true, &repo, &opts.name))
+            .collect::<Result<_, _>>()?;
         eprintln!(
             "{}",
             info_message(cformat!(
                 "Alias <bold>{}</> would run:\n{}",
                 opts.name,
-                format_bash_with_gutter(&command)
+                expanded
+                    .iter()
+                    .map(|c| format_bash_with_gutter(c))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             ))
         );
         return Ok(());
@@ -280,20 +294,23 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         progress_message(cformat!("Running alias <bold>{}</>", opts.name))
     );
 
-    // Build JSON context for stdin
-    let context_json = serde_json::to_string(&context_map)
-        .expect("HashMap<String, String> serialization should never fail");
-
-    match run_command_streaming(&command, &wt_path, Some(&context_json)) {
-        Ok(()) => Ok(()),
-        Err(CommandError::SpawnFailed(err)) => {
-            bail!("Failed to run alias '{}': {}", opts.name, err);
+    for cmd in commands {
+        let command = expand_template(&cmd.template, &vars, true, &repo, &opts.name)?;
+        match run_command_streaming(&command, &wt_path, Some(&context_json)) {
+            Ok(()) => {}
+            Err(CommandError::SpawnFailed(err)) => {
+                bail!("Failed to run alias '{}': {}", opts.name, err);
+            }
+            Err(CommandError::ExitCode(exit_code)) => {
+                return Err(WorktrunkError::AlreadyDisplayed {
+                    exit_code: exit_code.unwrap_or(1),
+                }
+                .into());
+            }
         }
-        Err(CommandError::ExitCode(exit_code)) => Err(WorktrunkError::AlreadyDisplayed {
-            exit_code: exit_code.unwrap_or(1),
-        }
-        .into()),
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

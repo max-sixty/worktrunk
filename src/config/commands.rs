@@ -57,6 +57,13 @@ pub struct CommandConfig {
 }
 
 impl CommandConfig {
+    /// Create a config with a single unnamed command.
+    pub fn single(template: impl Into<String>) -> Self {
+        Self {
+            commands: vec![Command::new(None, template.into())],
+        }
+    }
+
     /// Returns the commands as a slice
     pub fn commands(&self) -> &[Command] {
         &self.commands

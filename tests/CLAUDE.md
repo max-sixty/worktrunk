@@ -49,11 +49,11 @@ let output = wt_command()
 
 ### Method reference
 
-| Method | Use when |
-|--------|----------|
-| `repo.wt_command()` | Running wt commands with a TestRepo |
-| `wt_command()` | Running wt without a TestRepo (free function) |
-| `repo.git_command()` | Running git commands |
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `repo.wt_command()` | `Command` | Running wt commands with a TestRepo |
+| `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
+| `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
 ## Timing Tests: Long Timeouts with Fast Polling
 
@@ -380,7 +380,7 @@ Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is
 ```rust
 use crate::common::TEST_EPOCH;
 
-repo.git_command(&[
+repo.run_git(&[
     "config", "worktrunk.state.feature.ci-status",
     &format!(r#"{{"checked_at":{TEST_EPOCH},"head":"abc123"}}"#),
 ]);

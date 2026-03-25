@@ -241,7 +241,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides <span class="badge-experimental"></span>
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision. `step.copy-ignored.exclude` appends too, preserving global exclusions.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks and aliases append — both global and per-project versions run (global first). `step.copy-ignored.exclude` appends too, preserving global exclusions.
 
 ```toml
 [projects."github.com/user/repo"]

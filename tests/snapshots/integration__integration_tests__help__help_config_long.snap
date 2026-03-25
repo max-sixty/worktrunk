@@ -251,7 +251,7 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
 [1mSetting overrides [experimental][0m
 
-Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision. [2mstep.copy-ignored.exclude[0m appends too, preserving global exclusions.
+Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks and aliases append — both global and per-project versions run (global first). [2mstep.copy-ignored.exclude[0m appends too, preserving global exclusions.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m

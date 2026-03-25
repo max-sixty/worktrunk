@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
+use super::commands::CommandConfig;
 
 /// Project-level configuration for `wt list` output.
 ///
@@ -124,8 +125,8 @@ pub struct ProjectConfig {
 
     /// \[experimental\] Command aliases for `wt step <name>`.
     ///
-    /// Each alias maps a name to a command template. All hook template variables
-    /// are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    /// Each alias maps a name to one or more command templates. All hook
+    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
     ///
     /// ```toml
     /// [aliases]
@@ -133,7 +134,7 @@ pub struct ProjectConfig {
     /// lint = "npm run lint"
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, String>>,
+    pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }
 
 impl ProjectConfig {
