@@ -796,11 +796,12 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     let subcommands = value_suggestions(&stdout);
     // Hook types and commands
     assert!(subcommands.contains(&"show"), "Missing show");
-    assert!(subcommands.contains(&"post-create"), "Missing post-create");
+    assert!(subcommands.contains(&"pre-start"), "Missing pre-start");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
     assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
     assert!(subcommands.contains(&"pre-switch"), "Missing pre-switch");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
+    assert!(subcommands.contains(&"post-commit"), "Missing post-commit");
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
     assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
@@ -808,8 +809,8 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"approvals"), "Missing approvals");
     assert_eq!(
         subcommands.len(),
-        11,
-        "Should have exactly 11 hook subcommands"
+        12,
+        "Should have exactly 12 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
@@ -817,9 +818,9 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
-    assert!(subcommands.contains(&"post-create"));
     assert!(subcommands.contains(&"post-start"));
     assert!(subcommands.contains(&"post-switch"));
+    assert!(subcommands.contains(&"post-commit"));
     assert!(subcommands.contains(&"post-merge"));
     assert!(subcommands.contains(&"post-remove"));
     assert!(!subcommands.contains(&"pre-commit"));

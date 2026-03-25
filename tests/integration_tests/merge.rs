@@ -2,7 +2,7 @@ use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings,
+    repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -668,12 +668,10 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 
-    // Verify the command ran in the main worktree (not the feature worktree)
+    // Verify the command ran in the main worktree (not the feature worktree).
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should have created marker file in main worktree"
-    );
+    wait_for_file(&marker_file);
     let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
         content.contains("merged feature to main"),
@@ -851,12 +849,10 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 
-    // Verify the post-merge command ran in the main worktree
+    // Verify the post-merge command ran in the main worktree.
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should run even when nothing to merge"
-    );
+    wait_for_file(&marker_file);
 }
 
 #[rstest]
@@ -877,12 +873,10 @@ fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     // Run merge from main branch (repo root) - nothing to merge
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["--yes"], None));
 
-    // Verify the post-merge command ran
+    // Verify the post-merge command ran.
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should run even when on main branch"
-    );
+    wait_for_file(&marker_file);
 }
 
 #[rstest]

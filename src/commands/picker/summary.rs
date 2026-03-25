@@ -58,64 +58,67 @@ mod tests {
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
     use std::fs;
+    use worktrunk::shell_exec::Cmd;
 
-    fn git_command(dir: &std::path::Path) -> std::process::Command {
-        let mut cmd = std::process::Command::new("git");
-        cmd.current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@test.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@test.com");
-        cmd
+    fn git_init(dir: &std::path::Path, args: &[&str]) {
+        Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(dir)
+            .run()
+            .unwrap();
     }
 
-    fn git(dir: &std::path::Path, args: &[&str]) {
-        let output = git_command(dir).args(args).output().unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    fn git_output(dir: &std::path::Path, args: &[&str]) -> String {
-        let output = git_command(dir).args(args).output().unwrap();
-        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    fn configure_test_identity(repo: &Repository) {
+        repo.run_command(&["config", "user.name", "Test"]).unwrap();
+        repo.run_command(&["config", "user.email", "test@test.com"])
+            .unwrap();
     }
 
     /// Create a minimal temp git repo (for cache-only tests that don't need branches).
     fn temp_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().unwrap();
-        git(dir.path(), &["init", "--initial-branch=main"]);
-        git(dir.path(), &["commit", "--allow-empty", "-m", "init"]);
+        git_init(dir.path(), &["init", "--initial-branch=main"]);
         let repo = Repository::at(dir.path()).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
+            .unwrap();
         (dir, repo)
     }
 
     /// Create a temp repo with main branch, default-branch config, and a real commit.
     fn temp_repo_configured() -> (tempfile::TempDir, Repository, String) {
         let dir = tempfile::tempdir().unwrap();
-        git(dir.path(), &["init", "--initial-branch=main"]);
-        git(dir.path(), &["config", "worktrunk.default-branch", "main"]);
-        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
-        git(dir.path(), &["add", "README.md"]);
-        git(dir.path(), &["commit", "-m", "initial commit"]);
-        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        git_init(dir.path(), &["init", "--initial-branch=main"]);
         let repo = Repository::at(dir.path()).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["config", "worktrunk.default-branch", "main"])
+            .unwrap();
+        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
+        repo.run_command(&["add", "README.md"]).unwrap();
+        repo.run_command(&["commit", "-m", "initial commit"])
+            .unwrap();
+        let head = repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
         (dir, repo, head)
     }
 
     /// Create a temp repo with main + feature branch that has real changes.
     fn temp_repo_with_feature() -> (tempfile::TempDir, Repository, String) {
-        let (dir, _, _) = temp_repo_configured();
+        let (dir, repo, _) = temp_repo_configured();
 
-        git(dir.path(), &["checkout", "-b", "feature"]);
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
         fs::write(dir.path().join("new.txt"), "new content\n").unwrap();
-        git(dir.path(), &["add", "new.txt"]);
-        git(dir.path(), &["commit", "-m", "add new file"]);
+        repo.run_command(&["add", "new.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "add new file"]).unwrap();
 
-        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        let head = repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
         let repo = Repository::at(dir.path()).unwrap();
         (dir, repo, head)
     }
@@ -360,7 +363,7 @@ mod tests {
         let (dir, repo, head) = temp_repo_with_feature();
         // Add uncommitted changes
         fs::write(dir.path().join("uncommitted.txt"), "wip\n").unwrap();
-        git(dir.path(), &["add", "uncommitted.txt"]);
+        repo.run_command(&["add", "uncommitted.txt"]).unwrap();
 
         let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
         assert!(result.is_some());
@@ -389,21 +392,30 @@ mod tests {
         // "master", "develop", "trunk"). This ensures default_branch() returns
         // None, exercising the code path where branch diff is skipped.
         let dir = tempfile::tempdir().unwrap();
-        git(dir.path(), &["init", "--initial-branch=init-branch"]);
+        git_init(dir.path(), &["init", "--initial-branch=init-branch"]);
+        let setup_repo = Repository::at(dir.path()).unwrap();
+        configure_test_identity(&setup_repo);
         fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
-        git(dir.path(), &["add", "README.md"]);
-        git(dir.path(), &["commit", "-m", "initial commit"]);
-        git(dir.path(), &["checkout", "-b", "feature"]);
-        git(
-            dir.path(),
-            &["commit", "--allow-empty", "-m", "feature commit"],
-        );
+        setup_repo.run_command(&["add", "README.md"]).unwrap();
+        setup_repo
+            .run_command(&["commit", "-m", "initial commit"])
+            .unwrap();
+        setup_repo
+            .run_command(&["checkout", "-b", "feature"])
+            .unwrap();
+        setup_repo
+            .run_command(&["commit", "--allow-empty", "-m", "feature commit"])
+            .unwrap();
 
         // Add uncommitted changes
         fs::write(dir.path().join("wip.txt"), "work in progress\n").unwrap();
-        git(dir.path(), &["add", "wip.txt"]);
+        setup_repo.run_command(&["add", "wip.txt"]).unwrap();
 
-        let head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+        let head = setup_repo
+            .run_command(&["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
         let repo = Repository::at(dir.path()).unwrap();
 
         // Verify default_branch() actually returns None with these branch names

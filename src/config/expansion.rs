@@ -492,6 +492,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use crate::shell_exec::Cmd;
 
     /// Test fixture that creates a real temporary git repository.
     struct TestRepo {
@@ -502,10 +503,10 @@ mod tests {
     impl TestRepo {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            std::process::Command::new("git")
+            Cmd::new("git")
                 .args(["init"])
                 .current_dir(dir.path())
-                .output()
+                .run()
                 .unwrap();
             let repo = Repository::at(dir.path()).unwrap();
             Self { _dir: dir, repo }

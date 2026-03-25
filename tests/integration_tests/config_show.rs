@@ -1786,7 +1786,7 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
     // User fixes the config (removes deprecation)
     fs::write(
         &project_config_path,
-        r#"post-create = "ln -sf {{ repo }}/node_modules"
+        r#"pre-start = "ln -sf {{ repo }}/node_modules"
 "#,
     )
     .unwrap();

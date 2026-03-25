@@ -218,6 +218,12 @@ mod tests {
             .unwrap();
     }
 
+    fn configure_test_identity(repo: &Repository) {
+        repo.run_command(&["config", "user.name", "Test"]).unwrap();
+        repo.run_command(&["config", "user.email", "test@test.com"])
+            .unwrap();
+    }
+
     #[test]
     fn test_try_repo_at_rejects_git_file() {
         let tmp = tempfile::tempdir().unwrap();
@@ -281,28 +287,18 @@ mod tests {
         let repo_dir = base.join("repo");
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
+        let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
         // Create an initial commit so worktree add works
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(&repo_dir)
-            .run()
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
         // Add a linked worktree
         let wt_path = base.join("feature-wt");
-        Cmd::new("git")
-            .args([
-                "worktree",
-                "add",
-                &wt_path.to_string_lossy(),
-                "-b",
-                "feature",
-            ])
-            .current_dir(&repo_dir)
-            .run()
+        let wt_str = wt_path.to_string_lossy();
+        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
-        let repo = Repository::at(&repo_dir).unwrap();
         assert!(was_worktree_of(&repo, &wt_path));
     }
 
@@ -310,13 +306,11 @@ mod tests {
     fn test_was_worktree_of_rejects_unknown_path() {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(tmp.path())
-            .run()
+        let repo = Repository::at(tmp.path()).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
-        let repo = Repository::at(tmp.path()).unwrap();
         let unknown = PathBuf::from("/nonexistent/unknown");
         assert!(!was_worktree_of(&repo, &unknown));
     }
@@ -338,24 +332,15 @@ mod tests {
         let repo_dir = base.join("repo");
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(&repo_dir)
-            .run()
+        let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
         // Add a linked worktree
         let wt_path = base.join("feature-wt");
-        Cmd::new("git")
-            .args([
-                "worktree",
-                "add",
-                &wt_path.to_string_lossy(),
-                "-b",
-                "feature",
-            ])
-            .current_dir(&repo_dir)
-            .run()
+        let wt_str = wt_path.to_string_lossy();
+        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree directory (simulating external removal)
@@ -372,10 +357,9 @@ mod tests {
         let repo_dir = base.join("repo");
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(&repo_dir)
-            .run()
+        let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
         // Try to recover from a path that was never a worktree
@@ -395,26 +379,24 @@ mod tests {
         std::fs::create_dir(&repo_b).unwrap();
         git_init(&repo_a);
         git_init(&repo_b);
-        for repo in [&repo_a, &repo_b] {
-            Cmd::new("git")
-                .args(["commit", "--allow-empty", "-m", "init"])
-                .current_dir(repo)
-                .run()
+        let repo_a_handle = Repository::at(&repo_a).unwrap();
+        let repo_b_handle = Repository::at(&repo_b).unwrap();
+        for repo in [&repo_a_handle, &repo_b_handle] {
+            configure_test_identity(repo);
+            repo.run_command(&["commit", "--allow-empty", "-m", "init"])
                 .unwrap();
         }
 
         // Add worktrees for both repos as siblings
         let wt_a = base.join("alpha.feature");
         let wt_b = base.join("beta.feature");
-        Cmd::new("git")
-            .args(["worktree", "add", &wt_a.to_string_lossy(), "-b", "feature"])
-            .current_dir(&repo_a)
-            .run()
+        let wt_a_str = wt_a.to_string_lossy();
+        let wt_b_str = wt_b.to_string_lossy();
+        repo_a_handle
+            .run_command(&["worktree", "add", &wt_a_str, "-b", "feature"])
             .unwrap();
-        Cmd::new("git")
-            .args(["worktree", "add", &wt_b.to_string_lossy(), "-b", "feature"])
-            .current_dir(&repo_b)
-            .run()
+        repo_b_handle
+            .run_command(&["worktree", "add", &wt_b_str, "-b", "feature"])
             .unwrap();
 
         // Delete beta's worktree (simulating wt merge from another terminal)
@@ -436,25 +418,16 @@ mod tests {
         let repo_dir = base.join("myrepo");
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(&repo_dir)
-            .run()
+        let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
         // Add a worktree nested under the repo
         let wt_path = repo_dir.join(".worktrees").join("feature");
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
-        Cmd::new("git")
-            .args([
-                "worktree",
-                "add",
-                &wt_path.to_string_lossy(),
-                "-b",
-                "feature",
-            ])
-            .current_dir(&repo_dir)
-            .run()
+        let wt_str = wt_path.to_string_lossy();
+        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree
@@ -471,23 +444,14 @@ mod tests {
         let repo_dir = base.join("repo");
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(&repo_dir)
-            .run()
+        let repo = Repository::at(&repo_dir).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
         let wt_path = base.join("feature-wt");
-        Cmd::new("git")
-            .args([
-                "worktree",
-                "add",
-                &wt_path.to_string_lossy(),
-                "-b",
-                "feature",
-            ])
-            .current_dir(&repo_dir)
-            .run()
+        let wt_str = wt_path.to_string_lossy();
+        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree
@@ -504,12 +468,10 @@ mod tests {
         // A normal repo with a main worktree should suggest `wt switch ^`.
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
-        Cmd::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(tmp.path())
-            .run()
-            .unwrap();
         let repo = Repository::at(tmp.path()).unwrap();
+        configure_test_identity(&repo);
+        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
+            .unwrap();
         let hint = hint_for_repo(&repo);
         insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
     }

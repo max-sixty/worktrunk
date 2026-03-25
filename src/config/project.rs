@@ -145,15 +145,34 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
-        let repo_root = repo
-            .current_worktree()
-            .root()
-            .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
-        let config_path = repo_root.join(".config").join("wt.toml");
-
-        if !config_path.exists() {
-            return Ok(None);
-        }
+        // For bare repos, go straight to the primary worktree for config.
+        // `root()` falls back to the bare repo directory when `--show-toplevel`
+        // fails, which would incorrectly pick up a `.config/wt.toml` placed in
+        // the bare repo root — that's an accidental side effect, not a real
+        // worktree root (#1691).
+        let config_path = if repo.is_bare().unwrap_or(false) {
+            let primary = repo
+                .primary_worktree()
+                .ok()
+                .flatten()
+                .map(|p| p.join(".config").join("wt.toml"))
+                .filter(|p| p.exists());
+            match primary {
+                Some(path) => path,
+                None => return Ok(None),
+            }
+        } else {
+            let repo_root = repo
+                .current_worktree()
+                .root()
+                .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
+            let config_path = repo_root.join(".config").join("wt.toml");
+            if config_path.exists() {
+                config_path
+            } else {
+                return Ok(None);
+            }
+        };
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
         let contents = std::fs::read_to_string(&config_path)

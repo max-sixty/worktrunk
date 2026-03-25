@@ -24,7 +24,7 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.130"
+        version: "=0.9.132"
 
     - name: "\U0001F4B0 Cache"
       uses: Swatinem/rust-cache@v2
@@ -45,3 +45,10 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y zsh fish
+
+    - name: Set build environment
+      shell: bash
+      run: |
+        echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+        echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
+        echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"

@@ -4,7 +4,8 @@ use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, 
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::process::Command;
+use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 /// Helper to get the current branch in a directory
 fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
@@ -270,10 +271,9 @@ fn test_promote_bare_repo_no_worktrees() {
     let bare_repo = temp_dir.path().join("bare.git");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args(["init", "--bare", bare_repo.to_str().unwrap()])
+        .run()
         .unwrap();
 
     // Try to run promote in the bare repo - fails with "No worktrees found"
@@ -300,57 +300,42 @@ fn test_promote_bare_repo_with_worktrees() {
     let temp_clone = temp_dir.path().join("temp");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args([
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare_repo.to_str().unwrap(),
+        ])
+        .run()
         .unwrap();
 
     // Create a commit via a temporary clone
-    Command::new("git")
+    Cmd::new("git")
         .args([
             "clone",
             bare_repo.to_str().unwrap(),
             temp_clone.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
 
-    Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(&temp_clone)
-        .output()
+    let clone_repo = Repository::at(&temp_clone).unwrap();
+    clone_repo
+        .run_command(&["config", "user.email", "test@test.com"])
         .unwrap();
-
-    Command::new("git")
-        .args(["config", "user.name", "Test"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["config", "user.name", "Test"])
         .unwrap();
-
-    Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["commit", "--allow-empty", "-m", "init"])
         .unwrap();
-
-    Command::new("git")
-        .args(["push", "origin", "main"])
-        .current_dir(&temp_clone)
-        .output()
-        .unwrap();
+    clone_repo.run_command(&["push", "origin", "main"]).unwrap();
 
     // Add a worktree to the bare repo
-    Command::new("git")
-        .args([
-            "--git-dir",
-            bare_repo.to_str().unwrap(),
-            "worktree",
-            "add",
-            worktree_path.to_str().unwrap(),
-            "main",
-        ])
-        .output()
+    let bare_repo_handle = Repository::at(&bare_repo).unwrap();
+    bare_repo_handle
+        .run_command(&["worktree", "add", worktree_path.to_str().unwrap(), "main"])
         .unwrap();
 
     // Try to run promote in the bare repo - should fail with bare repo error

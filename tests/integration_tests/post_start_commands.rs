@@ -108,7 +108,7 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Should show warning but continue (worktree should still be created)
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast
     snapshot_switch(
         "post_create_failing_command",
         &repo,
@@ -570,7 +570,7 @@ approved-commands = ["cat > context.json"]
     );
     assert_eq!(
         json["hook_type"].as_str(),
-        Some("post-create"),
+        Some("pre-start"),
         "JSON should contain hook_type"
     );
 }
@@ -657,7 +657,7 @@ approved-commands = ["./scripts/setup.py"]
         contents
     );
     assert!(
-        contents.contains("hook_type=post-create"),
+        contents.contains("hook_type=pre-start"),
         "Output should contain hook_type: {}",
         contents
     );
