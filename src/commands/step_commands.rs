@@ -559,18 +559,25 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
 /// other VCS tools colocated with git need explicit exclusion.
 const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
 
-/// Tool-specific directories that are always excluded from `wt step copy-ignored`.
-const DEFAULT_COPY_IGNORED_EXCLUDE_DIRS: &[&str] = &[".conductor", ".entire", ".pi", ".worktrees"];
+/// Built-in excludes for `wt step copy-ignored`: VCS metadata + tool-state directories.
+const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
+    ".bzr/",
+    ".conductor/",
+    ".entire/",
+    ".hg/",
+    ".jj/",
+    ".pi/",
+    ".pijul/",
+    ".sl/",
+    ".svn/",
+    ".worktrees/",
+];
 
 fn default_copy_ignored_excludes() -> Vec<String> {
-    let mut exclude: Vec<String> = VCS_METADATA_DIRS
+    BUILTIN_COPY_IGNORED_EXCLUDES
         .iter()
-        .chain(DEFAULT_COPY_IGNORED_EXCLUDE_DIRS.iter())
-        .map(|dir| format!("{dir}/"))
-        .collect();
-    exclude.sort();
-    exclude.dedup();
-    exclude
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 /// Resolve the full copy-ignored config by merging built-in defaults, project

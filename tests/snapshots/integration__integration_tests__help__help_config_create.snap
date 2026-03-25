@@ -182,7 +182,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.[0m
+[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
@@ -206,7 +206,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Setting overrides [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks and aliases append — both global and per-project versions run (global first). `step.copy-ignored.exclude` appends too, preserving global exclusions.[0m
+[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m

@@ -363,8 +363,6 @@ After `.worktreeinclude` selects entries, you can add more gitignore-style exclu
 exclude = [".cache/", ".turbo/"]
 ```
 
-Built-in excludes always apply. User config and project config exclusions are combined, and per-project user exclusions append to global user exclusions.
-
 ### Common patterns
 
 | Type | Patterns |

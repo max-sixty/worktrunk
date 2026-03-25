@@ -206,7 +206,7 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
 ```
 
-Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined. In user config, per-project exclusions append to global exclusions.
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
 
 ### Aliases
 
@@ -232,7 +232,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides [experimental]
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks and aliases append — both global and per-project versions run (global first). `step.copy-ignored.exclude` appends too, preserving global exclusions.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
