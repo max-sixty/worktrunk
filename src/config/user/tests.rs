@@ -2393,6 +2393,45 @@ fn test_hooks_merge_post_create_both_sides() {
     assert_eq!(commands[1].template, "cargo build");
 }
 
+#[test]
+fn test_aliases_accessor_appends_on_collision() {
+    let toml_str = r#"
+[aliases]
+shared = "global-cmd"
+global-only = "only-global"
+
+[projects."test-project".aliases]
+shared = "project-cmd"
+project-only = "only-project"
+"#;
+    let config: UserConfig = toml::from_str(toml_str).unwrap();
+
+    let aliases = config.aliases(Some("test-project"));
+
+    // Non-colliding aliases are present
+    assert_eq!(aliases["global-only"].commands().len(), 1);
+    assert_eq!(aliases["global-only"].commands()[0].template, "only-global");
+    assert_eq!(
+        aliases["project-only"].commands().len(),
+        1
+    );
+    assert_eq!(
+        aliases["project-only"].commands()[0].template,
+        "only-project"
+    );
+
+    // Colliding alias: both commands run (global first, then per-project)
+    let shared = &aliases["shared"];
+    assert_eq!(shared.commands().len(), 2);
+    assert_eq!(shared.commands()[0].template, "global-cmd");
+    assert_eq!(shared.commands()[1].template, "project-cmd");
+
+    // Without project: only global aliases
+    let global_only = config.aliases(None);
+    assert_eq!(global_only["shared"].commands().len(), 1);
+    assert_eq!(global_only["shared"].commands()[0].template, "global-cmd");
+}
+
 /// Test that reload_projects_from handles permission errors
 /// when the config file exists but cannot be read.
 #[cfg(unix)]
