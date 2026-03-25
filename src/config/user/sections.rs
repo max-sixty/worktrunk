@@ -476,6 +476,10 @@ pub struct OverridableConfig {
     /// Per-project aliases append to global aliases on name collision (global
     /// first, then per-project), matching hook merge semantics.
     ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
+    ///
     /// ```toml
     /// [aliases]
     /// deploy = "cd {{ worktree_path }} && make deploy"

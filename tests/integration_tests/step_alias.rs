@@ -280,9 +280,9 @@ shared = "echo user-version"
         )
     );
 
-    // User overrides project on collision (user config = trusted, no approval needed)
+    // Both run on collision: user first, then project (append semantics)
     assert_cmd_snapshot!(
-        "user_overrides_project",
+        "user_and_project_append",
         make_snapshot_cmd(&repo, "step", &["shared", "--dry-run"], Some(&feature_path),)
     );
 }
@@ -410,11 +410,11 @@ deploy = "echo deploying from user config"
 
 /// User override of project alias skips approval (user is trusted)
 #[rstest]
-fn test_alias_approval_user_override_skips(mut repo: TestRepo) {
+fn test_alias_approval_user_and_project_both_need_approval(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
-deploy = "echo UNTRUSTED project deploy"
+deploy = "echo project deploy"
 "#,
     );
     repo.commit("Add alias config");
@@ -422,18 +422,18 @@ deploy = "echo UNTRUSTED project deploy"
     repo.write_test_config(
         r#"
 [aliases]
-deploy = "echo trusted user deploy"
+deploy = "echo user deploy"
 "#,
     );
 
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // User override runs without approval — the user version is trusted
+    // Both run with --yes: user first, then project (project needs approval)
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["deploy"],
+        &["deploy", "--yes"],
         Some(&feature_path),
     ));
 }

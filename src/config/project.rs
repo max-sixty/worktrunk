@@ -117,6 +117,10 @@ pub struct ProjectConfig {
     /// Each alias maps a name to one or more command templates. All hook
     /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
     ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
+    ///
     /// ```toml
     /// [aliases]
     /// deploy = "cd {{ worktree_path }} && make deploy"
