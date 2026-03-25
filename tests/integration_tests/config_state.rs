@@ -104,10 +104,10 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command().args(["branch", "abc"]).status().unwrap();
-    repo.git_command().args(["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // wt config state default-branch get should fail with an error
@@ -138,7 +138,7 @@ fn test_state_set_default_branch(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "develop");
 }
@@ -163,7 +163,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -257,7 +257,7 @@ fn test_state_get_ci_status(repo: TestRepo) {
 fn test_state_get_ci_status_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Without any CI configured, should return "no-ci"
@@ -296,7 +296,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
         "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
@@ -342,7 +342,7 @@ fn test_state_get_marker_empty(repo: TestRepo) {
 fn test_state_get_marker_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set a marker for feature branch (using JSON format)
@@ -373,7 +373,7 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
 fn test_state_set_marker_branch_specific(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "set", &["🔧", "--branch", "feature"])
@@ -404,7 +404,7 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.main.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -424,7 +424,7 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.feature.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -446,7 +446,7 @@ fn test_state_clear_marker_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
@@ -608,7 +608,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Marker (using JSON format)
@@ -635,7 +635,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.history"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
@@ -644,7 +644,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.state.main.marker"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
@@ -743,7 +743,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps for deterministic age)
@@ -753,7 +753,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args([
@@ -761,7 +761,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.bugfix.marker",
             &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -809,7 +809,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps)
@@ -819,7 +819,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -947,7 +947,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
     // Create a feature branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Add CI cache via git config for the specific branch
@@ -956,7 +956,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -971,7 +971,7 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
     // Create a feature branch without any CI cache
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -986,7 +986,7 @@ fn test_state_clear_marker_specific_branch(repo: TestRepo) {
     // Create a feature branch and set marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
     repo.set_marker("feature", "🔧");
 
@@ -1002,7 +1002,7 @@ fn test_state_clear_marker_specific_branch_not_set(repo: TestRepo) {
     // Create a feature branch without any marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
@@ -1050,11 +1050,11 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
     // Set hints via git config (as the code stores them)
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
@@ -1077,11 +1077,11 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1092,7 +1092,7 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.hints\."])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // No matches
 }
@@ -1102,7 +1102,7 @@ fn test_state_hints_clear_single(repo: TestRepo) {
     // Set a single hint
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1115,11 +1115,11 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &["worktree-path"])
@@ -1132,14 +1132,14 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.worktree-path"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // Cleared
 
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.another-hint"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success()); // Still there
 }
@@ -1304,7 +1304,7 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     // Create log file for a different branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let git_dir = repo.root_path().join(".git");

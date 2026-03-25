@@ -127,8 +127,25 @@ impl CommandCollector for PickerCollector {
                 // Only remove the item and spawn background deletion if this succeeds.
                 let caller_path = self.repo.current_worktree().root().ok();
                 let config = self.repo.user_config();
+
+                // Resolve removal target by path when possible (handles both
+                // branched and detached worktrees). Branch-only items won't
+                // match any worktree path, so they fall through to Branch.
+                let worktree_path = self.repo.list_worktrees().ok().and_then(|wts| {
+                    // Match by branch first, then fall back to detached (branch: None).
+                    let by_branch = wts
+                        .iter()
+                        .find(|wt| wt.branch.as_deref() == Some(selected_output.as_str()));
+                    let matched = by_branch.or_else(|| wts.iter().find(|wt| wt.branch.is_none()));
+                    matched.map(|wt| wt.path.clone())
+                });
+                let target = match &worktree_path {
+                    Some(path) => RemoveTarget::Path(path),
+                    None => RemoveTarget::Branch(&selected_output),
+                };
+
                 let preparation = self.repo.prepare_worktree_removal(
-                    RemoveTarget::Branch(&selected_output),
+                    target,
                     BranchDeletionMode::SafeDelete,
                     false,
                     config,
@@ -829,6 +846,48 @@ pub mod tests {
             !output.is_empty(),
             "unmerged branch should be retained with SafeDelete"
         );
+    }
+
+    #[test]
+    fn test_do_removal_removes_detached_worktree() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = init_test_repo(&tmp);
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let wt_path = tmp.path().join("repo.detached");
+
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "to-detach",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // Detach HEAD in the new worktree
+        Cmd::new("git")
+            .args(["checkout", "--detach", "HEAD"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+
+        assert!(wt_path.exists());
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: repo_path,
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: None,
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+
+        PickerCollector::do_removal(&repo, &result).unwrap();
+        assert!(!wt_path.exists(), "detached worktree should be removed");
     }
 
     // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at

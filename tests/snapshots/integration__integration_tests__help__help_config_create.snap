@@ -199,7 +199,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Setting overrides [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.[0m
+[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks and aliases append — both global and per-project versions run (global first).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m

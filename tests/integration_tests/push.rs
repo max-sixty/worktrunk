@@ -81,7 +81,7 @@ fn test_push_with_dirty_target(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("conflict.txt")).unwrap();
     assert_eq!(main_contents, "old content");
 
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -109,7 +109,7 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
     assert_eq!(notes, "temporary notes");
 
     // Autostash should clean up after itself
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -162,7 +162,7 @@ fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("file.txt")).unwrap();
     assert_eq!(main_contents, "modified in target");
 
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()

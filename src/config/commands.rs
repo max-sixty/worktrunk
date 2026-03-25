@@ -90,6 +90,13 @@ pub struct CommandConfig {
 }
 
 impl CommandConfig {
+    /// Create a config with a single unnamed command.
+    pub fn single(template: impl Into<String>) -> Self {
+        Self {
+            steps: vec![HookStep::Single(Command::new(None, template.into()))],
+        }
+    }
+
     /// Returns a flat iterator over all commands (for approval, completion, display).
     pub fn commands(&self) -> impl Iterator<Item = &Command> {
         self.steps.iter().flat_map(|step| match step {

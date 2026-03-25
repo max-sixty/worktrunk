@@ -651,7 +651,7 @@ fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: Test
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_wt_path)
-        .output()
+        .run()
         .unwrap();
     let feature_commit = String::from_utf8_lossy(&feature_commit.stdout);
     let feature_commit = feature_commit.trim();
@@ -1019,7 +1019,7 @@ failing = "exit 1"
         .git_command()
         .current_dir(&feature_wt)
         .args(["log", "--oneline", "-1"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

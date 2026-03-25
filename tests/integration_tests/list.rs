@@ -35,7 +35,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
             .env("GIT_COMMITTER_DATE", time)
             .args(["add", "."])
             .current_dir(path)
-            .output()
+            .run()
             .unwrap();
 
         repo.git_command()
@@ -43,7 +43,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
             .env("GIT_COMMITTER_DATE", time)
             .args(["commit", "-m", &format!("Commit at {}", time_short)])
             .current_dir(path)
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -434,7 +434,7 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     let head_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap()
         .stdout;
     let head_sha = String::from_utf8_lossy(&head_sha);
@@ -446,7 +446,7 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     ]);
 
     // Verify the ref exists but the remote doesn't
-    let remotes = repo.git_command().args(["remote"]).output().unwrap().stdout;
+    let remotes = repo.git_command().args(["remote"]).run().unwrap().stdout;
     let remotes = String::from_utf8_lossy(&remotes);
     assert!(
         !remotes.contains("deleted-remote"),
@@ -619,10 +619,10 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
         // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 
     repo.commit_with_age("Initial commit", DAY);
@@ -710,7 +710,7 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
         .git_command()
         .current_dir(&feature)
         .args(["rebase", "main"])
-        .output()
+        .run()
         .unwrap();
 
     // Rebase should fail with conflicts - verify we're in rebase state
@@ -785,9 +785,9 @@ fn remove_fixture_worktrees(repo: &mut TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 }
 
@@ -1651,7 +1651,7 @@ impl SubscriptionRoot {
         let output = repo
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -1731,7 +1731,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let output = repo
         .git_command()
         .args(["rev-parse", branch])
-        .output()
+        .run()
         .unwrap();
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -1753,7 +1753,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let output = repo
         .git_command()
         .args(["rev-parse", "--git-common-dir"])
-        .output()
+        .run()
         .unwrap();
     let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -2449,7 +2449,7 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
         .git_command()
         .args(["rebase", "main"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Rebase should fail with conflicts - verify we're in rebase state
@@ -2516,7 +2516,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -2526,19 +2526,19 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "remote-file.txt"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Remote commit"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     let remote_sha = {
         let output = repo
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -2547,7 +2547,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["reset", "--hard", &base_sha])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Local-only commit (divergence on the local side)
@@ -2555,24 +2555,24 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "local-file.txt"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Local commit"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Wire up upstream tracking deterministically: point origin/feature at the remote-only commit
     repo.git_command()
         .args(["update-ref", "refs/remotes/origin/feature", &remote_sha])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Make main advance with conflicting change (so feature is behind with conflicts)
@@ -2722,32 +2722,26 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
     // Create an orphan branch (no common ancestor with main)
     repo.git_command()
         .args(["checkout", "--orphan", "assets"])
-        .output()
+        .run()
         .unwrap();
 
     // Clear working tree and create new content
-    repo.git_command()
-        .args(["rm", "-rf", "."])
-        .output()
-        .unwrap();
+    repo.git_command().args(["rm", "-rf", "."]).run().unwrap();
     std::fs::write(repo.root_path().join("asset.txt"), "asset content\n").unwrap();
-    repo.git_command().args(["add", "."]).output().unwrap();
+    repo.git_command().args(["add", "."]).run().unwrap();
     repo.git_command()
         .args(["commit", "-m", "Add asset"])
-        .output()
+        .run()
         .unwrap();
 
     // Go back to main
-    repo.git_command()
-        .args(["checkout", "main"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["checkout", "main"]).run().unwrap();
 
     // Verify no merge base exists (this confirms we have a true orphan branch)
     let output = repo
         .git_command()
         .args(["merge-base", "main", "assets"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         !output.status.success(),
@@ -2776,7 +2770,7 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["worktree", "list", "--porcelain"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2807,12 +2801,12 @@ fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "feature.txt"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Feature work"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     // With threshold=1, feature branch (2 behind) should skip expensive tasks

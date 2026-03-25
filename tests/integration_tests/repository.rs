@@ -144,7 +144,7 @@ fn test_available_branches_some_without_worktrees() {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -164,14 +164,8 @@ fn test_available_branches_some_without_worktrees() {
 fn test_all_branches() {
     let repo = TestRepo::new();
     // Create some branches
-    repo.git_command()
-        .args(["branch", "alpha"])
-        .output()
-        .unwrap();
-    repo.git_command()
-        .args(["branch", "beta"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["branch", "alpha"]).run().unwrap();
+    repo.git_command().args(["branch", "beta"]).run().unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let branches = repository.all_branches().unwrap();
@@ -197,7 +191,7 @@ fn test_project_identifier_https() {
             "origin",
             "https://github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -217,7 +211,7 @@ fn test_project_identifier_http() {
             "origin",
             "http://gitlab.example.com/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -237,7 +231,7 @@ fn test_project_identifier_ssh_colon() {
             "origin",
             "git@github.com:user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -257,7 +251,7 @@ fn test_project_identifier_ssh_protocol() {
             "origin",
             "ssh://git@github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -278,7 +272,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
             "origin",
             "ssh://git@gitlab.example.com:2222/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -309,7 +303,7 @@ fn test_get_config_exists() {
     let repo = TestRepo::new();
     repo.git_command()
         .args(["config", "test.key", "test-value"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
