@@ -1072,9 +1072,9 @@ wt step push
 <!-- subdoc: promote -->
 <!-- subdoc: prune -->
 <!-- subdoc: relocate -->
-## Aliases
+## Aliases [experimental]
 
-[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml

@@ -97,9 +97,9 @@ Manual merge workflow with review between steps:
 - [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [2mwt hook[0m — Run configured hooks
 
-[1m[32mAliases[0m
+[1m[32mAliases [experimental][0m
 
-[experimental] Custom command templates configured in user config ([2m~/.config/worktrunk/config.toml[0m) or project config ([2m.config/wt.toml[0m). Aliases support the same template variables as hooks.
+Custom command templates configured in user config ([2m~/.config/worktrunk/config.toml[0m) or project config ([2m.config/wt.toml[0m). Aliases support the same template variables as hooks.
 
 [107m [0m [2m# .config/wt.toml[0m
 [107m [0m [2m[36m[aliases][0m

@@ -808,9 +808,9 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## Aliases
+## Aliases [experimental]
 
-[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](https://worktrunk.dev/hook/#template-variables) as hooks.
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](https://worktrunk.dev/hook/#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml
