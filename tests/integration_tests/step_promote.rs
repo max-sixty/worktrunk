@@ -4,8 +4,8 @@ use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, 
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::process::Command;
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 /// Helper to get the current branch in a directory
 fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
@@ -271,10 +271,9 @@ fn test_promote_bare_repo_no_worktrees() {
     let bare_repo = temp_dir.path().join("bare.git");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args(["init", "--bare", bare_repo.to_str().unwrap()])
+        .run()
         .unwrap();
 
     // Try to run promote in the bare repo - fails with "No worktrees found"
@@ -301,20 +300,24 @@ fn test_promote_bare_repo_with_worktrees() {
     let temp_clone = temp_dir.path().join("temp");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args([
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare_repo.to_str().unwrap(),
+        ])
+        .run()
         .unwrap();
 
     // Create a commit via a temporary clone
-    Command::new("git")
+    Cmd::new("git")
         .args([
             "clone",
             bare_repo.to_str().unwrap(),
             temp_clone.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
 
     let clone_repo = Repository::at(&temp_clone).unwrap();

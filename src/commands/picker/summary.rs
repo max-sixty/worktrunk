@@ -58,19 +58,14 @@ mod tests {
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
     use std::fs;
+    use worktrunk::shell_exec::Cmd;
 
     fn git_init(dir: &std::path::Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
-            .args(args)
+        Cmd::new("git")
+            .args(args.iter().copied())
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 
     fn configure_test_identity(repo: &Repository) {
