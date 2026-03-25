@@ -345,15 +345,22 @@ copy = "wt step copy-ignored"
 
 ### What gets copied
 
-All gitignored files are copied by default. Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
 
-To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```text
 # .worktreeinclude
 .env
 node_modules/
 target/
+```
+
+After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
 ```
 
 ### Common patterns
@@ -371,7 +378,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
 
 ### Performance
 
@@ -842,9 +849,9 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## Aliases
+## Aliases <span class="badge-experimental"></span>
 
-[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml

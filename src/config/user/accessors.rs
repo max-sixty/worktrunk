@@ -6,13 +6,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::config::HooksConfig;
+use crate::config::commands::CommandConfig;
 use crate::config::expansion::expand_template;
 
 use super::UserConfig;
 use super::merge::{Merge, merge_optional};
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, SelectConfig, SwitchConfig,
-    SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, SelectConfig,
+    StepConfig, SwitchConfig, SwitchPickerConfig,
 };
 
 /// Default worktree path template
@@ -124,6 +125,21 @@ impl UserConfig {
         merge_optional(self.configs.switch.as_ref(), project_config)
     }
 
+    /// Returns the `wt step` config for a specific project.
+    pub fn step(&self, project: Option<&str>) -> Option<StepConfig> {
+        let project_config = project
+            .and_then(|p| self.projects.get(p))
+            .and_then(|c| c.overrides.step.as_ref());
+        merge_optional(self.configs.step.as_ref(), project_config)
+    }
+
+    /// Returns the `wt step copy-ignored` config for a specific project.
+    pub fn copy_ignored(&self, project: Option<&str>) -> CopyIgnoredConfig {
+        self.step(project)
+            .and_then(|step| step.copy_ignored)
+            .unwrap_or_default()
+    }
+
     /// Returns the select config for a specific project (deprecated path).
     ///
     /// Merges project-specific settings with global settings, where project
@@ -198,14 +214,15 @@ impl UserConfig {
 
     /// Returns effective aliases for a specific project.
     ///
-    /// Merges global user aliases with per-project user aliases (per-project overrides on collision).
-    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, String> {
+    /// Merges global user aliases with per-project user aliases using append
+    /// semantics: both run on name collision (global first, then per-project).
+    pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, CommandConfig> {
         let mut result = self.configs.aliases.clone().unwrap_or_default();
         if let Some(proj_aliases) = project
             .and_then(|p| self.projects.get(p))
             .and_then(|proj| proj.overrides.aliases.as_ref())
         {
-            result.extend(proj_aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+            crate::config::commands::append_aliases(&mut result, proj_aliases);
         }
         result
     }

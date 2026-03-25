@@ -9,7 +9,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::{ProjectConfig, UserConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -250,7 +250,6 @@ impl ValueCompleter for HookCommandCompleter {
                 candidates.extend(
                     config
                         .commands()
-                        .iter()
                         .filter_map(|cmd| cmd.name.as_ref())
                         .map(|name| CompletionCandidate::new(name.clone())),
                 );
@@ -389,7 +388,7 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
     }
 
     cmd.mut_subcommand("step", |mut step| {
-        for (name, template) in aliases {
+        for (name, cmd_config) in aliases {
             // Skip aliases that shadow built-in step commands
             if step
                 .get_subcommands()
@@ -397,7 +396,13 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
             {
                 continue;
             }
-            let help = truncate_template(&template);
+            // Use the first command's template for the help text
+            let first_template = cmd_config
+                .commands()
+                .next()
+                .map(|c| c.template.as_str())
+                .unwrap_or("");
+            let help = truncate_template(first_template);
             // clap::Command::new() requires Into<Str>, and Str only implements
             // From<&'static str> (not From<String>). Leak is fine: completion is
             // a short-lived subprocess that exits after printing candidates.
@@ -420,20 +425,22 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
 }
 
 /// Load aliases from user and project config for completion.
-fn load_aliases_for_completion() -> BTreeMap<String, String> {
+///
+/// Merges user and project aliases with append semantics (matching hooks).
+fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
     let mut aliases = BTreeMap::new();
 
     if let Ok(repo) = Repository::current() {
-        // Project config aliases first
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(project_aliases) = project_config.aliases
-        {
-            aliases.extend(project_aliases);
-        }
-        // User config aliases override
+        // User config first
         if let Ok(user_config) = UserConfig::load() {
             let project_id = repo.project_identifier().ok();
             aliases.extend(user_config.aliases(project_id.as_deref()));
+        }
+        // Project config appends
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(ref project_aliases) = project_config.aliases
+        {
+            append_aliases(&mut aliases, project_aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));
