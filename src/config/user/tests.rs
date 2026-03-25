@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
 use crate::git::{HookType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -11,10 +12,10 @@ struct TestRepo {
 impl TestRepo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["init"])
             .current_dir(dir.path())
-            .output()
+            .run()
             .unwrap();
         let repo = Repository::at(dir.path()).unwrap();
         Self { _dir: dir, repo }

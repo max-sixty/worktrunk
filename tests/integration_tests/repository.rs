@@ -3,6 +3,7 @@
 use std::fs;
 
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 use crate::common::TestRepo;
 
@@ -570,37 +571,28 @@ fn test_repo_path_in_submodule() {
     fs::create_dir(&parent_path).unwrap();
 
     // Initialize parent repo with git config
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&parent_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(output.status.success(), "git init failed for parent");
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for commits
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&parent_path)
-        .output()
+    let parent_repo = Repository::at(&parent_path).unwrap();
+    parent_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in parent
     fs::write(parent_path.join("README.md"), "# Parent").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&parent_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo.run_command(&["add", "."]).unwrap();
+    parent_repo
+        .run_command(&["commit", "-m", "Initial commit"])
         .unwrap();
 
     // Create submodule repository (as a separate repo first)
@@ -608,45 +600,33 @@ fn test_repo_path_in_submodule() {
     let sub_origin_path = sub_temp.path().join("submodule-origin");
     fs::create_dir(&sub_origin_path).unwrap();
 
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&sub_origin_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "git init failed for submodule origin"
-    );
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for submodule
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&sub_origin_path)
-        .output()
+    let sub_repo = Repository::at(&sub_origin_path).unwrap();
+    sub_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in submodule origin
     fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&sub_origin_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Submodule initial commit"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo.run_command(&["add", "."]).unwrap();
+    sub_repo
+        .run_command(&["commit", "-m", "Submodule initial commit"])
         .unwrap();
 
     // Add submodule to parent (using local path directly, with file transport allowed)
-    let output = std::process::Command::new("git")
-        .args([
+    parent_repo
+        .run_command(&[
             "-c",
             "protocol.file.allow=always",
             "submodule",
@@ -654,20 +634,11 @@ fn test_repo_path_in_submodule() {
             sub_origin_path.to_str().unwrap(),
             "sub",
         ])
-        .current_dir(&parent_path)
-        .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "git submodule add failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 
     // Commit the submodule addition
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Add submodule"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["commit", "-m", "Add submodule"])
         .unwrap();
 
     // Now test: create Repository from inside the submodule
