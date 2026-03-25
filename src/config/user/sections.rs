@@ -635,12 +635,12 @@ mod tests {
             ("shared".into(), CommandConfig::single("other-cmd")),
         ]);
         let result = merge_alias_maps(&Some(base), &Some(other)).unwrap();
-        assert_eq!(result["a"].commands().len(), 1);
-        assert_eq!(result["b"].commands().len(), 1);
+        assert_eq!(result["a"].commands().count(), 1);
+        assert_eq!(result["b"].commands().count(), 1);
         // Collision: both commands are preserved (base first, then other)
-        let shared = &result["shared"];
-        assert_eq!(shared.commands().len(), 2);
-        assert_eq!(shared.commands()[0].template, "base-cmd");
-        assert_eq!(shared.commands()[1].template, "other-cmd");
+        let shared: Vec<_> = result["shared"].commands().collect();
+        assert_eq!(shared.len(), 2);
+        assert_eq!(shared[0].template, "base-cmd");
+        assert_eq!(shared[1].template, "other-cmd");
     }
 }

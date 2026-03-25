@@ -159,7 +159,6 @@ pub fn approve_alias_commands(
 
     let cmds: Vec<_> = commands
         .commands()
-        .iter()
         .map(|cmd| ApprovableCommand {
             phase: Phase::Alias,
             command: worktrunk::config::Command::new(

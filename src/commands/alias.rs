@@ -252,7 +252,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
 
-    let commands = cmd_config.commands();
+    let commands: Vec<_> = cmd_config.commands().collect();
 
     if opts.dry_run {
         let expanded: Vec<_> = commands

@@ -72,7 +72,7 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use approvals::{Approvals, approvals_path};
-pub use commands::{Command, CommandConfig, append_aliases};
+pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;
@@ -303,9 +303,9 @@ mod tests {
         let toml = r#"post-create = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_create.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "npm install".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "npm install".to_string()));
     }
 
     #[test]
@@ -317,15 +317,15 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 2);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(Some("server".to_string()), "npm run dev".to_string())
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("watch".to_string()), "npm run watch".to_string())
         );
     }
@@ -341,7 +341,7 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         // Extract just the names for easier verification
         let names: Vec<_> = commands
@@ -371,7 +371,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         assert_eq!(commands.len(), 2);
         // Should be in TOML order: task1, task2
@@ -405,9 +405,9 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml = r#"pre-merge = "cargo test""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "cargo test".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "cargo test".to_string()));
     }
 
     #[test]
@@ -420,22 +420,22 @@ task2 = "echo 'Task 2 running' > task2.txt"
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 3);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(
                 Some("format".to_string()),
                 "cargo fmt -- --check".to_string()
             )
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("lint".to_string()), "cargo clippy".to_string())
         );
         assert_eq!(
-            commands[2],
+            *commands[2],
             Command::new(Some("test".to_string()), "cargo test".to_string())
         );
     }
@@ -694,7 +694,7 @@ lint = "cargo clippy"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
@@ -704,7 +704,7 @@ lint = "cargo clippy"
             .hooks
             .pre_merge
             .expect("pre-merge should be present");
-        let commands = pre_merge.commands();
+        let commands: Vec<_> = pre_merge.commands().collect();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
         assert_eq!(commands[1].name.as_deref(), Some("lint"));
@@ -723,7 +723,7 @@ post-create = "npm install"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].name.is_none()); // single command has no name
         assert_eq!(commands[0].template, "npm install");
