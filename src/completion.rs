@@ -9,7 +9,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -250,7 +250,6 @@ impl ValueCompleter for HookCommandCompleter {
                 candidates.extend(
                     config
                         .commands()
-                        .iter()
                         .filter_map(|cmd| cmd.name.as_ref())
                         .map(|name| CompletionCandidate::new(name.clone())),
                 );
@@ -400,7 +399,7 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
             // Use the first command's template for the help text
             let first_template = cmd_config
                 .commands()
-                .first()
+                .next()
                 .map(|c| c.template.as_str())
                 .unwrap_or("");
             let help = truncate_template(first_template);
@@ -426,20 +425,22 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
 }
 
 /// Load aliases from user and project config for completion.
+///
+/// Merges user and project aliases with append semantics (matching hooks).
 fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
     let mut aliases = BTreeMap::new();
 
     if let Ok(repo) = Repository::current() {
-        // Project config aliases first
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(project_aliases) = project_config.aliases
-        {
-            aliases.extend(project_aliases);
-        }
-        // User config aliases replace on collision (trusted)
+        // User config first
         if let Ok(user_config) = UserConfig::load() {
             let project_id = repo.project_identifier().ok();
             aliases.extend(user_config.aliases(project_id.as_deref()));
+        }
+        // Project config appends
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(ref project_aliases) = project_config.aliases
+        {
+            append_aliases(&mut aliases, project_aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));

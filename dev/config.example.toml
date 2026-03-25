@@ -118,6 +118,13 @@
 # # Tasks still running when the budget expires are abandoned; 0 disables
 # # timeout-ms = 500
 #
+# ### Step
+#
+# [step.copy-ignored]
+# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+#
+# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+#
 # ### Aliases
 #
 # Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.
@@ -140,13 +147,14 @@
 #
 # #### Setting overrides [experimental]
 #
-# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks and aliases append — both global and per-project versions run (global first).
+# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
 # pre-start.env = "cp .env.example .env"
+# step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
 # ### Custom prompt templates

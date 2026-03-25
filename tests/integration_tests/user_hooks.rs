@@ -2302,3 +2302,65 @@ check = "test -d {{ cwd }} && echo 'cwd_exists=true' > ../cwd_check.txt || echo 
         "cwd should point to an existing directory, got: {content}"
     );
 }
+
+// ============================================================================
+// Pipeline Tests (list form)
+// ============================================================================
+
+#[rstest]
+fn test_user_post_start_pipeline_serial_ordering(repo: TestRepo) {
+    // Pipeline: serial step creates a marker, concurrent step reads it.
+    // The compound shell command chains them with &&, so the marker
+    // exists when the concurrent step runs.
+    repo.write_test_config(
+        r#"post-start = [
+    "echo SETUP_DONE > pipeline_marker.txt",
+    { bg = "cat pipeline_marker.txt > bg_saw_marker.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_ordering",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let bg_file = worktree_path.join("bg_saw_marker.txt");
+    wait_for_file_content(&bg_file);
+
+    let content = fs::read_to_string(&bg_file).unwrap();
+    assert!(
+        content.contains("SETUP_DONE"),
+        "Concurrent step should see serial step's output, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
+    // First step fails → second step should not run (chained with &&).
+    repo.write_test_config(
+        r#"post-start = [
+    "exit 1",
+    { bg = "echo SHOULD_NOT_RUN > should_not_exist.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_failure",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Give background commands time to run (if they were going to)
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker_file = worktree_path.join("should_not_exist.txt");
+    assert!(
+        !marker_file.exists(),
+        "Later pipeline steps should NOT run after serial step failure"
+    );
+}

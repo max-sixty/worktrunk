@@ -21,7 +21,7 @@ use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -34,7 +34,7 @@ use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
-    spawn_background_hooks,
+    spawn_prepared_hooks,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
@@ -359,7 +359,7 @@ pub fn handle_squash(
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
         let hooks = prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        spawn_background_hooks(&ctx, hooks)?;
+        spawn_prepared_hooks(&ctx, hooks)?;
     }
 
     Ok(SquashResult::Squashed)
@@ -559,18 +559,58 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
 /// other VCS tools colocated with git need explicit exclusion.
 const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
 
+/// Built-in excludes for `wt step copy-ignored`: VCS metadata + tool-state directories.
+const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
+    ".bzr/",
+    ".conductor/",
+    ".entire/",
+    ".hg/",
+    ".jj/",
+    ".pi/",
+    ".pijul/",
+    ".sl/",
+    ".svn/",
+    ".worktrees/",
+];
+
+fn default_copy_ignored_excludes() -> Vec<String> {
+    BUILTIN_COPY_IGNORED_EXCLUDES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+/// Resolve the full copy-ignored config by merging built-in defaults, project
+/// config (`.config/wt.toml`), and user config (global + per-project overrides).
+fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredConfig> {
+    let mut config = CopyIgnoredConfig {
+        exclude: default_copy_ignored_excludes(),
+    };
+    if let Some(project_config) = repo.load_project_config()?
+        && let Some(project_copy_ignored) = project_config.copy_ignored()
+    {
+        config = config.merged_with(project_copy_ignored);
+    }
+    let user_config = UserConfig::load().context("Failed to load config")?;
+    let project_id = repo.project_identifier().ok();
+    config = config.merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    Ok(config)
+}
+
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// VCS metadata directories and entries that contain nested worktrees.
+/// configured patterns, VCS metadata directories, and entries that contain nested worktrees.
 ///
-/// Combines four steps:
+/// Combines five steps:
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. VCS metadata filtering — exclude directories like `.jj`, `.hg`
-/// 4. Nested worktree filtering — exclude entries containing other worktrees
+/// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
+/// 4. VCS metadata filtering — exclude directories like `.jj`, `.hg`
+/// 5. Nested worktree filtering — exclude entries containing other worktrees
 fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
     worktree_paths: &[PathBuf],
+    exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
     let ignored_entries = list_ignored_entries(worktree_path, context)?;
 
@@ -595,26 +635,52 @@ fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    // Filter out VCS metadata directories and entries that contain other worktrees
+    // Build exclude matcher for configured patterns (if any)
+    let exclude_matcher = if exclude_patterns.is_empty() {
+        None
+    } else {
+        let mut builder = GitignoreBuilder::new(worktree_path);
+        for pattern in exclude_patterns {
+            builder.add_line(None, pattern).map_err(|error| {
+                anyhow::anyhow!(
+                    "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
+                    pattern,
+                    error
+                )
+            })?;
+        }
+        Some(
+            builder
+                .build()
+                .context("Failed to build copy-ignored exclude matcher")?,
+        )
+    };
+
+    // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
-        .filter(|(entry_path, is_dir)| {
+        .filter(|(path, is_dir)| {
+            // Skip entries matching configured exclude patterns
+            if let Some(ref matcher) = exclude_matcher {
+                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
+                if matcher.matched(relative, *is_dir).is_ignore() {
+                    return false;
+                }
+            }
             // Skip VCS metadata directories (.jj, .hg, etc.) — these contain
             // internal state tied to a specific working directory
             if *is_dir
-                && entry_path
+                && path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|name| VCS_METADATA_DIRS.contains(&name))
             {
                 return false;
             }
-            true
-        })
-        .filter(|(entry_path, _)| {
+            // Skip entries that contain other worktrees
             !worktree_paths
                 .iter()
-                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(entry_path))
+                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
         })
         .collect())
 }
@@ -633,6 +699,7 @@ pub fn step_copy_ignored(
     force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
+    let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
@@ -682,8 +749,12 @@ pub fn step_copy_ignored(
         .into_iter()
         .map(|wt| wt.path)
         .collect();
-    let entries_to_copy =
-        list_and_filter_ignored_entries(&source_path, &source_context, &worktree_paths)?;
+    let entries_to_copy = list_and_filter_ignored_entries(
+        &source_path,
+        &source_context,
+        &worktree_paths,
+        &copy_ignored_config.exclude,
+    )?;
 
     if entries_to_copy.is_empty() {
         eprintln!("{}", info_message("No matching files to copy"));
@@ -1236,9 +1307,11 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Discover gitignored entries BEFORE branch exchange — .gitignore rules belong
     // to the current branch and will change after `git switch`.
     let worktree_paths: Vec<PathBuf> = worktrees.iter().map(|wt| wt.path.clone()).collect();
-    let main_entries = list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths)?;
+    let no_excludes: &[String] = &[];
+    let main_entries =
+        list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths, no_excludes)?;
     let target_entries =
-        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths)?;
+        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths, no_excludes)?;
 
     // Move gitignored files to staging BEFORE branch exchange.
     // `git switch` silently overwrites ignored files that collide with tracked

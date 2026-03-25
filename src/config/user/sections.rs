@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::merge::Merge;
+use super::merge::{Merge, merge_optional};
 use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
 
@@ -421,6 +421,59 @@ impl Merge for SwitchConfig {
     }
 }
 
+/// Configuration for `wt step copy-ignored`
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct CopyIgnoredConfig {
+    /// Gitignore-style patterns to exclude from `wt step copy-ignored`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
+impl CopyIgnoredConfig {
+    pub fn merged_with(&self, other: &Self) -> Self {
+        let mut exclude = self.exclude.clone();
+        for pattern in &other.exclude {
+            if !exclude.contains(pattern) {
+                exclude.push(pattern.clone());
+            }
+        }
+        Self { exclude }
+    }
+}
+
+impl Merge for CopyIgnoredConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        self.merged_with(other)
+    }
+}
+
+/// Configuration for `wt step` subcommands.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct StepConfig {
+    /// Configuration for `wt step copy-ignored`.
+    #[serde(
+        default,
+        rename = "copy-ignored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub copy_ignored: Option<CopyIgnoredConfig>,
+}
+
+impl StepConfig {
+    /// Returns the resolved copy-ignored config, defaulting to empty if unset.
+    pub fn copy_ignored(&self) -> CopyIgnoredConfig {
+        self.copy_ignored.clone().unwrap_or_default()
+    }
+}
+
+impl Merge for StepConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            copy_ignored: merge_optional(self.copy_ignored.as_ref(), other.copy_ignored.as_ref()),
+        }
+    }
+}
+
 /// Settings that can be set globally or per-project.
 ///
 /// This struct is flattened into both `UserConfig` (global) and `UserProjectOverrides`
@@ -464,6 +517,10 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchConfig>,
 
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
     /// **DEPRECATED**: Use `[switch.picker]` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub select: Option<SelectConfig>,
@@ -475,6 +532,10 @@ pub struct OverridableConfig {
     ///
     /// Per-project aliases append to global aliases on name collision (global
     /// first, then per-project), matching hook merge semantics.
+    ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
     ///
     /// ```toml
     /// [aliases]
@@ -496,6 +557,7 @@ impl OverridableConfig {
             && self.commit.is_none()
             && self.merge.is_none()
             && self.switch.is_none()
+            && self.step.is_none()
             && self.select.is_none()
             && self.aliases.is_none()
     }
@@ -515,6 +577,7 @@ impl Merge for OverridableConfig {
             commit: merge_optional(self.commit.as_ref(), other.commit.as_ref()),
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
             switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
+            step: merge_optional(self.step.as_ref(), other.step.as_ref()),
             select: merge_optional(self.select.as_ref(), other.select.as_ref()),
             aliases: merge_alias_maps(&self.aliases, &other.aliases), // Append semantics
         }
@@ -535,12 +598,7 @@ fn merge_alias_maps(
         (None, Some(o)) => Some(o.clone()),
         (Some(b), Some(o)) => {
             let mut merged = b.clone();
-            for (k, v) in o {
-                merged
-                    .entry(k.clone())
-                    .and_modify(|existing| *existing = existing.merge_append(v))
-                    .or_insert_with(|| v.clone());
-            }
+            crate::config::commands::append_aliases(&mut merged, o);
             Some(merged)
         }
     }
@@ -587,7 +645,7 @@ pub struct UserProjectOverrides {
     )]
     pub commit_generation: Option<CommitGenerationConfig>,
 
-    /// Per-project overrides (worktree-path, list, commit, merge, switch, select)
+    /// Per-project overrides (worktree-path, list, commit, merge, switch, step, select)
     #[serde(flatten, default)]
     pub overrides: OverridableConfig,
 }
@@ -636,12 +694,12 @@ mod tests {
             ("shared".into(), CommandConfig::single("other-cmd")),
         ]);
         let result = merge_alias_maps(&Some(base), &Some(other)).unwrap();
-        assert_eq!(result["a"].commands().len(), 1);
-        assert_eq!(result["b"].commands().len(), 1);
+        assert_eq!(result["a"].commands().count(), 1);
+        assert_eq!(result["b"].commands().count(), 1);
         // Collision: both commands are preserved (base first, then other)
-        let shared = &result["shared"];
-        assert_eq!(shared.commands().len(), 2);
-        assert_eq!(shared.commands()[0].template, "base-cmd");
-        assert_eq!(shared.commands()[1].template, "other-cmd");
+        let shared: Vec<_> = result["shared"].commands().collect();
+        assert_eq!(shared.len(), 2);
+        assert_eq!(shared[0].template, "base-cmd");
+        assert_eq!(shared[1].template, "other-cmd");
     }
 }

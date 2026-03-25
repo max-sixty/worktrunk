@@ -4,6 +4,74 @@ use crate::common::{TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_f
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::{Path, PathBuf};
+const CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG: &str = r#"[step.copy-ignored]
+exclude = [".custom-cache/"]
+"#;
+
+fn run_copy_ignored(repo: &TestRepo, feature_path: &Path) -> std::process::Output {
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn run_copy_ignored_single_entry(repo: &TestRepo, feature_path: &Path) {
+    let output = run_copy_ignored(repo, feature_path);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Copied 1 entry"),
+        "expected one copied entry: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write_worktree_project_config(worktree_path: &Path, contents: &str) {
+    let config_dir = worktree_path.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), contents).unwrap();
+}
+
+fn assert_copy_ignored_excluded(feature_path: &Path, excluded_dirs: &[&str], source: &str) {
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should still be copied"
+    );
+    for excluded_dir in excluded_dirs {
+        assert!(
+            !feature_path.join(excluded_dir).exists(),
+            "{} should be excluded by {}",
+            excluded_dir,
+            source
+        );
+    }
+}
+
+fn setup_copy_ignored_exclude_fixture(repo: &mut TestRepo) -> PathBuf {
+    let feature_path = repo.add_worktree("feature");
+
+    let ignored_entries = ".env\n.custom-cache/\n";
+
+    fs::create_dir_all(repo.root_path().join(".custom-cache")).unwrap();
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(
+        repo.root_path().join(".custom-cache").join("state.json"),
+        "{}",
+    )
+    .unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
+
+    feature_path
+}
 
 /// Test with no .worktreeinclude file and no gitignored files
 #[rstest]
@@ -44,6 +112,49 @@ fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
     assert!(
         feature_path.join("cache.db").exists(),
         "cache.db should be copied without .worktreeinclude"
+    );
+}
+
+#[rstest]
+fn test_copy_ignored_excludes_project_config(mut repo: TestRepo) {
+    let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
+    repo.write_project_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+    write_worktree_project_config(&feature_path, CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "project config");
+}
+
+#[rstest]
+fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
+    let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
+    repo.write_test_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "user config");
+}
+
+#[rstest]
+fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let ignored_entries = ".conductor/\n.entire/\n.pi/\n.env\n";
+
+    for dir in [".conductor", ".entire", ".pi"] {
+        fs::create_dir_all(repo.root_path().join(dir)).unwrap();
+        fs::write(repo.root_path().join(dir).join("state.json"), dir).unwrap();
+    }
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(
+        &feature_path,
+        &[".conductor", ".entire", ".pi"],
+        "built-in excludes",
     );
 }
 
@@ -117,12 +228,7 @@ fn test_copy_ignored_basic(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from feature worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify file was copied
     let copied_env = feature_path.join(".env");
@@ -148,24 +254,8 @@ fn test_copy_ignored_idempotent(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run copy-ignored twice - second run should succeed (skip existing)
-    let output1 = repo
-        .wt_command()
-        .args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
-    assert!(output1.status.success(), "First copy should succeed");
-
-    let output2 = repo
-        .wt_command()
-        .args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
-    assert!(
-        output2.status.success(),
-        "Second copy should succeed (idempotent)"
-    );
+    run_copy_ignored(&repo, &feature_path);
+    run_copy_ignored(&repo, &feature_path);
 
     // File should still exist with original content
     assert_eq!(
@@ -256,12 +346,7 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
 
     // Run from feature worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify directory was copied with contents
     let copied_target = feature_path.join("target");
@@ -292,12 +377,7 @@ fn test_copy_ignored_glob_pattern(mut repo: TestRepo) {
     // .worktreeinclude with same pattern
     fs::write(repo.root_path().join(".worktreeinclude"), ".env*\n").unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify all were copied
     assert!(feature_path.join(".env").exists());
@@ -401,12 +481,7 @@ fn test_copy_ignored_deep_pattern(mut repo: TestRepo) {
     )
     .unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify the nested file was copied
     assert!(
@@ -439,12 +514,7 @@ fn test_copy_ignored_nested_gitignore(mut repo: TestRepo) {
     )
     .unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify the file was copied (nested .gitignore was respected)
     assert!(
@@ -542,12 +612,7 @@ fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Copy from feature - should use main worktree as source (primary_worktree fallback)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify file was copied from main worktree
     assert!(
@@ -1186,12 +1251,7 @@ fn test_copy_ignored_skips_vcs_metadata_dirs(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), ".jj/\n.hg/\n.env\n").unwrap();
 
     // Run copy-ignored
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify: .env was copied (regular ignored file)
     assert!(
