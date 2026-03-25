@@ -368,7 +368,7 @@ $ wt step warm --force
 Configure as a post-start hook to warm every new worktree automatically:
 
 ```toml
-[hooks.post-start]
+[post-start]
 commands = [
     "wt step warm",
 ]

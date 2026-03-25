@@ -1266,3 +1266,25 @@ fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
         ".worktrees directory should NOT be copied (contains nested worktree)"
     );
 }
+
+/// Test that `wt step warm` works as a shorthand for `wt step copy-ignored`
+#[rstest]
+fn test_step_warm_copies_gitignored_files(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create gitignored files in the primary worktree
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["warm"],
+        Some(&feature_path),
+    ));
+
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should be copied via step warm"
+    );
+}
