@@ -155,17 +155,19 @@ Hooks can be defined in two places: project config (`.config/wt.toml`) for repos
 
 ## Project hooks
 
-Project hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
+Project hooks are defined in `.config/wt.toml`:
 
 ```toml
 # Single command (string)
 pre-start = "npm install"
 
-# Multiple commands (table) — run sequentially in declaration order
+# Multiple commands (table) — for pre-* hooks, run sequentially; for post-* hooks, run concurrently
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
 ```
+
+For post-* hooks that need ordering guarantees (e.g., install before build), see [Pipeline ordering](#pipeline-ordering).
 
 ## User hooks
 
@@ -327,6 +329,54 @@ wt hook pre-start --var branch=feature/test     # Override template variable
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
+
+# Pipeline Ordering <span class="badge-experimental"></span>
+
+By default, all commands in a `post-*` hook run concurrently in the background. When one command depends on another — `npm run build` needs `npm install` to finish first — use a list instead of a table:
+
+```toml
+[hooks]
+post-start = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" }
+]
+```
+
+The list runs steps in order. Each step is either a string (single command) or a map (named commands). Single-entry maps run one command; multi-entry maps run their commands concurrently. The TOML data structure encodes the execution model directly:
+
+- **String** — single command
+- **Map** (table) — concurrent commands
+- **List** (array) — serial pipeline
+
+The entire pipeline runs in the background as one process. Anonymous steps work too:
+
+```toml
+post-start = ["npm install", "npm run build"]
+```
+
+## How it works
+
+Steps are chained with `&&` in a compound shell command, so a failing step skips all later steps. A multi-entry map spawns its commands as background processes and waits for all to complete before the next step.
+
+For the example above, the generated command is:
+
+```
+{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }
+```
+
+Pre-* hooks ignore pipeline structure — all commands run serially regardless, since pre-* hooks are blocking by nature.
+
+## When to use pipelines
+
+Most hooks don't need pipelines. A table of concurrent post-start commands is fine when they're independent:
+
+```toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+copy = "wt step copy-ignored"
+```
+
+Pipelines matter when there's a dependency chain — typically setup steps that must complete before other tasks can start. Common pattern: install dependencies, then run build + dev server concurrently.
 
 # Designing Effective Hooks
 
