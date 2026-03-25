@@ -105,6 +105,12 @@ impl CommandConfig {
         })
     }
 
+    /// Returns true if this config uses a pipeline (list form with multiple steps).
+    /// Single-step configs (string or map) return false.
+    pub fn is_pipeline(&self) -> bool {
+        self.steps.len() > 1
+    }
+
     /// Returns the pipeline steps for execution.
     pub fn steps(&self) -> &[HookStep] {
         &self.steps

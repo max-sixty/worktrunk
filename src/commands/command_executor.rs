@@ -261,27 +261,34 @@ pub fn prepare_steps(
         return Ok(Vec::new());
     }
 
+    // Collect step sizes so we can re-partition after a single expand_commands call.
+    // This avoids calling build_hook_context (which spawns git subprocesses) per step.
+    let step_sizes: Vec<usize> = steps
+        .iter()
+        .map(|s| match s {
+            HookStep::Single(_) => 1,
+            HookStep::Concurrent(cmds) => cmds.len(),
+        })
+        .collect();
+
+    let all_commands: Vec<Command> = command_config.commands().cloned().collect();
+    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source)?;
+    let mut expanded_iter = all_expanded.into_iter();
+
     let mut result = Vec::new();
-    for step in steps {
+    for (step, &size) in steps.iter().zip(&step_sizes) {
+        let chunk: Vec<_> = expanded_iter.by_ref().take(size).collect();
         match step {
-            HookStep::Single(cmd) => {
-                let expanded = expand_commands(
-                    std::slice::from_ref(cmd),
-                    ctx,
-                    extra_vars,
-                    hook_type,
-                    source,
-                )?;
-                let (cmd, json) = expanded.into_iter().next().unwrap();
+            HookStep::Single(_) => {
+                let (cmd, json) = chunk.into_iter().next().unwrap();
                 result.push(PreparedStep::Single(PreparedCommand {
                     name: cmd.name,
                     expanded: cmd.expanded,
                     context_json: json,
                 }));
             }
-            HookStep::Concurrent(cmds) => {
-                let expanded = expand_commands(cmds, ctx, extra_vars, hook_type, source)?;
-                let prepared = expanded
+            HookStep::Concurrent(_) => {
+                let prepared = chunk
                     .into_iter()
                     .map(|(cmd, json)| PreparedCommand {
                         name: cmd.name,

@@ -404,7 +404,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
 /// Prepare hook steps as a pipeline, preserving serial/concurrent structure.
 ///
 /// Accepts pre-looked-up configs to avoid redundant loading.
-fn prepare_pipeline_hooks_with_configs(
+pub(crate) fn prepare_pipeline_hooks_with_configs(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
     proj_config: Option<&CommandConfig>,
@@ -432,35 +432,6 @@ fn prepare_pipeline_hooks_with_configs(
     }
 
     Ok(all_steps)
-}
-
-/// Prepare pipeline hooks with automatic config lookup.
-pub(crate) fn prepare_pipeline_hooks(
-    ctx: &CommandContext,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    display_path: Option<&Path>,
-) -> anyhow::Result<Vec<SourcedStep>> {
-    let project_config = ctx.repo.load_project_config()?;
-    let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) =
-        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
-    prepare_pipeline_hooks_with_configs(
-        ctx,
-        user_config,
-        proj_config,
-        hook_type,
-        extra_vars,
-        display_path,
-    )
-}
-
-/// Detect if a config uses a pipeline (list form) vs flat concurrent.
-///
-/// Returns true only for multi-step configs (from the TOML list form).
-/// Single-step configs (string or map) use the traditional flat path.
-pub(crate) fn config_has_pipeline(config: &CommandConfig) -> bool {
-    config.steps().len() > 1
 }
 
 /// Group commands by hook type, preserving insertion order.
@@ -648,8 +619,6 @@ pub fn execute_hook(
 
 /// Prepare background hooks with automatic config lookup.
 ///
-/// Prepare background hooks with automatic config lookup.
-///
 /// Returns `PreparedHooks::Pipeline` when any source uses a list config,
 /// or `PreparedHooks::Flat` for traditional string/map configs.
 /// Callers should use `spawn_prepared_hooks` to execute the result.
@@ -666,7 +635,7 @@ pub(crate) fn prepare_background_hooks(
 
     if [user_config, proj_config]
         .iter()
-        .any(|c| c.is_some_and(config_has_pipeline))
+        .any(|c| c.is_some_and(CommandConfig::is_pipeline))
     {
         let steps = prepare_pipeline_hooks_with_configs(
             ctx,
@@ -815,7 +784,6 @@ mod tests {
             "echo hi",
         )]))];
         let cmd = build_pipeline_command(&steps);
-        // Single-entry concurrent group doesn't need background/wait
         assert_eq!(cmd, "{ { echo hi; } & wait; }");
     }
 
@@ -851,11 +819,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_has_pipeline() {
+    fn test_is_pipeline() {
         use worktrunk::config::CommandConfig;
 
-        // Single step → not a pipeline
         let single = CommandConfig::single("npm install");
-        assert!(!config_has_pipeline(&single));
+        assert!(!single.is_pipeline());
     }
 }
