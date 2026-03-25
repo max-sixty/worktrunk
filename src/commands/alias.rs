@@ -36,6 +36,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "rebase",
     "relocate",
     "squash",
+    "warm",
 ];
 
 /// Options parsed from the external subcommand args.

@@ -317,6 +317,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             dry_run,
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
+        StepCommand::Warm { dry_run, force } => step_copy_ignored(None, None, dry_run, force),
         StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { args } => step_for_each(args),
         StepCommand::Promote { branch } => {

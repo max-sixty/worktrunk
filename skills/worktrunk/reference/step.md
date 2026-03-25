@@ -50,6 +50,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>rebase</span></b>        Rebase onto target
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
+  <b><span class=c>warm</span></b>          Warm build cache from primary worktree
   <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
   <b><span class=c>promote</span></b>       [experimental] Swap a branch into the main worktree

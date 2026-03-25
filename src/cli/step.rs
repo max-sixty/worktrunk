@@ -334,6 +334,59 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         force: bool,
     },
 
+    /// Warm build cache from primary worktree
+    ///
+    /// Copies gitignored files (build artifacts, dependencies) from the primary
+    /// worktree to the current one using copy-on-write when available.
+    #[command(
+        after_long_help = r#"Shorthand for `wt step copy-ignored`. Copies gitignored files — build caches, dependency directories, compiled assets — from the primary worktree to the current one.
+
+Uses copy-on-write (reflink) when the filesystem supports it, making copies of large directories like `target/` nearly instant.
+
+## Examples
+
+Warm the current worktree from the primary worktree:
+
+```console
+$ wt step warm
+```
+
+Preview what would be copied:
+
+```console
+$ wt step warm --dry-run
+```
+
+Overwrite existing files:
+
+```console
+$ wt step warm --force
+```
+
+## As a hook
+
+Configure as a post-start hook to warm every new worktree automatically:
+
+```toml
+[hooks.post-start]
+commands = [
+    "wt step warm",
+]
+```
+
+Note: This command is equivalent to `wt step copy-ignored` — use whichever name is clearer in context.
+"#
+    )]
+    Warm {
+        /// Show what would be copied
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Overwrite existing files in destination
+        #[arg(long)]
+        force: bool,
+    },
+
     /// \[experimental\] Evaluate a template expression
     ///
     /// Prints the result to stdout for use in scripts and shell substitutions.
