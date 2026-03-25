@@ -5,6 +5,7 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::process::Command;
+use worktrunk::git::Repository;
 
 /// Helper to get the current branch in a directory
 fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
@@ -316,41 +317,22 @@ fn test_promote_bare_repo_with_worktrees() {
         .output()
         .unwrap();
 
-    Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(&temp_clone)
-        .output()
+    let clone_repo = Repository::at(&temp_clone).unwrap();
+    clone_repo
+        .run_command(&["config", "user.email", "test@test.com"])
         .unwrap();
-
-    Command::new("git")
-        .args(["config", "user.name", "Test"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["config", "user.name", "Test"])
         .unwrap();
-
-    Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["commit", "--allow-empty", "-m", "init"])
         .unwrap();
-
-    Command::new("git")
-        .args(["push", "origin", "main"])
-        .current_dir(&temp_clone)
-        .output()
-        .unwrap();
+    clone_repo.run_command(&["push", "origin", "main"]).unwrap();
 
     // Add a worktree to the bare repo
-    Command::new("git")
-        .args([
-            "--git-dir",
-            bare_repo.to_str().unwrap(),
-            "worktree",
-            "add",
-            worktree_path.to_str().unwrap(),
-            "main",
-        ])
-        .output()
+    let bare_repo_handle = Repository::at(&bare_repo).unwrap();
+    bare_repo_handle
+        .run_command(&["worktree", "add", worktree_path.to_str().unwrap(), "main"])
         .unwrap();
 
     // Try to run promote in the bare repo - should fail with bare repo error
