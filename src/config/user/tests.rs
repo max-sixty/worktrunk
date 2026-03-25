@@ -2411,10 +2411,7 @@ project-only = "only-project"
     // Non-colliding aliases are present
     assert_eq!(aliases["global-only"].commands().len(), 1);
     assert_eq!(aliases["global-only"].commands()[0].template, "only-global");
-    assert_eq!(
-        aliases["project-only"].commands().len(),
-        1
-    );
+    assert_eq!(aliases["project-only"].commands().len(), 1);
     assert_eq!(
         aliases["project-only"].commands()[0].template,
         "only-project"
