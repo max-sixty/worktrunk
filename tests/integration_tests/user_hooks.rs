@@ -165,14 +165,16 @@ failing = "exit 1"
 "#,
     );
 
-    // Failing user hook should produce warning but not block creation
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast.
+    // The worktree is already created before pre-start runs (it was renamed from
+    // post-create), so the worktree exists but the command exits non-zero.
     snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
 
-    // Worktree should still be created despite hook failure
+    // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.exists(),
-        "Worktree should be created even if post-create hook fails"
+        "Worktree should exist — it was created before pre-start ran"
     );
 }
 
@@ -649,7 +651,7 @@ fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: Test
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_wt_path)
-        .output()
+        .run()
         .unwrap();
     let feature_commit = String::from_utf8_lossy(&feature_commit.stdout);
     let feature_commit = feature_commit.trim();
@@ -917,6 +919,116 @@ lint = "exit 1"
 }
 
 // ============================================================================
+// User Post-Commit Hook Tests (Background, via `wt step commit`)
+// ============================================================================
+
+/// Helper for step commit snapshots
+fn snapshot_step_commit(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("commit");
+        cmd.args(args);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: test commit'",
+        );
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[rstest]
+fn test_user_post_commit_hook_executes(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_executes", &repo, &[], Some(&feature_wt));
+
+    // Post-commit runs in background in the worktree where the commit happened
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    wait_for_file_content(&marker_file);
+
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("USER_POST_COMMIT_RAN"),
+        "User post-commit hook should have run, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit(
+        "user_post_commit_skipped_no_verify",
+        &repo,
+        &["--no-verify"],
+        Some(&feature_wt),
+    );
+
+    // Wait to ensure background hook would have had time to run
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    assert!(
+        !marker_file.exists(),
+        "User post-commit hook should be skipped with --no-verify"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_failure_does_not_block_commit(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with failing post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+failing = "exit 1"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_failure", &repo, &[], Some(&feature_wt));
+
+    // The commit should have succeeded despite post-commit hook failure
+    // (post-commit runs in background and doesn't affect exit code)
+    let output = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["log", "--oneline", "-1"])
+        .run()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feat: test commit"),
+        "Commit should have succeeded despite post-commit hook failure, got: {stdout}"
+    );
+}
+
+// ============================================================================
 // Template Variable Tests
 // ============================================================================
 
@@ -1123,6 +1235,24 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
     assert!(marker.exists(), "post-create hook should have run");
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_CREATE"));
+}
+
+#[rstest]
+fn test_standalone_hook_pre_start_fails_on_failure(repo: TestRepo) {
+    // pre-start hooks use FailFast like all other pre-* hooks — consistent with
+    // the symmetric pre (blocking, fail-fast) / post (background, warn) pattern.
+    repo.write_project_config(r#"pre-start = "exit 1""#);
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt hook pre-start should exit non-zero when the hook fails (fail-fast, like all pre-* hooks)"
+    );
 }
 
 #[rstest]

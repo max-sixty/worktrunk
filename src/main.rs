@@ -653,6 +653,7 @@ fn validate_remove_targets(
                         deletion_mode,
                         force,
                         config,
+                        None,
                     ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
@@ -667,7 +668,7 @@ fn validate_remove_targets(
                 } else {
                     RemoveTarget::Path(&path_canonical)
                 };
-                match repo.prepare_worktree_removal(target, deletion_mode, force, config) {
+                match repo.prepare_worktree_removal(target, deletion_mode, force, config, None) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
                 }
@@ -678,6 +679,7 @@ fn validate_remove_targets(
                     deletion_mode,
                     force,
                     config,
+                    None,
                 ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),
@@ -732,6 +734,7 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                         BranchDeletionMode::from_flags(!spec.delete_branch, spec.force_delete),
                         spec.force,
                         &config,
+                        None,
                     )
                     .context("Failed to remove worktree")?;
 

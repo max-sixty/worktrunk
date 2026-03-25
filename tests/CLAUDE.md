@@ -49,11 +49,11 @@ let output = wt_command()
 
 ### Method reference
 
-| Method | Use when |
-|--------|----------|
-| `repo.wt_command()` | Running wt commands with a TestRepo |
-| `wt_command()` | Running wt without a TestRepo (free function) |
-| `repo.git_command()` | Running git commands |
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `repo.wt_command()` | `Command` | Running wt commands with a TestRepo |
+| `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
+| `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
 ## Timing Tests: Long Timeouts with Fast Polling
 

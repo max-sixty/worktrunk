@@ -1304,7 +1304,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://github.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config
@@ -1343,7 +1343,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://gitlab.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config

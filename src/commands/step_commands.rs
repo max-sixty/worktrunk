@@ -1489,6 +1489,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             BranchDeletionMode::SafeDelete,
             false,
             config,
+            None,
         ) {
             Ok(plan) => plan,
             Err(_) => {
