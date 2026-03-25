@@ -539,12 +539,7 @@ fn merge_alias_maps(
         (None, Some(o)) => Some(o.clone()),
         (Some(b), Some(o)) => {
             let mut merged = b.clone();
-            for (k, v) in o {
-                merged
-                    .entry(k.clone())
-                    .and_modify(|existing| *existing = existing.merge_append(v))
-                    .or_insert_with(|| v.clone());
-            }
+            crate::config::commands::append_aliases(&mut merged, o);
             Some(merged)
         }
     }

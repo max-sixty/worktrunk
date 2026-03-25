@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, expand_template};
+use worktrunk::config::{
+    CommandConfig, ProjectConfig, UserConfig, append_aliases, expand_template,
+};
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
@@ -147,12 +149,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // need approval regardless of whether user also defines the alias.
     let mut aliases = user_config.aliases(project_id.as_deref());
     if let Some(project_aliases) = project_config.as_ref().and_then(|pc| pc.aliases.as_ref()) {
-        for (k, v) in project_aliases {
-            aliases
-                .entry(k.clone())
-                .and_modify(|existing| *existing = existing.merge_append(v))
-                .or_insert_with(|| v.clone());
-        }
+        append_aliases(&mut aliases, project_aliases);
     }
 
     // Warn about aliases that shadow built-in step commands

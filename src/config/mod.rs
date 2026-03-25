@@ -72,7 +72,7 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use approvals::{Approvals, approvals_path};
-pub use commands::{Command, CommandConfig};
+pub use commands::{Command, CommandConfig, append_aliases};
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;

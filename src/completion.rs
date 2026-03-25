@@ -9,7 +9,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -439,14 +439,9 @@ fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
         }
         // Project config appends
         if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(project_aliases) = project_config.aliases
+            && let Some(ref project_aliases) = project_config.aliases
         {
-            for (k, v) in &project_aliases {
-                aliases
-                    .entry(k.clone())
-                    .and_modify(|existing| *existing = existing.merge_append(v))
-                    .or_insert_with(|| v.clone());
-            }
+            append_aliases(&mut aliases, project_aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));

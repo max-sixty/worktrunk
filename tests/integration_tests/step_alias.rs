@@ -287,6 +287,40 @@ shared = "echo user-version"
     );
 }
 
+/// Both global and per-project user aliases execute in order on name collision.
+///
+/// Uses project config (`.config/wt.toml`) + user config to verify the
+/// project-vs-user append, since `test_aliases_accessor_appends_on_collision`
+/// already covers the user-config internal append via unit test.
+#[rstest]
+fn test_alias_append_executes_both(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo PROJECT"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+greet = "echo USER"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Both commands execute: user first, then project (--yes approves project alias)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["greet", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
 // ============================================================================
 // Approval tests
 // ============================================================================

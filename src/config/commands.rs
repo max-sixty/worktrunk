@@ -3,6 +3,8 @@
 //! Handles parsing and representation of commands that run during various phases
 //! of worktree and merge operations.
 
+use std::collections::BTreeMap;
+
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::ser::SerializeMap;
@@ -76,6 +78,21 @@ impl CommandConfig {
         let mut commands = self.commands.clone();
         commands.extend(other.commands.iter().cloned());
         Self { commands }
+    }
+}
+
+/// Append alias commands from `additions` into `base`.
+///
+/// On name collision, commands are appended (base first, then additions),
+/// matching how hooks merge across config layers.
+pub fn append_aliases(
+    base: &mut BTreeMap<String, CommandConfig>,
+    additions: &BTreeMap<String, CommandConfig>,
+) {
+    for (k, v) in additions {
+        base.entry(k.clone())
+            .and_modify(|existing| *existing = existing.merge_append(v))
+            .or_insert_with(|| v.clone());
     }
 }
 
