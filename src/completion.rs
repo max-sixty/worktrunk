@@ -250,7 +250,6 @@ impl ValueCompleter for HookCommandCompleter {
                 candidates.extend(
                     config
                         .commands()
-                        .iter()
                         .filter_map(|cmd| cmd.name.as_ref())
                         .map(|name| CompletionCandidate::new(name.clone())),
                 );

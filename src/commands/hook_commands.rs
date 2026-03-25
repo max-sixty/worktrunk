@@ -27,8 +27,9 @@ use super::command_executor::build_hook_context;
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_hook_commands,
-    run_hook_with_filter, spawn_background_hooks,
+    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, config_has_pipeline,
+    prepare_hook_commands, prepare_pipeline_hooks, run_hook_with_filter, spawn_background_hooks,
+    spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -66,6 +67,17 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
+        // Pipeline configs (list form) use compound shell command path.
+        // Name filtering falls through to the flat path (individual command execution).
+        let has_pipeline = [user_config, project_config]
+            .iter()
+            .any(|c| c.is_some_and(config_has_pipeline));
+
+        if has_pipeline && name_filter.is_none() {
+            let steps = prepare_pipeline_hooks(ctx, hook_type, extra_vars, None)?;
+            return spawn_hook_pipeline(ctx, steps);
+        }
+
         let commands = prepare_hook_commands(
             ctx,
             HookCommandSpec {
@@ -583,7 +595,7 @@ fn render_hook_commands(
     approval_context: Option<(&Approvals, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let commands = config.commands();
+    let commands: Vec<_> = config.commands().collect();
     if commands.is_empty() {
         return Ok(());
     }

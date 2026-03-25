@@ -1906,7 +1906,7 @@ fn test_hooks_merge_append_semantics() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1925,7 +1925,7 @@ fn test_hooks_no_project_override_uses_global() {
 
     let effective = config.hooks(Some("github.com/other/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1948,7 +1948,7 @@ fn test_hooks_project_only_no_global() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
@@ -1980,13 +1980,13 @@ fn test_hooks_different_hook_types_not_merged() {
 
     // post-start: only global
     let post_start = effective.post_start.unwrap();
-    let start_commands = post_start.commands();
+    let start_commands: Vec<_> = post_start.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
     // pre-commit: only project
     let pre_commit = effective.pre_commit.unwrap();
-    let commit_commands = pre_commit.commands();
+    let commit_commands: Vec<_> = pre_commit.commands().collect();
     assert_eq!(commit_commands.len(), 1);
     assert_eq!(commit_commands[0].template, "echo project-commit");
 }
@@ -2004,7 +2004,7 @@ fn test_hooks_none_project_uses_global() {
 
     let effective = config.hooks(None);
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -2132,7 +2132,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2177,7 +2177,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2332,7 +2332,7 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 
     let merged = global_hooks.merge_with(&project_hooks);
     let pre_merge = merged.pre_merge.unwrap();
-    let commands = pre_merge.commands();
+    let commands: Vec<_> = pre_merge.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "global-lint"); // Global first
     assert_eq!(commands[1].template, "project-lint"); // Project second
@@ -2349,7 +2349,7 @@ fn test_hooks_merge_folds_post_create_into_pre_start() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(commands.len(), 2, "Both hooks should be present");
     assert_eq!(commands[0].template, "npm install"); // User's post-create first
     assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
@@ -2367,7 +2367,7 @@ fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(
         commands.len(),
         2,
@@ -2387,7 +2387,7 @@ fn test_hooks_merge_post_create_both_sides() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install");
     assert_eq!(commands[1].template, "cargo build");

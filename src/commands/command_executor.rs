@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
+use worktrunk::config::{Command, CommandConfig, HookStep, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -13,6 +13,13 @@ pub struct PreparedCommand {
     pub name: Option<String>,
     pub expanded: String,
     pub context_json: String,
+}
+
+/// A step in a prepared pipeline, mirroring `HookStep`.
+#[derive(Debug)]
+pub enum PreparedStep {
+    Single(PreparedCommand),
+    Concurrent(Vec<PreparedCommand>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -220,12 +227,12 @@ pub fn prepare_commands(
     hook_type: HookType,
     source: HookSource,
 ) -> anyhow::Result<Vec<PreparedCommand>> {
-    let commands = command_config.commands();
+    let commands: Vec<Command> = command_config.commands().cloned().collect();
     if commands.is_empty() {
         return Ok(Vec::new());
     }
 
-    let expanded_with_json = expand_commands(commands, ctx, extra_vars, hook_type, source)?;
+    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source)?;
 
     Ok(expanded_with_json
         .into_iter()
@@ -235,4 +242,57 @@ pub fn prepare_commands(
             context_json,
         })
         .collect())
+}
+
+/// Prepare pipeline steps for execution, preserving serial/concurrent structure.
+///
+/// Like `prepare_commands`, but returns `Vec<PreparedStep>` that preserves
+/// the pipeline structure from the config. Used by post-* hooks that need
+/// to distinguish serial steps from concurrent groups.
+pub fn prepare_steps(
+    command_config: &CommandConfig,
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+    hook_type: HookType,
+    source: HookSource,
+) -> anyhow::Result<Vec<PreparedStep>> {
+    let steps = command_config.steps();
+    if steps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    for step in steps {
+        match step {
+            HookStep::Single(cmd) => {
+                let expanded = expand_commands(
+                    std::slice::from_ref(cmd),
+                    ctx,
+                    extra_vars,
+                    hook_type,
+                    source,
+                )?;
+                let (cmd, json) = expanded.into_iter().next().unwrap();
+                result.push(PreparedStep::Single(PreparedCommand {
+                    name: cmd.name,
+                    expanded: cmd.expanded,
+                    context_json: json,
+                }));
+            }
+            HookStep::Concurrent(cmds) => {
+                let expanded = expand_commands(cmds, ctx, extra_vars, hook_type, source)?;
+                let prepared = expanded
+                    .into_iter()
+                    .map(|(cmd, json)| PreparedCommand {
+                        name: cmd.name,
+                        expanded: cmd.expanded,
+                        context_json: json,
+                    })
+                    .collect();
+                result.push(PreparedStep::Concurrent(prepared));
+            }
+        }
+    }
+
+    Ok(result)
 }
