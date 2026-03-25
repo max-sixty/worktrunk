@@ -552,14 +552,13 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
     Ok(())
 }
 
-/// VCS metadata directories that should never be copied between worktrees.
-///
-/// These directories contain internal state tied to a specific working directory.
-/// Git's own `.git` is implicitly excluded (git ls-files never reports it), but
-/// other VCS tools colocated with git need explicit exclusion.
-const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
-
 /// Built-in excludes for `wt step copy-ignored`: VCS metadata + tool-state directories.
+///
+/// VCS directories contain internal state tied to a specific working directory.
+/// Git's own `.git` is implicitly excluded (git ls-files never reports it), but
+/// other VCS tools colocated with git need explicit exclusion. Tool-state
+/// directories (`.conductor/`, `.worktrees/`, etc.) are project-local state that
+/// shouldn't be shared between worktrees.
 const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
     ".bzr/",
     ".conductor/",
@@ -604,7 +603,7 @@ fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredC
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
 /// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
-/// 4. VCS metadata filtering — exclude directories like `.jj`, `.hg`
+/// 4. Built-in exclude filtering — always skip VCS metadata and tool-state directories
 /// 5. Nested worktree filtering — exclude entries containing other worktrees
 fn list_and_filter_ignored_entries(
     worktree_path: &Path,
@@ -667,13 +666,16 @@ fn list_and_filter_ignored_entries(
                     return false;
                 }
             }
-            // Skip VCS metadata directories (.jj, .hg, etc.) — these contain
-            // internal state tied to a specific working directory
+            // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
             if *is_dir
                 && path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|name| VCS_METADATA_DIRS.contains(&name))
+                    .is_some_and(|name| {
+                        BUILTIN_COPY_IGNORED_EXCLUDES
+                            .iter()
+                            .any(|pat| pat.trim_end_matches('/') == name)
+                    })
             {
                 return false;
             }
