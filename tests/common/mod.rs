@@ -770,7 +770,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
 /// This is the `Cmd` equivalent of [`configure_git_cmd`]. Use this when building
 /// git commands via the builder pattern (`Cmd::new("git")`).
 pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
-    cmd.env("GIT_CONFIG_GLOBAL", git_config_path.to_str().unwrap())
+    cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
         .env("GIT_CONFIG_SYSTEM", NULL_DEVICE)
         .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
         .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
