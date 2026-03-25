@@ -476,6 +476,10 @@ pub struct OverridableConfig {
     /// Per-project aliases append to global aliases on name collision (global
     /// first, then per-project), matching hook merge semantics.
     ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
+    ///
     /// ```toml
     /// [aliases]
     /// deploy = "cd {{ worktree_path }} && make deploy"
@@ -535,12 +539,7 @@ fn merge_alias_maps(
         (None, Some(o)) => Some(o.clone()),
         (Some(b), Some(o)) => {
             let mut merged = b.clone();
-            for (k, v) in o {
-                merged
-                    .entry(k.clone())
-                    .and_modify(|existing| *existing = existing.merge_append(v))
-                    .or_insert_with(|| v.clone());
-            }
+            crate::config::commands::append_aliases(&mut merged, o);
             Some(merged)
         }
     }

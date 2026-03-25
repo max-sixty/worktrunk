@@ -6,13 +6,15 @@
 //!
 //! Project-config aliases require command approval (same as project hooks).
 //! User-config aliases are trusted and skip approval. When an alias exists
-//! in both configs, the user version wins and is trusted.
+//! in both configs, both run — user first, then project (with approval).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, expand_template};
+use worktrunk::config::{
+    CommandConfig, ProjectConfig, UserConfig, append_aliases, expand_template,
+};
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
@@ -103,30 +105,18 @@ fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
 
 /// Determine whether an alias requires project-config approval.
 ///
-/// An alias needs approval when:
-/// - It exists in project config AND
-/// - It does NOT exist in user config (user overrides are trusted)
+/// Returns the project-config commands for this alias, if any exist.
+/// Project-config commands always need approval, regardless of whether
+/// user config also defines the same alias — matching hook behavior.
 fn alias_needs_approval(
     alias_name: &str,
     project_config: &Option<ProjectConfig>,
-    user_config: &UserConfig,
-    project_id: Option<&str>,
 ) -> Option<CommandConfig> {
-    // Check if alias exists in project config
-    let project_commands = project_config
+    project_config
         .as_ref()
         .and_then(|pc| pc.aliases.as_ref())
-        .and_then(|a| a.get(alias_name));
-
-    let project_commands = project_commands?;
-
-    // Check if user config overrides this alias (user overrides are trusted)
-    let user_aliases = user_config.aliases(project_id);
-    if user_aliases.contains_key(alias_name) {
-        return None;
-    }
-
-    Some(project_commands.clone())
+        .and_then(|a| a.get(alias_name))
+        .cloned()
 }
 
 /// Find the closest match for `input` among `candidates` using Jaro similarity.
@@ -154,13 +144,13 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let project_id = repo.project_identifier().ok();
     let project_config = ProjectConfig::load(&repo, true)?;
 
-    // Merge aliases: start with project config, user config replaces on collision
-    // (user aliases are trusted; project aliases need approval)
-    let mut aliases: BTreeMap<String, CommandConfig> = project_config
-        .as_ref()
-        .and_then(|pc| pc.aliases.clone())
-        .unwrap_or_default();
-    aliases.extend(user_config.aliases(project_id.as_deref()));
+    // Merge aliases: user config first, then project config appends.
+    // Matches hook merge semantics — both sources run, project commands
+    // need approval regardless of whether user also defines the alias.
+    let mut aliases = user_config.aliases(project_id.as_deref());
+    if let Some(project_aliases) = project_config.as_ref().and_then(|pc| pc.aliases.as_ref()) {
+        append_aliases(&mut aliases, project_aliases);
+    }
 
     // Warn about aliases that shadow built-in step commands
     let shadowed: Vec<_> = aliases
@@ -227,12 +217,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // project_id is required for approval — re-derive with error propagation
     // rather than using the .ok() from above.
     if !opts.dry_run
-        && let Some(project_commands) = alias_needs_approval(
-            &opts.name,
-            &project_config,
-            &user_config,
-            project_id.as_deref(),
-        )
+        && let Some(project_commands) = alias_needs_approval(&opts.name, &project_config)
     {
         let project_id = repo
             .project_identifier()

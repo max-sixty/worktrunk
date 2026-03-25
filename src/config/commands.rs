@@ -26,6 +26,8 @@
 //! ]
 //! ```
 
+use std::collections::BTreeMap;
+
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::ser::SerializeMap;
@@ -152,6 +154,21 @@ fn map_to_step(map: IndexMap<String, String>) -> HookStep {
                 .map(|(name, template)| Command::new(Some(name), template))
                 .collect(),
         )
+    }
+}
+
+/// Append alias commands from `additions` into `base`.
+///
+/// On name collision, commands are appended (base first, then additions),
+/// matching how hooks merge across config layers.
+pub fn append_aliases(
+    base: &mut BTreeMap<String, CommandConfig>,
+    additions: &BTreeMap<String, CommandConfig>,
+) {
+    for (k, v) in additions {
+        base.entry(k.clone())
+            .and_modify(|existing| *existing = existing.merge_append(v))
+            .or_insert_with(|| v.clone());
     }
 }
 

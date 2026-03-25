@@ -207,12 +207,7 @@ impl UserConfig {
             .and_then(|p| self.projects.get(p))
             .and_then(|proj| proj.overrides.aliases.as_ref())
         {
-            for (k, v) in proj_aliases {
-                result
-                    .entry(k.clone())
-                    .and_modify(|existing| *existing = existing.merge_append(v))
-                    .or_insert_with(|| v.clone());
-            }
+            crate::config::commands::append_aliases(&mut result, proj_aliases);
         }
         result
     }
