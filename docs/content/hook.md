@@ -151,54 +151,30 @@ Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
 # Configuration
 
-Hooks can be defined in two places: project config (`.config/wt.toml`) for repository-specific automation, or user config (`~/.config/worktrunk/config.toml`) for personal automation across all repositories.
-
-## Project hooks
-
-Project hooks are defined in `.config/wt.toml`:
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format — a single command or multiple named commands:
 
 ```toml
 # Single command (string)
 pre-start = "npm install"
 
-# Multiple commands (table) — for pre-* hooks, run sequentially; for post-* hooks, run concurrently
+# Multiple commands (table)
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
 ```
 
-For post-* hooks that need ordering guarantees (e.g., install before build), see [Pipeline ordering](#pipeline-ordering).
+For pre-* hooks, commands in a table run sequentially. For post-* hooks, they run concurrently in the background. Post-* hooks that need ordering guarantees can use [pipeline ordering](#pipeline-ordering).
 
-## User hooks
-
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
-
-```toml
-# ~/.config/worktrunk/config.toml
-[pre-start]
-setup = "echo 'Setting up worktree...'"
-
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
-```
-
-User hooks support the same hook types and template variables as project hooks.
-
-**Key differences from project hooks:**
+## Project vs user hooks
 
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories (or per-project) |
+| Scope | Single repository | All repositories (or [per-project](@/config.md#setting-overrides)) |
 | Approval | Required | Not required |
-| Execution order | After user hooks | Global first, then per-project |
+| Execution order | After user hooks | First |
 
-Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
-
-**Use cases:**
-- Personal notifications or logging
-- Editor/IDE integration
-- Repository-agnostic setup tasks
+Skip all hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 
