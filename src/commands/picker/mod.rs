@@ -102,19 +102,13 @@ impl PickerCollector {
                     .ok()
                     .flatten()
                     .unwrap_or_default();
-                let target_path_str =
-                    worktrunk::path::to_posix_path(&main_path.to_string_lossy());
+                let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
                 let extra_vars: Vec<(&str, &str)> = vec![
                     ("target", &target_ref),
                     ("target_worktree_path", &target_path_str),
                 ];
-                let pre_ctx = CommandContext::new(
-                    &repo,
-                    &config,
-                    Some(hook_branch),
-                    worktree_path,
-                    false,
-                );
+                let pre_ctx =
+                    CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
                 execute_hook(
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
