@@ -145,7 +145,7 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Err(_) => return Ok(None),
     };
 
-    let config_path = match repo.expected_project_config_path() {
+    let config_path = match repo.project_config_path() {
         Ok(path) => path,
         Err(_) => return Ok(None),
     };

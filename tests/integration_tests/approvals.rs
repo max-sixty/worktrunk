@@ -263,12 +263,12 @@ fn test_add_approvals_bare_repo_config_in_primary_worktree() {
     });
 }
 
-/// Test that `expected_project_config_path` falls back to the bare repo root
-/// when no linked worktrees exist (bare repo with no primary worktree).
+/// Test that `project_config_path` errors in a bare repo with no linked
+/// worktrees (no bare repo root fallback — removed in #1697).
 #[test]
-fn test_config_create_project_bare_repo_no_worktrees_fallback() {
+fn test_config_create_project_bare_repo_no_worktrees_errors() {
     let test = BareRepoTest::new();
-    // Don't create any worktrees — this exercises the fallback path
+    // Don't create any worktrees — no primary worktree available
 
     // Run `wt config create --project` from the bare repo root
     let mut cmd = wt_command();
@@ -277,17 +277,8 @@ fn test_config_create_project_bare_repo_no_worktrees_fallback() {
         .args(["config", "create", "--project"]);
     let output = cmd.output().unwrap();
     assert!(
-        output.status.success(),
-        "wt config create --project failed:\nstderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Config should be created at the bare repo root (fallback location)
-    let bare_root_config = test.bare_repo_path().join(".config").join("wt.toml");
-    assert!(
-        bare_root_config.exists(),
-        "Config should be created in bare repo root (fallback) at {:?}",
-        bare_root_config
+        !output.status.success(),
+        "wt config create --project should fail with no worktrees"
     );
 }
 

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use color_print::cformat;
 
 use crate::config::ProjectConfig;
@@ -405,20 +405,29 @@ impl Repository {
     // Project config
     // =========================================================================
 
-    /// Return the expected path for the project config file.
+    /// Return the path for the project config file.
     ///
-    /// For bare repos, uses the primary worktree (default branch worktree)
-    /// to match `ProjectConfig::load` (#1691). Falls back to the bare repo
-    /// root only when no primary worktree exists (no linked worktrees yet).
-    /// For normal repos, uses the current worktree root.
-    pub fn expected_project_config_path(&self) -> anyhow::Result<PathBuf> {
+    /// Uses the current worktree root for both normal and bare repos.
+    /// For bare repos, when the current worktree has no real root (i.e.,
+    /// running from the bare repo root), falls back to the primary worktree
+    /// (default branch worktree) to match `ProjectConfig::load` (#1691).
+    pub fn project_config_path(&self) -> anyhow::Result<PathBuf> {
         if self.is_bare().unwrap_or(false) {
+            // In bare repos, `root()` falls back to the base path when
+            // `--show-toplevel` fails, which would return the bare repo root
+            // — not a real worktree. Check `--show-toplevel` directly to
+            // distinguish "inside a linked worktree" from "at the bare root".
+            let wt = self.current_worktree();
+            if let Ok(toplevel) = wt.run_command(&["rev-parse", "--show-toplevel"]) {
+                // We're inside a linked worktree — use it like a normal repo.
+                let root = PathBuf::from(toplevel.trim());
+                return Ok(root.join(".config").join("wt.toml"));
+            }
+            // At the bare repo root — fall back to primary worktree (#1691, #1697).
             if let Some(primary) = self.primary_worktree()? {
                 return Ok(primary.join(".config").join("wt.toml"));
             }
-            // No primary worktree — bare repo with no linked worktrees.
-            // Fall back to bare repo root (best-effort location).
-            return Ok(self.repo_path()?.join(".config").join("wt.toml"));
+            bail!("bare repo has no linked worktrees; cannot determine project config path");
         }
         Ok(self
             .current_worktree()
