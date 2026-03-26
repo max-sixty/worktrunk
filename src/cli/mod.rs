@@ -1399,7 +1399,7 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 # Pipeline Ordering [experimental]
 
-The TOML type determines how hook commands execute. In the simplest case, a string runs one command:
+By default, all commands in a `post-*` hook run concurrently in the background. The TOML type determines execution order. In the simplest case, a string runs one command:
 
 ```toml
 post-start = "npm install"
