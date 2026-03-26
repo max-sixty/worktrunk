@@ -35,10 +35,10 @@
 //! ```
 //!
 //! **Manually-written pages** (faq.md, llm-commits.md) bypass this pipeline.
-//! They use `{{ experimental() }}` (Zola shortcode) for badges.
+//! They use `<span class="badge-experimental"></span>` directly for badges.
 //!
 //! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
-//! which strips Zola syntax (terminal shortcodes, `{{ experimental() }}` → `[experimental]`)
+//! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
 //! for plain-markdown consumption.
 
 use std::process;
