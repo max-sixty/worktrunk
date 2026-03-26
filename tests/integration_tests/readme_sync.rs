@@ -420,7 +420,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
         let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = trim_lines(&html);
+        let normalized = encode_leading_spaces(&trim_lines(&html));
 
         // Build the terminal shortcode with standard template markers
         // cmd= parameter enables giallo syntax highlighting on the command line
@@ -464,6 +464,19 @@ fn trim_lines(content: &str) -> String {
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+/// Encode leading spaces on the first line as `&#32;` HTML entities.
+/// Zola trims leading whitespace from shortcode bodies, stripping the
+/// two-space gutter that aligns table headers with data rows in `wt list`.
+/// HTML entities survive the trim and render as spaces in `<pre>` blocks.
+fn encode_leading_spaces(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("");
+    let leading = first_line.len() - first_line.trim_start().len();
+    if leading == 0 {
+        return content.to_string();
+    }
+    format!("{}{}", "&#32;".repeat(leading), &content[leading..])
 }
 
 /// Parse snapshot content for docs (with ANSI to HTML conversion)
