@@ -301,30 +301,37 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 [experimental]
 
-By default, all commands in a `post-*` hook run concurrently in the background:
+The TOML type determines how hook commands execute. In the simplest case, a string runs one command:
 
 ```toml
-# A table — all three run concurrently
+post-start = "npm install"
+```
+
+Most hooks have a few named commands in a map, which run concurrently:
+
+```toml
 [post-start]
 install = "npm install"
 build = "npm run build"
 lint = "npm run lint"
 ```
 
-When one command depends on another — `npm run build` needs `npm install` to finish first — switch from a table to a list:
+When one command depends on another — `npm run build` needs `npm install` to finish first — a list runs its items in order, with each map's entries running concurrently:
 
 ```toml
 # A list of two maps, run in order.
 # Each map runs its entries concurrently.
 post-start = [
+    # install runs first
     { install = "npm install" },
+    # ...then build and lint run concurrently
     { build = "npm run build", lint = "npm run lint" }
 ]
 ```
 
-The TOML type determines execution:
+In summary:
 
-- **String** — one command (`post-start = "npm install"`)
+- **String** — one command
 - **Map** — concurrent commands
 - **List** — serial steps (each item is a string or map)
 
