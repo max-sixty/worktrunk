@@ -39,15 +39,15 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅
-@     [2m^[22m[2m|[22m                           [2m|
-+     [2m↑[22m                 [32m↑1[0m      
-+     [2m↑[22m                 [32m↑1[0m      
-+     [2m↑[22m                 [32m↑1[0m      
-+   [36m?[39m [2m–[22m                         
-+     [2m_[22m                         
-+     [2m_[22m                         
+  [1mBranch
+@ main
++ feature-a
++ feature-b
++ feature-c
++ feature/implement-oauth2-social-login
++ [2mfix/database-connection-pool-exhausti[22m…
++ [2mshort
 
-[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 5 columns hidden
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 8 columns hidden
 
 ----- stderr -----
