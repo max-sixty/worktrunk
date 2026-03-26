@@ -151,52 +151,30 @@ Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
 # Configuration
 
-Hooks can be defined in two places: project config (`.config/wt.toml`) for repository-specific automation, or user config (`~/.config/worktrunk/config.toml`) for personal automation across all repositories.
-
-## Project hooks
-
-Project hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format — a single command or multiple named commands:
 
 ```toml
 # Single command (string)
 pre-start = "npm install"
 
-# Multiple commands (table) — run sequentially in declaration order
+# Multiple commands (table)
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
 ```
 
-## User hooks
+For pre-* hooks, commands in a table run sequentially. For post-* hooks, they run concurrently in the background. Post-* hooks that need ordering guarantees can use [pipeline ordering](#pipeline-ordering).
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
-
-```toml
-# ~/.config/worktrunk/config.toml
-[pre-start]
-setup = "echo 'Setting up worktree...'"
-
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
-```
-
-User hooks support the same hook types and template variables as project hooks.
-
-**Key differences from project hooks:**
+## Project vs user hooks
 
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories (or per-project) |
+| Scope | Single repository | All repositories (or [per-project](@/config.md#setting-overrides)) |
 | Approval | Required | Not required |
-| Execution order | After user hooks | Global first, then per-project |
+| Execution order | After user hooks | First |
 
-Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
-
-**Use cases:**
-- Personal notifications or logging
-- Editor/IDE integration
-- Repository-agnostic setup tasks
+Skip all hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 
@@ -327,6 +305,56 @@ wt hook pre-start --var branch=feature/test     # Override template variable
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
+
+# Pipeline Ordering
+
+<span class="badge-experimental"></span>
+
+By default, all commands in a `post-*` hook run concurrently in the background. When one command depends on another — `npm run build` needs `npm install` to finish first — use a list instead of a table:
+
+```toml
+[hooks]
+post-start = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" }
+]
+```
+
+The list runs steps in order. Each step is either a string (single command) or a map (named commands). Single-entry maps run one command; multi-entry maps run their commands concurrently. The TOML data structure encodes the execution model directly:
+
+- **String** — single command
+- **Map** (table) — concurrent commands
+- **List** (array) — serial pipeline
+
+The entire pipeline runs in the background as one process. Anonymous steps work too:
+
+```toml
+post-start = ["npm install", "npm run build"]
+```
+
+## How it works
+
+Steps are chained with `&&` in a compound shell command, so a failing step skips all later steps. A multi-entry map spawns its commands as background processes and waits for all to complete before the next step.
+
+For the example above, the generated command is:
+
+```
+{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }
+```
+
+Pre-* hooks ignore pipeline structure — all commands run serially regardless, since pre-* hooks are blocking by nature.
+
+## When to use pipelines
+
+Most hooks don't need pipelines. A table of concurrent post-start commands is fine when they're independent:
+
+```toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+copy = "wt step copy-ignored"
+```
+
+Pipelines matter when there's a dependency chain — typically setup steps that must complete before other tasks can start. Common pattern: install dependencies, then run build + dev server concurrently.
 
 # Designing Effective Hooks
 

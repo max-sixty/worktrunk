@@ -1,23 +1,30 @@
 // Benchmarks for `wt step copy-ignored` COW directory copying
 //
-// Tests copy performance with realistic Rust target/ directory structures.
-// Uses file-by-file reflink copying on all platforms.
+// Compares serial vs the production parallel (rayon) recursive directory copying.
+// Two directory layouts test different parallelism profiles:
+//
+// - deep: Rust target/ with most files in a single deps/ dir (narrow tree)
+// - wide: Files spread across many subdirectories (wide tree)
 //
 // Run:
 //   cargo bench --bench cow_copy
+//   cargo bench --bench cow_copy -- serial   # serial only
+//   cargo bench --bench cow_copy -- parallel # parallel only
+//   cargo bench --bench cow_copy -- wide     # wide tree only
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use tempfile::TempDir;
+use worktrunk::copy::copy_dir_recursive;
 
-/// Create a directory structure mimicking a Rust target/ directory.
+/// Create a narrow directory structure mimicking a Rust target/ directory.
 ///
-/// Structure: target/debug/{deps,build,incremental}/... with .rlib, .rmeta, .d files
-fn create_target_dir(file_count: usize) -> TempDir {
+/// Most files concentrate in debug/deps/ — exercises parallelism within a single
+/// large directory.
+fn create_deep_target(file_count: usize) -> TempDir {
     let temp = tempfile::tempdir().unwrap();
     let target = temp.path().join("target");
 
-    // Create typical Rust target subdirectories
     let subdirs = [
         "debug/deps",
         "debug/build",
@@ -28,12 +35,10 @@ fn create_target_dir(file_count: usize) -> TempDir {
         std::fs::create_dir_all(target.join(subdir)).unwrap();
     }
 
-    // Distribute files across subdirectories (mostly in deps/)
     let mut created = 0;
     let deps_dir = target.join("debug/deps");
 
     while created < file_count {
-        // Create .rlib files (larger, ~100KB simulated)
         let rlib = deps_dir.join(format!("libcrate_{:04}.rlib", created));
         std::fs::write(&rlib, vec![0u8; 100_000]).unwrap();
         created += 1;
@@ -42,7 +47,6 @@ fn create_target_dir(file_count: usize) -> TempDir {
             break;
         }
 
-        // Create .rmeta files (smaller, ~10KB)
         let rmeta = deps_dir.join(format!("libcrate_{:04}.rmeta", created));
         std::fs::write(&rmeta, vec![0u8; 10_000]).unwrap();
         created += 1;
@@ -51,13 +55,11 @@ fn create_target_dir(file_count: usize) -> TempDir {
             break;
         }
 
-        // Create .d dependency files (tiny, ~500 bytes)
         let dep = deps_dir.join(format!("libcrate_{:04}.d", created));
         std::fs::write(&dep, vec![0u8; 500]).unwrap();
         created += 1;
     }
 
-    // Add some incremental compilation artifacts
     let incr = target.join("debug/incremental/crate_name-hash");
     std::fs::create_dir_all(&incr).unwrap();
     for i in 0..10 {
@@ -67,16 +69,37 @@ fn create_target_dir(file_count: usize) -> TempDir {
     temp
 }
 
-/// Copy directory using the same approach as `wt step copy-ignored`.
+/// Create a wide directory tree with files distributed across many subdirectories.
 ///
-/// Uses file-by-file reflink on all platforms. We intentionally avoid atomic
-/// directory cloning on macOS (via clonefile()) because it saturates disk I/O
-/// and freezes interactive processes. See step_commands.rs for details.
-fn copy_dir_cow(src: &Path, dest: &Path) -> std::io::Result<()> {
-    copy_dir_recursive(src, dest)
+/// Exercises parallelism across sibling directories — the primary benefit of
+/// rayon in copy_dir_recursive.
+fn create_wide_target(file_count: usize) -> TempDir {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("target");
+
+    let files_per_dir = 10;
+    let dir_count = file_count / files_per_dir;
+    let mut created = 0;
+
+    for d in 0..dir_count {
+        let subdir = target.join(format!("pkg_{:04}", d));
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        for f in 0..files_per_dir {
+            if created >= file_count {
+                return temp;
+            }
+            let file = subdir.join(format!("file_{:02}.dat", f));
+            std::fs::write(&file, vec![0u8; 50_000]).unwrap();
+            created += 1;
+        }
+    }
+
+    temp
 }
 
-fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
+/// Serial baseline: sequential file-by-file copy without rayon.
+fn copy_dir_serial(src: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -85,7 +108,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
         let dest_path = dest.join(entry.file_name());
 
         if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path)?;
+            copy_dir_serial(&src_path, &dest_path)?;
         } else if file_type.is_file() {
             reflink_copy::reflink_or_copy(src_path, &dest_path)?;
         }
@@ -93,23 +116,50 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn bench_helper(
+    group: &mut criterion::BenchmarkGroup<criterion::measurement::WallTime>,
+    label: &str,
+    file_count: usize,
+    create_fn: fn(usize) -> TempDir,
+) {
+    let temp = create_fn(file_count);
+    let src = temp.path().join("target");
+
+    group.bench_with_input(
+        BenchmarkId::new(format!("serial/{label}"), file_count),
+        &src,
+        |b, src| {
+            let mut iter = 0u64;
+            b.iter(|| {
+                let dest = temp.path().join(format!("copy_s_{}", iter));
+                iter += 1;
+                copy_dir_serial(src, &dest).unwrap();
+                std::fs::remove_dir_all(&dest).ok();
+            });
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new(format!("parallel/{label}"), file_count),
+        &src,
+        |b, src| {
+            let mut iter = 0u64;
+            b.iter(|| {
+                let dest = temp.path().join(format!("copy_p_{}", iter));
+                iter += 1;
+                copy_dir_recursive(src, &dest, false).unwrap();
+                std::fs::remove_dir_all(&dest).ok();
+            });
+        },
+    );
+}
+
 fn bench_copy_target(c: &mut Criterion) {
     let mut group = c.benchmark_group("copy_target");
 
-    // Test various sizes typical of Rust projects
-    for &file_count in &[100, 500, 1000, 2000] {
-        let temp = create_target_dir(file_count);
-        let src = temp.path().join("target");
-
-        group.bench_with_input(BenchmarkId::new("files", file_count), &src, |b, src| {
-            let mut iter = 0u64;
-            b.iter(|| {
-                let dest = temp.path().join(format!("target_copy_{}", iter));
-                iter += 1;
-                copy_dir_cow(src, &dest).unwrap();
-                std::fs::remove_dir_all(&dest).ok();
-            });
-        });
+    for &file_count in &[100, 500, 1000] {
+        bench_helper(&mut group, "deep", file_count, create_deep_target);
+        bench_helper(&mut group, "wide", file_count, create_wide_target);
     }
 
     group.finish();

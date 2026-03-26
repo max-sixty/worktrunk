@@ -1391,10 +1391,7 @@ mod bare_repo_prompt_pty {
         let git_config_output = Cmd::new("git")
             .args(["config", "worktrunk.skip-bare-repo-prompt"])
             .current_dir(&main_worktree)
-            .env(
-                "GIT_CONFIG_GLOBAL",
-                test.git_config_path().to_str().unwrap(),
-            )
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
             .run()
             .unwrap();
         let value = String::from_utf8_lossy(&git_config_output.stdout);

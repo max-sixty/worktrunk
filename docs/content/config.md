@@ -208,6 +208,15 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 # timeout-ms = 500
 ```
 
+### Step
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+```
+
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+
 ### Aliases
 
 Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
@@ -230,9 +239,11 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides <span class="badge-experimental"></span>
+#### Setting overrides
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+<span class="badge-experimental"></span>
+
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -240,6 +251,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 pre-start.env = "cp .env.example .env"
+step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
@@ -356,6 +368,10 @@ url = "http://localhost:{{ branch | hash_port }}"
 # Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
+
+# Add more gitignored excludes for wt step copy-ignored
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
 
 # Command aliases (run with wt step <name>)
 [aliases]

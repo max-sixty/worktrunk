@@ -34,6 +34,8 @@ runs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7.6.0
+      with:
+        cache-dependency-glob: .pre-commit-config.yaml
 
     - name: Install pre-commit
       shell: bash

@@ -14,6 +14,7 @@ use crate::commands::branch_deletion::{
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
     HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_background_hooks,
+    spawn_hook_pipeline,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -851,12 +852,19 @@ fn spawn_hooks_after_remove(
         let dest_branch = repo.worktree_at(main_path).branch()?;
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
-        hooks.extend(prepare_background_hooks(
+        match prepare_background_hooks(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
             display_path,
-        )?);
+        )? {
+            crate::commands::hooks::PreparedHooks::Flat(cmds) => hooks.extend(cmds),
+            crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
+                if !steps.is_empty() {
+                    spawn_hook_pipeline(&switch_ctx, steps)?;
+                }
+            }
+        }
     }
 
     spawn_background_hooks(&remove_ctx, hooks)
