@@ -975,10 +975,15 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     // If we have unmatched candidates but no configured shells, suggest raising an issue
+    // Apply the same confirmed_paths filter used above to avoid including wrapper files
     if has_any_unmatched && !has_any_configured {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
-            .filter(|r| !r.unmatched_candidates.is_empty())
+            .filter(|r| {
+                !r.unmatched_candidates.is_empty()
+                    && r.matched_lines.is_empty()
+                    && !confirmed_paths.contains(r.path.as_path())
+            })
             .flat_map(|r| {
                 r.unmatched_candidates
                     .iter()
