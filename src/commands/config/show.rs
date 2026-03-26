@@ -520,8 +520,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         }
     };
     let config_path = match repo.project_config_path() {
-        Ok(path) => path,
-        Err(_) => {
+        Ok(Some(path)) => path,
+        _ => {
             writeln!(
                 out,
                 "{}",

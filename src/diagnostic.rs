@@ -323,7 +323,7 @@ fn config_show_output(repo: &Repository) -> Option<String> {
     }
 
     // Project config
-    if let Ok(project_config_path) = repo.project_config_path() {
+    if let Ok(Some(project_config_path)) = repo.project_config_path() {
         output.push_str(&format!(
             "\n{}",
             format_config_section(&project_config_path, "Project config")

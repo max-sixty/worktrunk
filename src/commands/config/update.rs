@@ -146,8 +146,8 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     };
 
     let config_path = match repo.project_config_path() {
-        Ok(path) => path,
-        Err(_) => return Ok(None),
+        Ok(Some(path)) => path,
+        _ => return Ok(None),
     };
     if !config_path.exists() {
         return Ok(None);

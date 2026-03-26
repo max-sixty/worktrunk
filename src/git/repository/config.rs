@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use color_print::cformat;
 
 use crate::config::ProjectConfig;
@@ -407,33 +407,35 @@ impl Repository {
 
     /// Return the path for the project config file.
     ///
-    /// Uses the current worktree root for both normal and bare repos.
-    /// For bare repos, when the current worktree has no real root (i.e.,
-    /// running from the bare repo root), falls back to the primary worktree
-    /// (default branch worktree) to match `ProjectConfig::load` (#1691).
-    pub fn project_config_path(&self) -> anyhow::Result<PathBuf> {
-        if self.is_bare().unwrap_or(false) {
-            // In bare repos, `root()` falls back to the base path when
-            // `--show-toplevel` fails, which would return the bare repo root
-            // — not a real worktree. Check `--show-toplevel` directly to
-            // distinguish "inside a linked worktree" from "at the bare root".
-            let wt = self.current_worktree();
-            if let Ok(toplevel) = wt.run_command(&["rev-parse", "--show-toplevel"]) {
-                // We're inside a linked worktree — use it like a normal repo.
-                let root = PathBuf::from(toplevel.trim());
-                return Ok(root.join(".config").join("wt.toml"));
-            }
-            // At the bare repo root — fall back to primary worktree (#1691, #1697).
-            if let Some(primary) = self.primary_worktree()? {
-                return Ok(primary.join(".config").join("wt.toml"));
-            }
-            bail!("bare repo has no linked worktrees; cannot determine project config path");
-        }
-        Ok(self
+    /// Uses the current worktree when inside one (both normal and bare repos).
+    /// For bare repos at the bare root (outside any worktree), falls back to
+    /// the primary worktree. Returns `None` when no worktree can be determined
+    /// (bare repo with no linked worktrees).
+    pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        let in_worktree = self
             .current_worktree()
-            .root()?
-            .join(".config")
-            .join("wt.toml"))
+            .run_command(&["rev-parse", "--is-inside-work-tree"])
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false);
+
+        if in_worktree {
+            // Inside a worktree — use it (normal repo or linked worktree in bare repo)
+            return Ok(Some(
+                self.current_worktree()
+                    .root()?
+                    .join(".config")
+                    .join("wt.toml"),
+            ));
+        }
+
+        if self.is_bare().unwrap_or(false) {
+            // At bare repo root — use primary worktree
+            return Ok(self
+                .primary_worktree()?
+                .map(|p| p.join(".config").join("wt.toml")));
+        }
+
+        Ok(None)
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
