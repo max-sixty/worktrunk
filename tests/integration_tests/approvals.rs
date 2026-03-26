@@ -290,6 +290,35 @@ fn test_config_create_project_bare_repo_no_worktrees_errors() {
     );
 }
 
+/// `hook approvals add` and `hook list` should error in a bare repo with
+/// no linked worktrees (project_config_path returns None).
+#[test]
+fn test_hook_commands_bare_repo_no_worktrees_errors() {
+    let test = BareRepoTest::new();
+
+    // hook approvals add --all should fail
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["hook", "approvals", "add", "--all"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "hook approvals add should fail with no worktrees"
+    );
+
+    // hook show should fail
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["hook", "show"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "hook show should fail with no worktrees"
+    );
+}
+
 /// Regression test for #1744: `wt config create --project` in a bare repo
 /// should create config in the primary worktree, not the bare repo root.
 #[test]
