@@ -42,6 +42,24 @@ impl CommandEnv {
         })
     }
 
+    /// Load the command environment for a named worktree (by branch name).
+    ///
+    /// Resolves the worktree path from the branch name rather than using
+    /// the current working directory.
+    pub fn for_branch(_action: &str, config: UserConfig, branch: &str) -> anyhow::Result<Self> {
+        let repo = Repository::current()?;
+        let worktree_path = repo
+            .worktree_for_branch(branch)?
+            .ok_or_else(|| anyhow::anyhow!("no worktree for branch '{branch}'"))?;
+
+        Ok(Self {
+            repo,
+            branch: Some(branch.to_string()),
+            config,
+            worktree_path,
+        })
+    }
+
     /// Load the command environment without requiring a branch.
     ///
     /// Use this for commands that can operate in detached HEAD state,

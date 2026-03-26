@@ -254,11 +254,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
 fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit {
+            branch,
             yes,
             verify,
             stage,
             show_prompt,
-        } => step_commit(yes, verify, stage, show_prompt),
+        } => step_commit(branch, yes, verify, stage, show_prompt),
         StepCommand::Squash {
             target,
             yes,
