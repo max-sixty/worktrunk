@@ -270,7 +270,7 @@ fn test_config_create_project_bare_repo_no_worktrees_errors() {
     let test = BareRepoTest::new();
     // Don't create any worktrees — no primary worktree available
 
-    // Run `wt config create --project` from the bare repo root
+    // Run `wt config create --project` from the bare repo root — should fail
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
     cmd.current_dir(test.bare_repo_path())
