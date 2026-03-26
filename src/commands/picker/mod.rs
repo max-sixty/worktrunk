@@ -27,7 +27,7 @@ use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::spawn_background_hooks;
+use super::hooks::{HookFailureStrategy, execute_hook, spawn_background_hooks};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
@@ -68,16 +68,16 @@ struct PickerCollector {
 }
 
 impl PickerCollector {
-    /// Execute removal silently: worktree + branch, or branch-only.
+    /// Execute removal in background: pre-remove hooks + worktree + branch + post-remove hooks.
+    ///
+    /// Called from a background thread after the picker optimistically removes the item
+    /// from the list. The entire operation runs off skim's event loop so the TUI stays
+    /// responsive. If pre-remove hooks fail, the removal is aborted (but the item is
+    /// already gone from the picker — a tradeoff until we can show in-progress state).
     ///
     /// `repo` is only used for `BranchOnly` deletion. `RemovedWorktree` constructs
     /// its own from `main_path` (which may differ from the picker's startup repo in
-    /// bare-repo setups). Post-remove hooks spawn in background.
-    ///
-    /// TODO: Pre-remove hooks are skipped because running them synchronously freezes
-    /// the picker UI. Until we can show in-progress state in the TUI (e.g., a
-    /// spinner or status line), this is an intentionally degraded experience —
-    /// which is why picker removal isn't documented as a primary workflow.
+    /// bare-repo setups).
     fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
         match result {
             RemoveResult::RemovedWorktree {
@@ -94,7 +94,35 @@ impl PickerCollector {
                 let config = repo.user_config();
                 let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
 
-                // Pre-remove hooks are intentionally skipped — see TODO on do_removal.
+                // Run pre-remove hooks (synchronously in this background thread).
+                // Non-zero exit aborts the removal, matching `wt remove` semantics.
+                let target_ref = repo
+                    .worktree_at(main_path)
+                    .branch()
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let target_path_str =
+                    worktrunk::path::to_posix_path(&main_path.to_string_lossy());
+                let extra_vars: Vec<(&str, &str)> = vec![
+                    ("target", &target_ref),
+                    ("target_worktree_path", &target_path_str),
+                ];
+                let pre_ctx = CommandContext::new(
+                    &repo,
+                    &config,
+                    Some(hook_branch),
+                    worktree_path,
+                    false,
+                );
+                execute_hook(
+                    &pre_ctx,
+                    worktrunk::HookType::PreRemove,
+                    &extra_vars,
+                    HookFailureStrategy::FailFast,
+                    None,
+                    None, // no display path in TUI context
+                )?;
 
                 let output = execute_removal(
                     &repo,
