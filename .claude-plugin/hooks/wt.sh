@@ -11,12 +11,11 @@ if [[ "$(uname -o 2>/dev/null)" =~ ^(Msys|Cygwin)$ ]]; then
     elif [[ "$(command -v wt 2>/dev/null)" != *WindowsApps* ]]; then
         WT=wt
     else
-        echo "worktrunk: wt resolves to Windows Terminal; install git-wt or add worktrunk to PATH" >&2
+        echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or replace the Windows Terminal alias" >&2
         exit 1
     fi
 else
     WT=wt
 fi
 
-"$WT" "$@"
 "$WT" "$@"
