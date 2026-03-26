@@ -318,9 +318,9 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
     // Load project config (error if missing - this command requires it)
-    let config_path = repo
-        .project_config_path()?
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine project config location — no worktree found"))?;
+    let config_path = repo.project_config_path()?.ok_or_else(|| {
+        anyhow::anyhow!("Cannot determine project config location — no worktree found")
+    })?;
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
@@ -549,9 +549,9 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let config_path = repo
-        .project_config_path()?
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine project config location — no worktree found"))?;
+    let config_path = repo.project_config_path()?.ok_or_else(|| {
+        anyhow::anyhow!("Cannot determine project config location — no worktree found")
+    })?;
 
     writeln!(
         out,
