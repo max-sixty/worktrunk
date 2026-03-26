@@ -30,7 +30,7 @@ const MAX_COPY_THREADS: usize = 4;
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
 ///
-/// Uses a dedicated rayon thread pool capped at [`MAX_COPY_THREADS`] to avoid
+/// Uses a dedicated rayon thread pool capped at `MAX_COPY_THREADS` to avoid
 /// SSD I/O contention from the larger global pool.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     let pool = rayon::ThreadPoolBuilder::new()
