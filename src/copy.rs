@@ -15,6 +15,12 @@ use std::path::Path;
 use anyhow::Context;
 use rayon::prelude::*;
 
+/// Maximum threads for filesystem copy operations. Beyond this, SSD I/O
+/// contention causes performance to regress (benchmarked on APFS and ext4).
+/// The global rayon pool is sized for network I/O (2x cores) which is too
+/// many for local filesystem work.
+const MAX_COPY_THREADS: usize = 4;
+
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
 /// Handles regular files, directories, and symlinks. Non-regular files (sockets,
@@ -23,7 +29,19 @@ use rayon::prelude::*;
 ///
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
+///
+/// Uses a dedicated rayon thread pool capped at [`MAX_COPY_THREADS`] to avoid
+/// SSD I/O contention from the larger global pool.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(MAX_COPY_THREADS)
+        .build()
+        .context("building copy thread pool")?;
+
+    pool.install(|| copy_dir_recursive_inner(src, dest, force))
+}
+
+fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
     let entries: Vec<_> = fs::read_dir(src)?.collect::<Result<Vec<_>, _>>()?;
@@ -45,7 +63,7 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
                 create_symlink(&target, &src_path, &dest_path)?;
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path, force)?;
+            copy_dir_recursive_inner(&src_path, &dest_path, force)?;
         } else if !file_type.is_file() {
             log::debug!("skipping non-regular file: {}", src_path.display());
         } else {
