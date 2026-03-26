@@ -27,9 +27,7 @@ use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::{
-    HookCommandSpec, prepare_hook_commands, run_hooks_silently, spawn_background_hooks,
-};
+use super::hooks::spawn_background_hooks;
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
@@ -74,8 +72,12 @@ impl PickerCollector {
     ///
     /// `repo` is only used for `BranchOnly` deletion. `RemovedWorktree` constructs
     /// its own from `main_path` (which may differ from the picker's startup repo in
-    /// bare-repo setups). Pre-remove hooks abort removal on failure; post-remove
-    /// hooks spawn in background.
+    /// bare-repo setups). Post-remove hooks spawn in background.
+    ///
+    /// TODO: Pre-remove hooks are skipped because running them synchronously freezes
+    /// the picker UI. Until we can show in-progress state in the TUI (e.g., a
+    /// spinner or status line), this is an intentionally degraded experience —
+    /// which is why picker removal isn't documented as a primary workflow.
     fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
         match result {
             RemoveResult::RemovedWorktree {
@@ -92,42 +94,7 @@ impl PickerCollector {
                 let config = repo.user_config();
                 let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
 
-                // Run pre-remove hooks silently. Non-zero exit aborts removal.
-                let pre_ctx =
-                    CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
-                let target_branch_for_hook = repo
-                    .worktree_at(main_path)
-                    .branch()
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
-                let pre_extra_vars: Vec<(&str, &str)> = vec![
-                    ("target", &target_branch_for_hook),
-                    ("target_worktree_path", &target_path_str),
-                ];
-
-                let pre_remove_commands = {
-                    let project_config = pre_ctx.repo.load_project_config()?;
-                    let user_hooks = pre_ctx.config.hooks(pre_ctx.project_id().as_deref());
-                    let (user_cfg, proj_cfg) = crate::commands::hooks::lookup_hook_configs(
-                        &user_hooks,
-                        project_config.as_ref(),
-                        worktrunk::HookType::PreRemove,
-                    );
-                    prepare_hook_commands(
-                        &pre_ctx,
-                        HookCommandSpec {
-                            user_config: user_cfg,
-                            project_config: proj_cfg,
-                            hook_type: worktrunk::HookType::PreRemove,
-                            extra_vars: &pre_extra_vars,
-                            name_filter: None,
-                            display_path: None,
-                        },
-                    )?
-                };
-                run_hooks_silently(pre_remove_commands, worktree_path)?;
+                // Pre-remove hooks are intentionally skipped — see TODO on do_removal.
 
                 let output = execute_removal(
                     &repo,
