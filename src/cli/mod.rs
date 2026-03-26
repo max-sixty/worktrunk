@@ -1399,27 +1399,39 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 # Pipeline Ordering [experimental]
 
-By default, all commands in a `post-*` hook run concurrently in the background. When one command depends on another — `npm run build` needs `npm install` to finish first — use a list instead of a table:
+By default, all commands in a `post-*` hook run concurrently in the background. The TOML type determines execution order. In the simplest case, a string runs one command:
 
 ```toml
-[hooks]
+post-start = "npm install"
+```
+
+Most hooks are a map of named commands, which run concurrently:
+
+```toml
+[post-start]
+install = "npm install"
+build = "npm run build"
+lint = "npm run lint"
+```
+
+When one command depends on another — `npm run build` needs `npm install` to finish first — use a list to run steps in order:
+
+```toml
+# A list of two maps, run in order.
+# Each map runs its entries concurrently.
 post-start = [
+    # install runs first
     { install = "npm install" },
+    # ...then build and lint run concurrently
     { build = "npm run build", lint = "npm run lint" }
 ]
 ```
 
-The list runs steps in order. Each step is either a string (single command) or a map (named commands). Single-entry maps run one command; multi-entry maps run their commands concurrently. The TOML data structure encodes the execution model directly:
+In summary:
 
-- **String** — single command
-- **Map** (table) — concurrent commands
-- **List** (array) — serial pipeline
-
-The entire pipeline runs in the background as one process. Anonymous steps work too:
-
-```toml
-post-start = ["npm install", "npm run build"]
-```
+- **String** — one command
+- **Map** of `name = "command"` pairs — run concurrently
+- **List** of maps — run in order
 
 ## How it works
 
