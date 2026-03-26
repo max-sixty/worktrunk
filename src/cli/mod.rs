@@ -1413,7 +1413,7 @@ When one command depends on another — `npm run build` needs `npm install` to f
 
 ```toml
 # A list of two maps, run in order.
-# Each map's entries run concurrently.
+# Each map runs its entries concurrently.
 post-start = [
     { install = "npm install" },
     { build = "npm run build", lint = "npm run lint" }

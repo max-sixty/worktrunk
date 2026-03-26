@@ -179,6 +179,9 @@ impl<'de> Deserialize<'de> for CommandConfig {
         D: serde::Deserializer<'de>,
     {
         /// An entry in a pipeline list: either a string or a map of named commands.
+        ///
+        /// Anonymous strings work but are intentionally undocumented — they
+        /// complicate the explanation without adding much over single-entry maps.
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum PipelineEntry {
