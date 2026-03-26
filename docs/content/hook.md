@@ -316,7 +316,7 @@ The TOML type determines how hook commands execute. In the simplest case, a stri
 post-start = "npm install"
 ```
 
-Most hooks have a few named commands in a map, which run concurrently:
+Most hooks are a map of named commands, which run concurrently:
 
 ```toml
 [post-start]
@@ -325,7 +325,7 @@ build = "npm run build"
 lint = "npm run lint"
 ```
 
-When one command depends on another — `npm run build` needs `npm install` to finish first — a list runs its items in order, with each map's entries running concurrently:
+When one command depends on another — `npm run build` needs `npm install` to finish first — use a list to run steps in order:
 
 ```toml
 # A list of two maps, run in order.
@@ -341,10 +341,8 @@ post-start = [
 In summary:
 
 - **String** — one command
-- **Map** — concurrent commands
-- **List** — serial steps (each item is a string or map)
-
-The entire pipeline runs in the background as one process.
+- **Map** of `name = "command"` pairs — run concurrently
+- **List** of maps — run in order
 
 ## How it works
 
