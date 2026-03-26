@@ -44,9 +44,7 @@ pub(super) fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
-        let config_path = repo.project_config_path()?.ok_or_else(|| {
-            anyhow::anyhow!("Cannot determine project config location — no worktree found")
-        })?;
+        let config_path = repo.require_project_config_path()?;
         let user_config_exists = require_user_config_path()
             .map(|p| p.exists())
             .unwrap_or(false);

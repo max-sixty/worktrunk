@@ -438,6 +438,15 @@ impl Repository {
         Ok(None)
     }
 
+    /// Like [`project_config_path`](Self::project_config_path), but returns
+    /// an error when no worktree can be determined (bare repo with no linked
+    /// worktrees).
+    pub fn require_project_config_path(&self) -> anyhow::Result<PathBuf> {
+        self.project_config_path()?.ok_or_else(|| {
+            anyhow::anyhow!("Cannot determine project config location — no worktree found")
+        })
+    }
+
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
