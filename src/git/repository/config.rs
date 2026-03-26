@@ -1,5 +1,7 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
+use std::path::PathBuf;
+
 use anyhow::Context;
 use color_print::cformat;
 
@@ -402,6 +404,28 @@ impl Repository {
     // =========================================================================
     // Project config
     // =========================================================================
+
+    /// Return the expected path for the project config file.
+    ///
+    /// For bare repos, uses the primary worktree (default branch worktree)
+    /// to match `ProjectConfig::load` (#1691). Falls back to the bare repo
+    /// root only when no primary worktree exists (no linked worktrees yet).
+    /// For normal repos, uses the current worktree root.
+    pub fn expected_project_config_path(&self) -> anyhow::Result<PathBuf> {
+        if self.is_bare().unwrap_or(false) {
+            if let Some(primary) = self.primary_worktree()? {
+                return Ok(primary.join(".config").join("wt.toml"));
+            }
+            // No primary worktree — bare repo with no linked worktrees.
+            // Fall back to bare repo root (best-effort location).
+            return Ok(self.repo_path()?.join(".config").join("wt.toml"));
+        }
+        Ok(self
+            .current_worktree()
+            .root()?
+            .join(".config")
+            .join("wt.toml"))
+    }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///

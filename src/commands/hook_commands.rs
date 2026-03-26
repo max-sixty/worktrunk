@@ -318,11 +318,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
     // Load project config (error if missing - this command requires it)
-    let config_path = repo
-        .current_worktree()
-        .root()?
-        .join(".config")
-        .join("wt.toml");
+    let config_path = repo.expected_project_config_path()?;
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
@@ -551,8 +547,7 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let repo_root = repo.current_worktree().root()?;
-    let config_path = repo_root.join(".config").join("wt.toml");
+    let config_path = repo.expected_project_config_path()?;
 
     writeln!(
         out,

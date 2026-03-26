@@ -145,12 +145,10 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Err(_) => return Ok(None),
     };
 
-    let root = match repo.current_worktree().root() {
-        Ok(root) => root,
+    let config_path = match repo.expected_project_config_path() {
+        Ok(path) => path,
         Err(_) => return Ok(None),
     };
-
-    let config_path = root.join(".config").join("wt.toml");
     if !config_path.exists() {
         return Ok(None);
     }

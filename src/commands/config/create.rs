@@ -44,7 +44,7 @@ pub(super) fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
-        let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
+        let config_path = repo.expected_project_config_path()?;
         let user_config_exists = require_user_config_path()
             .map(|p| p.exists())
             .unwrap_or(false);
@@ -61,8 +61,8 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
         )
     } else {
         let project_config_exists = Repository::current()
-            .and_then(|repo| repo.current_worktree().root())
-            .map(|root| root.join(".config/wt.toml").exists())
+            .and_then(|repo| repo.expected_project_config_path())
+            .map(|path| path.exists())
             .unwrap_or(false);
         create_config_file(
             require_user_config_path()?,
