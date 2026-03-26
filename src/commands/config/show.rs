@@ -895,8 +895,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             // For wrapper-based shells, the file at the path IS the integration — any
             // action means it was recognized. For eval-based shells, only AlreadyExists
             // means the config line was found.
-            r.shell.is_wrapper_based()
-                || matches!(r.action, ConfigAction::AlreadyExists)
+            r.shell.is_wrapper_based() || matches!(r.action, ConfigAction::AlreadyExists)
         })
         .map(|r| r.path.as_path())
         .collect();
