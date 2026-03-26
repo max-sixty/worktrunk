@@ -1,0 +1,15 @@
+---
+source: tests/integration_tests/bare_repository.rs
+expression: "&output"
+---
+[33m▲[39m [33mBare repo at [1mproject/.git[22m — worktrees will be at [1mproject/.git.feature-auth[22m[39m
+
+[36m❯[39m Configure worktree-path to place worktrees at [1mproject/feature-auth[22m? [1m[y/N/?][22m y
+[32m✓[39m [32mSet [1mworktree-path[22m for [1m[TEMP]/project[22m:[39m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
+[2m↳[22m [2mTo set globally, add to [4m[TEMP]/test-config.toml[24m[22m
+
+[32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m[TEMP]/project/feature[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

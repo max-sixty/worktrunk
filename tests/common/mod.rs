@@ -22,7 +22,7 @@
 //!
 //! ## Environment Isolation
 //!
-//! Git commands are run with isolated environments using `Command::env()` to ensure:
+//! Git commands are run with isolated environments using `Cmd::env()` to ensure:
 //! - No interference from global git config
 //! - Deterministic commit timestamps
 //! - Consistent locale settings
@@ -409,6 +409,7 @@ pub fn wt_bin() -> PathBuf {
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
+use worktrunk::shell_exec::Cmd;
 
 /// Path to the standard fixture (relative to crate root).
 /// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
@@ -573,7 +574,7 @@ const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 ///
 /// NOTE: Path-dependent variables (HOME, WORKTRUNK_CONFIG_PATH, GIT_CONFIG_*)
 /// are NOT included here because they depend on the TestRepo instance.
-const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
+pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("CLICOLOR_FORCE", "1"),
     // Terminal width for PTY tests. configure_cli_command() overrides to 500 for longer paths.
     ("COLUMNS", "150"),
@@ -589,15 +590,15 @@ const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
 // - configure_cli_command() sets TERM=alacritty for hyperlink detection testing
-// - PTY tests (especially skim-based select tests) need a TERM with valid terminfo
+// - PTY tests (especially skim-based picker tests) need a TERM with valid terminfo
 // - macOS CI doesn't have alacritty terminfo, causing skim to fail
 
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
-const NULL_DEVICE: &str = "NUL";
+pub const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
-const NULL_DEVICE: &str = "/dev/null";
+pub const NULL_DEVICE: &str = "/dev/null";
 
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
@@ -764,10 +765,25 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
+/// Configure a `Cmd`-based git command with isolated environment for testing.
+///
+/// This is the `Cmd` equivalent of [`configure_git_cmd`]. Use this when building
+/// git commands via the builder pattern (`Cmd::new("git")`).
+pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
+    cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
+        .env("GIT_CONFIG_SYSTEM", NULL_DEVICE)
+        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string())
+        .env("GIT_TERMINAL_PROMPT", "0")
+}
+
 /// Shared interface for test repository fixtures.
 ///
-/// Provides `configure_git_cmd()`, `git_command()`, and `run_git_in()` with consistent
-/// environment isolation.
+/// Provides `configure_git_cmd()` (for `Command`), `git_command()` (returns `Cmd`),
+/// and `run_git_in()` with consistent environment isolation.
 pub trait TestRepoBase {
     /// Path to the git config file for this test.
     fn git_config_path(&self) -> &Path;
@@ -778,16 +794,17 @@ pub trait TestRepoBase {
     }
 
     /// Create a git command for the given directory.
-    fn git_command(&self, dir: &Path) -> Command {
-        let mut cmd = Command::new("git");
-        cmd.current_dir(dir);
-        self.configure_git_cmd(&mut cmd);
-        cmd
+    fn git_command(&self, dir: &Path) -> Cmd {
+        configure_git_env(Cmd::new("git"), self.git_config_path()).current_dir(dir)
     }
 
     /// Run a git command in a specific directory, panicking on failure.
     fn run_git_in(&self, dir: &Path, args: &[&str]) {
-        let output = self.git_command(dir).args(args).output().unwrap();
+        let output = self
+            .git_command(dir)
+            .args(args.iter().copied())
+            .run()
+            .unwrap();
         check_git_status(&output, &args.join(" "));
     }
 
@@ -801,7 +818,7 @@ pub trait TestRepoBase {
         let output = self
             .git_command(dir)
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
 
         if !output.status.success() {
@@ -1010,11 +1027,11 @@ pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
 
 /// Check that a git command succeeded, panicking with diagnostics if not.
 ///
-/// Use this after `git_command().output()` to ensure the command succeeded.
+/// Use this after `git_command().run()` to ensure the command succeeded.
 ///
 /// # Example
 /// ```ignore
-/// let output = repo.git_command().args(["add", "."]).current_dir(&dir).output().unwrap();
+/// let output = repo.git_command().args(["add", "."]).current_dir(&dir).run().unwrap();
 /// check_git_status(&output, "add");
 /// ```
 pub fn check_git_status(output: &std::process::Output, cmd_desc: &str) {
@@ -1229,28 +1246,25 @@ impl TestRepo {
 
     /// Create a `git` command pre-configured for this test repo.
     ///
-    /// Returns an isolated Command with test-specific git config.
-    /// Chain `.args()` to add arguments.
+    /// Returns an isolated `Cmd` with test-specific git config.
+    /// Chain `.args()` to add arguments, then `.run()` to execute.
     ///
     /// # Example
     /// ```ignore
     /// repo.git_command()
     ///     .args(["status", "--porcelain"])
-    ///     .output()?;
+    ///     .run()?;
     /// ```
     #[must_use]
-    pub fn git_command(&self) -> Command {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.current_dir(&self.root);
-        cmd
+    pub fn git_command(&self) -> Cmd {
+        configure_git_env(Cmd::new("git"), &self.git_config_path).current_dir(&self.root)
     }
 
     /// Run a git command in the repo root, panicking on failure.
     ///
     /// Thin wrapper around `git_command()` that runs the command and checks status.
     pub fn run_git(&self, args: &[&str]) {
-        let output = self.git_command().args(args).output().unwrap();
+        let output = self.git_command().args(args.iter().copied()).run().unwrap();
         check_git_status(&output, &args.join(" "));
     }
 
@@ -1260,9 +1274,9 @@ impl TestRepo {
     pub fn run_git_in(&self, dir: &Path, args: &[&str]) {
         let output = self
             .git_command()
-            .args(args)
+            .args(args.iter().copied())
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, &args.join(" "));
     }
@@ -1271,7 +1285,7 @@ impl TestRepo {
     ///
     /// Thin wrapper around `git_command()` for commands that return output.
     pub fn git_output(&self, args: &[&str]) -> String {
-        let output = self.git_command().args(args).output().unwrap();
+        let output = self.git_command().args(args.iter().copied()).run().unwrap();
         check_git_status(&output, &args.join(" "));
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
@@ -1297,10 +1311,10 @@ impl TestRepo {
                         "--force",
                         worktree_path.to_str().unwrap(),
                     ])
-                    .output();
+                    .run();
             }
             // Delete the branch after removing the worktree
-            let _ = self.git_command().args(["branch", "-D", branch]).output();
+            let _ = self.git_command().args(["branch", "-D", branch]).run();
             // Remove from worktrees map so add_worktree() can recreate if needed
             self.worktrees.remove(*branch);
         }
@@ -1316,7 +1330,7 @@ impl TestRepo {
         let output = self
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, "rev-parse HEAD");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -1328,7 +1342,7 @@ impl TestRepo {
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, "rev-parse HEAD");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -1483,11 +1497,11 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         self.git_command()
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1503,11 +1517,11 @@ impl TestRepo {
         let file_path = self.root.join(format!("file-{}.txt", sanitized));
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         self.git_command()
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1535,14 +1549,14 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         // Create commit with custom timestamp
         self.git_command()
             .env("GIT_AUTHOR_DATE", &timestamp)
             .env("GIT_COMMITTER_DATE", &timestamp)
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1567,7 +1581,7 @@ impl TestRepo {
             .env("GIT_COMMITTER_DATE", &timestamp)
             .args(["commit", "-m", message])
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1816,7 +1830,7 @@ impl TestRepo {
     pub fn has_origin_head(&self) -> bool {
         self.git_command()
             .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
-            .output()
+            .run()
             .unwrap()
             .status
             .success()
@@ -2151,7 +2165,7 @@ impl TestRepo {
         let json_value = format!(r#"{{"marker":"{}","set_at":{}}}"#, marker, TEST_EPOCH);
         self.git_command()
             .args(["config", &config_key, &json_value])
-            .output()
+            .run()
             .unwrap();
     }
 }
@@ -2206,11 +2220,11 @@ impl BareRepoTest {
         };
 
         // Create bare repository
-        let mut cmd = Command::new("git");
-        cmd.args(["init", "--bare", "--initial-branch", "main"])
-            .arg(&test.bare_repo_path);
-        test.configure_git_cmd(&mut cmd);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
+            .args(["init", "--bare", "--initial-branch", "main"])
+            .arg(test.bare_repo_path.to_str().unwrap())
+            .run()
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -2260,7 +2274,7 @@ impl BareRepoTest {
                 branch,
                 worktree_path.to_str().unwrap(),
             ])
-            .output()
+            .run()
             .unwrap();
 
         if !output.status.success() {
@@ -2685,8 +2699,14 @@ fn setup_snapshot_settings_for_paths_with_home(
         r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
+    // macOS nix-shell: /private/tmp/nix-shell.XXX/.tmpYYY/path -> [PROJECT_ID]
+    settings.add_filter(
+        r"/private/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
-    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
+    // Also handles nix-shell: /tmp/nix-shell.XXX/.tmpYYY/path
+    settings.add_filter(r"/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
     // Windows: C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/path -> [PROJECT_ID]
     // Handles Windows temp paths with drive letters (after backslash normalization)
     settings.add_filter(
@@ -2756,7 +2776,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     // - Linux (dash): "sh: 1: nonexistent-command: not found"
     // Normalize to a consistent format
     settings.add_filter(
-        r"(?:/usr/bin/bash: line \d+|sh|bash)(?:: \d+)?: ([^:]+): (?:command )?not found",
+        r"(?:/usr/bin/bash: line \d+|sh(?:: line \d+)?|bash)(?:: \d+)?: ([^:]+): (?:command )?not found",
         "sh: $1: command not found",
     );
 
@@ -2903,9 +2923,32 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
-    // Filter temp paths in output
+    // Filter temp paths in output — multiple forms needed for cross-platform:
+    // 1. Canonical path (macOS: /private/tmp needs the canonical /private form)
+    // 2. Raw path as provided
+    // 3. Regex matching the unique temp dir name with any prefix (Windows:
+    //    format_path_for_display replaces $HOME with ~, producing ~/AppData/...
+    //    which doesn't match the raw path. Match by unique dir name instead.)
+    if let Ok(canonical) = dunce::canonicalize(temp_path) {
+        let canonical_str = canonical.to_str().unwrap();
+        let temp_str = temp_path.to_str().unwrap();
+        if canonical_str != temp_str {
+            settings.add_filter(&regex::escape(canonical_str), "[TEMP]");
+        }
+    }
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
+    // Match the unique temp dir name with any path prefix (handles ~/AppData/... on Windows)
+    if let Some(dir_name) = temp_path.file_name().and_then(|n| n.to_str()) {
+        // Consume optional leading quote from shell_escape (format_path_for_display
+        // wraps non-home paths in single quotes on Windows).
+        let pattern = format!(r"'?[^\s]*{}", regex::escape(dir_name));
+        settings.add_filter(&pattern, "[TEMP]");
+    }
     settings.add_filter(r"\\", "/");
+    // Clean up trailing shell-escape quote after [TEMP] replacement — the leading
+    // quote is consumed by the dir-name regex, but the trailing one remains after
+    // the file name (e.g., [TEMP]/test-config.toml' → [TEMP]/test-config.toml).
+    settings.add_filter(r"(\[TEMP\]/[^\s]*)'", "$1");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 
@@ -2918,7 +2961,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 // PTY Test Filters
 // =============================================================================
 //
-// PTY-based tests (shell wrappers, approval prompts, TUI select) capture output
+// PTY-based tests (shell wrappers, approval prompts, TUI picker) capture output
 // from pseudo-terminals. This output has platform-specific artifacts that need
 // normalization for stable snapshots.
 //
@@ -3243,7 +3286,7 @@ pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
 /// wait_for("git to detect dirty working tree", || {
 ///     repo.git_command()
 ///         .args(["status", "--porcelain"])
-///         .output()
+///         .run()
 ///         .map(|o| !o.stdout.is_empty())
 ///         .unwrap_or(false)
 /// });
@@ -3345,11 +3388,7 @@ mod tests {
         repo.commit_with_age("Ten minutes ago", 10 * MINUTE);
 
         // Verify commits were created (1 from fixture + 4 = 5 commits)
-        let output = repo
-            .git_command()
-            .args(["log", "--oneline"])
-            .output()
-            .unwrap();
+        let output = repo.git_command().args(["log", "--oneline"]).run().unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);
     }

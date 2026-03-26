@@ -3,6 +3,7 @@
 use std::fs;
 
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 use crate::common::TestRepo;
 
@@ -143,7 +144,7 @@ fn test_available_branches_some_without_worktrees() {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -163,14 +164,8 @@ fn test_available_branches_some_without_worktrees() {
 fn test_all_branches() {
     let repo = TestRepo::new();
     // Create some branches
-    repo.git_command()
-        .args(["branch", "alpha"])
-        .output()
-        .unwrap();
-    repo.git_command()
-        .args(["branch", "beta"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["branch", "alpha"]).run().unwrap();
+    repo.git_command().args(["branch", "beta"]).run().unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let branches = repository.all_branches().unwrap();
@@ -196,7 +191,7 @@ fn test_project_identifier_https() {
             "origin",
             "https://github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -216,7 +211,7 @@ fn test_project_identifier_http() {
             "origin",
             "http://gitlab.example.com/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -236,7 +231,7 @@ fn test_project_identifier_ssh_colon() {
             "origin",
             "git@github.com:user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -256,7 +251,7 @@ fn test_project_identifier_ssh_protocol() {
             "origin",
             "ssh://git@github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -277,7 +272,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
             "origin",
             "ssh://git@gitlab.example.com:2222/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -300,7 +295,7 @@ fn test_project_identifier_no_remote_fallback() {
 }
 
 // =============================================================================
-// get_config/set_config tests
+// config_value/set_config tests
 // =============================================================================
 
 #[test]
@@ -308,11 +303,11 @@ fn test_get_config_exists() {
     let repo = TestRepo::new();
     repo.git_command()
         .args(["config", "test.key", "test-value"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("test.key").unwrap();
+    let value = repository.config_value("test.key").unwrap();
     assert_eq!(value, Some("test-value".to_string()));
 }
 
@@ -321,7 +316,7 @@ fn test_get_config_not_exists() {
     let repo = TestRepo::new();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    let value = repository.get_config("nonexistent.key").unwrap();
+    let value = repository.config_value("nonexistent.key").unwrap();
     assert!(value.is_none());
 }
 
@@ -333,8 +328,55 @@ fn test_set_config() {
     repository.set_config("test.setting", "new-value").unwrap();
 
     // Verify it was set
-    let value = repository.get_config("test.setting").unwrap();
+    let value = repository.config_value("test.setting").unwrap();
     assert_eq!(value, Some("new-value".to_string()));
+}
+
+// =============================================================================
+// config_value() error handling: corrupt config propagation
+// =============================================================================
+
+#[test]
+fn test_config_value_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+
+    // Corrupt the git config file after repository creation
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.config_value("test.key");
+
+    // Should propagate the error, not silently return None
+    assert!(
+        result.is_err(),
+        "config_value() should propagate errors from corrupt config, not return Ok(None)"
+    );
+}
+
+#[test]
+fn test_clear_hint_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+
+    // Create repository and set a hint before corrupting config
+    let repository = Repository::at(root.clone()).unwrap();
+    repository.mark_hint_shown("test-hint").unwrap();
+
+    // Corrupt the git config file
+    let config_path = root.join(".git/config");
+    fs::write(&config_path, "[invalid section\n").unwrap();
+
+    let result = repository.clear_hint("test-hint");
+
+    // Should propagate the error, not silently return Ok(false)
+    assert!(
+        result.is_err(),
+        "clear_hint() should propagate errors from corrupt config, not return Ok(false)"
+    );
 }
 
 // =============================================================================
@@ -523,37 +565,28 @@ fn test_repo_path_in_submodule() {
     fs::create_dir(&parent_path).unwrap();
 
     // Initialize parent repo with git config
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&parent_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(output.status.success(), "git init failed for parent");
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for commits
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&parent_path)
-        .output()
+    let parent_repo = Repository::at(&parent_path).unwrap();
+    parent_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in parent
     fs::write(parent_path.join("README.md"), "# Parent").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&parent_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo.run_command(&["add", "."]).unwrap();
+    parent_repo
+        .run_command(&["commit", "-m", "Initial commit"])
         .unwrap();
 
     // Create submodule repository (as a separate repo first)
@@ -561,45 +594,33 @@ fn test_repo_path_in_submodule() {
     let sub_origin_path = sub_temp.path().join("submodule-origin");
     fs::create_dir(&sub_origin_path).unwrap();
 
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&sub_origin_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "git init failed for submodule origin"
-    );
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for submodule
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&sub_origin_path)
-        .output()
+    let sub_repo = Repository::at(&sub_origin_path).unwrap();
+    sub_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in submodule origin
     fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&sub_origin_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Submodule initial commit"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo.run_command(&["add", "."]).unwrap();
+    sub_repo
+        .run_command(&["commit", "-m", "Submodule initial commit"])
         .unwrap();
 
     // Add submodule to parent (using local path directly, with file transport allowed)
-    let output = std::process::Command::new("git")
-        .args([
+    parent_repo
+        .run_command(&[
             "-c",
             "protocol.file.allow=always",
             "submodule",
@@ -607,20 +628,11 @@ fn test_repo_path_in_submodule() {
             sub_origin_path.to_str().unwrap(),
             "sub",
         ])
-        .current_dir(&parent_path)
-        .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "git submodule add failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 
     // Commit the submodule addition
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Add submodule"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["commit", "-m", "Add submodule"])
         .unwrap();
 
     // Now test: create Repository from inside the submodule
@@ -720,6 +732,25 @@ fn test_branch_returns_none_for_detached_head() {
     assert!(
         result.unwrap().is_none(),
         "branch() should return None for detached HEAD"
+    );
+}
+
+#[test]
+fn test_branch_returns_branch_for_unborn_repo() {
+    let repo = TestRepo::empty();
+    let root = repo.root_path().to_path_buf();
+    let repository = Repository::at(&root).unwrap();
+    let wt = repository.worktree_at(&root);
+
+    let result = wt.branch();
+    assert!(
+        result.is_ok(),
+        "branch() should succeed for unborn repo (no commits)"
+    );
+    assert_eq!(
+        result.unwrap(),
+        Some("main".to_string()),
+        "branch() should return the default branch name even without commits"
     );
 }
 

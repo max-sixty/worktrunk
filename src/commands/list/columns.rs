@@ -69,6 +69,9 @@ pub struct ColumnSpec {
     pub base_priority: u8,
     /// Task required for this column's data. If Some and task is skipped, column is hidden.
     pub requires_task: Option<TaskKind>,
+    /// If true, the column can shrink below its ideal width (down to header width)
+    /// instead of being dropped entirely when space is tight.
+    pub shrinkable: bool,
 }
 
 impl ColumnSpec {
@@ -77,7 +80,13 @@ impl ColumnSpec {
             kind,
             base_priority,
             requires_task,
+            shrinkable: false,
         }
+    }
+
+    pub const fn shrinkable(mut self) -> Self {
+        self.shrinkable = true;
+        self
     }
 }
 
@@ -87,7 +96,7 @@ impl ColumnSpec {
 /// which is independent of display order (position in array).
 pub const COLUMN_SPECS: &[ColumnSpec] = &[
     ColumnSpec::new(ColumnKind::Gutter, 0, None),
-    ColumnSpec::new(ColumnKind::Branch, 1, None),
+    ColumnSpec::new(ColumnKind::Branch, 1, None).shrinkable(),
     ColumnSpec::new(ColumnKind::Status, 2, None),
     ColumnSpec::new(ColumnKind::WorkingDiff, 3, None),
     ColumnSpec::new(ColumnKind::AheadBehind, 4, None),
@@ -176,21 +185,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_column_spec_new() {
-        let spec = ColumnSpec::new(ColumnKind::Branch, 1, None);
-        assert_eq!(spec.kind, ColumnKind::Branch);
-        assert_eq!(spec.base_priority, 1);
-        assert!(spec.requires_task.is_none());
-    }
-
-    #[test]
-    fn test_column_spec_with_required_task() {
-        let spec = ColumnSpec::new(ColumnKind::BranchDiff, 5, Some(TaskKind::BranchDiff));
-        assert_eq!(spec.kind, ColumnKind::BranchDiff);
-        assert_eq!(spec.requires_task, Some(TaskKind::BranchDiff));
     }
 
     #[test]

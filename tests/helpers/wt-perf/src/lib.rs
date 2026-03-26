@@ -32,9 +32,9 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
+use worktrunk::shell_exec::Cmd;
 
 /// Lazy-initialized rust repo path.
 static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
@@ -101,7 +101,7 @@ impl RepoConfig {
     }
 
     /// Config for testing `wt switch` interactive picker (6 worktrees with varying commits).
-    pub const fn select_test() -> Self {
+    pub const fn picker_test() -> Self {
         Self {
             commits_on_main: 3,
             files: 3,
@@ -116,12 +116,12 @@ impl RepoConfig {
 
 /// Run a git command in the given directory.
 pub fn run_git(path: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
+    let output = Cmd::new("git")
+        .args(args.iter().copied())
         .current_dir(path)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -237,10 +237,10 @@ pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
         let branch = format!("feature-wt-{wt_num}");
         let wt_path = parent_dir.join(format!("{repo_name}.{branch}"));
 
-        let head_output = Command::new("git")
+        let head_output = Cmd::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(repo_path)
-            .output()
+            .run()
             .unwrap();
         let base_commit = String::from_utf8_lossy(&head_output.stdout)
             .trim()
@@ -280,10 +280,10 @@ pub fn setup_fake_remote(repo_path: &Path) {
     let refs_dir = repo_path.join(".git/refs/remotes/origin");
     std::fs::create_dir_all(&refs_dir).unwrap();
     std::fs::write(refs_dir.join("HEAD"), "ref: refs/remotes/origin/main\n").unwrap();
-    let head_sha = Command::new("git")
+    let head_sha = Cmd::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(repo_path)
-        .output()
+        .run()
         .unwrap();
     std::fs::write(refs_dir.join("main"), head_sha.stdout).unwrap();
 }
@@ -324,10 +324,10 @@ pub fn ensure_rust_repo() -> PathBuf {
             let rust_repo = cache_dir.join("rust");
 
             if rust_repo.exists() {
-                let output = Command::new("git")
+                let output = Cmd::new("git")
                     .args(["rev-parse", "HEAD"])
                     .current_dir(&rust_repo)
-                    .output();
+                    .run();
 
                 if output.is_ok_and(|o| o.status.success()) {
                     eprintln!("Using cached rust repo at {}", rust_repo.display());
@@ -340,13 +340,13 @@ pub fn ensure_rust_repo() -> PathBuf {
             std::fs::create_dir_all(&cache_dir).unwrap();
             eprintln!("Cloning rust-lang/rust (this will take several minutes)...");
 
-            let clone_output = Command::new("git")
+            let clone_output = Cmd::new("git")
                 .args([
                     "clone",
                     "https://github.com/rust-lang/rust.git",
                     rust_repo.to_str().unwrap(),
                 ])
-                .output()
+                .run()
                 .unwrap();
 
             assert!(clone_output.status.success(), "Failed to clone rust repo");
@@ -364,14 +364,14 @@ pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
     let rust_repo = ensure_rust_repo();
     let workspace_main = temp.path().join("repo");
 
-    let clone_output = Command::new("git")
+    let clone_output = Cmd::new("git")
         .args([
             "clone",
             "--local",
             rust_repo.to_str().unwrap(),
             workspace_main.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(
         clone_output.status.success(),
@@ -390,10 +390,10 @@ pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
 /// creates `feature-NNN` branches pointing at them. This reproduces the
 /// GH #461 scenario where branch divergence depth (not count) drives cost.
 pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
-    let log_output = Command::new("git")
+    let log_output = Cmd::new("git")
         .args(["log", "--oneline", "-n", "5000", "--format=%H"])
         .current_dir(repo_path)
-        .output()
+        .run()
         .unwrap();
     let log_str = String::from_utf8_lossy(&log_output.stdout);
     let step = 5000 / count;
@@ -417,7 +417,7 @@ pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// - `branches-N` - N branches with 1 commit each
 /// - `branches-N-M` - N branches with M commits each
 /// - `divergent` - many divergent branches (GH #461)
-/// - `select-test` - config for wt switch interactive picker testing
+/// - `picker-test` - config for wt switch interactive picker testing
 pub fn parse_config(s: &str) -> Option<RepoConfig> {
     if let Some(n) = s.strip_prefix("typical-") {
         let worktrees: usize = n.parse().ok()?;
@@ -442,7 +442,7 @@ pub fn parse_config(s: &str) -> Option<RepoConfig> {
 
     match s {
         "divergent" => Some(RepoConfig::many_divergent_branches()),
-        "select-test" => Some(RepoConfig::select_test()),
+        "picker-test" => Some(RepoConfig::picker_test()),
         _ => None,
     }
 }

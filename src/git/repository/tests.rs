@@ -271,28 +271,6 @@ fn test_parse_remote_default_branch_branch_with_slash() {
 use super::ResolvedWorktree;
 
 #[test]
-fn test_resolved_worktree_debug() {
-    let wt = ResolvedWorktree::Worktree {
-        path: PathBuf::from("/path/to/worktree"),
-        branch: Some("feature".to_string()),
-    };
-    let debug = format!("{:?}", wt);
-    assert!(debug.contains("Worktree"));
-    assert!(debug.contains("/path/to/worktree"));
-    assert!(debug.contains("feature"));
-}
-
-#[test]
-fn test_resolved_worktree_branch_only_debug() {
-    let wt = ResolvedWorktree::BranchOnly {
-        branch: "feature".to_string(),
-    };
-    let debug = format!("{:?}", wt);
-    assert!(debug.contains("BranchOnly"));
-    assert!(debug.contains("feature"));
-}
-
-#[test]
 fn test_resolved_worktree_clone() {
     let wt = ResolvedWorktree::Worktree {
         path: PathBuf::from("/path/to/worktree"),

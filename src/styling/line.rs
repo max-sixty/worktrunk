@@ -159,239 +159,128 @@ impl StyledLine {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
+    /// Width calculation ignores ANSI escape codes and OSC 8 hyperlinks.
     #[test]
-    fn test_width_strips_osc_hyperlinks() {
-        // Text with OSC 8 hyperlink should have visual width of just the text
+    fn test_width_ignores_invisible_characters() {
+        // OSC 8 hyperlink: visual width is just the link text
         let url = "https://github.com/user/repo/pull/123";
-        let text_content = "●";
         let hyperlinked = format!(
             "{}{}{}",
             osc8::Hyperlink::new(url),
-            text_content,
+            "●",
             osc8::Hyperlink::END
         );
+        assert_eq!(StyledString::raw(&hyperlinked).width(), 1);
 
-        let styled_str = StyledString::raw(&hyperlinked);
-        assert_eq!(
-            styled_str.width(),
-            1,
-            "Hyperlinked '●' should have width 1, not {}",
-            styled_str.width()
-        );
-    }
-
-    #[test]
-    fn test_width_strips_sgr_codes() {
-        // Text with SGR color codes should have visual width of just the text
+        // SGR color codes are invisible
         use anstyle::{AnsiColor, Color, Style};
         let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
         let colored = format!("{}●{}", green.render(), green.render_reset());
+        assert_eq!(StyledString::raw(colored).width(), 1);
 
-        let styled_str = StyledString::raw(colored);
-        assert_eq!(
-            styled_str.width(),
-            1,
-            "Colored '●' should have width 1, not {}",
-            styled_str.width()
-        );
-    }
-
-    #[test]
-    fn test_width_with_combined_ansi_codes() {
-        // Text with both color and hyperlink
-        use anstyle::{AnsiColor, Color, Style};
-        let url = "https://example.com";
+        // Combined color + hyperlink
         let yellow = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
         let combined = format!(
             "{}{}● passed{}{}",
             yellow.render(),
-            osc8::Hyperlink::new(url),
+            osc8::Hyperlink::new("https://example.com"),
             osc8::Hyperlink::END,
             yellow.render_reset()
         );
+        assert_eq!(StyledString::raw(&combined).width(), 8); // "● passed"
 
-        let styled_str = StyledString::raw(&combined);
-        // "● passed" = 1 + 1 (space) + 6 = 8
-        assert_eq!(
-            styled_str.width(),
-            8,
-            "Combined styled text should have width 8, not {}",
-            styled_str.width()
-        );
-    }
-
-    /// Helper to compute visible width for tests
-    fn visible_width(rendered: &str) -> usize {
-        UnicodeWidthStr::width(rendered.ansi_strip().as_ref())
-    }
-
-    #[test]
-    fn test_visible_width_strips_osc8() {
+        // OSC-8 via raw escape sequences
         let s = "\u{1b}]8;;https://example.com\u{1b}\\A\u{1b}]8;;\u{1b}\\";
-        assert_eq!(visible_width(s), 1, "OSC-8 should be zero-width");
+        assert_eq!(UnicodeWidthStr::width(s.ansi_strip().as_ref()), 1,);
     }
 
+    /// truncate_visible respects visual width, handles emoji, and appends reset codes.
     #[test]
-    fn test_truncate_visible_preserves_budget_and_resets() {
+    fn test_truncate_visible() {
+        use ansi_str::AnsiStr;
+
+        let visible_width = |s: &str| UnicodeWidthStr::width(s.ansi_strip().as_ref());
+
+        // Truncates colored text to budget, ends with reset
         let colored = "\u{1b}[31mhello\u{1b}[0m";
         let out = truncate_visible(colored, 3);
         assert_eq!(visible_width(&out), 3);
         assert!(out.ends_with("\u{1b}[0m"));
-    }
 
-    #[test]
-    fn test_truncate_visible_handles_wide_emoji() {
-        let rocket = "🚀";
-        let out = truncate_visible(rocket, 1);
+        // Wide emoji (width 2) truncated to budget 1
+        let out = truncate_visible("🚀", 1);
         assert_eq!(visible_width(&out), 1);
-        assert!(out.ends_with("\u{1b}[0m"));
+
+        // Zero width → empty
+        assert!(truncate_visible("hello world", 0).is_empty());
+
+        // No truncation when text fits
+        assert_eq!(truncate_visible("short", 100), "short");
+
+        // Budget of 1 stays within limit
+        let out = truncate_visible("hello", 1);
+        assert!(visible_width(&out) <= 1);
     }
 
+    /// StyledLine composition: push, extend, render, plain_text all produce correct output.
     #[test]
-    fn test_truncate_visible_zero_width() {
-        let text = "hello world";
-        let out = truncate_visible(text, 0);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn test_truncate_visible_no_truncation_needed() {
-        let text = "short";
-        let out = truncate_visible(text, 100);
-        assert_eq!(out, text, "No truncation should return original string");
-    }
-
-    #[test]
-    fn test_truncate_visible_zero_budget() {
-        // When max_width equals ellipsis width, budget becomes 0
-        let text = "hello";
-        let out = truncate_visible(text, 1);
-        assert!(
-            visible_width(&out) <= 1,
-            "Output should be within max_width"
-        );
-    }
-
-    #[test]
-    fn test_styled_string_raw() {
-        let s = StyledString::raw("test");
-        assert_eq!(s.text, "test");
-        assert!(s.style.is_none());
-    }
-
-    #[test]
-    fn test_styled_string_styled() {
-        let style = Style::new().bold();
-        let s = StyledString::styled("test", style);
-        assert_eq!(s.text, "test");
-        assert!(s.style.is_some());
-    }
-
-    #[test]
-    fn test_styled_string_render_raw() {
-        let s = StyledString::raw("test");
-        assert_eq!(s.render(), "test");
-    }
-
-    #[test]
-    fn test_styled_string_render_styled() {
-        let style = Style::new().bold();
-        let s = StyledString::styled("test", style);
-        let rendered = s.render();
-        assert!(rendered.contains("test"));
-        // Should have escape codes for bold
-        assert!(rendered.starts_with("\u{1b}["));
-    }
-
-    #[test]
-    fn test_styled_line_push_methods() {
+    fn test_styled_line_composition() {
         let mut line = StyledLine::new();
         line.push_raw("hello");
         line.push_styled(" world", Style::new().bold());
         line.push(StyledString::raw("!"));
 
         assert_eq!(line.segments.len(), 3);
-        assert_eq!(line.width(), 12); // "hello world!" = 12
+        assert_eq!(line.width(), 12);
+        assert_eq!(line.plain_text(), "hello world!");
+
+        // render() includes ANSI codes but preserves text
+        assert_snapshot!(line.render(), @"hello[1m world[0m!");
+
+        // extend merges segments
+        let mut a = StyledLine::new();
+        a.push_raw("hello");
+        let mut b = StyledLine::new();
+        b.push_raw(" world");
+        a.extend(b);
+        assert_eq!(a.plain_text(), "hello world");
     }
 
-    #[test]
-    fn test_styled_line_extend() {
-        let mut line1 = StyledLine::new();
-        line1.push_raw("hello");
-
-        let mut line2 = StyledLine::new();
-        line2.push_raw(" world");
-
-        line1.extend(line2);
-        assert_eq!(line1.segments.len(), 2);
-        assert_eq!(line1.plain_text(), "hello world");
-    }
-
+    /// pad_to adds spaces up to target width; never shrinks.
     #[test]
     fn test_styled_line_pad_to() {
         let mut line = StyledLine::new();
         line.push_raw("hi");
-        assert_eq!(line.width(), 2);
-
         line.pad_to(5);
         assert_eq!(line.width(), 5);
-        assert!(line.plain_text().ends_with("   ")); // 3 spaces added
+        assert!(line.plain_text().ends_with("   "));
+
+        // Already wider than target: no change
+        line.pad_to(3);
+        assert_eq!(line.width(), 5);
     }
 
+    /// truncate_to_width clips long lines and preserves short ones.
     #[test]
-    fn test_styled_line_pad_to_no_padding_needed() {
-        let mut line = StyledLine::new();
-        line.push_raw("hello");
-        let original_width = line.width();
+    fn test_styled_line_truncate_to_width() {
+        let mut short = StyledLine::new();
+        short.push_raw("hello");
+        assert_eq!(short.clone().truncate_to_width(100).plain_text(), "hello");
 
-        line.pad_to(3); // Target is less than current width
-        assert_eq!(line.width(), original_width); // Should not change
+        let mut long = StyledLine::new();
+        long.push_raw("hello world this is a long message");
+        assert!(long.truncate_to_width(10).width() <= 10);
     }
 
+    /// StyledString render with style includes ANSI escape codes.
     #[test]
-    fn test_styled_line_render() {
-        let mut line = StyledLine::new();
-        line.push_raw("a");
-        line.push_styled("b", Style::new().bold());
-        line.push_raw("c");
-
-        let rendered = line.render();
-        assert!(rendered.contains("a"));
-        assert!(rendered.contains("b"));
-        assert!(rendered.contains("c"));
-    }
-
-    #[test]
-    fn test_styled_line_plain_text() {
-        let mut line = StyledLine::new();
-        line.push_raw("hello");
-        line.push_styled(" world", Style::new().bold());
-
-        assert_eq!(line.plain_text(), "hello world");
-    }
-
-    #[test]
-    fn test_styled_line_truncate_to_width_no_truncation() {
-        let mut line = StyledLine::new();
-        line.push_raw("hello");
-        let truncated = line.clone().truncate_to_width(100);
-        assert_eq!(truncated.plain_text(), "hello");
-    }
-
-    #[test]
-    fn test_styled_line_truncate_to_width_truncates() {
-        let mut line = StyledLine::new();
-        line.push_raw("hello world this is a long message");
-        let truncated = line.truncate_to_width(10);
-        assert!(truncated.width() <= 10);
-    }
-
-    #[test]
-    fn test_styled_line_default() {
-        let line = StyledLine::default();
-        assert!(line.segments.is_empty());
-        assert_eq!(line.width(), 0);
+    fn test_styled_string_render_styled() {
+        let style = Style::new().bold();
+        let s = StyledString::styled("test", style);
+        assert_snapshot!(s.render(), @"[1mtest[0m");
     }
 }

@@ -1,3 +1,4 @@
+mod alias;
 pub(crate) mod branch_deletion;
 pub(crate) mod command_approval;
 pub(crate) mod command_executor;
@@ -5,6 +6,7 @@ pub(crate) mod commit;
 pub(crate) mod config;
 pub(crate) mod configure_shell;
 pub(crate) mod context;
+mod eval;
 mod for_each;
 mod handle_switch;
 mod hook_commands;
@@ -13,16 +15,17 @@ pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
 pub(crate) mod merge;
+#[cfg(unix)]
+pub(crate) mod picker;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
 pub(crate) mod repository_ext;
-#[cfg(unix)]
-pub(crate) mod select;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
+pub(crate) use alias::{AliasOptions, step_alias};
 pub(crate) use config::{
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
     handle_hints_get, handle_logs_get, handle_state_clear, handle_state_clear_all,
@@ -31,6 +34,7 @@ pub(crate) use config::{
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
 };
+pub(crate) use eval::step_eval;
 pub(crate) use for_each::step_for_each;
 pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
@@ -38,14 +42,14 @@ pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]
-pub(crate) use select::handle_select;
+pub(crate) use picker::handle_picker;
+pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
-    resolve_worktree_arg, worktree_display_name,
+    OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location
@@ -75,7 +79,7 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
 /// * `repo` - The repository to query
 /// * `range` - The commit range to diff (e.g., "HEAD~1..HEAD" or "main..HEAD")
 pub(crate) fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::Result<()> {
-    let term_width = crate::display::get_terminal_width();
+    let term_width = crate::display::terminal_width();
     let stat_width = term_width.saturating_sub(worktrunk::styling::GUTTER_OVERHEAD);
     let diff_stat = repo
         .run_command(&[
@@ -100,27 +104,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_command_label_with_name() {
-        let result = format_command_label("post-create", Some("install"));
-        assert!(result.contains("Running"));
-        assert!(result.contains("post-create"));
-        assert!(result.contains("install"));
-    }
-
-    #[test]
-    fn test_format_command_label_without_name() {
-        let result = format_command_label("pre-merge", None);
-        assert_eq!(result, "Running pre-merge");
-    }
-
-    #[test]
-    fn test_format_command_label_various_types() {
-        let result = format_command_label("post-start", Some("build"));
-        assert!(result.contains("post-start"));
-        assert!(result.contains("build"));
-
-        let result = format_command_label("pre-commit", None);
-        assert!(result.contains("pre-commit"));
-        assert!(!result.contains("None"));
+    fn test_format_command_label() {
+        use insta::assert_snapshot;
+        assert_snapshot!(format_command_label("post-create", Some("install")), @"Running post-create [1minstall[22m");
+        assert_snapshot!(format_command_label("pre-merge", None), @"Running pre-merge");
+        assert_snapshot!(format_command_label("post-start", Some("build")), @"Running post-start [1mbuild[22m");
+        assert_snapshot!(format_command_label("pre-commit", None), @"Running pre-commit");
     }
 }

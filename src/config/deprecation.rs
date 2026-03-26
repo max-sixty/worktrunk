@@ -39,6 +39,18 @@ use crate::styling::{
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Pre-compiled regexes for deprecated variable word-boundary matching.
+/// Compiled once on first use, shared across all calls to normalize/replace.
+static DEPRECATED_VAR_REGEXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    DEPRECATED_VARS
+        .iter()
+        .map(|&(old, new)| {
+            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
+            (re, new)
+        })
+        .collect()
+});
+
 /// Tracks which config paths have already shown unknown field warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
@@ -76,9 +88,8 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
     }
 
     let mut result = template.to_string();
-    for &(old, new) in DEPRECATED_VARS {
-        let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-        result = re.replace_all(&result, new).into_owned();
+    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+        result = re.replace_all(&result, *new).into_owned();
     }
     Cow::Owned(result)
 }
@@ -147,9 +158,8 @@ pub fn replace_deprecated_vars(content: &str) -> String {
 
     for original in strings {
         let mut modified = original.clone();
-        for &(old, new) in DEPRECATED_VARS {
-            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-            modified = re.replace_all(&modified, new).into_owned();
+        for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+            modified = re.replace_all(&modified, *new).into_owned();
         }
         if modified != original {
             result = result.replace(&original, &modified);
@@ -188,6 +198,8 @@ pub struct Deprecations {
     pub approved_commands: bool,
     /// Has `[select]` section (moved to `[switch.picker]`)
     pub select: bool,
+    /// Has `[hooks.post-create]` (renamed to `[hooks.pre-start]`)
+    pub post_create: bool,
 }
 
 impl Deprecations {
@@ -197,6 +209,7 @@ impl Deprecations {
             && self.commit_gen.is_empty()
             && !self.approved_commands
             && !self.select
+            && !self.post_create
     }
 }
 
@@ -210,6 +223,7 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         commit_gen: find_commit_generation_deprecations(content),
         approved_commands: find_approved_commands_deprecation(content),
         select: find_select_deprecation(content),
+        post_create: find_post_create_deprecation(content),
     }
 }
 
@@ -498,6 +512,105 @@ pub fn find_select_deprecation(content: &str) -> bool {
     }
 
     false
+}
+
+/// Check if config has a deprecated `post-create` hook without a corresponding `pre-start`.
+///
+/// Checks both top-level hooks (`post-create = "..."`) and project hooks
+/// (`[projects."...".hooks] post-create = "..."`). This handles both user config
+/// and project config formats. Empty tables are ignored (no-op configs don't
+/// need migration warnings).
+pub fn find_post_create_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Check top-level hooks section (project config: `post-create = "..."`)
+    if doc.get("pre-start").is_none() && doc.get("post-create").is_some_and(is_non_empty_item) {
+        return true;
+    }
+
+    // Check [hooks] section (user config: `[hooks] post-create = "..."`)
+    if let Some(hooks) = doc.get("hooks").and_then(|h| h.as_table())
+        && hooks.get("pre-start").is_none()
+        && hooks.get("post-create").is_some_and(is_non_empty_item)
+    {
+        return true;
+    }
+
+    // Check project-level hooks
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && let Some(hooks) = project_table.get("hooks").and_then(|h| h.as_table())
+                && hooks.get("pre-start").is_none()
+                && hooks.get("post-create").is_some_and(is_non_empty_item)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a TOML item is non-empty (strings are always non-empty, tables must have entries).
+fn is_non_empty_item(item: &toml_edit::Item) -> bool {
+    match item {
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => !t.is_empty(),
+        toml_edit::Item::Table(t) => !t.is_empty(),
+        _ => true, // strings and other values are always "non-empty"
+    }
+}
+
+/// Migrate `post-create` hooks to `pre-start`.
+///
+/// Renames `post-create` to `pre-start` in hooks sections. Skips if `pre-start` already exists.
+pub fn migrate_post_create_to_pre_start(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    let mut modified = false;
+
+    // Top-level (project config format)
+    if doc.get("pre-start").is_none()
+        && let Some(value) = doc.remove("post-create")
+    {
+        doc.insert("pre-start", value);
+        modified = true;
+    }
+
+    // [hooks] section (user config format)
+    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_table_mut())
+        && hooks.get("pre-start").is_none()
+        && let Some(value) = hooks.remove("post-create")
+    {
+        hooks.insert("pre-start", value);
+        modified = true;
+    }
+
+    // Project-level hooks
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut()
+                && let Some(hooks) = project_table
+                    .get_mut("hooks")
+                    .and_then(|h| h.as_table_mut())
+                && hooks.get("pre-start").is_none()
+                && let Some(value) = hooks.remove("post-create")
+            {
+                hooks.insert("pre-start", value);
+                modified = true;
+            }
+        }
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
 }
 
 /// Migrate `[select]` section to `[switch.picker]`.
@@ -839,6 +952,9 @@ pub fn write_migration_file(
     if deprecations.select {
         new_content = migrate_select_to_switch_picker(&new_content);
     }
+    if deprecations.post_create {
+        new_content = migrate_post_create_to_pre_start(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -953,6 +1069,17 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             "{}",
             warning_message(format!(
                 "{} uses deprecated config section: [select] → [switch.picker]",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.post_create {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated hook name: post-create → pre-start",
                 info.label
             ))
         );
@@ -1454,31 +1581,6 @@ command = "llm -m opus"
     }
 
     #[test]
-    fn test_migrate_commit_generation_simple() {
-        let content = r#"
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("[commit-generation]"));
-    }
-
-    #[test]
-    fn test_migrate_commit_generation_with_args() {
-        let content = r#"
-[commit-generation]
-command = "llm"
-args = ["-m", "haiku"]
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("args"));
-    }
-
-    #[test]
     fn test_migrate_commit_generation_args_with_spaces() {
         let content = r#"
 [commit-generation]
@@ -1486,21 +1588,11 @@ command = "llm"
 args = ["-m", "claude haiku 4.5"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        // Args with spaces should be quoted
-        assert!(result.contains("command = \"llm -m 'claude haiku 4.5'\""));
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_commit_generation_project_level() {
-        let content = r#"
-[projects."github.com/user/repo".commit-generation]
-command = "llm -m gpt-4"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[projects.\"github.com/user/repo\".commit.generation]"));
-        assert!(result.contains("command = \"llm -m gpt-4\""));
-        assert!(!result.contains("commit-generation"));
+        [commit.generation]
+        command = "llm -m 'claude haiku 4.5'"
+        "#);
     }
 
     #[test]
@@ -1511,25 +1603,12 @@ command = "llm -m haiku"
 template = "Write commit: {{ diff }}"
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(result.contains("template = \"Write commit: {{ diff }}\""));
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_commit_generation_preserves_existing_commit_section() {
-        let content = r#"
-[commit]
-stage = "all"
-
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit]"));
-        assert!(result.contains("stage = \"all\""));
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
+        [commit.generation]
+        command = "llm -m haiku"
+        template = "Write commit: {{ diff }}"
+        "#);
     }
 
     #[test]
@@ -1539,14 +1618,11 @@ command = "llm -m haiku"
 command = "llm -m haiku"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Should return unchanged content
         assert_eq!(result, content);
     }
 
     #[test]
     fn test_migrate_skips_when_new_section_exists() {
-        // When both old and new sections exist, migration should NOT overwrite
-        // the new section (new takes precedence)
         let content = r#"
 [commit.generation]
 command = "new-command"
@@ -1555,16 +1631,15 @@ command = "new-command"
 command = "old-command"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // New section should be preserved, old section should be removed but not migrated
-        assert!(
-            result.contains("command = \"new-command\""),
-            "New command should be preserved"
-        );
-        // Old section is left alone (not migrated since new exists)
-        assert!(
-            result.contains("[commit-generation]"),
-            "Old section is left as-is since new already exists"
-        );
+        // Old section left as-is since new already exists
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "new-command"
+
+        [commit-generation]
+        command = "old-command"
+        "#);
     }
 
     #[test]
@@ -1614,8 +1689,6 @@ command = "old-command"
 
     #[test]
     fn test_combined_migrations_template_vars_and_section_rename() {
-        // Test that both deprecated template variables AND deprecated
-        // [commit-generation] section are migrated in a single pass
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
@@ -1623,22 +1696,15 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 command = "llm"
 args = ["-m", "haiku"]
 "#;
-        // First apply template var replacements
         let step1 = replace_deprecated_vars(content);
-        assert!(step1.contains("{{ repo }}"), "main_worktree → repo");
-
-        // Then apply section migration
         let step2 = migrate_commit_generation_sections(&step1);
-        assert!(step2.contains("[commit.generation]"), "Section renamed");
-        assert!(
-            step2.contains("command = \"llm -m haiku\""),
-            "Args merged into command"
-        );
-        assert!(
-            !step2.contains("[commit-generation]"),
-            "Old section removed"
-        );
-        assert!(!step2.contains("args"), "Args field removed");
+        insta::assert_snapshot!(step2, @r#"
+
+        worktree-path = "../{{ repo }}.{{ branch }}"
+
+        [commit.generation]
+        command = "llm -m haiku"
+        "#);
     }
 
     // Tests for inline table handling
@@ -1727,28 +1793,6 @@ commit-generation = { command = "llm", args = ["-m", "gpt-4"] }
     }
 
     #[test]
-    fn test_migrate_preserves_existing_commit_stage() {
-        // When [commit] section already exists with other fields, preserve them
-        let content = r#"
-[commit]
-stage = "all"
-
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("stage = \"all\""), "Should preserve stage");
-        assert!(
-            result.contains("[commit.generation]"),
-            "Should add generation subsection"
-        );
-        assert!(
-            result.contains("command = \"llm -m haiku\""),
-            "Should migrate command"
-        );
-    }
-
-    #[test]
     fn test_find_deprecations_empty_inline_table() {
         // Empty inline table should not be flagged
         let content = r#"
@@ -1763,76 +1807,51 @@ commit-generation = {}
 
     #[test]
     fn test_migrate_args_without_command_preserved() {
-        // When args exists but command doesn't, args should be preserved
-        // (merge_args_into_command won't run without a command)
+        // Args preserved when no command to merge into
         let content = r#"
 [commit-generation]
 args = ["-m", "haiku"]
 template = "some template"
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(
-            result.contains("[commit.generation]"),
-            "Section should be renamed"
-        );
-        // Args should be preserved since there's no command to merge into
-        assert!(
-            result.contains("args ="),
-            "Args should be preserved when no command exists"
-        );
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        args = ["-m", "haiku"]
+        template = "some template"
+        "#);
     }
 
     #[test]
     fn test_migrate_args_with_non_string_command() {
-        // When command is not a string (e.g., integer), args should be preserved
+        // Args preserved when command is not a string
         let content = r#"
 [commit-generation]
 command = 123
 args = ["-m", "haiku"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Args should be preserved since command is not a string
-        assert!(
-            result.contains("args ="),
-            "Args should be preserved when command is not a string"
-        );
-    }
+        insta::assert_snapshot!(result, @r#"
 
-    #[test]
-    fn test_migrate_command_only_no_args() {
-        // When only command exists (no args), it should migrate cleanly
-        let content = r#"
-[commit-generation]
-command = "llm -m haiku"
-"#;
-        let result = migrate_commit_generation_sections(content);
-        assert!(result.contains("[commit.generation]"));
-        assert!(result.contains("command = \"llm -m haiku\""));
-        assert!(!result.contains("args"));
+        [commit.generation]
+        command = 123
+        args = ["-m", "haiku"]
+        "#);
     }
 
     #[test]
     fn test_migrate_empty_command_with_args() {
-        // When command is empty string but args exist, args become the command
         let content = r#"
 [commit-generation]
 command = ""
 args = ["-m", "haiku"]
 "#;
         let result = migrate_commit_generation_sections(content);
-        assert!(
-            result.contains("[commit.generation]"),
-            "Section should be renamed"
-        );
-        // Empty command + args should produce just args as command
-        assert!(
-            result.contains("command = \"-m haiku\""),
-            "Empty command should be replaced with args"
-        );
-        assert!(
-            !result.contains("args"),
-            "Args field should be removed after merge"
-        );
+        insta::assert_snapshot!(result, @r#"
+
+        [commit.generation]
+        command = "-m haiku"
+        "#);
     }
 
     #[test]
@@ -2026,31 +2045,6 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
     // Tests for remove_approved_commands_from_config
 
     #[test]
-    fn test_remove_approved_commands_simple() {
-        let content = r#"
-[projects."github.com/user/repo"]
-approved-commands = ["npm install", "npm test"]
-"#;
-        let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        // Empty project section and empty projects table should be removed
-        assert!(!result.contains("[projects"));
-    }
-
-    #[test]
-    fn test_remove_approved_commands_preserves_other_fields() {
-        let content = r#"
-[projects."github.com/user/repo"]
-approved-commands = ["npm install"]
-worktree-path = ".worktrees/{{ branch | sanitize }}"
-"#;
-        let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        assert!(result.contains("worktree-path"));
-        assert!(result.contains("projects"));
-    }
-
-    #[test]
     fn test_remove_approved_commands_multiple_projects() {
         let content = r#"
 [projects."github.com/user/repo1"]
@@ -2061,12 +2055,11 @@ approved-commands = ["cargo test"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 "#;
         let result = remove_approved_commands_from_config(content);
-        assert!(!result.contains("approved-commands"));
-        // repo1 had only approved-commands, so its section should be removed
-        assert!(!result.contains("repo1"));
-        // repo2 has other fields, so its section should remain
-        assert!(result.contains("repo2"));
-        assert!(result.contains("worktree-path"));
+        insta::assert_snapshot!(result, @r#"
+
+        [projects."github.com/user/repo2"]
+        worktree-path = ".worktrees/{{ branch | sanitize }}"
+        "#);
     }
 
     #[test]
@@ -2130,6 +2123,7 @@ approved-commands = ["npm install"]
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2158,6 +2152,7 @@ approved-commands = ["npm install"]
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2187,6 +2182,7 @@ approved-commands = ["npm install"]
             commit_gen: CommitGenerationDeprecations::default(),
             approved_commands: true,
             select: false,
+            post_create: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
@@ -2445,6 +2441,7 @@ branches = true
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: true,
+                post_create: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2477,6 +2474,7 @@ pager = "delta --paging=never"
             commit_gen: CommitGenerationDeprecations::default(),
             approved_commands: false,
             select: true,
+            post_create: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(result.is_some(), "Should write migration file for select");
@@ -2489,6 +2487,289 @@ pager = "delta --paging=never"
         assert!(
             !migrated.contains("[select]"),
             "Migrated content should not have [select]: {migrated}"
+        );
+    }
+
+    // --- post-create → pre-start deprecation tests ---
+
+    #[test]
+    fn test_find_post_create_deprecation_none() {
+        // No post-create, no deprecation
+        let content = r#"
+pre-start = "npm install"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_top_level() {
+        // Project config format: bare key
+        let content = r#"
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_hooks_section() {
+        // User config format: under [hooks]
+        let content = r#"
+[hooks]
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_project_level() {
+        // User config format: under [projects."...".hooks]
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "npm install"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_named_commands() {
+        // Named command table format
+        let content = r#"
+[post-create]
+lint = "npm run lint"
+build = "npm run build"
+"#;
+        assert!(find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_empty_table_not_flagged() {
+        // Empty [post-create] table is a no-op — don't warn
+        let content = r#"
+[post-create]
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_top_level() {
+        // Both present at top level — don't flag
+        let content = r#"
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_hooks() {
+        // Both present in [hooks] — don't flag
+        let content = r#"
+[hooks]
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_find_post_create_deprecation_skips_when_pre_start_exists_project() {
+        // Both present in project hooks — don't flag
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "old"
+pre-start = "new"
+"#;
+        assert!(!find_post_create_deprecation(content));
+    }
+
+    #[test]
+    fn test_migrate_post_create_top_level() {
+        let content = r#"
+post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+        assert!(
+            result.contains("[post-start]"),
+            "Should preserve other sections: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_hooks_section() {
+        let content = r#"
+[hooks]
+post-create = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_project_level() {
+        let content = r#"
+[projects."my-project".hooks]
+post-create = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("pre-start"),
+            "Should have pre-start: {result}"
+        );
+        assert!(
+            !result.contains("post-create"),
+            "Should not have post-create: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_named_commands() {
+        let content = r#"
+[post-create]
+lint = "npm run lint"
+build = "npm run build"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert!(
+            result.contains("[pre-start]"),
+            "Should rename section header: {result}"
+        );
+        assert!(
+            !result.contains("[post-create]"),
+            "Should not have old section header: {result}"
+        );
+        assert!(
+            result.contains("lint = \"npm run lint\""),
+            "Should preserve named commands: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_skips_when_pre_start_exists() {
+        let content = r#"
+post-create = "old"
+pre-start = "new"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(
+            result, content,
+            "Should not migrate when pre-start already exists"
+        );
+    }
+
+    #[test]
+    fn test_migrate_post_create_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
+    }
+
+    #[test]
+    fn test_migrate_post_create_no_post_create() {
+        let content = r#"
+pre-start = "npm install"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        assert_eq!(result, content, "No post-create means no migration");
+    }
+
+    #[test]
+    fn test_detect_deprecations_includes_post_create() {
+        let content = r#"
+post-create = "npm install"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.post_create);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn snapshot_migrate_post_create_to_pre_start() {
+        let content = r#"post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        let result = migrate_post_create_to_pre_start(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
+    }
+
+    #[test]
+    fn test_format_deprecation_details_post_create() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: false,
+                post_create: true,
+            },
+            label: "Project config".to_string(),
+            main_worktree_path: None,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_details(&info);
+        assert!(
+            output.contains("post-create"),
+            "Should mention post-create: {output}"
+        );
+        assert!(
+            output.contains("pre-start"),
+            "Should mention pre-start: {output}"
+        );
+    }
+
+    #[test]
+    fn test_write_migration_file_with_post_create() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("wt.toml");
+        let content = r#"post-create = "npm install"
+
+[post-start]
+server = "npm run dev"
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let deprecations = Deprecations {
+            vars: vec![],
+            commit_gen: CommitGenerationDeprecations::default(),
+            approved_commands: false,
+            select: false,
+            post_create: true,
+        };
+        let result = write_migration_file(&config_path, content, &deprecations, None);
+        assert!(
+            result.is_some(),
+            "Should write migration file for post_create"
+        );
+        let migration_path = result.unwrap();
+        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        assert!(
+            migrated.contains("pre-start"),
+            "Migrated content should have pre-start: {migrated}"
+        );
+        assert!(
+            !migrated.contains("post-create"),
+            "Migrated content should not have post-create: {migrated}"
         );
     }
 }

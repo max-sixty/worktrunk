@@ -1,6 +1,8 @@
 ---
 name: writing-user-outputs
 description: CLI output formatting standards for worktrunk. Use when writing user-facing messages, error handling, progress output, hints, warnings, or working with the output system.
+metadata:
+  internal: true
 ---
 
 # Output System Architecture
@@ -84,8 +86,8 @@ use worktrunk::styling::format_heading;
 format_heading("BINARIES", None)  // => "BINARIES" (cyan)
 
 // Heading with suffix
-format_heading("USER CONFIG", Some("~/.config/wt.toml"))
-// => "USER CONFIG  ~/.config/wt.toml" (title cyan, suffix plain)
+format_heading("USER CONFIG", Some("@ ~/.config/wt.toml"))
+// => "USER CONFIG @ ~/.config/wt.toml" (title cyan, suffix plain)
 ```
 
 ## stdout vs stderr
@@ -321,7 +323,7 @@ When a command evaluates state, discovers something unexpected, and proceeds
 anyway, the warning should come first:
 
 ```
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ◎ Removing feature worktree & branch in background (same commit as main, _)
 ```
 
@@ -329,7 +331,7 @@ Not:
 
 ```
 ◎ Removing feature worktree & branch in background (same commit as main, _)
-▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+▲ Branch-worktree mismatch: feature @ ~/workspace/project.alias, expected @ ~/workspace/project.feature ⚑
 ```
 
 Warnings that result from the action itself (something failed during execution)
@@ -456,6 +458,44 @@ Use `suggest_command()` from `worktrunk::styling` for proper shell escaping.
 
 **Section titles:** For sectioned output (`wt hook show`, `wt config show`), use
 `format_heading()` from `worktrunk::styling` (documented above).
+
+## Interactive Prompts vs Non-Interactive Hints
+
+Prompts and hints serve different purposes and have different `--yes` behavior.
+
+**Prompts** are expected steps in a workflow — the user ran a command knowing
+it would ask for confirmation. Hook approval during `wt merge`, config update
+confirmation, shell install confirmation. `--yes` bypasses these because the
+user anticipated the question and wants to pre-answer it (e.g., in CI).
+
+**Setup prompts** are unexpected — the user ran `wt merge` and got asked about
+LLM config or shell integration they didn't know about. `--yes` must NOT
+bypass these. A user passing `--yes` to skip hook approval did not consent to
+auto-configuring their shell. In non-interactive mode (no TTY), these should
+degrade to a hint or be skipped silently — never error.
+
+| Type | Example | `--yes` | Non-TTY behavior |
+|------|---------|---------|------------------|
+| Workflow prompt | Hook approval, config update | Bypasses | Error (`NotInteractive`) |
+| Setup prompt | LLM config, shell integration | No effect | Hint or silent skip |
+
+**Non-TTY degradation patterns:**
+
+- **Hint** — when the user benefits from knowing about the option on every run.
+  Shell integration hint: `↳ To enable automatic cd, run wt config shell install`
+- **Silent skip** — when a hint would be noise. Commit generation setup prompt
+  skips silently because a separate fallback hint (`emit_hint_if_needed`)
+  already covers the unconfigured case on every commit.
+- **Error** — only for workflow prompts where proceeding without consent is
+  unsafe (hook approval). The error includes a hint for the fix:
+  `↳ To skip prompts in CI/CD, add --yes`
+
+**Key invariants:**
+
+- Hints shown in non-TTY mode must NOT set skip flags — hints are not prompts,
+  and should repeat on every non-TTY run
+- `--yes` means "I anticipated this prompt" — it applies to workflow prompts
+  the user chose to invoke, not to setup/config discovery prompts
 
 ## Blank Line Principles
 
@@ -817,13 +857,17 @@ Shows template expansions and other details users might need for debugging confi
 Format for template expansion:
 ```
 ○ Expanding name
- ┃ template → result
+ ┃ template (bash-highlighted)
+ ┃ → (dim)
+ ┃ result (bash-highlighted)
 ```
 
 - **Info message** for header (`○` symbol, "Expanding" + bold name)
-- **Gutter** for quoted content (template → result)
-- Arrow `→` is dim
-- For multiline: template lines, dim `→` on its own line, result lines
+- **Bash gutter** for template and result (dim + syntax highlighting via
+  `format_bash_with_gutter`)
+- **Plain gutter** for dim `→` separator (bypasses syntax highlighter)
+- Template and result are always on separate gutter blocks from the arrow,
+  because the `→` can't go through the bash syntax highlighter
 
 **`-vv` (debug):** Developer-facing logging output. MAY violate these guidelines.
 Uses `log::debug!()` with structured format for deep debugging. Not intended for
@@ -835,21 +879,25 @@ regular users.
 `worktrunk::path`. This function replaces home directory prefixes with `~` for
 readability (e.g., `/Users/alex/projects/repo` → `~/projects/repo`).
 
-**Use `@` (not "at") before paths in status messages.** This is the codebase
-convention for associating an entity with a location:
+**Use `@` (not "at") before paths in all user-facing output.** This is the
+codebase convention for associating an entity with a location — in status
+messages, section headings, hints, and everywhere else:
 
 ```rust
 // GOOD - @ before path
 "Created worktree for feature @ ~/code/repo.feature"
 "Squashed @ a1b2c3d"
 "Worktree for feature @ ~/repo.feature, but cannot change directory..."
+format_heading("USER HOOKS", Some(&format!("@ {}", format_path_for_display(p))))
 
 // BAD - "at" before path
 "Created worktree for feature at ~/code/repo.feature"
+// BAD - heading without @
+format_heading("USER HOOKS", Some(&format_path_for_display(p)))
 ```
 
-**Exception:** Prose contexts (error descriptions, doc comments, help text) use
-"at" — `@` is for terse status messages only.
+**Exception:** Prose contexts (doc comments, help text) use "at" — `@` is for
+terse output only.
 
 ```rust
 use worktrunk::path::format_path_for_display;
@@ -872,6 +920,7 @@ eprintln!("{}", success_message(format!(
 
 **Applies to:**
 - Success/info/warning/error messages
+- Section headings (`format_heading` with path suffix)
 - Hints suggesting paths
 - Progress messages
 - Dry-run previews

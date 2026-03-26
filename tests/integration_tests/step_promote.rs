@@ -4,15 +4,16 @@ use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, 
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::process::Command;
+use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 /// Helper to get the current branch in a directory
-fn get_branch(repo: &TestRepo, dir: &std::path::Path) -> String {
+fn branch_name(repo: &TestRepo, dir: &std::path::Path) -> String {
     let output = repo
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(dir)
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -38,12 +39,12 @@ fn test_promote_from_worktree(mut repo: TestRepo) {
 
     // Verify branches were exchanged
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "feature",
         "main worktree should now have feature"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "main",
         "other worktree should now have main"
     );
@@ -65,12 +66,12 @@ fn test_promote_with_branch_argument(mut repo: TestRepo) {
 
     // Verify branches were exchanged
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "feature",
         "main worktree should now have feature"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "main",
         "other worktree should now have main"
     );
@@ -95,7 +96,7 @@ fn test_promote_restore(mut repo: TestRepo) {
     );
 
     // Verify first promote worked
-    assert_eq!(get_branch(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
 
     // Restore: promote main back (now 'main' is in the other worktree)
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -107,12 +108,12 @@ fn test_promote_restore(mut repo: TestRepo) {
 
     // Verify canonical state restored
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "main",
         "main worktree should have main again"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "feature",
         "other worktree should have feature again"
     );
@@ -150,8 +151,8 @@ fn test_promote_auto_restore(mut repo: TestRepo) {
     );
 
     // Verify first promote worked
-    assert_eq!(get_branch(&repo, repo.root_path()), "feature");
-    assert_eq!(get_branch(&repo, &feature_path), "main");
+    assert_eq!(branch_name(&repo, repo.root_path()), "feature");
+    assert_eq!(branch_name(&repo, &feature_path), "main");
 
     // Auto-restore: no argument from main worktree restores default branch
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -163,12 +164,12 @@ fn test_promote_auto_restore(mut repo: TestRepo) {
 
     // Verify canonical state restored
     assert_eq!(
-        get_branch(&repo, repo.root_path()),
+        branch_name(&repo, repo.root_path()),
         "main",
         "main worktree should have main again"
     );
     assert_eq!(
-        get_branch(&repo, &feature_path),
+        branch_name(&repo, &feature_path),
         "feature",
         "other worktree should have feature again"
     );
@@ -270,10 +271,9 @@ fn test_promote_bare_repo_no_worktrees() {
     let bare_repo = temp_dir.path().join("bare.git");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args(["init", "--bare", bare_repo.to_str().unwrap()])
+        .run()
         .unwrap();
 
     // Try to run promote in the bare repo - fails with "No worktrees found"
@@ -300,57 +300,42 @@ fn test_promote_bare_repo_with_worktrees() {
     let temp_clone = temp_dir.path().join("temp");
 
     // Create a bare repository
-    Command::new("git")
-        .args(["init", "--bare", "--initial-branch=main"])
-        .arg(&bare_repo)
-        .output()
+    Cmd::new("git")
+        .args([
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare_repo.to_str().unwrap(),
+        ])
+        .run()
         .unwrap();
 
     // Create a commit via a temporary clone
-    Command::new("git")
+    Cmd::new("git")
         .args([
             "clone",
             bare_repo.to_str().unwrap(),
             temp_clone.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
 
-    Command::new("git")
-        .args(["config", "user.email", "test@test.com"])
-        .current_dir(&temp_clone)
-        .output()
+    let clone_repo = Repository::at(&temp_clone).unwrap();
+    clone_repo
+        .run_command(&["config", "user.email", "test@test.com"])
         .unwrap();
-
-    Command::new("git")
-        .args(["config", "user.name", "Test"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["config", "user.name", "Test"])
         .unwrap();
-
-    Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&temp_clone)
-        .output()
+    clone_repo
+        .run_command(&["commit", "--allow-empty", "-m", "init"])
         .unwrap();
-
-    Command::new("git")
-        .args(["push", "origin", "main"])
-        .current_dir(&temp_clone)
-        .output()
-        .unwrap();
+    clone_repo.run_command(&["push", "origin", "main"]).unwrap();
 
     // Add a worktree to the bare repo
-    Command::new("git")
-        .args([
-            "--git-dir",
-            bare_repo.to_str().unwrap(),
-            "worktree",
-            "add",
-            worktree_path.to_str().unwrap(),
-            "main",
-        ])
-        .output()
+    let bare_repo_handle = Repository::at(&bare_repo).unwrap();
+    bare_repo_handle
+        .run_command(&["worktree", "add", worktree_path.to_str().unwrap(), "main"])
         .unwrap();
 
     // Try to run promote in the bare repo - should fail with bare repo error
@@ -379,14 +364,14 @@ fn test_promote_detached_head_main(mut repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(repo.root_path())
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
 
     repo.git_command()
         .args(["checkout", "--detach", &sha])
         .current_dir(repo.root_path())
-        .output()
+        .run()
         .unwrap();
 
     // Promote should fail due to detached HEAD
@@ -687,8 +672,8 @@ fn test_promote_swap_roundtrip(mut repo: TestRepo) {
     );
 
     // After round-trip: everything should be back to original state
-    assert_eq!(get_branch(&repo, repo.root_path()), "main");
-    assert_eq!(get_branch(&repo, &feature_path), "feature");
+    assert_eq!(branch_name(&repo, repo.root_path()), "main");
+    assert_eq!(branch_name(&repo, &feature_path), "feature");
 
     assert_eq!(
         fs::read_to_string(repo.root_path().join("build/artifact")).unwrap(),
@@ -811,7 +796,7 @@ fn test_promote_swap_no_staging_leftover(mut repo: TestRepo) {
     // The staging directory should be cleaned up
     let git_dir = repo.root_path().join(".git");
     assert!(
-        !git_dir.join("wt-promote-staging").exists(),
+        !git_dir.join("wt/staging/promote").exists(),
         "staging directory should be cleaned up after promote"
     );
 }
@@ -890,7 +875,7 @@ fn test_promote_stale_staging_blocks_with_guidance(mut repo: TestRepo) {
 
     // Create a fake leftover staging directory (as if previous promote was interrupted)
     let git_dir = repo.root_path().join(".git");
-    let staging_dir = git_dir.join("wt-promote-staging");
+    let staging_dir = git_dir.join("wt/staging/promote");
     fs::create_dir_all(staging_dir.join("a")).unwrap();
     fs::write(staging_dir.join("a/leftover"), "leftover data").unwrap();
 
@@ -920,14 +905,14 @@ fn test_promote_detached_head_linked(mut repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
 
     repo.git_command()
         .args(["checkout", "--detach", &sha])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     // No-arg promote from linked worktree should fail due to detached HEAD

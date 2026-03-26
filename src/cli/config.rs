@@ -27,7 +27,7 @@ Zsh (~/.zshrc):
 eval "$(wt config shell init zsh)"
 ```
 
-Nushell (experimental) — save to vendor autoload directory:
+Nushell [experimental] — save to vendor autoload directory:
 ```console
 wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```"#
@@ -438,7 +438,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
 
 ## What's logged
 
-Two kinds of logs live in `.git/wt-logs/`:
+Two kinds of logs live in `.git/wt/logs/`:
 
 ### Command log (`commands.jsonl`)
 
@@ -455,7 +455,7 @@ Source is `user` or `project` depending on where the hook is defined.
 
 ## Location
 
-All logs are stored in `.git/wt-logs/` (in the main worktree's git directory).
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 ## Behavior
 
@@ -472,12 +472,12 @@ wt config state logs get
 
 Query the command log:
 ```console
-tail -5 .git/wt-logs/commands.jsonl | jq .
+tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```console
-cat "$(git rev-parse --git-dir)/wt-logs/feature-project-post-start-build.log"
+cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:

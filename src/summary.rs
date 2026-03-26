@@ -1,7 +1,7 @@
 //! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt-cache/summaries/`. Summaries are invalidated when the combined
+//! in `.git/wt/cache/summaries/`. Summaries are invalidated when the combined
 //! diff (branch diff + working tree diff) changes.
 //!
 //! Used by both `wt list --full` (Summary column) and `wt switch` (preview tab).
@@ -27,7 +27,7 @@ use crate::llm::{execute_llm_command, prepare_diff};
 /// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
 pub(crate) static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
-/// Cached summary stored in `.git/wt-cache/summaries/<branch>.json`
+/// Cached summary stored in `.git/wt/cache/summaries/<branch>.json`
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
     pub summary: String,
@@ -65,7 +65,7 @@ const SUMMARY_TEMPLATE: &str = r#"Write a summary of this branch's changes as a 
 
 /// Get the cache directory for summaries
 pub(crate) fn cache_dir(repo: &Repository) -> PathBuf {
-    repo.git_common_dir().join("wt-cache").join("summaries")
+    repo.wt_dir().join("cache").join("summaries")
 }
 
 /// Get the cache file path for a branch
@@ -236,7 +236,7 @@ pub(crate) fn generate_summary_core(
 ///
 /// This is the TUI-friendly wrapper that returns a formatted string for all cases,
 /// including errors and "no changes" — suitable for `wt switch` preview pane.
-#[cfg_attr(windows, allow(dead_code))] // Called from select module (unix-only)
+#[cfg_attr(windows, allow(dead_code))] // Called from picker module (unix-only)
 pub(crate) fn generate_summary(
     branch: &str,
     head: &str,
@@ -258,8 +258,23 @@ mod tests {
     #[test]
     fn test_render_prompt_includes_diff_and_stat() {
         let result = render_prompt("diff content here", "stat content here").unwrap();
-        assert!(result.contains("diff content here"));
-        assert!(result.contains("stat content here"));
+        insta::assert_snapshot!(result, @r#"
+        Write a summary of this branch's changes as a commit message.
+
+        <format>
+        - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
+        - Blank line, then a body paragraph or bullet list explaining the key changes
+        - Output only the message — no quotes, code blocks, or labels
+        </format>
+
+        <diffstat>
+        stat content here
+        </diffstat>
+
+        <diff>
+        diff content here
+        </diff>
+        "#);
     }
 
     #[test]

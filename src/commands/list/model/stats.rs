@@ -60,26 +60,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ahead_behind_default() {
-        let ab = AheadBehind::default();
-        assert_eq!(ab.ahead, 0);
-        assert_eq!(ab.behind, 0);
-    }
-
-    #[test]
-    fn test_branch_diff_totals_default() {
-        let diff = BranchDiffTotals::default();
-        assert!(diff.diff.is_empty());
-    }
-
-    #[test]
-    fn test_commit_details_default() {
-        let details = CommitDetails::default();
-        assert_eq!(details.timestamp, 0);
-        assert_eq!(details.commit_message, "");
-    }
-
-    #[test]
     fn test_upstream_status_active_with_remote() {
         let status = UpstreamStatus {
             remote: Some("origin".to_string()),

@@ -125,7 +125,7 @@ pub(super) struct RepoCache {
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
-    /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
+    /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
 
     // ========== Per-worktree values (keyed by path) ==========
@@ -374,11 +374,28 @@ impl Repository {
         &self.git_common_dir
     }
 
+    /// Get the worktrunk data directory inside the git directory.
+    ///
+    /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
+    /// All worktrunk-managed state lives under this single directory.
+    pub fn wt_dir(&self) -> PathBuf {
+        self.git_common_dir().join("wt")
+    }
+
     /// Get the directory where worktrunk background logs are stored.
     ///
-    /// Returns `<git-common-dir>/wt-logs/` (typically `.git/wt-logs/`).
+    /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).
     pub fn wt_logs_dir(&self) -> PathBuf {
-        self.git_common_dir().join("wt-logs")
+        self.wt_dir().join("logs")
+    }
+
+    /// Get the directory where worktrees are staged for background deletion.
+    ///
+    /// Returns `<git-common-dir>/wt/trash/` (typically `.git/wt/trash/`).
+    /// Worktrees are renamed here (instant same-filesystem rename) before
+    /// being deleted by a background process.
+    pub fn wt_trash_dir(&self) -> PathBuf {
+        self.wt_dir().join("trash")
     }
 
     /// The repository root path (the main worktree directory).
@@ -510,26 +527,34 @@ impl Repository {
             .unwrap_or(false)
     }
 
-    /// Start the fsmonitor daemon for this worktree.
+    /// Start the fsmonitor daemon at a worktree path.
     ///
-    /// This is idempotent - if the daemon is already running, this is a no-op.
+    /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
-    pub fn start_fsmonitor_daemon(&self) {
-        // Best effort - log errors at debug level for troubleshooting
-        if let Err(e) = self.run_command(&["fsmonitor--daemon", "start"]) {
-            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
-        }
-    }
-
-    /// Start fsmonitor daemon at a specific worktree path.
     ///
-    /// Like `start_fsmonitor_daemon` but runs the command in the specified worktree.
+    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
+    /// inherits pipe file descriptors from its parent, keeping them open
+    /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
+    /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
-        if let Err(e) = self
-            .worktree_at(path)
-            .run_command(&["fsmonitor--daemon", "start"])
-        {
-            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+        log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
+        let result = std::process::Command::new("git")
+            .args(["fsmonitor--daemon", "start"])
+            .current_dir(path)
+            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match result {
+            Ok(status) if !status.success() => {
+                log::debug!("fsmonitor daemon start exited {status} (usually fine)");
+            }
+            Err(e) => {
+                log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+            }
+            _ => {}
         }
     }
 

@@ -14,7 +14,7 @@ use super::{
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
-fn get_github_owner_repo(repo: &Repository) -> Option<(String, String)> {
+fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
     for (_, url) in repo.all_remote_urls() {
         if let Some(parsed) = GitRemoteUrl::parse(&url)
             && parsed.is_github()
@@ -166,7 +166,7 @@ pub(super) fn detect_github(
 /// status across multiple workflows (e.g., `ci` and `publish-docs`).
 pub(super) fn detect_github_commit_checks(repo: &Repository, local_head: &str) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
-    let (owner, repo_name) = get_github_owner_repo(repo)?;
+    let (owner, repo_name) = github_owner_repo(repo)?;
 
     // Use GitHub's check-runs API to get all checks for this commit
     let output = match non_interactive_cmd("gh")

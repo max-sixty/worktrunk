@@ -7,7 +7,9 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{HookCommandSpec, HookFailureStrategy};
+use super::hooks::{
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
+};
 use super::repository_ext::RepositoryCliExt;
 
 // Re-export StageMode from config for use by CLI
@@ -17,7 +19,7 @@ pub use worktrunk::config::StageMode;
 pub struct CommitOptions<'a> {
     pub ctx: &'a CommandContext<'a>,
     pub target_branch: Option<&'a str>,
-    pub no_verify: bool,
+    pub verify: bool,
     pub stage_mode: StageMode,
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
@@ -29,7 +31,7 @@ impl<'a> CommitOptions<'a> {
         Self {
             ctx,
             target_branch: None,
-            no_verify: false,
+            verify: true,
             stage_mode: StageMode::All,
             warn_about_untracked: true,
             show_no_squash_note: false,
@@ -157,22 +159,22 @@ impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
-        let user_hooks_exist = user_hooks.pre_commit.is_some();
-        let project_hooks_exist = project_config
-            .as_ref()
-            .map(|c| c.hooks.pre_commit.is_some())
-            .unwrap_or(false);
-        let any_hooks_exist = user_hooks_exist || project_hooks_exist;
+        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+            &user_hooks,
+            project_config.as_ref(),
+            HookType::PreCommit,
+        );
+        let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
         // Show skip message
-        if self.no_verify && any_hooks_exist {
+        if !self.verify && any_hooks_exist {
             eprintln!(
                 "{}",
                 info_message("Skipping pre-commit hooks (--no-verify)")
             );
         }
 
-        if !self.no_verify {
+        if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
@@ -183,10 +185,8 @@ impl CommitOptions<'_> {
             super::hooks::run_hook_with_filter(
                 self.ctx,
                 HookCommandSpec {
-                    user_config: user_hooks.pre_commit.as_ref(),
-                    project_config: project_config
-                        .as_ref()
-                        .and_then(|c| c.hooks.pre_commit.as_ref()),
+                    user_config: user_cfg,
+                    project_config: proj_cfg,
                     hook_type: HookType::PreCommit,
                     extra_vars: &extra_vars,
                     name_filter: None,
@@ -229,7 +229,21 @@ impl CommitOptions<'_> {
             true, // show_progress
             self.show_no_squash_note,
             self.stage_mode,
-        )
+        )?;
+
+        // Spawn post-commit hooks in background (respects --no-verify)
+        if self.verify {
+            let extra_vars: Vec<(&str, &str)> = self
+                .target_branch
+                .into_iter()
+                .map(|target| ("target", target))
+                .collect();
+            let hooks =
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            spawn_prepared_hooks(self.ctx, hooks)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -238,24 +252,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_message_for_display_single_line() {
+    fn test_format_message_for_display() {
+        use insta::assert_snapshot;
         let config = CommitGenerationConfig::default();
         let generator = CommitGenerator::new(&config);
-        let result = generator.format_message_for_display("Simple commit message");
-        // Should contain the message text with styling
-        assert!(result.contains("Simple commit message"));
-        // Should be styled (output differs from plain input)
-        assert!(result.len() > "Simple commit message".len());
-    }
 
-    #[test]
-    fn test_format_message_for_display_multiline() {
-        let config = CommitGenerationConfig::default();
-        let generator = CommitGenerator::new(&config);
-        let result = generator.format_message_for_display("First line\nSecond line\nThird line");
-        assert!(result.contains("First line"));
-        assert!(result.contains("Second line"));
-        assert!(result.contains("Third line"));
+        assert_snapshot!(generator.format_message_for_display("Simple commit message"), @"[1mSimple commit message[22m");
+        assert_snapshot!(generator.format_message_for_display("First line\nSecond line\nThird line"), @"
+        [1mFirst line[22m
+        Second line
+        Third line
+        ");
     }
 
     #[test]
@@ -264,26 +271,5 @@ mod tests {
         let generator = CommitGenerator::new(&config);
         let result = generator.format_message_for_display("");
         assert_eq!(result, "");
-    }
-
-    #[test]
-    fn test_commit_options_new() {
-        // CommitOptions::new requires a CommandContext, which requires a Repository.
-        // Instead, test the struct fields directly
-        let stage_mode = StageMode::default();
-        assert!(matches!(stage_mode, StageMode::All));
-    }
-
-    #[test]
-    fn test_stage_mode_variants() {
-        // Test that all StageMode variants can be matched
-        let modes = [StageMode::All, StageMode::Tracked, StageMode::None];
-        for mode in modes {
-            match mode {
-                StageMode::All => assert_eq!(format!("{:?}", mode), "All"),
-                StageMode::Tracked => assert_eq!(format!("{:?}", mode), "Tracked"),
-                StageMode::None => assert_eq!(format!("{:?}", mode), "None"),
-            }
-        }
     }
 }

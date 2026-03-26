@@ -374,7 +374,7 @@ pub fn scan_shell_configs(
 
         // For Fish/Nushell, also check if any candidate's parent directory exists
         // since we create the file there rather than modifying an existing one
-        let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
+        let has_config_location = if shell.is_wrapper_based() {
             paths.iter().any(|p| p.parent().is_some_and(|d| d.exists())) || target_path.is_some()
         } else {
             target_path.is_some()
@@ -411,7 +411,7 @@ pub fn scan_shell_configs(
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
             // For Fish/Nushell, we check for parent directory; for others, the config file
-            let skipped_path = if matches!(shell, Shell::Fish | Shell::Nushell) {
+            let skipped_path = if shell.is_wrapper_based() {
                 paths
                     .first()
                     .and_then(|p| p.parent())
@@ -452,7 +452,7 @@ fn configure_shell_file(
     // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
     // This allows updates to worktrunk to automatically provide the latest wrapper logic
     // without requiring reinstall.
-    if matches!(shell, Shell::Fish | Shell::Nushell) {
+    if shell.is_wrapper_based() {
         let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
         let wrapper = if matches!(shell, Shell::Fish) {
             init.generate_fish_wrapper()
@@ -598,12 +598,8 @@ fn configure_wrapper_file(
     // - Nushell: vendor/autoload/{cmd}.nu is autoloaded automatically at startup
 
     // Check if it already exists and has our integration
-    // Use .ok() for read errors - treat as "not configured" rather than failing
-    if let Some(existing_content) = path
-        .exists()
-        .then(|| fs::read_to_string(path).ok())
-        .flatten()
-    {
+    // Read errors (including not-found) fall through to "not configured"
+    if let Ok(existing_content) = fs::read_to_string(path) {
         // Compare only non-comment lines so that comment changes (e.g. updated
         // URLs) don't cause existing installations to appear unconfigured.
         if fish_code_lines(&existing_content) == fish_code_lines(content) {
@@ -864,11 +860,8 @@ pub fn process_shell_completions(
             .map_err(|e| format!("Failed to get completion path for {shell}: {e}"))?;
 
         // Check if completions already exist with correct content
-        // Use .ok() for read errors - treat as "not configured" rather than failing
-        if let Some(existing) = completion_path
-            .exists()
-            .then(|| fs::read_to_string(&completion_path).ok())
-            .flatten()
+        // Read errors (including not-found) fall through to "not configured"
+        if let Ok(existing) = fs::read_to_string(&completion_path)
             && existing == fish_completion
         {
             results.push(CompletionResult {

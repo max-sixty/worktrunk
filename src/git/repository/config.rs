@@ -1,5 +1,7 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
+use std::path::PathBuf;
+
 use anyhow::Context;
 use color_print::cformat;
 
@@ -9,10 +11,19 @@ use super::{DefaultBranchName, GitError, Repository};
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
-    pub fn get_config(&self, key: &str) -> anyhow::Result<Option<String>> {
-        match self.run_command(&["config", key]) {
-            Ok(value) => Ok(Some(value.trim().to_string())),
-            Err(_) => Ok(None), // Config key doesn't exist
+    ///
+    /// Distinguishes "key not found" (exit code 1) from actual errors
+    /// (corrupt config, permission denied, etc.) which are propagated.
+    pub fn config_value(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let output = self.run_command_output(&["config", key])?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(Some(stdout.trim().to_string()))
+        } else if output.status.code() == Some(1) {
+            Ok(None) // Config key doesn't exist
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config {}: {}", key, stderr.trim());
         }
     }
 
@@ -84,10 +95,19 @@ impl Repository {
     }
 
     /// Clear a hint so it will show again.
+    ///
+    /// Returns `true` if the hint was cleared, `false` if it didn't exist.
+    /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
-        match self.run_command(&["config", "--unset", &format!("worktrunk.hints.{name}")]) {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false), // Key didn't exist
+        let key = format!("worktrunk.hints.{name}");
+        let output = self.run_command_output(&["config", "--unset", &key])?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(5) {
+            Ok(false) // Key didn't exist (--unset uses exit code 5)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
         }
     }
 
@@ -214,7 +234,7 @@ impl Repository {
         let remote = self.primary_remote().ok()?;
 
         // Try git's local cache for this remote (e.g., origin/HEAD)
-        if let Ok(branch) = self.get_local_default_branch(&remote) {
+        if let Ok(branch) = self.local_default_branch(&remote) {
             return Some(branch);
         }
 
@@ -282,7 +302,7 @@ impl Repository {
     /// 5. Fail if none of the above work
     fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
         // 1. If there's only one local branch, use it
-        let branches = self.local_branches()?;
+        let branches = self.all_branches()?;
         if branches.len() == 1 {
             return Ok(branches[0].clone());
         }
@@ -336,10 +356,10 @@ impl Repository {
             .ok()
             .and_then(|s| s.trim().strip_prefix("refs/heads/").map(String::from))
             .is_some_and(|head_branch| head_branch == branch)
-            && self.local_branches().is_ok_and(|b| b.is_empty())
+            && self.all_branches().is_ok_and(|b| b.is_empty())
     }
 
-    fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
+    fn local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout =
             self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
         DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)
@@ -365,15 +385,58 @@ impl Repository {
     /// `default_branch()` will re-detect (using git's cache or querying remote).
     ///
     /// Returns `true` if cache was cleared, `false` if no cache existed.
+    /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .run_command(&["config", "--unset", "worktrunk.default-branch"])
-            .is_ok())
+        let output = self.run_command_output(&["config", "--unset", "worktrunk.default-branch"])?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(5) {
+            Ok(false) // Key didn't exist (--unset uses exit code 5)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "git config --unset worktrunk.default-branch: {}",
+                stderr.trim()
+            );
+        }
     }
 
     // =========================================================================
     // Project config
     // =========================================================================
+
+    /// Return the path for the project config file.
+    ///
+    /// Uses the current worktree when inside one (both normal and bare repos).
+    /// For bare repos at the bare root (outside any worktree), falls back to
+    /// the primary worktree. Returns `None` when no worktree can be determined
+    /// (bare repo with no linked worktrees).
+    pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        let in_worktree = self
+            .current_worktree()
+            .run_command(&["rev-parse", "--is-inside-work-tree"])
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false);
+
+        if in_worktree {
+            // Inside a worktree — use it (normal repo or linked worktree in bare repo)
+            return Ok(Some(
+                self.current_worktree()
+                    .root()?
+                    .join(".config")
+                    .join("wt.toml"),
+            ));
+        }
+
+        if self.is_bare().unwrap_or(false) {
+            // At bare repo root — use primary worktree
+            return Ok(self
+                .primary_worktree()?
+                .map(|p| p.join(".config").join("wt.toml")));
+        }
+
+        Ok(None)
+    }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///

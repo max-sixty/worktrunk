@@ -1,6 +1,8 @@
 //! Integration tests for `wt step prune`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo};
+use crate::common::{
+    BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -103,7 +105,7 @@ fn test_prune_skips_unmerged(mut repo: TestRepo) {
 
 /// Min-age guard: worktrees younger than threshold are skipped.
 ///
-/// With test epoch (Jan 2025) and real file creation (Feb 2026), get_now()
+/// With test epoch (Jan 2025) and real file creation (Feb 2026), epoch_now()
 /// returns a time before the file was created, so age is 0 — always younger
 /// than any positive threshold. This verifies the guard works.
 #[rstest]
@@ -196,6 +198,29 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
         !parent.join("repo.detached-integrated").exists(),
         "Integrated detached worktree should be removed"
     );
+}
+
+/// Prune removes multiple integrated detached HEAD worktrees (exercises plural "worktrees")
+#[rstest]
+fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Two worktrees at same commit as main, then detach both
+    repo.add_worktree("detached-a");
+    repo.detach_head_in_worktree("detached-a");
+    repo.add_worktree("detached-b");
+    repo.detach_head_in_worktree("detached-b");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        None
+    ));
+
+    let parent = repo.root_path().parent().unwrap();
+    assert!(!parent.join("repo.detached-a").exists());
+    assert!(!parent.join("repo.detached-b").exists());
 }
 
 /// Prune skips locked worktrees
@@ -407,6 +432,44 @@ fn test_prune_dry_run_mixed_worktrees_and_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!(cmd);
 }
 
+/// Prune works when the current worktree is mid-rebase.
+///
+/// During an interactive rebase, the worktree is in detached HEAD state.
+/// `git branch --format=%(refname:lstrip=2)` includes a synthetic entry like
+/// `(no branch, rebasing feature)` which isn't a valid ref. The orphan branch
+/// scan must not pass this to `integration_reason`.
+#[rstest]
+fn test_prune_during_rebase(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a merged worktree (same commit as main)
+    repo.add_worktree("merged-wt");
+
+    // Create a feature worktree with commits to rebase
+    let feature_path = repo.add_worktree_with_commit("rebasing", "r.txt", "v1", "commit 1");
+    repo.commit_in_worktree(&feature_path, "r.txt", "v2", "commit 2");
+
+    // Start an interactive rebase that pauses (exec false fails)
+    let git_status = repo
+        .git_command()
+        .args(["rebase", "-i", "--exec", "false", "main"])
+        .current_dir(&feature_path)
+        .env("GIT_SEQUENCE_EDITOR", "true")
+        .run()
+        .unwrap();
+    // The rebase should pause (exec false fails), leaving us in rebase state
+    assert!(!git_status.status.success(), "rebase should be paused");
+
+    // Run prune from the rebasing worktree — should succeed, not error on
+    // "(no branch, rebasing ...)" being used as a git revision
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s"],
+        Some(&feature_path)
+    ));
+}
+
 /// Stale candidate + young worktrees: shows both the candidate and skipped count.
 ///
 /// A stale worktree (directory deleted) bypasses the age check because it goes
@@ -432,4 +495,48 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
         &["prune", "--dry-run"],
         None
     ));
+}
+
+/// Default branch without a worktree should not be pruned despite being
+/// trivially "integrated" into itself (tautological SameCommit).
+#[test]
+fn test_prune_skips_default_branch_orphan() {
+    use crate::common::TestRepoBase;
+
+    let test = BareRepoTest::new();
+
+    // Create main worktree with a commit, then remove it so main becomes orphan
+    let main_wt = test.create_worktree("main", "main");
+    test.commit_in(&main_wt, "initial commit");
+    std::fs::remove_dir_all(&main_wt).unwrap();
+    test.git_command(test.bare_repo_path())
+        .args(["worktree", "prune"])
+        .run()
+        .unwrap();
+
+    // Create a feature branch (integrated, at same commit as main)
+    let feature_wt = test.create_worktree("feature", "feature");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = test.wt_command();
+        cmd.args(["step", "prune", "--yes"])
+            .current_dir(&feature_wt)
+            // Far-future epoch: branches appear old enough to pass min-age guard
+            .env("WORKTRUNK_TEST_EPOCH", "1893456000");
+
+        assert_cmd_snapshot!("prune_skips_default_branch_orphan", cmd);
+    });
+
+    // Verify main branch still exists
+    let output = test
+        .git_command(test.bare_repo_path())
+        .args(["branch", "--list", "main"])
+        .run()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        branches.contains("main"),
+        "Default branch 'main' should not have been pruned"
+    );
 }

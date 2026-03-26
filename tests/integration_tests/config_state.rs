@@ -30,10 +30,10 @@ fn state_get_settings() -> insta::Settings {
     settings
 }
 
-/// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
+/// Write CI status to the file-based cache at .git/wt/cache/ci-status/<branch>.json
 fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let git_dir = repo.root_path().join(".git");
-    let cache_dir = git_dir.join("wt-cache").join("ci-status");
+    let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Sanitize branch name for filename
@@ -104,10 +104,10 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command().args(["branch", "abc"]).status().unwrap();
-    repo.git_command().args(["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // wt config state default-branch get should fail with an error
@@ -138,7 +138,7 @@ fn test_state_set_default_branch(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "develop");
 }
@@ -163,7 +163,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -257,7 +257,7 @@ fn test_state_get_ci_status(repo: TestRepo) {
 fn test_state_get_ci_status_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Without any CI configured, should return "no-ci"
@@ -296,7 +296,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
         "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
@@ -342,7 +342,7 @@ fn test_state_get_marker_empty(repo: TestRepo) {
 fn test_state_get_marker_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set a marker for feature branch (using JSON format)
@@ -373,7 +373,7 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
 fn test_state_set_marker_branch_specific(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "set", &["🔧", "--branch", "feature"])
@@ -404,7 +404,7 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.main.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -424,7 +424,7 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.feature.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -446,7 +446,7 @@ fn test_state_clear_marker_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
@@ -480,16 +480,16 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     );
     // Path separator varies by platform, so check for either / or \
     assert!(
-        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
-        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
+        stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
+        "Expected .git/wt/logs or .git\\wt\\logs in output: {stderr}"
     );
 }
 
 #[rstest]
 fn test_state_get_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with hook output and command log files
+    // Create wt/logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(
         log_dir.join("feature-post-start-npm.log"),
@@ -520,9 +520,9 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
-    // Create wt-logs directory with non-log files (empty of actual log files)
+    // Create wt/logs directory with non-log files (empty of actual log files)
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("README.txt"), "not a log file").unwrap();
     std::fs::write(log_dir.join(".gitkeep"), "").unwrap();
@@ -553,9 +553,9 @@ fn test_state_clear_logs_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_logs_with_files(repo: TestRepo) {
-    // Create wt-logs directory with hook output and command log files
+    // Create wt/logs directory with hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
@@ -571,9 +571,9 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_logs_single_file(repo: TestRepo) {
-    // Create wt-logs directory with one log file
+    // Create wt/logs directory with one log file
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
 
@@ -608,7 +608,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Marker (using JSON format)
@@ -623,7 +623,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     // Logs
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-remove.log"), "output").unwrap();
 
@@ -635,7 +635,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.history"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
@@ -644,14 +644,14 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.state.main.marker"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
             == Some(1)
     );
     // CI cache is now file-based, verify the cache file is cleared
-    let ci_cache_dir = git_dir.join("wt-cache").join("ci-status");
+    let ci_cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     assert!(
         !ci_cache_dir.join("feature.json").exists(),
         "CI cache file should be cleared"
@@ -695,10 +695,10 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mHINTS[39m
         [107m [0m (none)
 
-        [36mCOMMAND LOG[39m  @ <PATH>
+        [36mCOMMAND LOG[39m @ <PATH>
         [107m [0m (none)
 
-        [36mHOOK OUTPUT[39m  @ <PATH>
+        [36mHOOK OUTPUT[39m @ <PATH>
         [107m [0m (none)
         ");
     });
@@ -743,7 +743,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps for deterministic age)
@@ -753,7 +753,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args([
@@ -761,7 +761,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.bugfix.marker",
             &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -775,7 +775,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 
     // Create log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
@@ -809,7 +809,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps)
@@ -819,7 +819,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -860,7 +860,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 fn test_state_get_json_with_logs(repo: TestRepo) {
     // Create hook output and command log files
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
@@ -947,7 +947,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
     // Create a feature branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Add CI cache via git config for the specific branch
@@ -956,7 +956,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -971,7 +971,7 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
     // Create a feature branch without any CI cache
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -986,7 +986,7 @@ fn test_state_clear_marker_specific_branch(repo: TestRepo) {
     // Create a feature branch and set marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
     repo.set_marker("feature", "🔧");
 
@@ -1002,7 +1002,7 @@ fn test_state_clear_marker_specific_branch_not_set(repo: TestRepo) {
     // Create a feature branch without any marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
@@ -1050,11 +1050,11 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
     // Set hints via git config (as the code stores them)
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
@@ -1077,11 +1077,11 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1092,7 +1092,7 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.hints\."])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // No matches
 }
@@ -1102,7 +1102,7 @@ fn test_state_hints_clear_single(repo: TestRepo) {
     // Set a single hint
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1115,11 +1115,11 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &["worktree-path"])
@@ -1132,14 +1132,14 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.worktree-path"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // Cleared
 
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.another-hint"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success()); // Still there
 }
@@ -1159,9 +1159,9 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
-    // Create wt-logs directory with a post-start log file
+    // Create wt/logs directory with a post-start log file
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("main", "user", "post-start", "server");
     let log_file = log_dir.join(&filename);
@@ -1185,7 +1185,7 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
 fn test_state_logs_get_hook_project_source(repo: TestRepo) {
     // Test that project source logs are found with explicit format
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("main", "project", "post-start", "build");
     let log_file = log_dir.join(&filename);
@@ -1208,7 +1208,7 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
 fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
     // Test finding an internal operation log (e.g., "internal:remove")
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = internal_log_filename("main", "remove");
     let log_file = log_dir.join(&filename);
@@ -1228,9 +1228,9 @@ fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_not_found(repo: TestRepo) {
-    // Create wt-logs directory with some log files but not the requested one
+    // Create wt/logs directory with some log files but not the requested one
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let other_filename = hook_log_filename("main", "user", "post-start", "other");
     std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
@@ -1279,9 +1279,9 @@ fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
 
 #[rstest]
 fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
-    // Create wt-logs directory with logs for different branch
+    // Create wt/logs directory with logs for different branch
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
     std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
@@ -1304,11 +1304,11 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     // Create log file for a different branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt-logs");
+    let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     let filename = hook_log_filename("feature", "user", "post-start", "dev");
     std::fs::write(log_dir.join(&filename), "dev output").unwrap();

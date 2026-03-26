@@ -4,6 +4,74 @@ use crate::common::{TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_f
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
+use std::path::{Path, PathBuf};
+const CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG: &str = r#"[step.copy-ignored]
+exclude = [".custom-cache/"]
+"#;
+
+fn run_copy_ignored(repo: &TestRepo, feature_path: &Path) -> std::process::Output {
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn run_copy_ignored_single_entry(repo: &TestRepo, feature_path: &Path) {
+    let output = run_copy_ignored(repo, feature_path);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Copied 1 entry"),
+        "expected one copied entry: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write_worktree_project_config(worktree_path: &Path, contents: &str) {
+    let config_dir = worktree_path.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), contents).unwrap();
+}
+
+fn assert_copy_ignored_excluded(feature_path: &Path, excluded_dirs: &[&str], source: &str) {
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should still be copied"
+    );
+    for excluded_dir in excluded_dirs {
+        assert!(
+            !feature_path.join(excluded_dir).exists(),
+            "{} should be excluded by {}",
+            excluded_dir,
+            source
+        );
+    }
+}
+
+fn setup_copy_ignored_exclude_fixture(repo: &mut TestRepo) -> PathBuf {
+    let feature_path = repo.add_worktree("feature");
+
+    let ignored_entries = ".env\n.custom-cache/\n";
+
+    fs::create_dir_all(repo.root_path().join(".custom-cache")).unwrap();
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(
+        repo.root_path().join(".custom-cache").join("state.json"),
+        "{}",
+    )
+    .unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
+
+    feature_path
+}
 
 /// Test with no .worktreeinclude file and no gitignored files
 #[rstest]
@@ -44,6 +112,49 @@ fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
     assert!(
         feature_path.join("cache.db").exists(),
         "cache.db should be copied without .worktreeinclude"
+    );
+}
+
+#[rstest]
+fn test_copy_ignored_excludes_project_config(mut repo: TestRepo) {
+    let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
+    repo.write_project_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+    write_worktree_project_config(&feature_path, CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "project config");
+}
+
+#[rstest]
+fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
+    let feature_path = setup_copy_ignored_exclude_fixture(&mut repo);
+    repo.write_test_config(CUSTOM_COPY_IGNORED_EXCLUDE_CONFIG);
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(&feature_path, &[".custom-cache"], "user config");
+}
+
+#[rstest]
+fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    let ignored_entries = ".conductor/\n.entire/\n.pi/\n.env\n";
+
+    for dir in [".conductor", ".entire", ".pi"] {
+        fs::create_dir_all(repo.root_path().join(dir)).unwrap();
+        fs::write(repo.root_path().join(dir).join("state.json"), dir).unwrap();
+    }
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ignored_entries).unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ignored_entries).unwrap();
+
+    run_copy_ignored_single_entry(&repo, &feature_path);
+
+    assert_copy_ignored_excluded(
+        &feature_path,
+        &[".conductor", ".entire", ".pi"],
+        "built-in excludes",
     );
 }
 
@@ -117,12 +228,7 @@ fn test_copy_ignored_basic(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run from feature worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify file was copied
     let copied_env = feature_path.join(".env");
@@ -148,24 +254,8 @@ fn test_copy_ignored_idempotent(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Run copy-ignored twice - second run should succeed (skip existing)
-    let output1 = repo
-        .wt_command()
-        .args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
-    assert!(output1.status.success(), "First copy should succeed");
-
-    let output2 = repo
-        .wt_command()
-        .args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
-    assert!(
-        output2.status.success(),
-        "Second copy should succeed (idempotent)"
-    );
+    run_copy_ignored(&repo, &feature_path);
+    run_copy_ignored(&repo, &feature_path);
 
     // File should still exist with original content
     assert_eq!(
@@ -256,12 +346,7 @@ fn test_copy_ignored_directory(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
 
     // Run from feature worktree
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify directory was copied with contents
     let copied_target = feature_path.join("target");
@@ -292,12 +377,7 @@ fn test_copy_ignored_glob_pattern(mut repo: TestRepo) {
     // .worktreeinclude with same pattern
     fs::write(repo.root_path().join(".worktreeinclude"), ".env*\n").unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify all were copied
     assert!(feature_path.join(".env").exists());
@@ -401,12 +481,7 @@ fn test_copy_ignored_deep_pattern(mut repo: TestRepo) {
     )
     .unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify the nested file was copied
     assert!(
@@ -439,12 +514,7 @@ fn test_copy_ignored_nested_gitignore(mut repo: TestRepo) {
     )
     .unwrap();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify the file was copied (nested .gitignore was respected)
     assert!(
@@ -492,7 +562,7 @@ fn test_copy_ignored_from_nonexistent_worktree(repo: TestRepo) {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     // Try to copy from a branch with no worktree
@@ -510,7 +580,7 @@ fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     // Setup a file to copy
@@ -542,12 +612,7 @@ fn test_copy_ignored_no_default_branch_worktree(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Copy from feature - should use main worktree as source (primary_worktree fallback)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify file was copied from main worktree
     assert!(
@@ -839,6 +904,74 @@ fn test_copy_ignored_skips_non_regular_files(mut repo: TestRepo) {
     assert!(!feature_path.join("target").join("test.sock").exists());
 }
 
+/// Test that top-level symlinks are copied as symlinks, not as regular files (GitHub issue #1488)
+///
+/// When `git ls-files` lists a symlink as a top-level entry (not inside a directory),
+/// it should be recreated as a symlink in the destination, not copied as a regular file.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_top_level_symlinks(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a regular file and a symlink to it, both gitignored
+    fs::write(repo.root_path().join("test_file"), "content").unwrap();
+    std::os::unix::fs::symlink("test_file", repo.root_path().join("symlink_to_test_file")).unwrap();
+
+    fs::write(
+        repo.root_path().join(".gitignore"),
+        "test_file\nsymlink_to_test_file\n",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    // The symlink should be preserved as a symlink, not copied as a regular file
+    let dest_symlink = feature_path.join("symlink_to_test_file");
+    assert!(
+        dest_symlink
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink_to_test_file should be a symlink, not a regular file"
+    );
+    assert_eq!(
+        fs::read_link(&dest_symlink).unwrap(),
+        std::path::PathBuf::from("test_file"),
+        "symlink target should be preserved"
+    );
+
+    // The regular file should also be copied
+    assert!(feature_path.join("test_file").exists());
+
+    // Run again to exercise the idempotent skip path (symlink already exists)
+    let output2 = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(output2.status.success());
+
+    // Symlink should still be intact
+    assert!(
+        dest_symlink
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "symlink should survive idempotent re-run"
+    );
+}
+
 /// Test that symlinks inside directories are copied correctly
 #[cfg(unix)]
 #[rstest]
@@ -947,6 +1080,199 @@ fn test_copy_ignored_error_includes_path_file(mut repo: TestRepo) {
     );
 }
 
+/// Test that nested file copy errors mention the parent directory creation failure
+///
+/// Exercises the `create_dir_all(parent)` error path in the top-level file copy loop.
+/// The existing `test_copy_ignored_error_includes_path_file` test uses a top-level file,
+/// so it doesn't reach `create_dir_all`.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_error_nested_file_parent_creation(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a nested file that's individually gitignored (not as a directory)
+    let cache_dir = repo.root_path().join("cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(cache_dir.join("data.json"), "content").unwrap();
+
+    // Gitignore the specific file (not the directory) so git ls-files returns it as a file
+    fs::write(repo.root_path().join(".gitignore"), "cache/data.json\n").unwrap();
+    fs::write(
+        repo.root_path().join(".worktreeinclude"),
+        "cache/data.json\n",
+    )
+    .unwrap();
+
+    // Make feature worktree root read-only so create_dir_all("cache/") fails
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Restore permissions for cleanup
+    fs::set_permissions(&feature_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("creating directory for") && stderr.contains("cache"),
+        "Error should mention parent directory creation, got: {stderr}"
+    );
+}
+
+/// Test that broken symlinks at the destination don't prevent copying regular files (GitHub #1547)
+///
+/// When copy-ignored runs and the destination already has a broken symlink where a
+/// regular file would be copied, reflink_or_copy follows the symlink and gets ENOENT
+/// instead of EEXIST. This should be treated as "already exists" (skip), not an error.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_broken_symlink_at_dest_for_regular_file(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a regular file in main that's gitignored
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    // Create a broken symlink at the destination where the file would be copied.
+    // The target path has a non-existent parent dir so fs::copy fails with ENOENT.
+    std::os::unix::fs::symlink("/nonexistent/path/file", feature_path.join(".env")).unwrap();
+
+    // Verify it's a broken symlink (symlink_metadata succeeds, but exists() returns false)
+    assert!(feature_path.join(".env").symlink_metadata().is_ok());
+    assert!(!feature_path.join(".env").exists());
+
+    // copy-ignored should succeed, skipping the broken symlink
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed when destination has broken symlink: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Test that broken symlinks inside directories don't prevent copying (GitHub #1547)
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_broken_symlink_in_dir_at_dest(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create target directory with a regular file in main
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(&target_dir).unwrap();
+    fs::write(target_dir.join("data.txt"), "content").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    // Create destination target dir with a broken symlink where data.txt would go
+    let dest_target = feature_path.join("target");
+    fs::create_dir_all(&dest_target).unwrap();
+    std::os::unix::fs::symlink("/nonexistent/path/file", dest_target.join("data.txt")).unwrap();
+
+    // copy-ignored should succeed, skipping the broken symlink
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed when dir entry has broken symlink at dest: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Test that directory permissions are preserved during copy (GitHub issue #1589)
+///
+/// When copying gitignored directories, the destination directories should have the
+/// same permissions as the source directories. For example, a directory with mode 0700
+/// should not become 0755 in the destination.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a directory with restrictive permissions (0700)
+    let test_dir = repo.root_path().join("test");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(test_dir.join("file"), "content").unwrap();
+    fs::set_permissions(&test_dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Add to .gitignore
+    fs::write(repo.root_path().join(".gitignore"), "test\n").unwrap();
+
+    // Run copy-ignored
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify directory was copied
+    let dest_dir = feature_path.join("test");
+    assert!(dest_dir.exists(), "test directory should be copied");
+    assert!(dest_dir.join("file").exists(), "test/file should be copied");
+
+    // Verify directory permissions are preserved (0700, not default 0755)
+    let dest_mode = fs::metadata(&dest_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dest_mode, 0o700,
+        "Directory permissions should be preserved (expected 0700, got {dest_mode:04o})"
+    );
+
+    // Also verify read-only directories (0o555) are handled correctly.
+    // Permissions must be set AFTER copying contents, otherwise the destination
+    // becomes read-only before files are copied into it.
+    let readonly_dir = repo.root_path().join("readonly");
+    fs::create_dir_all(&readonly_dir).unwrap();
+    fs::write(readonly_dir.join("data"), "content").unwrap();
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "test\nreadonly\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let dest_readonly = feature_path.join("readonly");
+    assert!(
+        output.status.success(),
+        "copy-ignored should handle read-only source dirs: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Check permissions BEFORE restoring for cleanup
+    let dest_readonly_mode = fs::metadata(&dest_readonly).unwrap().permissions().mode() & 0o777;
+    // Restore for cleanup
+    fs::set_permissions(&readonly_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    if dest_readonly.exists() {
+        fs::set_permissions(&dest_readonly, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(
+        dest_readonly_mode, 0o555,
+        "Read-only directory permissions should be preserved (expected 0555, got {dest_readonly_mode:04o})"
+    );
+}
+
 /// Test that VCS metadata directories are excluded from copy-ignored (GitHub issue #1249)
 ///
 /// VCS metadata directories like `.jj` (Jujutsu), `.hg` (Mercurial) contain internal
@@ -971,12 +1297,7 @@ fn test_copy_ignored_skips_vcs_metadata_dirs(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".gitignore"), ".jj/\n.hg/\n.env\n").unwrap();
 
     // Run copy-ignored
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["copy-ignored"],
-        Some(&feature_path),
-    ));
+    run_copy_ignored(&repo, &feature_path);
 
     // Verify: .env was copied (regular ignored file)
     assert!(
@@ -1018,7 +1339,7 @@ fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
             "feature-nested",
             nested_worktree_path.to_str().unwrap(),
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Add .worktrees to .gitignore (typical for this setup)

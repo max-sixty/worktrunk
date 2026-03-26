@@ -108,7 +108,7 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Should show warning but continue (worktree should still be created)
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast
     snapshot_switch(
         "post_create_failing_command",
         &repo,
@@ -280,7 +280,7 @@ fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestR
     // Set up an upstream tracking branch
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push");
 
     // Create project config with git-related template variables
@@ -353,7 +353,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push main");
 
     // Create project config with upstream template variable
@@ -387,7 +387,7 @@ fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRep
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
-        .output()
+        .run()
         .expect("failed to push main");
 
     // Create project config with conditional upstream check
@@ -570,7 +570,7 @@ approved-commands = ["cat > context.json"]
     );
     assert_eq!(
         json["hook_type"].as_str(),
-        Some("post-create"),
+        Some("pre-start"),
         "JSON should contain hook_type"
     );
 }
@@ -657,7 +657,7 @@ approved-commands = ["./scripts/setup.py"]
         contents
     );
     assert!(
-        contents.contains("hook_type=post-create"),
+        contents.contains("hook_type=pre-start"),
         "Output should contain hook_type: {}",
         contents
     );
@@ -751,7 +751,7 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     // Verify log file was created in the common git directory
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     assert!(log_dir.exists());
 
     // Wait for the background command to complete
@@ -896,7 +896,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     // Wait for log file to be created (not just the directory)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Find the log file
@@ -985,7 +985,7 @@ approved-commands = [
     // Wait for all 3 log files to be created (poll, don't use fixed sleep)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = git_common_dir.join("wt/logs");
     wait_for_file_count(&log_dir, "log", 3);
 
     let log_files: Vec<_> = fs::read_dir(&log_dir)
@@ -1244,4 +1244,130 @@ approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
         !marker_file.exists(),
         "Post-start should NOT run when switching to existing worktree"
     );
+}
+
+// ============================================================================
+// Pipeline Tests (project config, list form)
+// ============================================================================
+
+#[rstest]
+fn test_post_start_project_pipeline(repo: TestRepo) {
+    // Project config with pipeline: serial setup, then concurrent tasks
+    repo.write_project_config(
+        r#"post-start = [
+    "echo SETUP > setup_marker.txt",
+    { task1 = "cat setup_marker.txt > task1_saw_setup.txt", task2 = "echo TASK2 > task2.txt" }
+]
+"#,
+    );
+    repo.commit("Add pipeline config");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo SETUP > setup_marker.txt",
+    "cat setup_marker.txt > task1_saw_setup.txt",
+    "echo TASK2 > task2.txt",
+]
+"#,
+    );
+
+    snapshot_switch(
+        "post_start_project_pipeline",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    // task1 reads the setup marker — verifies serial-before-concurrent ordering
+    let task1_file = worktree_path.join("task1_saw_setup.txt");
+    wait_for_file_content(&task1_file);
+
+    let content = fs::read_to_string(&task1_file).unwrap();
+    assert!(
+        content.contains("SETUP"),
+        "Concurrent task should see serial step's output, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_start_pipeline_with_template_vars(repo: TestRepo) {
+    // Pipeline with template variable expansion
+    repo.write_project_config(
+        r#"post-start = [
+    "echo {{ branch }} > branch_marker.txt",
+    { check = "cat branch_marker.txt > branch_check.txt" }
+]
+"#,
+    );
+    repo.commit("Add pipeline with templates");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo {{ branch }} > branch_marker.txt",
+    "cat branch_marker.txt > branch_check.txt",
+]
+"#,
+    );
+
+    snapshot_switch(
+        "post_start_pipeline_template_vars",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let check_file = worktree_path.join("branch_check.txt");
+    wait_for_file_content(&check_file);
+
+    let content = fs::read_to_string(&check_file).unwrap();
+    assert!(
+        content.contains("feature"),
+        "Template variable should be expanded in pipeline, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_start_mixed_user_pipeline_project_flat(repo: TestRepo) {
+    // User has a pipeline, project has flat concurrent commands.
+    // Both should execute.
+    repo.write_test_config(
+        r#"post-start = [
+    "echo USER_SETUP > user_pipeline_marker.txt",
+    { user_bg = "echo USER_BG > user_bg.txt" }
+]
+"#,
+    );
+
+    repo.write_project_config(
+        r#"[post-start]
+proj = "echo PROJECT > project_marker.txt"
+"#,
+    );
+    repo.commit("Add project config");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo PROJECT > project_marker.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "post_start_mixed_user_pipeline_project_flat",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // User pipeline should run
+    wait_for_file_content(&worktree_path.join("user_bg.txt"));
+    let user_bg = fs::read_to_string(worktree_path.join("user_bg.txt")).unwrap();
+    assert!(user_bg.contains("USER_BG"));
+
+    // Project flat hook should also run
+    wait_for_file_content(&worktree_path.join("project_marker.txt"));
+    let project = fs::read_to_string(worktree_path.join("project_marker.txt")).unwrap();
+    assert!(project.contains("PROJECT"));
 }

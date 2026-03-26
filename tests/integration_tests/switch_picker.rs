@@ -18,7 +18,7 @@
 //! Instead of fixed delays (which are either too short on slow CI or wastefully
 //! long on fast machines), we poll for screen stabilization:
 //!
-//! - **Long timeouts** (10s) ensure reliability on slow CI
+//! - **Long timeouts** (30s) ensure reliability on slow CI
 //! - **Fast polling** (10ms) means tests complete quickly when things work
 //! - **Content-based readiness** detects when skim has rendered ("> " prompt)
 //! - **Stabilization detection** waits for screen to stop changing
@@ -29,7 +29,7 @@ use insta::assert_snapshot;
 use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -39,13 +39,14 @@ const TERM_COLS: u16 = 120;
 
 /// Maximum time to wait for skim to become ready (show "> " prompt).
 /// Long timeout ensures reliability on slow CI.
-const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time to wait for screen to stabilize after input.
-/// Long timeout ensures reliability on slow CI.
-/// Increased from 5s to 10s to handle macOS CI under heavy load where branch
-/// loading can be slow (particularly when waiting for async branch lists to populate).
-const STABILIZE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Long timeout ensures reliability on slow CI where skim's async item loading
+/// and preview commands can be very slow under heavy load. Fast polling (10ms)
+/// means tests complete quickly when things work — the long timeout only matters
+/// in worst-case scenarios.
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
@@ -397,8 +398,15 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
 ///
-/// Tip: include the panel border character (`│`) in `expected_content` to ensure
-/// the full TUI frame has rendered, not just the preview text content.
+/// Handles a subtle race condition: skim may continuously redraw (cursor repositioning,
+/// border repaints) even after all meaningful content is rendered. These minor redraws
+/// reset the stability timer, preventing the "no changes for 500ms" condition from
+/// being met. To handle this, once expected content is found, we track how long it
+/// has been continuously present and accept stability after STABLE_DURATION even if
+/// the screen keeps changing cosmetically.
+///
+/// Tip: avoid including the panel border character (`│`) in `expected_content` —
+/// its rendering varies by platform and terminal, causing flaky assertions.
 fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
@@ -407,6 +415,9 @@ fn wait_for_stable_with_content(
     let start = Instant::now();
     let mut last_change = Instant::now();
     let mut last_content = parser.screen().contents();
+    // Tracks when expected content first appeared continuously on screen.
+    // Used as a fallback stability signal when skim keeps redrawing cosmetically.
+    let mut content_found_at: Option<Instant> = None;
 
     while start.elapsed() < STABILIZE_TIMEOUT {
         // Drain available output
@@ -422,23 +433,69 @@ fn wait_for_stable_with_content(
 
         // Check if expected content is present (if required)
         let content_ready = match expected_content {
-            Some(expected) => current_content.contains(expected),
+            Some(expected) => {
+                let found = current_content.contains(expected);
+                if found {
+                    content_found_at.get_or_insert(Instant::now());
+                } else {
+                    // Content disappeared (e.g., skim full redraw) — reset
+                    content_found_at = None;
+                }
+                found
+            }
             None => true,
         };
 
-        // Screen hasn't changed for STABLE_DURATION and content is ready
+        // Primary: screen hasn't changed for STABLE_DURATION and content is ready
         if last_change.elapsed() >= STABLE_DURATION && content_ready {
+            return;
+        }
+
+        // Fallback for content-expected case: if expected content has been continuously
+        // present for STABLE_DURATION, consider the screen stable even if skim keeps
+        // doing cosmetic redraws (cursor repositioning, border repaints). These minor
+        // changes don't affect snapshot correctness.
+        if let Some(found_time) = content_found_at
+            && found_time.elapsed() >= STABLE_DURATION
+        {
             return;
         }
 
         std::thread::sleep(POLL_INTERVAL);
     }
 
-    // Timeout - proceed anyway (test may still pass with partial render)
+    // Timeout: if expected content was specified but not found, fail with diagnostics
+    // instead of proceeding to a guaranteed snapshot mismatch.
+    if let Some(expected) = expected_content
+        && !last_content.contains(expected)
+    {
+        panic!(
+            "Timed out after {:?} waiting for expected content {:?} to appear on screen.\n\
+             Screen content:\n{}",
+            STABILIZE_TIMEOUT, expected, last_content
+        );
+    }
+
+    // Stability-only timeout (no content expectation, or content present but unstable) —
+    // warn but proceed (test may still pass with current screen state)
     eprintln!(
         "Warning: Screen did not fully stabilize within {:?}",
         STABILIZE_TIMEOUT
     );
+}
+
+/// Disable the picker's 500ms data collection timeout so all task results
+/// arrive before rendering. Without this, slow CI runners (especially macOS)
+/// can show `·` stale placeholders for columns whose data didn't arrive in
+/// time, causing non-deterministic snapshots.
+fn disable_picker_timeout(repo: &TestRepo) {
+    let existing = std::fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+    let config = if existing.is_empty() {
+        "skip-commit-generation-prompt = true\n\n[switch-picker]\ntimeout-ms = 0\n".to_string()
+    } else {
+        format!("{existing}\n[switch-picker]\ntimeout-ms = 0\n")
+    };
+    std::fs::write(repo.test_config_path(), config).unwrap();
 }
 
 /// Create insta settings with filters for switch picker snapshot stability.
@@ -479,6 +536,7 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
@@ -504,6 +562,7 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
@@ -533,13 +592,14 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -570,6 +630,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -578,7 +639,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -590,7 +651,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
             "-m",
             "Add tracked file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -611,7 +672,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("1", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
+            ("1", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -630,6 +691,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -643,7 +705,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         let output = repo
             .git_command()
             .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to add files");
         let output = repo
@@ -655,7 +717,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
                 "-m",
                 &format!("Add file {i} with content"),
             ])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to commit");
     }
@@ -670,7 +732,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("2", Some("│* ")), // Wait for git log output (│ = border drawn)
+            ("2", Some("* ")), // Wait for git log output
         ],
     );
 
@@ -689,6 +751,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -707,7 +770,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -719,7 +782,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
             "-m",
             "Add new feature implementation",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -736,7 +799,7 @@ fn test_new_feature() {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -748,7 +811,7 @@ fn test_new_feature() {
             "-m",
             "Add tests for new feature",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -762,7 +825,7 @@ fn test_new_feature() {
         &env_vars,
         &[
             ("feature", None),
-            ("3", Some("│diff --git")), // Wait for diff to load (│ = border drawn)
+            ("3", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -781,6 +844,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -789,7 +853,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -801,7 +865,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
             "-m",
             "Add new file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -815,7 +879,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         &env_vars,
         &[
             ("feature", None),
-            ("5", Some("│Configure")), // Wait for config hint (│ = border drawn)
+            ("5", Some("Configure")), // Wait for config hint
         ],
     );
 
@@ -842,7 +906,7 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -852,6 +916,9 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
         r#"
 [list]
 branches = true
+
+[switch-picker]
+timeout-ms = 0
 "#,
     );
 
@@ -862,7 +929,7 @@ branches = true
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        &[("", Some("│orphan-branch"))], // Wait for orphan-branch to appear before abort
+        &[("", Some("orphan-branch"))], // Wait for orphan-branch to appear in list before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -915,7 +982,7 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
     let branch_output = repo
         .git_command()
         .args(["branch", "--list", "new-feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
@@ -992,5 +1059,149 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
         screen.contains("target-branch") || screen.contains("Switched") || screen.contains("cd "),
         "Expected switch output showing target-branch.\nScreen:\n{}",
         screen
+    );
+}
+
+/// Helper to create a temporary directive file for PTY tests.
+/// Returns (path, guard) — the guard keeps the temp file alive until dropped.
+fn directive_file_for_pty() -> (PathBuf, tempfile::TempPath) {
+    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
+    let path = file.path().to_path_buf();
+    let guard = file.into_temp_path();
+    (path, guard)
+}
+
+#[rstest]
+fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to switch to
+    repo.add_worktree("target-branch");
+
+    let (directive_path, _guard) = directive_file_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
+        directive_path.display().to_string(),
+    ));
+
+    // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful switch"
+    );
+
+    // Verify directive file does NOT contain cd command
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        !directives.contains("cd '"),
+        "Directive file should NOT contain cd command with --no-cd via picker, got: {}",
+        directives
+    );
+}
+
+#[rstest]
+fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to switch to
+    repo.add_worktree("target-branch");
+
+    let (directive_path, _guard) = directive_file_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
+        directive_path.display().to_string(),
+    ));
+
+    // Run `wt switch` (without --no-cd), select "target-branch" via picker
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to switch
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for successful switch"
+    );
+
+    // Verify directive file DOES contain cd command (default behavior)
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.contains("cd '"),
+        "Directive file should contain cd command without --no-cd, got: {}",
+        directives
+    );
+}
+
+#[rstest]
+fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Create a worktree to select
+    repo.add_worktree("target-branch");
+
+    let (directive_path, _guard) = directive_file_for_pty();
+
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
+        directive_path.display().to_string(),
+    ));
+
+    // Run `wt switch --no-cd`, filter to "target", press Enter to select
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch", "--no-cd"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("target", None), // Filter to "target-branch"
+            ("\r", None),     // Enter to select
+        ],
+    );
+
+    assert_eq!(
+        result.exit_code, 0,
+        "Expected exit code 0 for --no-cd selection"
+    );
+
+    let screen = result.screen();
+
+    // --no-cd should output the branch name
+    assert!(
+        screen.contains("target-branch"),
+        "Expected branch name in output with --no-cd.\nScreen:\n{}",
+        screen
+    );
+
+    // --no-cd should NOT emit a cd directive (read-only operation)
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        !directives.contains("cd '"),
+        "Directive file should NOT contain cd command with --no-cd, got: {}",
+        directives
     );
 }

@@ -3,14 +3,13 @@
 //! Implements `RemoteRefProvider` for GitHub Pull Requests using the `gh` CLI.
 
 use std::io::ErrorKind;
-use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{PlatformData, RemoteRefInfo, RemoteRefProvider};
-use crate::git::RefType;
 use crate::git::error::GitError;
+use crate::git::{self, RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
@@ -22,8 +21,8 @@ impl RemoteRefProvider for GitHubProvider {
         RefType::Pr
     }
 
-    fn fetch_info(&self, number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
-        fetch_pr_info(number, repo_root)
+    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+        fetch_pr_info(number, repo)
     }
 
     fn ref_path(&self, number: u32) -> String {
@@ -77,11 +76,21 @@ struct GhOwner {
 }
 
 /// Fetch PR information from GitHub using the `gh` CLI.
-fn fetch_pr_info(pr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
+fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+    let repo_root = repo.repo_path()?;
+
+    // Best-effort hostname extraction for GitHub Enterprise support.
+    // Falls back to gh's default (github.com) if the remote URL can't be parsed.
+    let hostname = repo
+        .primary_remote_url()
+        .and_then(|url| git::GitRemoteUrl::parse(&url))
+        .map(|parsed| parsed.host().to_string())
+        .unwrap_or_else(|| "github.com".to_string());
+
     let api_path = format!("repos/{{owner}}/{{repo}}/pulls/{}", pr_number);
 
     let output = match Cmd::new("gh")
-        .args(["api", &api_path])
+        .args(["api", &api_path, "--hostname", &hostname])
         .current_dir(repo_root)
         .env("GH_PROMPT_DISABLED", "1")
         .run()

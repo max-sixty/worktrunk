@@ -1,6 +1,6 @@
 //! Hook execution for worktree operations.
 //!
-//! CommandContext implementations for post-create and post-remove hooks.
+//! CommandContext implementations for pre-start and post-remove hooks.
 
 use std::path::Path;
 
@@ -13,19 +13,19 @@ use crate::commands::hooks::{
 };
 
 impl<'a> CommandContext<'a> {
-    /// Execute post-create commands sequentially (blocking)
+    /// Execute pre-start commands sequentially (blocking)
     ///
     /// Runs user hooks first, then project hooks.
     /// Shows path in hook announcements when shell integration isn't active (user's shell
     /// won't cd to the new worktree, so they need to know where hooks ran).
     ///
     /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
-    pub fn execute_post_create_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
+    pub fn execute_pre_start_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
         execute_hook(
             self,
-            HookType::PostCreate,
+            HookType::PreStart,
             extra_vars,
-            HookFailureStrategy::Warn,
+            HookFailureStrategy::FailFast,
             None,
             crate::output::post_hook_display_path(self.worktree_path),
         )
@@ -69,6 +69,19 @@ impl<'a> CommandContext<'a> {
         } else {
             commit
         };
+        // Target vars: where the user ends up after removal (primary worktree).
+        // self.worktree_path is main_path (set by caller). Look up its branch
+        // rather than using self.branch (which is the removed branch).
+        let target_path_str = to_posix_path(&self.worktree_path.to_string_lossy());
+        let target_branch_owned = self
+            .repo
+            .worktree_at(self.worktree_path)
+            .branch()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let target_branch = target_branch_owned.as_str();
+
         let extra_vars: Vec<(&str, &str)> = vec![
             ("branch", removed_branch),
             ("worktree_path", &worktree_path_str),
@@ -76,6 +89,8 @@ impl<'a> CommandContext<'a> {
             ("worktree_name", worktree_name),
             ("commit", commit),
             ("short_commit", short_commit),
+            ("target", target_branch),
+            ("target_worktree_path", &target_path_str),
         ];
 
         let user_hooks = self.config.hooks(self.project_id().as_deref());

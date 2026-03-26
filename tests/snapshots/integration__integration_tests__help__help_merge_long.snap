@@ -11,14 +11,18 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -52,11 +56,8 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
       [1m[36m--no-remove[0m
           Keep worktree after merge
 
-      [1m[36m--no-verify[0m
-          Skip hooks
-
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
+      [1m[36m--no-ff[0m
+          Create a merge commit (no fast-forward)
 
       [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m
           What to stage before committing [default: all]
@@ -68,6 +69,13 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
+
+[1m[32mAutomation:[0m
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+      [1m[36m--no-verify[0m
+          Skip hooks
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -85,35 +93,40 @@ Unlike [2mgit merge[0m, this merges current into target (not target into curre
 
 Merge to the default branch:
 
-  [2mwt merge[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
 
 Merge to a different branch:
 
-  [2mwt merge develop[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge develop[0m
 
 Keep the worktree after merging:
 
-  [2mwt merge --no-remove[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
 
 Preserve commit history (no squash):
 
-  [2mwt merge --no-squash[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
+
+Create a merge commit (semi-linear history):
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-  [2mwt merge --no-commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
 
 [1m[32mPipeline[0m
 
 [2mwt merge[0m runs these steps:
 
-1. [1mSquash[0m — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, uncommitted changes become a separate commit and individual commits are preserved.
-2. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
-3. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See [2mwt hook[0m.
-4. [1mMerge[0m — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
-5. [1mPre-remove hooks[0m — Hooks run before removing worktree. Failures abort.
-6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
-7. [1mPost-merge hooks[0m — Hooks run after cleanup. Failures are logged but don't abort.
+1. [1mCommit[0m — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. With [2m--no-squash[0m, this is the only commit step; with squash (default), this is skipped and changes are staged during squash instead.
+2. [1mSquash[0m — Combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, individual commits are preserved.
+3. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
+4. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See [2mwt hook[0m.
+5. [1mMerge[0m — Fast-forward merge to the target branch. With [2m--no-ff[0m, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
+6. [1mPre-remove hooks[0m — Hooks run before removing worktree. Failures abort.
+7. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
+8. [1mPost-remove + post-merge hooks[0m — Run in background after cleanup.
 
 Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is passed. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
@@ -125,9 +138,9 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
-  [2m[pre-merge][0m
-  [2mtest = "cargo test"[0m
-  [2mlint = "cargo clippy"[0m
+[107m [0m [2m[36m[pre-merge][0m
+[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
+[107m [0m [2mlint = [0m[2m[32m"cargo clippy"[0m
 
 [1m[32mSee also[0m
 

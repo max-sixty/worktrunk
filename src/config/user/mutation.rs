@@ -9,9 +9,8 @@ use fs2::FileExt;
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
-use super::path::get_config_path;
-use super::sections::CommitConfig;
-use super::sections::CommitGenerationConfig;
+use super::path;
+use super::sections::{CommitConfig, CommitGenerationConfig};
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
@@ -56,7 +55,7 @@ impl UserConfig {
     {
         let path = match config_path {
             Some(p) => p.to_path_buf(),
-            None => get_config_path().ok_or_else(|| {
+            None => path::config_path().ok_or_else(|| {
                 ConfigError::Message(
                     "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
                 )
@@ -82,7 +81,7 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         let path = match config_path {
             Some(p) => Some(p.to_path_buf()),
-            None => get_config_path(),
+            None => path::config_path(),
         };
 
         let Some(path) = path else {
@@ -145,6 +144,26 @@ impl UserConfig {
                 return false;
             }
             config.skip_commit_generation_prompt = true;
+            true
+        })
+    }
+
+    /// Set worktree-path for a specific project and save.
+    ///
+    /// Creates the project entry if it doesn't exist.
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn set_project_worktree_path(
+        &mut self,
+        project: &str,
+        worktree_path: String,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
+        self.with_locked_mutation(config_path, |config| {
+            let entry = config.projects.entry(project.to_string()).or_default();
+            if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
+                return false;
+            }
+            entry.overrides.worktree_path = Some(worktree_path);
             true
         })
     }

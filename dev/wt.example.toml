@@ -48,7 +48,7 @@
 
 # Post-Start: Runs in BACKGROUND after worktree creation (parallel)
 # Use for: dev servers, file watchers, background builds
-# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log
+# Output logged to .git/wt/logs/{branch}-project-post-start-{name}.log
 #
 # [post-start]
 # server = "npm run dev -- --port {{ branch | hash_port }}"
@@ -82,6 +82,16 @@
 # Use for: cleanup, stopping services
 #
 # pre-remove = "docker compose down"
+
+# ============================================================================
+# Aliases (experimental) — run with `wt step <name>`
+# ============================================================================
+# Command templates that support the same variables as hooks.
+# Project-config aliases require command approval on first run.
+#
+# [aliases]
+# deploy = "make deploy BRANCH={{ branch }}"
+# url = "echo http://localhost:{{ branch | hash_port }}"
 
 # ============================================================================
 # Dev Server URL (shown in `wt list`)

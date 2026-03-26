@@ -229,7 +229,7 @@ fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] rep
     let upstream_check = repo
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
-        .output()
+        .run()
         .unwrap();
 
     assert!(
@@ -984,7 +984,7 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -992,6 +992,43 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
 
     // Switch to feature - should error since path is occupied by detached worktree
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
+}
+
+/// Switch to a detached worktree by absolute path (#1661).
+#[rstest]
+fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    let worktree_str = worktree_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["switch", &worktree_str])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Switch to a detached worktree by relative path (#1661).
+/// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
+#[rstest]
+fn test_switch_detached_worktree_by_relative_path(mut repo: TestRepo) {
+    repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+
+    // From the main worktree (repo/), the detached worktree is at ../repo.feature-detached
+    let relative_path = "../repo.feature-detached";
+
+    snapshot_switch_with_directive_file(
+        "switch_detached_worktree_by_relative_path",
+        &repo,
+        &[relative_path],
+    );
 }
 
 ///
@@ -1583,7 +1620,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1650,7 +1687,7 @@ fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1764,7 +1801,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -1781,7 +1818,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2008,7 +2045,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2035,7 +2072,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2092,7 +2129,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2110,7 +2147,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2195,7 +2232,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2264,7 +2301,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2581,7 +2618,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2640,7 +2677,7 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2899,7 +2936,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2920,7 +2957,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -3018,7 +3055,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -3046,7 +3083,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -3349,4 +3386,104 @@ fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
         &repo,
         &["base-test", "--base", "-"],
     );
+}
+
+/// Test that `--cd` flag overrides `[switch] no-cd = true` config
+#[rstest]
+fn test_switch_cd_flag_overrides_no_cd_config(repo: TestRepo) {
+    // Set up config with no-cd = true
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+no-cd = true
+"#,
+    );
+
+    repo.run_git(&["branch", "cd-override-test"]);
+
+    // --cd should override the config and include cd directive
+    snapshot_switch(
+        "switch_cd_flag_overrides_config",
+        &repo,
+        &["cd-override-test", "--cd"],
+    );
+}
+
+/// Test that `--no-cd` flag works (explicit flag, no config)
+#[rstest]
+fn test_switch_no_cd_flag_explicit(repo: TestRepo) {
+    repo.run_git(&["branch", "no-cd-explicit"]);
+
+    // --no-cd should skip the cd directive
+    snapshot_switch(
+        "switch_no_cd_flag_explicit",
+        &repo,
+        &["no-cd-explicit", "--no-cd"],
+    );
+}
+
+/// Test that worktrunk works correctly when `worktree.useRelativePaths` is enabled.
+///
+/// Git 2.48+ supports `worktree.useRelativePaths`, which stores relative paths in the
+/// `.git` file of linked worktrees instead of absolute paths. This makes worktree
+/// directories relocatable. We verify that worktrunk's path handling (which canonicalizes
+/// paths internally) works correctly with this configuration.
+///
+/// See: https://github.com/max-sixty/worktrunk/issues/1630
+#[rstest]
+fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
+    // Enable relative paths for worktrees
+    repo.run_git(&["config", "worktree.useRelativePaths", "true"]);
+
+    // Create a new worktree via wt switch --create
+    snapshot_switch(
+        "switch_create_relative_paths",
+        &repo,
+        &["--create", "relative-test"],
+    );
+
+    // Verify the .git file in the worktree contains a relative path
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.relative-test");
+    let git_file = std::fs::read_to_string(worktree_path.join(".git")).unwrap();
+    assert!(
+        !git_file.contains(repo.root_path().to_str().unwrap()),
+        "Expected relative path in .git file, but found absolute path: {git_file}"
+    );
+    assert!(
+        git_file.contains("gitdir: ../"),
+        "Expected relative gitdir in .git file: {git_file}"
+    );
+
+    // Verify wt list shows the worktree (path resolution works)
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
+        assert_cmd_snapshot!("list_with_relative_paths", cmd);
+    });
+
+    // Verify switching to the relative-path worktree works
+    snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
+}
+
+/// Test that `[switch] no-cd = true` config is respected when no flags provided
+#[rstest]
+fn test_switch_no_cd_config_default(repo: TestRepo) {
+    // Set up config with no-cd = true
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+no-cd = true
+"#,
+    );
+
+    repo.run_git(&["branch", "no-cd-config-test"]);
+
+    // Without any cd flags, config should be respected (no cd directive)
+    snapshot_switch("switch_no_cd_config_default", &repo, &["no-cd-config-test"]);
 }

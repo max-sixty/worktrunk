@@ -63,7 +63,7 @@ impl BenchConfig {
     }
 }
 
-fn get_release_binary() -> &'static Path {
+fn release_binary() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_wt"))
 }
 
@@ -102,7 +102,7 @@ fn run_benchmark(
 
 fn bench_skeleton(c: &mut Criterion) {
     let mut group = c.benchmark_group("skeleton");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -133,7 +133,7 @@ fn bench_skeleton(c: &mut Criterion) {
 
 fn bench_complete(c: &mut Criterion) {
     let mut group = c.benchmark_group("complete");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -157,7 +157,7 @@ fn bench_complete(c: &mut Criterion) {
 
 fn bench_worktree_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("worktree_scaling");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -181,7 +181,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -228,7 +228,7 @@ fn bench_real_repo(c: &mut Criterion) {
 
 fn bench_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("many_branches");
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
@@ -256,7 +256,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(30));
     group.sample_size(10);
 
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
@@ -307,7 +307,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(60));
     group.sample_size(10);
 
-    let binary = get_release_binary();
+    let binary = release_binary();
 
     // Setup function - each bench_function creates its own fresh workspace
     // Uses setup_rust_workspace_with_branches plus a worktree for worktrees_only test
@@ -372,54 +372,12 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark the effect of command timeout on GH #461 scenario.
-///
-/// Compares `wt list --branches` with and without the 500ms timeout.
-/// The timeout kills slow git commands (merge-tree, rev-list) that would
-/// otherwise block the TUI for seconds.
-fn bench_timeout_effect(c: &mut Criterion) {
-    let mut group = c.benchmark_group("timeout_effect");
-    group.measurement_time(std::time::Duration::from_secs(60));
-    group.sample_size(10);
-
-    let binary = get_release_binary();
-
-    // Set up workspace once for both benchmarks
-    let temp = tempfile::tempdir().unwrap();
-    let workspace_main = setup_rust_workspace_with_branches(&temp, 50);
-
-    // Without timeout (baseline)
-    group.bench_function("no_timeout", |b| {
-        b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
-        });
-    });
-
-    // With 500ms timeout (GH #461 fix)
-    group.bench_function("timeout_500ms", |b| {
-        b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .env("WORKTRUNK_COMMAND_TIMEOUT_MS", "500")
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches, bench_timeout_effect
+    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

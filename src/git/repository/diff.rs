@@ -52,23 +52,17 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamp in seconds since epoch.
-    pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
-        let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
-        stdout.trim().parse().context("Failed to parse timestamp")
-    }
-
     /// Get commit timestamps for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to timestamp. More efficient than calling
-    /// `commit_timestamp` multiple times when you have many commits.
+    /// Returns a map from commit SHA to timestamp.
     pub fn commit_timestamps(&self, commits: &[&str]) -> anyhow::Result<HashMap<String, i64>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        // Build command: git show -s --format='%H %ct' sha1 sha2 sha3 ...
-        let mut args = vec!["show", "-s", "--format=%H %ct"];
+        // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
+        // --no-walk shows exactly the named commits without DAG walking
+        let mut args = vec!["log", "--no-walk", "--no-show-signature", "--format=%H %ct"];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
@@ -85,32 +79,31 @@ impl Repository {
         Ok(result)
     }
 
-    /// Get commit message (subject line) for a commit.
-    pub fn commit_message(&self, commit: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["show", "-s", "--format=%s", commit])?;
-        Ok(stdout.trim().to_owned())
-    }
-
     /// Get commit timestamp and message in a single git command.
-    ///
-    /// More efficient than calling `commit_timestamp` and `commit_message` separately.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
         // Use space separator - timestamps don't contain spaces, and %s (subject)
         // is the first line only (no embedded newlines). Split on first space.
-        let stdout = self.run_command(&["show", "-s", "--format=%ct %s", commit])?;
+        // --no-show-signature suppresses GPG verification output that otherwise
+        // contaminates stdout when log.showSignature is set.
+        let stdout = self.run_command(&[
+            "log",
+            "-1",
+            "--no-show-signature",
+            "--format=%ct %s",
+            commit,
+        ])?;
         // Only strip trailing newline, not spaces (empty subject = "timestamp ")
         let line = stdout.trim_end_matches('\n');
         let (timestamp_str, message) = line
             .split_once(' ')
             .context("Failed to parse commit details")?;
         let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        // Trim the message to match commit_message() behavior
         Ok((timestamp, message.trim().to_owned()))
     }
 
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
-        let output = self.run_command(&["log", "--format=%s", range])?;
+        let output = self.run_command(&["log", "--no-show-signature", "--format=%s", range])?;
         Ok(output.lines().map(String::from).collect())
     }
 
@@ -125,7 +118,14 @@ impl Repository {
         count: usize,
     ) -> Option<Vec<String>> {
         let count_str = count.to_string();
-        let mut args = vec!["log", "--pretty=format:%s", "-n", &count_str, "--no-merges"];
+        let mut args = vec![
+            "log",
+            "--pretty=format:%s",
+            "--no-show-signature",
+            "-n",
+            &count_str,
+            "--no-merges",
+        ];
         if let Some(ref_name) = start_ref {
             args.push(ref_name);
         }
@@ -229,7 +229,7 @@ impl Repository {
     /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
     /// all counts in a single command. Returns a map from branch name to (ahead, behind).
     ///
-    /// Results are cached so subsequent lookups via `get_cached_ahead_behind()` avoid
+    /// Results are cached so subsequent lookups via `cached_ahead_behind()` avoid
     /// running individual git commands (though cache access still has minor overhead).
     ///
     /// On git < 2.36 or if the command fails, returns an empty map.
@@ -271,7 +271,7 @@ impl Repository {
     ///
     /// Returns cached results from a prior `batch_ahead_behind()` call, or None
     /// if the branch wasn't in the batch or batch wasn't run.
-    pub fn get_cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
+    pub fn cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
         self.cache
             .ahead_behind
             .get(&(base.to_string(), branch.to_string()))

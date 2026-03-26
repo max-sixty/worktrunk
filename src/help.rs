@@ -4,6 +4,42 @@
 //! - Pager support for `--help` output (git-style)
 //! - Markdown rendering for help text
 //! - Web documentation generation via `--help-page` and `--help-md`
+//!
+//! # Web docs generation (`--help-page`)
+//!
+//! Each command page flows through several transforms before becoming web docs:
+//!
+//! ```text
+//! cli.rs (source of truth)
+//!   ├── after_long_help: markdown prose with [experimental] markers, `●` dots, plain URLs
+//!   └── doc comments (/// lines): definition + subtitle for lead paragraph
+//!         │
+//!         ▼
+//! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
+//!         │
+//!         ▼
+//! post_process_for_html()        — text replacements on after_long_help markdown:
+//!         │                        [experimental] → badge <span>
+//!         │                        `●` green → colored <span>
+//!         │                        plain URLs → markdown links
+//!         ▼
+//! --help-page stdout             — markdown with embedded HTML spans
+//!         │
+//!         ▼  (readme_sync.rs test captures and writes to docs/)
+//!         │
+//! convert_command_reference_to_html()  — backtick-fenced --help blocks → {% terminal() %}
+//! expand_command_placeholders()        — ```bash wt list``` → snapshot terminal blocks
+//!         │
+//!         ▼
+//! docs/content/{command}.md      — final markdown consumed by Zola
+//! ```
+//!
+//! **Manually-written pages** (faq.md, llm-commits.md) bypass this pipeline.
+//! They use `<span class="badge-experimental"></span>` directly for badges.
+//!
+//! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
+//! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
+//! for plain-markdown consumption.
 
 use std::process;
 
@@ -97,7 +133,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
 
                     // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                     // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                    let width = worktrunk::styling::get_terminal_width();
+                    let width = worktrunk::styling::terminal_width();
                     let help = crate::md_help::render_markdown_in_help_with_width(
                         &clap_output,
                         Some(width),
@@ -132,15 +168,15 @@ pub fn maybe_handle_help_with_pager() -> bool {
 /// Returns the usage/options/subcommands section without the after_long_help content.
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
 /// Always preserves ANSI color codes for HTML conversion.
-fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
-    let output = get_help_reference_inner(command_path, width);
+fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
+    let output = help_reference_inner(command_path, width);
     // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
     // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
     // (colors), not OSC sequences - hyperlinks leak through as garbage.
     worktrunk::styling::strip_osc8_hyperlinks(&output)
 }
 
-fn get_help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
+fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
@@ -328,6 +364,7 @@ Commands with pages: merge, switch, remove, list"
     // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
     let raw_help = combine_command_docs(sub);
+    let raw_help = raw_help.replace("```console\n", "```bash\n");
 
     // Split content at first subdoc placeholder
     let subdoc_marker = "<!-- subdoc:";
@@ -339,13 +376,12 @@ Commands with pages: merge, switch, remove, list"
 
     // Process main content (before subdocs)
     let main_help = {
-        let text = main_content.replace("```console\n", "```bash\n");
-        let text = expand_demo_placeholders(&text);
-        colorize_ci_status_for_html(&text)
+        let text = expand_demo_placeholders(main_content);
+        post_process_for_html(&text)
     };
 
     // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = get_help_reference(&[subcommand], Some(80));
+    let reference_block = help_reference(&[subcommand], Some(80));
 
     // Output the generated content (frontmatter is in skeleton files)
     // Uses region markers so sync can replace just this content
@@ -366,28 +402,45 @@ Commands with pages: merge, switch, remove, list"
     std::println!();
     std::println!("```");
 
-    // Subdocs follow, each with their own command reference at the end
+    // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
-        let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
-        let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
+        // Apply post-processing to non-marker text (e.g., the Aliases section after
+        // the last subdoc marker). Must happen before expansion — after expansion,
+        // post_process_for_html has already run on each subcommand section internally
+        // (in format_subcommand_section), so re-running it would double-convert.
+        let subdocs = post_process_for_html(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name);
         std::println!();
         std::println!("# Subcommands");
         std::println!();
-        std::println!("{}", subdocs_processed.trim());
+        std::println!("{}", subdocs_expanded.trim());
     }
 
     std::println!();
     std::println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
 }
 
-/// Add HTML color spans for CI status dots in help page output.
+/// Post-process CLI help content for web docs rendering.
 ///
-/// Transforms plain text like "`●` green" into colored HTML spans for web rendering.
-/// This is the web-docs counterpart to md_help::colorize_status_symbols() which
-/// produces ANSI codes for terminal output.
+/// Applies text replacements to `after_long_help` content before it becomes markdown
+/// in the docs site. Each replacement converts a CLI-friendly marker into styled HTML:
 ///
-/// Also converts plain URL references to markdown links for web docs.
-fn colorize_ci_status_for_html(text: &str) -> String {
+/// | CLI source | Web docs |
+/// |------------|----------|
+/// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
+/// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
+/// | plain URL | markdown link |
+///
+/// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
+/// through ANSI-to-HTML via `convert_command_reference_to_html` in readme_sync.rs).
+///
+/// The terminal counterpart is `md_help::colorize_status_symbols()`.
+fn post_process_for_html(text: &str) -> String {
+    // First pass: move [experimental] from heading lines to a separate line after
+    // the heading. This keeps the badge outside Zola's heading anchor link.
+    // Terminal help keeps [experimental] on the heading line (different render path).
+    let text = move_experimental_from_headings(text);
+
     text
         // CI status colors (in table cells)
         .replace("`●` green", "<span style='color:#0a0'>●</span> green")
@@ -396,6 +449,12 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
+        // Experimental badges — empty span, text added via CSS ::after.
+        // Empty so the span doesn't affect Zola's heading slug generation.
+        .replace(
+            "[experimental]",
+            "<span class=\"badge-experimental\"></span>",
+        )
         // Convert plain URL references to markdown links for web docs
         // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."
         // Web shows: "[Open an issue](https://github.com/max-sixty/worktrunk/issues)."
@@ -403,6 +462,49 @@ fn colorize_ci_status_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
+}
+
+/// Move `[experimental]` from heading lines to a separate line after the heading.
+///
+/// Transforms `## Foo [experimental]` into:
+/// ```text
+/// ## Foo
+///
+/// [experimental]
+/// ```
+///
+/// This keeps the badge outside Zola's `<a class="zola-anchor">` wrapper so it's
+/// not part of the heading link. The `[experimental]` is then replaced with the
+/// badge `<span>` by the caller's `.replace()` chain.
+fn move_experimental_from_headings(text: &str) -> String {
+    if !text.contains(" [experimental]") {
+        return text.to_string();
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut in_code_block = false;
+
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+        }
+
+        if !in_code_block
+            && line.starts_with('#')
+            && let Some(heading) = line.strip_suffix(" [experimental]")
+        {
+            result.push_str(heading);
+            result.push_str("\n\n[experimental]");
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    // .lines() strips the trailing newline; restore original behavior
+    if !text.ends_with('\n') {
+        result.pop();
+    }
+    result
 }
 
 /// Increase markdown heading levels by one (## -> ###, ### -> ####, etc.)
@@ -520,6 +622,17 @@ fn format_subcommand_section(
 
     // Get combined docs: about + subtitle + after_long_help
     let raw_help = combine_command_docs(sub);
+    let raw_help = raw_help.replace("```console\n", "```bash\n");
+
+    // Extract [experimental] marker from content start → badge after heading.
+    // Placed after the heading (not inside it) so Zola's anchor link doesn't
+    // wrap the badge. CSS positions it inline with the heading text.
+    let (has_experimental, raw_help) = if let Some(rest) = raw_help.strip_prefix("[experimental] ")
+    {
+        (true, rest.to_string())
+    } else {
+        (false, raw_help)
+    };
 
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
     let subdoc_marker = "<!-- subdoc:";
@@ -531,9 +644,8 @@ fn format_subcommand_section(
 
     // Process main content (before any nested subdocs)
     let main_help = {
-        let text = main_content.replace("```console\n", "```bash\n");
-        let text = increase_heading_levels(&text);
-        colorize_ci_status_for_html(&text)
+        let text = increase_heading_levels(main_content);
+        post_process_for_html(&text)
     };
 
     // Build command path from parent_name: "wt config" -> ["config", "create"]
@@ -545,10 +657,13 @@ fn format_subcommand_section(
         .collect();
 
     // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = get_help_reference(&command_path, Some(80));
+    let reference_block = help_reference(&command_path, Some(80));
 
-    // Format the section: heading, main content, command reference, then nested subdocs
-    let mut section = format!("## {}\n\n", full_command);
+    // Format the section: heading, badge (outside heading), main content, command reference
+    let mut section = format!("## {full_command}\n\n");
+    if has_experimental {
+        section.push_str("<span class=\"badge-experimental\"></span>\n\n");
+    }
 
     if !main_help.is_empty() {
         section.push_str(main_help.trim());
@@ -560,12 +675,12 @@ fn format_subcommand_section(
     section.push_str(reference_block.trim());
     section.push_str("\n```\n");
 
-    // Expand nested subdocs after the command reference
+    // Expand nested subdocs after the command reference.
     if let Some(subdocs) = subdoc_content {
-        let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &full_command);
-        let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
+        let subdocs = post_process_for_html(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command);
         section.push('\n');
-        section.push_str(subdocs_processed.trim());
+        section.push_str(subdocs_expanded.trim());
         section.push('\n');
     }
 

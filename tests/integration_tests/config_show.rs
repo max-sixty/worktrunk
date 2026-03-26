@@ -738,7 +738,13 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     });
 }
 
-/// Test that config show displays "Outdated" when fish wrapper exists but has different code
+/// Test that config show displays "Outdated" when fish wrapper exists but has different code.
+///
+/// The wrapper file contains `function wt` which matches the command name at a word boundary,
+/// but `is_shell_integration_line()` won't match it (it looks for eval/source patterns).
+/// This should NOT trigger a "Found wt ... but not detected as integration" warning because
+/// the wrapper file IS the integration — `scan_shell_configs` already identified it (as
+/// outdated). Only the "Outdated shell extension" warning should appear.
 #[rstest]
 fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -769,7 +775,12 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
     });
 }
 
-/// Test that config show displays "Outdated" when nushell wrapper exists but has different code
+/// Test that config show displays "Outdated" when nushell wrapper exists but has different code.
+///
+/// Same false-positive suppression as the fish variant: the wrapper file contains `def --wrapped wt`
+/// which matches the command name, but `scan_shell_configs` already recognized the file as
+/// integration (outdated). Only the "Outdated" warning should appear, not the generic
+/// "not detected as integration" warning.
 #[rstest]
 fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -1304,7 +1315,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://github.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config
@@ -1343,7 +1354,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://gitlab.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config
@@ -1476,6 +1487,52 @@ fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: T
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
 export PATH="$HOME/bin:$PATH"
+alias wt="git worktree"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Verify that the unmatched candidate warning fires for a bash alias while being suppressed
+/// for a Fish wrapper file in the same `config show` run. This ensures wrapper-file suppression
+/// is path-specific and doesn't accidentally silence all unmatched candidate warnings.
+#[rstest]
+fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Fish wrapper (outdated) — should NOT trigger "not detected" warning
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+    fs::write(
+        functions.join("wt.fish"),
+        "# worktrunk shell integration for fish\nfunction wt\n    command wt-old $argv\nend\n",
+    )
+    .unwrap();
+
+    // Bash alias — SHOULD trigger "not detected" warning
+    fs::write(
+        temp_home.path().join(".bashrc"),
+        r#"# Some bash config
 alias wt="git worktree"
 "#,
     )
@@ -1786,7 +1843,7 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
     // User fixes the config (removes deprecation)
     fs::write(
         &project_config_path,
-        r#"post-create = "ln -sf {{ repo }}/node_modules"
+        r#"pre-start = "ln -sf {{ repo }}/node_modules"
 "#,
     )
     .unwrap();

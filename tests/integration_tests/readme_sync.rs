@@ -563,7 +563,7 @@ fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
 /// Get help output for a command
 ///
 /// Expected format: `wt <subcommand> --help-md` (ID includes backticks from marker)
-fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
+fn help_output(id: &str, project_root: &Path) -> Result<String, String> {
     // Strip backticks from ID (captured by MARKER_PATTERN)
     let command = id.trim_matches('`');
     let args: Vec<&str> = command.split_whitespace().collect();
@@ -826,7 +826,7 @@ fn transform_zola_to_github(content: &str) -> String {
 ///
 /// Parses `path#anchor` ID format, extracts section(s) by anchor
 /// (supports ranges like `start..end`), and transforms Zola links to GitHub URLs.
-fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, String> {
+fn docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, String> {
     let (path, anchor) = id
         .split_once('#')
         .ok_or_else(|| format!("Invalid section ID (missing #): {}", id))?;
@@ -845,17 +845,15 @@ fn get_docs_section_for_readme(id: &str, project_root: &Path) -> Result<String, 
 /// Get content for a README marker based on its type
 ///
 /// Handles help (`cmd`) and section (#anchor) markers.
-fn get_readme_content(
+fn generate_readme_content(
     id: &str,
     _current_content: &str,
     project_root: &Path,
 ) -> Result<String, String> {
     match MarkerType::from_id(id) {
         MarkerType::Snapshot => unreachable!("README has no snapshot markers"),
-        MarkerType::Help => get_help_output(id, project_root),
-        MarkerType::Section => {
-            get_docs_section_for_readme(id, project_root).map(|c| trim_lines(&c))
-        }
+        MarkerType::Help => help_output(id, project_root),
+        MarkerType::Section => docs_section_for_readme(id, project_root).map(|c| trim_lines(&c)),
     }
 }
 
@@ -892,7 +890,7 @@ fn sync_readme_markers(
         // Strip wrapper from current content (snapshots have ```console```, others are raw)
         let current_inner = marker_type.extract_inner(&current_with_wrapper);
 
-        let expected = match get_readme_content(&id, &current_with_wrapper, project_root) {
+        let expected = match generate_readme_content(&id, &current_with_wrapper, project_root) {
             Ok(content) => content,
             Err(e) => {
                 errors.push(format!("❌ {}: {}", id, e));
@@ -1092,6 +1090,116 @@ fn test_config_docs_include_all_sections() {
     }
 }
 
+/// Verify that LLM tool commands in docs/content/llm-commits.md match
+/// the double-commented examples in config.example.toml (the single source of truth).
+#[test]
+fn test_llm_docs_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
+
+    // Extract commands from config example: "# # command = ..." lines
+    let config_commands: Vec<String> = config_example
+        .lines()
+        .filter_map(|line| line.strip_prefix("# # "))
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    // Extract commands from llm-commits.md: "command = ..." lines in TOML code blocks
+    let doc_commands: Vec<String> = llm_docs
+        .lines()
+        .filter(|line| line.starts_with("command = "))
+        .filter_map(|line| {
+            let table: toml::Table = toml::from_str(line).ok()?;
+            Some(table["command"].as_str()?.to_string())
+        })
+        .collect();
+
+    assert!(
+        config_commands.len() >= 2,
+        "Expected at least 2 tool commands in config.example.toml, found {}",
+        config_commands.len()
+    );
+
+    for cmd in &config_commands {
+        assert!(
+            doc_commands.contains(cmd),
+            "Command from config.example.toml not found in docs/content/llm-commits.md:\n  {cmd}\n\
+             Update llm-commits.md to match the config example (source of truth: dev/config.example.toml, \
+             generated from src/cli/mod.rs)."
+        );
+    }
+}
+
+/// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
+/// the double-commented examples in config.example.toml (the single source of truth).
+/// Only compares tools present in both files — either side may have tools the other lacks.
+#[test]
+fn test_taskfile_llm_commands_match_config_example() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
+    let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
+
+    // Extract tool -> command from config example using h3 headings for tool names
+    // e.g. "# ### Claude Code" heading followed by '# # command = "..."' line
+    let mut config_commands = std::collections::HashMap::new();
+    let mut current_tool: Option<String> = None;
+    for line in config_example.lines() {
+        if let Some(heading) = line.strip_prefix("# ### ") {
+            current_tool = heading.split_whitespace().next().map(|s| s.to_lowercase());
+        } else if let Some(cmd_line) = line.strip_prefix("# # ")
+            && cmd_line.starts_with("command = ")
+            && let Some(ref tool) = current_tool
+            && let Ok(table) = toml::from_str::<toml::Table>(cmd_line)
+            && let Some(cmd) = table.get("command").and_then(|v| v.as_str())
+        {
+            config_commands.insert(tool.clone(), cmd.to_string());
+        }
+    }
+
+    // Extract tool -> command from Taskfile: COMMANDS["tool"]='shell-escaped-value'
+    // Unescape bash's '"'"' idiom (literal single quote) then strip outer quotes
+    let taskfile_re = Regex::new(r#"COMMANDS\["(\w+)"\]=(.*)"#).unwrap();
+    let taskfile_commands: std::collections::HashMap<String, String> = taskfile
+        .lines()
+        .filter_map(|line| {
+            let caps = taskfile_re.captures(line.trim())?;
+            let tool = caps[1].to_string();
+            let raw = &caps[2];
+            let unescaped = raw.replace("'\"'\"'", "'");
+            let cmd = unescaped
+                .strip_prefix('\'')?
+                .strip_suffix('\'')?
+                .to_string();
+            Some((tool, cmd))
+        })
+        .collect();
+
+    // Compare only tools present in both
+    let mut checked = 0;
+    for (tool, taskfile_cmd) in &taskfile_commands {
+        if let Some(config_cmd) = config_commands.get(tool.as_str()) {
+            assert_eq!(
+                config_cmd, taskfile_cmd,
+                "Command mismatch for '{tool}'.\n\
+                 Config example: {config_cmd}\n\
+                 Taskfile:       {taskfile_cmd}\n\
+                 Update Taskfile.yaml to match dev/config.example.toml (source of truth)."
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(
+        checked >= 1,
+        "No overlapping tools between config.example.toml and Taskfile.yaml"
+    );
+}
+
 #[test]
 fn test_config_source_templates_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1194,7 +1302,7 @@ fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec
 
     // Process in reverse order
     for (start, end, id, current) in matches.into_iter().rev() {
-        let expected = match get_help_output(&id, project_root) {
+        let expected = match help_output(&id, project_root) {
             Ok(content) => content,
             Err(e) => {
                 errors.push(format!("❌ {}: {}", id, e));
@@ -1538,6 +1646,10 @@ static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
 static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
 
+/// Regex to replace Zola experimental shortcode with plain text for skill files
+static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
+
 /// Regex to strip AUTO-GENERATED marker comments (just the comments, not content)
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
@@ -1554,6 +1666,7 @@ static HTML_FIGURE_PATTERN: LazyLock<Regex> =
 /// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
 /// - Strips AUTO-GENERATED marker comments (keeps content)
 /// - Strips HTML figure elements (demo GIFs not useful for skill)
+/// - Replaces Zola shortcodes with plain text equivalents
 /// - Converts Zola internal links (@/page.md) -> full URLs
 /// - Removes "See also" section (just links to other docs pages)
 fn transform_docs_for_skill(content: &str) -> String {
@@ -1576,6 +1689,13 @@ fn transform_docs_for_skill(content: &str) -> String {
 
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
+
+    // Replace experimental markers (shortcode and HTML badge) with plain text
+    let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
+    let content = content.replace(
+        "<span class=\"badge-experimental\"></span>",
+        "[experimental]",
+    );
 
     // Transform Zola internal links to full URLs
     let content = ZOLA_LINK_PATTERN
@@ -1700,7 +1820,85 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
+/// Sync .well-known/agent-skills/ index.json and verify symlink.
+///
+/// The skill files are served via a symlink:
+///   docs/static/.well-known/agent-skills/worktrunk → ../../../../skills/worktrunk
+///
+/// This function verifies the symlink is correct and generates index.json
+/// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
+fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
+    let mut updated_files = Vec::new();
+
+    let well_known_dir = project_root.join("docs/static/.well-known/agent-skills");
+    let symlink_path = well_known_dir.join("worktrunk");
+
+    // Verify the symlink exists and points to the right place
+    let expected_target = Path::new("../../../../skills/worktrunk");
+    match fs::read_link(&symlink_path) {
+        Ok(target) => {
+            assert_eq!(
+                target,
+                expected_target,
+                "Symlink at {} points to {:?}, expected {:?}",
+                symlink_path.display(),
+                target,
+                expected_target
+            );
+        }
+        Err(_) => {
+            panic!(
+                "Expected symlink at {} → {:?}, but it doesn't exist or isn't a symlink",
+                symlink_path.display(),
+                expected_target
+            );
+        }
+    }
+
+    // Read SKILL.md (through the symlink) for digest and description
+    let skill_md_path = symlink_path.join("SKILL.md");
+    let skill_md_content = fs::read_to_string(&skill_md_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+
+    // Generate index.json with SHA-256 digest of SKILL.md
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let file_bytes = fs::read(&skill_md_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+        let hash = Sha256::digest(&file_bytes);
+        format!("sha256:{hash:x}")
+    };
+
+    // Parse the description from SKILL.md frontmatter
+    let description = skill_md_content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+        .and_then(|(frontmatter, _)| {
+            frontmatter
+                .lines()
+                .find(|line| line.starts_with("description:"))
+                .map(|line| line.trim_start_matches("description:").trim().to_string())
+        })
+        .unwrap_or_default();
+
+    let index_json = format!(
+        "{{\n  \"$schema\": \"https://schemas.agentskills.io/discovery/0.2.0/schema.json\",\n  \"skills\": [\n    {{\n      \"name\": \"worktrunk\",\n      \"type\": \"skill-md\",\n      \"description\": {description},\n      \"url\": \"./worktrunk/SKILL.md\",\n      \"digest\": \"{digest}\"\n    }}\n  ]\n}}\n",
+        description = serde_json::to_string(&description).unwrap(),
+    );
+
+    let index_dst = well_known_dir.join("index.json");
+    let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
+    if current_index != index_json {
+        fs::write(&index_dst, &index_json)
+            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
+        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+    }
+
+    updated_files
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// then .well-known/agent-skills/ (skills → docs/static).
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
@@ -1713,9 +1911,17 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
 
+    // Step 3: Sync .well-known/agent-skills/ (skills/ → docs/static/)
+    // This reads the freshly-written skills from step 2
+    let well_known_files = sync_well_known_skills(project_root);
+
     // Aggregate results
     let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+    let all_files: Vec<_> = cmd_files
+        .into_iter()
+        .chain(skill_files)
+        .chain(well_known_files)
+        .collect();
 
     if !all_errors.is_empty() {
         panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));

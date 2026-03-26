@@ -16,11 +16,7 @@ wt switch pr:123                 # Switch to PR #123's branch
 
 ## Creating a branch
 
-The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
-
-**Upstream tracking:** Branches created with `--create` have no upstream tracking configured. This prevents accidental pushes to the wrong branch — for example, `--base origin/main` would otherwise make `git push` target `main`. Use `git push -u origin <branch>` to set up tracking as needed.
-
-Without `--create`, switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local branch tracking the remote — this is the standard git behavior and is preserved.
+The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
 ## Creating worktrees
 
@@ -28,10 +24,12 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
-2. Switches to new directory
-3. Runs [post-create hooks](https://worktrunk.dev/hook/#post-create) (blocking)
-4. Spawns [post-start hooks](https://worktrunk.dev/hook/#post-start) (background)
+1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#pre-switch) (blocking, fail-fast)
+2. Creates worktree at configured path
+3. Switches to new directory
+4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start) (blocking)
+5. Spawns [post-start hooks](https://worktrunk.dev/hook/#post-start) (background)
+6. Spawns [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background)
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
@@ -70,7 +68,6 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
-| `Alt-r` | Remove selected worktree |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
@@ -93,29 +90,18 @@ pager = "delta --paging=never --width=$COLUMNS"
 
 Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <branch>` directly.
 
-## GitHub pull requests
+## Pull requests and merge requests
 
-The `pr:<number>` syntax resolves the branch for a GitHub pull request. For same-repo PRs, it switches to the branch directly. For fork PRs, it fetches `refs/pull/N/head` and configures `pushRemote` to the fork URL.
-
-```bash
-wt switch pr:101                 # Checkout PR #101
-```
-
-Requires `gh` CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:` syntax since the branch already exists.
-
-**Fork PRs:** The local branch uses the PR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
-
-## GitLab merge requests
-
-The `mr:<number>` syntax resolves the branch for a GitLab merge request. For same-project MRs, it switches to the branch directly. For fork MRs, it fetches `refs/merge-requests/N/head` and configures `pushRemote` to the fork URL.
+The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```bash
-wt switch mr:101                 # Checkout MR !101
+wt switch pr:101                 # GitHub PR #101
+wt switch mr:101                 # GitLab MR !101
 ```
 
-Requires `glab` CLI to be installed and authenticated. The `--create` flag cannot be used with `mr:` syntax since the branch already exists.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
-**Fork MRs:** The local branch uses the MR's branch name directly, so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+**Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 ## When wt switch fails
 
@@ -146,12 +132,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           is expanded for templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
-      <b><span class=c>--branches</span></b>
-          Include branches without worktrees (interactive picker)
-
-      <b><span class=c>--remotes</span></b>
-          Include remote branches (interactive picker)
-
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
           Create a new branch
 
@@ -184,9 +164,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
           session named after the branch.
 
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
 
@@ -194,13 +171,27 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g.,
-          tmux workflows) or for CI/automation.
+          tmux workflows) or for CI/automation. Use --cd to override.
 
-      <b><span class=c>--no-verify</span></b>
-          Skip hooks
+          In picker mode (no branch argument), prints the selected branch name
+          and exits without switching. Useful for scripting.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Picker Options:</span></b>
+      <b><span class=c>--branches</span></b>
+          Include branches without worktrees
+
+      <b><span class=c>--remotes</span></b>
+          Include remote branches
+
+<b><span class=g>Automation:</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+
+      <b><span class=c>--no-verify</span></b>
+          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

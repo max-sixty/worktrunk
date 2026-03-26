@@ -75,8 +75,7 @@ fn resolve_remote_ref(
         progress_message(cformat!("Fetching {} {symbol}{number}...", ref_type.name()))
     );
 
-    let repo_root = repo.repo_path()?;
-    let info = provider.fetch_info(number, repo_root)?;
+    let info = provider.fetch_info(number, repo)?;
 
     // Display context with URL (as gutter under fetch progress)
     eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
@@ -317,7 +316,7 @@ fn resolve_same_repo_ref(
     let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
     // Use -- to prevent branch names starting with - from being interpreted as flags
     repo.run_command(&["fetch", "--", &remote, &refspec])
-        .with_context(|| format!("Failed to fetch branch '{}' from {}", branch, remote))?;
+        .with_context(|| cformat!("Failed to fetch branch <bold>{}</> from {}", branch, remote))?;
 
     Ok(ResolvedTarget {
         branch: info.source_branch.clone(),
@@ -532,7 +531,13 @@ fn setup_fork_branch(
     // Create local branch from FETCH_HEAD
     // Use -- to prevent branch names starting with - from being interpreted as flags
     repo.run_command(&["branch", "--", branch, "FETCH_HEAD"])
-        .with_context(|| format!("Failed to create local branch '{}' from {}", branch, label))?;
+        .with_context(|| {
+            cformat!(
+                "Failed to create local branch <bold>{}</> from {}",
+                branch,
+                label
+            )
+        })?;
 
     // Configure branch tracking for pull and push
     let branch_remote_key = format!("branch.{}.remote", branch);
@@ -595,7 +600,7 @@ pub fn plan_switch(
         Some(existing_path) if existing_path.exists() => {
             return Ok(SwitchPlan::Existing {
                 path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: target.branch,
+                branch: Some(target.branch),
                 new_previous,
             });
         }
@@ -606,6 +611,31 @@ pub fn plan_switch(
             .into());
         }
         None => {}
+    }
+
+    // Phase 2b: Path-based fallback for detached worktrees.
+    // If the argument looks like a path (not a branch name), try to find a worktree there.
+    if !create {
+        let candidate = Path::new(branch);
+        let abs_path = if candidate.is_absolute() {
+            Some(candidate.to_path_buf())
+        } else if candidate.components().count() > 1 {
+            // Relative path with directory separators (e.g., "../repo.feature").
+            // Single-component names are ambiguous with branch names (already tried in Phase 2).
+            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
+        } else {
+            None
+        };
+        if let Some(abs_path) = abs_path
+            && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
+        {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch: wt_branch,
+                new_previous,
+            });
+        }
     }
 
     // Phase 3: Compute expected path (only needed for create)
@@ -642,7 +672,7 @@ pub fn execute_switch(
     plan: SwitchPlan,
     config: &UserConfig,
     force: bool,
-    no_verify: bool,
+    run_hooks: bool,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
     match plan {
         SwitchPlan::Existing {
@@ -855,7 +885,7 @@ pub fn execute_switch(
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // Execute post-create commands
-            if !no_verify {
+            if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
 
                 match &method {
@@ -869,7 +899,7 @@ pub fn execute_switch(
                         .into_iter()
                         .flatten()
                         .collect();
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                     CreationMethod::ForkRef {
                         ref_type,
@@ -884,7 +914,7 @@ pub fn execute_switch(
                         };
                         let extra_vars: Vec<(&str, &str)> =
                             vec![(num_key, &num_str), (url_key, ref_url)];
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
             }
@@ -901,7 +931,7 @@ pub fn execute_switch(
                     from_remote,
                 },
                 SwitchBranchInfo {
-                    branch,
+                    branch: Some(branch),
                     expected_path: None,
                 },
             ))

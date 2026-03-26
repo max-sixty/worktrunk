@@ -336,6 +336,42 @@ fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] r
     });
 }
 
+/// Config-driven no-cd suppresses the cd directive (same as --no-cd flag)
+#[rstest]
+fn test_switch_no_cd_config_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    // Set up config with no-cd = true
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[switch]
+no-cd = true
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "feature"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file does NOT contain cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            !directives.contains("cd '"),
+            "Directive file should NOT contain cd command with no-cd config, got: {}",
+            directives
+        );
+    });
+}
+
 // ============================================================================
 // Non-Directive Mode Tests (no WORKTRUNK_DIRECTIVE_FILE)
 // ============================================================================

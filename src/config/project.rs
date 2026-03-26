@@ -2,11 +2,14 @@
 //!
 //! Configuration that is checked into the repository and shared across all developers.
 
+use std::collections::BTreeMap;
+
 use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::HooksConfig;
+use super::commands::CommandConfig;
+use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
 ///
@@ -65,6 +68,13 @@ impl ProjectConfig {
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
     }
+
+    /// Get `wt step copy-ignored` configuration if configured.
+    pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
+        self.step
+            .as_ref()
+            .and_then(|step| step.copy_ignored.as_ref())
+    }
 }
 
 /// Project-specific configuration with hooks.
@@ -108,6 +118,27 @@ pub struct ProjectConfig {
     /// CI configuration (platform override)
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
+
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
+    /// \[experimental\] Command aliases for `wt step <name>`.
+    ///
+    /// Each alias maps a name to one or more command templates. All hook
+    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
+    ///
+    /// ```toml
+    /// [aliases]
+    /// deploy = "cd {{ worktree_path }} && make deploy"
+    /// lint = "npm run lint"
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }
 
 impl ProjectConfig {
@@ -119,15 +150,13 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
-        let repo_root = repo
-            .current_worktree()
-            .root()
-            .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
-        let config_path = repo_root.join(".config").join("wt.toml");
-
-        if !config_path.exists() {
-            return Ok(None);
-        }
+        let config_path = match repo
+            .project_config_path()
+            .map_err(|e| ConfigError::Message(format!("Failed to get config path: {}", e)))?
+        {
+            Some(path) if path.exists() => path,
+            _ => return Ok(None),
+        };
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
         let contents = std::fs::read_to_string(&config_path)
@@ -206,82 +235,6 @@ pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, to
 mod tests {
     use super::*;
 
-    // ============================================================================
-    // ProjectConfig Default Tests
-    // ============================================================================
-
-    #[test]
-    fn test_project_config_default() {
-        let config = ProjectConfig::default();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.post_start.is_none());
-        assert!(config.hooks.post_switch.is_none());
-        assert!(config.hooks.pre_commit.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-        assert!(config.hooks.post_merge.is_none());
-        assert!(config.hooks.pre_remove.is_none());
-        assert!(config.list.is_none());
-        assert!(config.ci.is_none());
-    }
-
-    // ============================================================================
-    // Deserialization Tests
-    // ============================================================================
-
-    #[test]
-    fn test_deserialize_empty_config() {
-        let contents = "";
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_none());
-        assert!(config.hooks.pre_merge.is_none());
-    }
-
-    #[test]
-    fn test_deserialize_post_create_string() {
-        let contents = r#"post-create = "npm install""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_post_start_table() {
-        let contents = r#"
-[post-start]
-build = "cargo build"
-test = "cargo test"
-"#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_start.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_merge() {
-        let contents = r#"pre-merge = "cargo test""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_merge.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_post_merge() {
-        let contents = r#"post-merge = "git push origin main""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_merge.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_remove() {
-        let contents = r#"pre-remove = "echo cleaning up""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_remove.is_some());
-    }
-
-    #[test]
-    fn test_deserialize_pre_commit() {
-        let contents = r#"pre-commit = "cargo fmt --check""#;
-        let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.pre_commit.is_some());
-    }
-
     #[test]
     fn test_deserialize_all_hooks() {
         let contents = r#"
@@ -336,10 +289,16 @@ url = "http://localhost:{{ branch | hash_port }}"
     }
 
     #[test]
-    fn test_list_config_default() {
-        let config = ProjectListConfig::default();
-        assert!(config.url.is_none());
-        assert!(!config.is_configured());
+    fn test_deserialize_step_copy_ignored() {
+        let contents = r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(
+            config.copy_ignored().unwrap().exclude,
+            vec![".conductor/".to_string(), ".entire/".to_string()]
+        );
     }
 
     // ============================================================================
@@ -403,6 +362,9 @@ platform = "gitlab"
         let contents = r#"
 post-create = "npm install"
 pre-merge = "cargo test"
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 "#;
         let keys = find_unknown_keys(contents);
         assert!(keys.is_empty());

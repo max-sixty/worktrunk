@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 use crossbeam_channel as chan;
 use worktrunk::git::LineDiff;
 
+/// Deadline for the entire drain operation. Generous to avoid flaky timeouts
+/// under CI load where process spawning for ~70 work items can be slow.
+pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
+
 use super::super::model::{CommitDetails, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus};
 use super::execution::ExpectedResults;
 use super::types::{DrainOutcome, MissingResult, StatusContext, TaskError, TaskKind, TaskResult};
@@ -100,8 +104,8 @@ pub(super) fn apply_default(
 /// item index and a reference to the updated item, allowing progressive mode
 /// to update the live table while buffered mode does nothing.
 ///
-/// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
-/// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
+/// Uses a caller-provided `deadline` to cap wall-clock time. When the deadline
+/// is reached, returns `DrainOutcome::TimedOut` with diagnostic info.
 ///
 /// Errors are collected in the `errors` vec for display after rendering.
 /// Default values are applied for failed tasks so the UI can still render.
@@ -114,11 +118,9 @@ pub(super) fn drain_results(
     items: &mut [ListItem],
     errors: &mut Vec<TaskError>,
     expected_results: &ExpectedResults,
+    deadline: Instant,
     mut on_result: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) -> DrainOutcome {
-    // Deadline for the entire drain operation (30 seconds should be more than enough)
-    let deadline = Instant::now() + Duration::from_secs(30);
-
     // Track which result kinds we've received per item (for timeout diagnostics)
     let mut received_by_item: Vec<Vec<TaskKind>> = vec![Vec::new(); items.len()];
 
@@ -342,8 +344,59 @@ mod tests {
         .unwrap();
         drop(tx);
 
-        let outcome = drain_results(rx, &mut items, &mut errors, &expected, |_, _, _| {});
+        let outcome = drain_results(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now() + DRAIN_TIMEOUT,
+            |_, _, _| {},
+        );
         assert!(matches!(outcome, DrainOutcome::Complete));
         assert_eq!(items[0].summary, Some(Some("Add feature".into())));
+    }
+
+    #[test]
+    fn test_drain_results_timeout_returns_missing_diagnostics() {
+        let (_tx, rx) = crossbeam_channel::unbounded();
+        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
+        let mut errors = Vec::new();
+
+        // Register expected results but don't send any — simulates tasks still running
+        let expected = ExpectedResults::default();
+        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::AheadBehind);
+
+        // Use an already-expired deadline — remaining.is_zero() triggers immediately
+        let outcome = drain_results(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now(),
+            |_, _, _| {},
+        );
+
+        let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = outcome
+        else {
+            panic!("expected TimedOut with immediate deadline");
+        };
+
+        assert_eq!(received_count, 0);
+        assert_eq!(items_with_missing.len(), 1);
+        assert_eq!(items_with_missing[0].name, "feat");
+        assert!(
+            items_with_missing[0]
+                .missing_kinds
+                .contains(&TaskKind::CommitDetails)
+        );
+        assert!(
+            items_with_missing[0]
+                .missing_kinds
+                .contains(&TaskKind::AheadBehind)
+        );
     }
 }

@@ -30,7 +30,7 @@ pub(super) struct StatusContext {
 }
 
 impl StatusContext {
-    pub fn apply_to(&self, item: &mut ListItem, target: &str) {
+    pub fn apply_to(&self, item: &mut ListItem, target: Option<&str>) {
         // Main worktree case is handled inside check_integration_state()
         //
         // Prefer working tree conflicts (--full) when available.
@@ -40,7 +40,7 @@ impl StatusContext {
             .unwrap_or(self.has_merge_tree_conflicts);
 
         item.compute_status_symbols(
-            Some(target),
+            target,
             has_conflicts,
             self.user_marker.clone(),
             self.working_tree_status,
@@ -154,7 +154,7 @@ pub(crate) enum TaskResult {
         /// Whether the port is listening (None if no URL or couldn't parse port)
         active: Option<bool>,
     },
-    /// LLM-generated branch summary (--full only, requires LLM command configured)
+    /// LLM-generated branch summary (`--full` + `[list] summary = true` + LLM command)
     SummaryGenerate {
         item_idx: usize,
         summary: Option<String>,

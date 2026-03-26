@@ -28,8 +28,8 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use super::{PlatformData, RemoteRefInfo, RemoteRefProvider};
-use crate::git::RefType;
 use crate::git::error::GitError;
+use crate::git::{RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitLab Merge Request provider.
@@ -41,7 +41,8 @@ impl RemoteRefProvider for GitLabProvider {
         RefType::Mr
     }
 
-    fn fetch_info(&self, number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
+    fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
+        let repo_root = repo.repo_path()?;
         fetch_mr_info(number, repo_root)
     }
 
@@ -238,7 +239,7 @@ pub fn fetch_gitlab_project_urls(
         })?;
 
     // Compute URLs based on protocol preference
-    let use_ssh = get_git_protocol() == "ssh";
+    let use_ssh = git_protocol() == "ssh";
     let fork_push_url = if use_ssh {
         source_ssh.or(source_http)
     } else {
@@ -278,7 +279,7 @@ fn fetch_project_urls(
 }
 
 /// Get the git protocol configured in `glab` (GitLab CLI).
-pub fn get_git_protocol() -> String {
+pub fn git_protocol() -> String {
     Cmd::new("glab")
         .args(["config", "get", "git_protocol"])
         .run()
@@ -330,7 +331,6 @@ mod tests {
         };
 
         let result = fetch_gitlab_project_urls(&github_info, std::path::Path::new("."));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-GitLab ref"));
+        insta::assert_snapshot!(result.unwrap_err(), @"fetch_gitlab_project_urls called on non-GitLab ref");
     }
 }

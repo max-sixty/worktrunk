@@ -34,8 +34,12 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "config/state.rs",
     // Hint list output
     "config/hints.rs",
+    // Template evaluation output for scripting
+    "eval.rs",
     // LLM prompt output for wt step commit --show-prompt
     "step_commands.rs",
+    // --no-cd flag: branch name output for scripting
+    "picker/mod.rs",
 ];
 
 /// Substrings that indicate the line is a special case (e.g., in a comment or test reference)

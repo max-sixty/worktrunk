@@ -1,13 +1,16 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
-    configure_git_cmd, directive_file, repo, setup_temp_snapshot_settings, wait_for,
-    wait_for_file_count, wt_command,
+    configure_git_cmd, configure_git_env, directive_file, repo, setup_temp_snapshot_settings,
+    wait_for, wait_for_file_content, wait_for_file_count, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
+use worktrunk::shell_exec::Cmd;
 
 #[test]
 fn test_bare_repo_list_worktrees() {
@@ -91,7 +94,7 @@ fn test_bare_repo_switch_creates_worktree() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["worktree", "list"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -301,7 +304,7 @@ fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output()
+                .run()
                 .unwrap();
         }
     }
@@ -424,7 +427,7 @@ fn test_bare_repo_merge_workflow() {
     let log_output = test
         .git_command(&main_worktree)
         .args(["log", "--oneline"])
-        .output()
+        .run()
         .unwrap();
 
     let log = String::from_utf8_lossy(&log_output.stdout);
@@ -437,7 +440,7 @@ fn test_bare_repo_merge_workflow() {
 #[test]
 fn test_bare_repo_background_logs_location() {
     // This test verifies that background operation logs go to the correct location
-    // in bare repos (bare_repo/wt-logs/ instead of worktree/.git/wt-logs/)
+    // in bare repos (bare_repo/wt/logs/ instead of worktree/.git/wt/logs/)
     let test = BareRepoTest::new();
 
     // Create main worktree
@@ -468,7 +471,7 @@ fn test_bare_repo_background_logs_location() {
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
     // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
-    let log_dir = test.bare_repo_path().join("wt-logs");
+    let log_dir = test.bare_repo_path().join("wt/logs");
     wait_for_file_count(&log_dir, "log", 1);
 
     // Verify the log file matches expected pattern (feature-*-remove.log)
@@ -489,7 +492,7 @@ fn test_bare_repo_background_logs_location() {
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
-    let wrong_dir = main_worktree.join(".git/wt-logs");
+    let wrong_dir = main_worktree.join(".git/wt/logs");
     assert!(
         !wrong_dir.exists()
             || std::fs::read_dir(&wrong_dir)
@@ -497,6 +500,184 @@ fn test_bare_repo_background_logs_location() {
                 .unwrap_or(0)
                 == 0,
         "Log should NOT be in worktree's .git directory"
+    );
+}
+
+#[test]
+fn test_bare_repo_project_config_found_from_bare_root() {
+    // Regression test for #1691: project config in the primary worktree should be
+    // found when running from the bare repo root directory, not just from within
+    // a worktree that contains the config.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Use a marker file to prove the hook ran
+    let marker_path = test.bare_repo_path().join("hook-ran.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Now run `wt switch --create feature` from the bare repo root (NOT from main worktree)
+    // This is the scenario described in #1691
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The hook from the primary worktree's config should have executed
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Hook from primary worktree config should run when command is invoked from bare root. \
+         Marker file content: {:?}",
+        content
+    );
+}
+
+#[test]
+fn test_bare_repo_project_config_found_with_dash_c_flag() {
+    // Regression test for #1691 (comment): project config in the primary worktree
+    // should be found when using `-C <repo>` from an unrelated directory.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos)
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place project config in the primary worktree's .config/wt.toml
+    let config_dir = main_worktree.join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Use a marker file to prove the hook ran
+    let marker_path = test.bare_repo_path().join("hook-ran-c-flag.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Commit the config so it's part of the worktree
+    let output = test
+        .git_command(&main_worktree)
+        .args(["add", ".config/wt.toml"])
+        .run()
+        .unwrap();
+    assert!(output.status.success());
+    test.commit_in(&main_worktree, "Add project config");
+
+    // Run from a completely unrelated directory using -C to point at the bare repo
+    let unrelated_dir = tempfile::tempdir().unwrap();
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args([
+        "-C",
+        test.bare_repo_path().to_str().unwrap(),
+        "switch",
+        "--create",
+        "feature-c-flag",
+        "--yes",
+    ])
+    .current_dir(unrelated_dir.path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch -C failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The hook from the primary worktree's config should have executed
+    wait_for_file_content(&marker_path);
+    let content = fs::read_to_string(&marker_path).unwrap();
+    assert!(
+        content.contains("hook-executed"),
+        "Hook from primary worktree config should run when using -C flag. \
+         Marker file content: {:?}",
+        content
+    );
+}
+
+#[test]
+fn test_bare_repo_ignores_config_in_bare_root() {
+    // Regression test for #1691: a `.config/wt.toml` placed in the bare repo root
+    // directory should NOT be picked up. Only the primary worktree's config matters.
+    let test = BareRepoTest::new();
+
+    // Create main worktree (the primary worktree for bare repos) — no config here
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Place config in the bare repo root (NOT in a worktree)
+    let config_dir = test.bare_repo_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    let marker_path = test.bare_repo_path().join("hook-should-not-run.marker");
+    let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        config_dir.join("wt.toml"),
+        format!("post-start = \"echo bad > '{}'\"\n", marker_str),
+    )
+    .unwrap();
+
+    // Run `wt switch --create feature` from the bare repo root
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature", "--yes"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hook from the bare root config should NOT have executed
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !marker_path.exists(),
+        "Config in bare repo root should be ignored — only primary worktree config should be used"
     );
 }
 
@@ -554,7 +735,7 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
     let branch_output = test
         .git_command(&expected_path)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&branch_output.stdout).trim(),
@@ -607,11 +788,11 @@ impl NestedBareRepoTest {
         };
 
         // Create bare repository at project/.git
-        let mut cmd = Command::new("git");
-        cmd.args(["init", "--bare", "--initial-branch", "main"])
-            .arg(&test.bare_repo_path);
-        test.configure_git_cmd(&mut cmd);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
+            .args(["init", "--bare", "--initial-branch", "main"])
+            .arg(test.bare_repo_path.to_str().unwrap())
+            .run()
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -645,6 +826,10 @@ impl NestedBareRepoTest {
         &self.bare_repo_path
     }
 
+    fn config_path(&self) -> &Path {
+        &self.test_config_path
+    }
+
     fn temp_path(&self) -> &Path {
         self.temp_dir.path()
     }
@@ -655,6 +840,62 @@ impl NestedBareRepoTest {
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
+    }
+
+    /// Get test environment variables as a vector for PTY tests.
+    #[cfg(all(unix, feature = "shell-integration-tests"))]
+    fn test_env_vars(&self) -> Vec<(String, String)> {
+        use crate::common::{NULL_DEVICE, STATIC_TEST_ENV_VARS, TEST_EPOCH};
+
+        let mut vars: Vec<(String, String)> = STATIC_TEST_ENV_VARS
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        // HOME and XDG_CONFIG_HOME are needed for config lookups in env_clear'd PTY
+        let home = self.temp_dir.path().join("home");
+        std::fs::create_dir_all(&home).ok();
+
+        vars.extend([
+            (
+                "GIT_CONFIG_GLOBAL".to_string(),
+                self.git_config_path.display().to_string(),
+            ),
+            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
+            (
+                "GIT_AUTHOR_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            (
+                "GIT_COMMITTER_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+            ("HOME".to_string(), home.display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                home.join(".config").display().to_string(),
+            ),
+            ("WORKTRUNK_TEST_EPOCH".to_string(), TEST_EPOCH.to_string()),
+            (
+                "WORKTRUNK_CONFIG_PATH".to_string(),
+                self.test_config_path.display().to_string(),
+            ),
+            (
+                "WORKTRUNK_SYSTEM_CONFIG_PATH".to_string(),
+                "/etc/xdg/worktrunk/config.toml".to_string(),
+            ),
+            (
+                "WORKTRUNK_APPROVALS_PATH".to_string(),
+                self.temp_dir
+                    .path()
+                    .join("test-approvals.toml")
+                    .display()
+                    .to_string(),
+            ),
+        ]);
+
+        vars
     }
 }
 
@@ -838,7 +1079,7 @@ fn test_bare_repo_bootstrap_first_worktree() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["worktree", "list"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -871,10 +1112,11 @@ fn test_clone_bare_repo_list_no_status_errors() {
     fs::write(&test_config_path, "").unwrap();
 
     let run_git = |dir: &Path, args: &[&str]| {
-        let mut cmd = Command::new("git");
-        cmd.args(args).current_dir(dir);
-        configure_git_cmd(&mut cmd, &git_config_path);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &git_config_path)
+            .args(args.iter().copied())
+            .current_dir(dir)
+            .run()
+            .unwrap();
         assert!(
             output.status.success(),
             "git {} failed: {}",
@@ -939,4 +1181,246 @@ fn test_clone_bare_repo_list_no_status_errors() {
         !stderr.contains("git operations failed"),
         "Should not have git operation failures.\nstderr: {stderr}"
     );
+}
+
+/// Regression test for #1618: `wt merge` must not remove the default branch
+/// worktree in a bare repo. In bare repos all worktrees are linked, so the
+/// `is_linked()` check alone can't protect the primary worktree.
+#[test]
+fn test_bare_repo_merge_preserves_default_branch_worktree() {
+    let test = BareRepoTest::new();
+
+    // Create main (default branch) worktree and a feature worktree at the same commit
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit on main");
+
+    // Create feature branch at the same commit as main
+    let _feature_worktree = test.create_worktree("feature", "feature");
+
+    // Run `wt merge feature` from the main (default branch) worktree.
+    // This attempts to merge main into feature — the important thing is that
+    // the main worktree must NOT be removed even though is_linked() returns true.
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args([
+        "merge",
+        "feature",     // Target = feature branch
+        "--no-squash", // Skip squash to avoid LLM dependency
+        "--no-verify", // Skip hooks
+    ])
+    .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The merge itself may succeed or show "already up to date", but the key
+    // assertion is that the main worktree is preserved (not removed).
+    assert!(
+        main_worktree.exists(),
+        "Default branch worktree must not be removed.\nstderr: {stderr}"
+    );
+
+    // Should show "primary worktree" preservation message
+    assert!(
+        stderr.contains("primary worktree"),
+        "Should show primary worktree preservation message.\nstderr: {stderr}"
+    );
+}
+
+/// Helper: create a NestedBareRepoTest with no worktree-path configured and a main worktree.
+///
+/// Reuses NestedBareRepoTest's bare repo setup but clears the worktree-path config,
+/// so the default template (which references `{{ repo }}`) triggers the bare repo prompt.
+fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
+    let test = NestedBareRepoTest::new();
+
+    // Temporarily set worktree-path so the main worktree lands at project/main
+    // (without this, the default {{ repo }} template produces .git.main).
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"../{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    // Create main worktree with a commit (needed as a starting point for switch)
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main", "--yes"])
+        .current_dir(test.bare_repo_path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to create main worktree:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Clear config so the default template applies — the test subject is the bare repo prompt.
+    // Skip shell integration prompt so it doesn't interfere (especially in PTY tests).
+    fs::write(test.config_path(), "skip-shell-integration-prompt = true\n").unwrap();
+
+    test
+}
+
+/// Test that --yes does NOT auto-accept the bare repo config change — it shows
+/// the warning and creates the worktree at the unconfigured (bad) path.
+#[test]
+fn test_bare_repo_worktree_path_prompt_auto_accept() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.args(["switch", "--create", "feature", "--yes"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Config should NOT have worktree-path — --yes skips the config prompt
+    let config_content = fs::read_to_string(test.config_path()).unwrap();
+    assert!(
+        !config_content.contains("worktree-path"),
+        "Config should NOT contain worktree-path — --yes should not auto-configure.\nConfig: {config_content}"
+    );
+
+    // Worktree created at the unconfigured path (bad but expected without config)
+    let bad_path = test.project_path().join(".git.feature");
+    assert!(
+        bad_path.exists(),
+        "Worktree should be at {:?} (unconfigured default path)",
+        bad_path
+    );
+}
+
+/// Test that non-interactive (piped stdin) shows warning instead of prompt.
+#[test]
+fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
+    let test = setup_unconfigured_nested_bare_repo();
+    let main_worktree = test.project_path().join("main");
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        // No --yes, but stdin is piped (non-interactive) since assert_cmd_snapshot
+        // doesn't attach a TTY
+        cmd.args(["switch", "--create", "feature"])
+            .current_dir(&main_worktree);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// =============================================================================
+// PTY-based interactive prompt tests
+// =============================================================================
+
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod bare_repo_prompt_pty {
+    use super::*;
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+    use crate::common::{add_pty_binary_path_filters, add_pty_filters, wt_bin};
+    use insta::assert_snapshot;
+
+    fn prompt_pty_settings(temp_path: &Path) -> insta::Settings {
+        let mut settings = setup_temp_snapshot_settings(temp_path);
+        add_pty_filters(&mut settings);
+        add_pty_binary_path_filters(&mut settings);
+        settings
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_accept_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_accept", &output);
+        });
+
+        // Verify config was written
+        let config_content = fs::read_to_string(test.config_path()).unwrap();
+        assert!(
+            config_content.contains("worktree-path"),
+            "Config should contain worktree-path override.\nConfig: {config_content}"
+        );
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_decline_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_decline", &output);
+        });
+
+        // Verify skip flag was saved in git config
+        let git_config_output = Cmd::new("git")
+            .args(["config", "worktrunk.skip-bare-repo-prompt"])
+            .current_dir(&main_worktree)
+            .env("GIT_CONFIG_GLOBAL", test.git_config_path())
+            .run()
+            .unwrap();
+        let value = String::from_utf8_lossy(&git_config_output.stdout);
+        assert_eq!(
+            value.trim(),
+            "true",
+            "Skip flag should be saved in git config"
+        );
+    }
+
+    #[test]
+    fn test_bare_repo_worktree_path_prompt_preview_pty() {
+        let test = setup_unconfigured_nested_bare_repo();
+        let main_worktree = test.project_path().join("main");
+        let env_vars = test.test_env_vars();
+
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["switch", "--create", "feature"],
+            &main_worktree,
+            &env_vars,
+            None,
+        );
+        // Send ? first to see preview, then n to decline
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0);
+        prompt_pty_settings(test.temp_path()).bind(|| {
+            assert_snapshot!("bare_repo_prompt_preview", &output);
+        });
+    }
 }

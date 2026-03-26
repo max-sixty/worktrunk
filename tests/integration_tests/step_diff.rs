@@ -110,7 +110,7 @@ fn test_step_diff_index_unchanged(mut repo: TestRepo) {
     fs::write(feature_path.join("untracked.txt"), "content").unwrap();
 
     // Get index state before
-    let index_before = get_git_status(&repo, &feature_path);
+    let index_before = git_status(&repo, &feature_path);
 
     // Run step diff
     let mut cmd = repo.wt_command();
@@ -119,7 +119,7 @@ fn test_step_diff_index_unchanged(mut repo: TestRepo) {
     assert!(output.status.success(), "step diff failed");
 
     // Get index state after
-    let index_after = get_git_status(&repo, &feature_path);
+    let index_after = git_status(&repo, &feature_path);
 
     assert_eq!(
         index_before, index_after,
@@ -142,12 +142,12 @@ fn test_step_diff_explicit_target(mut repo: TestRepo) {
     ));
 }
 
-fn get_git_status(repo: &TestRepo, dir: &Path) -> String {
+fn git_status(repo: &TestRepo, dir: &Path) -> String {
     let output = repo
         .git_command()
         .args(["status", "--porcelain"])
         .current_dir(dir)
-        .output()
+        .run()
         .unwrap();
     String::from_utf8_lossy(&output.stdout).to_string()
 }

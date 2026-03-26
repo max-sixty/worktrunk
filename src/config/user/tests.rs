@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
-use crate::git::Repository;
+use crate::git::{HookType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -11,10 +12,10 @@ struct TestRepo {
 impl TestRepo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["init"])
             .current_dir(dir.path())
-            .output()
+            .run()
             .unwrap();
         let repo = Repository::at(dir.path()).unwrap();
         Self { _dir: dir, repo }
@@ -39,15 +40,15 @@ fn test_default_config_path_returns_platform_path() {
 }
 
 #[test]
-fn test_get_config_path_falls_through_to_default() {
+fn test_config_path_falls_through_to_default() {
     // When no CLI override or WORKTRUNK_CONFIG_PATH env var is set,
-    // get_config_path() should fall through to default_config_path().
+    // config_path() should fall through to default_config_path().
     // This also verifies both functions return the same path.
     let default = default_config_path().unwrap();
-    let resolved = get_config_path().unwrap();
+    let resolved = config_path().unwrap();
     assert_eq!(
         resolved, default,
-        "get_config_path() should match default_config_path() when no overrides are set"
+        "config_path() should match default_config_path() when no overrides are set"
     );
 }
 
@@ -95,6 +96,9 @@ stage = "all"
 
 [merge]
 squash = true
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 
 [post-create]
 run = "npm install"
@@ -188,8 +192,10 @@ fn test_user_project_config_with_worktree_path_serde() {
         ..Default::default()
     };
     let toml = toml::to_string(&config).unwrap();
-    assert!(toml.contains("worktree-path"));
-    assert!(toml.contains(".worktrees/{{ branch | sanitize }}"));
+    insta::assert_snapshot!(toml, @r#"
+    approved-commands = ["npm install"]
+    worktree-path = ".worktrees/{{ branch | sanitize }}"
+    "#);
 
     let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
     assert_eq!(
@@ -307,7 +313,8 @@ fn test_list_config_serde() {
         branches: Some(false),
         remotes: None,
         summary: None,
-        timeout_ms: Some(500),
+        task_timeout_ms: Some(500),
+        timeout_ms: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ListConfig = serde_json::from_str(&json).unwrap();
@@ -315,7 +322,8 @@ fn test_list_config_serde() {
     assert_eq!(parsed.branches, Some(false));
     assert_eq!(parsed.remotes, None);
     assert_eq!(parsed.summary, None);
-    assert_eq!(parsed.timeout_ms, Some(500));
+    assert_eq!(parsed.task_timeout_ms, Some(500));
+    assert_eq!(parsed.timeout_ms, None);
 }
 
 #[test]
@@ -454,6 +462,7 @@ fn test_merge_config_serde() {
         rebase: Some(false),
         remove: Some(true),
         verify: Some(true),
+        no_ff: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
@@ -509,6 +518,32 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     assert!(!config.skip_shell_integration_prompt);
 }
 
+#[test]
+fn test_set_project_worktree_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# empty config\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_project_worktree_path(
+            "github.com/user/repo",
+            "../{{ branch | sanitize }}".to_string(),
+            Some(&config_path),
+        )
+        .unwrap();
+
+    assert_eq!(
+        config.worktree_path_for_project("github.com/user/repo"),
+        "../{{ branch | sanitize }}"
+    );
+
+    // Verify it was saved to disk
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("[projects.\"github.com/user/repo\"]"));
+    assert!(content.contains("worktree-path"));
+}
+
 // =========================================================================
 // Merge trait tests
 // =========================================================================
@@ -520,14 +555,16 @@ fn test_merge_list_config() {
         branches: Some(false),
         remotes: None,
         summary: Some(true),
-        timeout_ms: Some(1000),
+        task_timeout_ms: Some(1000),
+        timeout_ms: Some(2000),
     };
     let override_config = ListConfig {
-        full: None,           // Should fall back to base
-        branches: Some(true), // Should override
-        remotes: Some(true),  // Should override (base was None)
-        summary: None,        // Should fall back to base
-        timeout_ms: None,     // Should fall back to base
+        full: None,            // Should fall back to base
+        branches: Some(true),  // Should override
+        remotes: Some(true),   // Should override (base was None)
+        summary: None,         // Should fall back to base
+        task_timeout_ms: None, // Should fall back to base
+        timeout_ms: None,      // Should fall back to base
     };
 
     let merged = base.merge_with(&override_config);
@@ -535,7 +572,8 @@ fn test_merge_list_config() {
     assert_eq!(merged.branches, Some(true)); // From override
     assert_eq!(merged.remotes, Some(true)); // From override
     assert_eq!(merged.summary, Some(true)); // From base
-    assert_eq!(merged.timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.task_timeout_ms, Some(1000)); // From base
+    assert_eq!(merged.timeout_ms, Some(2000)); // From base
 }
 
 #[test]
@@ -632,6 +670,7 @@ fn test_merge_merge_config() {
         rebase: Some(true),
         remove: Some(true),
         verify: Some(true),
+        no_ff: Some(false),
     };
     let override_config = MergeConfig {
         squash: Some(false), // Override
@@ -639,6 +678,7 @@ fn test_merge_merge_config() {
         rebase: None,        // Fall back to base
         remove: Some(false), // Override
         verify: None,        // Fall back to base
+        no_ff: Some(true),   // Override
     };
 
     let merged = base.merge_with(&override_config);
@@ -647,6 +687,7 @@ fn test_merge_merge_config() {
     assert_eq!(merged.rebase, Some(true));
     assert_eq!(merged.remove, Some(false));
     assert_eq!(merged.verify, Some(true));
+    assert_eq!(merged.no_ff, Some(true));
 }
 
 #[test]
@@ -830,6 +871,7 @@ fn test_effective_merge_with_partial_override() {
                 rebase: Some(true),
                 remove: Some(true),
                 verify: Some(true),
+                no_ff: Some(false),
             }),
             ..Default::default()
         },
@@ -846,6 +888,7 @@ fn test_effective_merge_with_partial_override() {
                     rebase: None,
                     remove: None,
                     verify: None,
+                    no_ff: None,
                 }),
                 ..Default::default()
             },
@@ -954,7 +997,8 @@ fn test_list_config_accessor_methods_defaults() {
     assert!(!config.full());
     assert!(!config.branches());
     assert!(!config.remotes());
-    assert!(config.timeout_ms().is_none());
+    assert!(config.task_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -964,24 +1008,33 @@ fn test_list_config_accessor_methods_with_values() {
         branches: Some(true),
         remotes: Some(false),
         summary: Some(true),
-        timeout_ms: Some(5000),
+        task_timeout_ms: Some(5000),
+        timeout_ms: Some(3000),
     };
     assert!(config.full());
     assert!(config.branches());
     assert!(!config.remotes());
     assert!(config.summary());
-    assert_eq!(config.timeout_ms(), Some(5000));
+    assert_eq!(
+        config.task_timeout(),
+        Some(std::time::Duration::from_millis(5000))
+    );
+    assert_eq!(
+        config.timeout(),
+        Some(std::time::Duration::from_millis(3000))
+    );
 }
 
 #[test]
 fn test_merge_config_accessor_methods_defaults() {
     let config = MergeConfig::default();
-    // MergeConfig defaults are all true
+    // MergeConfig defaults are all true except no_ff (false)
     assert!(config.squash());
     assert!(config.commit());
     assert!(config.rebase());
     assert!(config.remove());
     assert!(config.verify());
+    assert!(!config.no_ff());
 }
 
 #[test]
@@ -992,12 +1045,14 @@ fn test_merge_config_accessor_methods_with_values() {
         rebase: Some(false),
         remove: Some(false),
         verify: Some(false),
+        no_ff: Some(true),
     };
     assert!(!config.squash());
     assert!(!config.commit());
     assert!(!config.rebase());
     assert!(!config.remove());
     assert!(!config.verify());
+    assert!(config.no_ff());
 }
 
 #[test]
@@ -1033,20 +1088,20 @@ fn test_switch_picker_config_accessor_methods() {
 
     let config = SwitchPickerConfig::default();
     assert!(config.pager().is_none());
-    // Default timeout is 200ms
+    // Default wall-clock budget is 500ms
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 
     let config = SwitchPickerConfig {
         pager: Some("delta --paging=never".to_string()),
-        timeout_ms: Some(500),
+        timeout_ms: Some(1000),
     };
     assert_eq!(config.pager(), Some("delta --paging=never"));
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(500))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(1000))
     );
 }
 
@@ -1058,7 +1113,7 @@ fn test_switch_picker_timeout_zero_disables() {
         timeout_ms: Some(0),
         ..Default::default()
     };
-    assert!(config.picker_command_timeout().is_none());
+    assert!(config.timeout().is_none());
 }
 
 #[test]
@@ -1067,8 +1122,8 @@ fn test_switch_picker_timeout_none_uses_default() {
 
     let config = SwitchPickerConfig::default();
     assert_eq!(
-        config.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        config.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 
@@ -1120,12 +1175,14 @@ fn test_switch_config_merge() {
             pager: Some("delta".to_string()),
             timeout_ms: None,
         }),
+        ..Default::default()
     };
     let other = SwitchConfig {
         picker: Some(SwitchPickerConfig {
             pager: None,
             timeout_ms: Some(300),
         }),
+        ..Default::default()
     };
     let merged = base.merge_with(&other);
     assert_eq!(
@@ -1135,7 +1192,7 @@ fn test_switch_config_merge() {
     assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
 
     // Base has picker, other doesn't
-    let other_none = SwitchConfig { picker: None };
+    let other_none = SwitchConfig::default();
     let merged = base.merge_with(&other_none);
     assert_eq!(
         merged.picker.as_ref().unwrap().pager.as_deref(),
@@ -1143,9 +1200,82 @@ fn test_switch_config_merge() {
     );
 
     // Neither has picker
-    let base_none = SwitchConfig { picker: None };
-    let merged = base_none.merge_with(&other_none);
+    let merged = SwitchConfig::default().merge_with(&other_none);
     assert!(merged.picker.is_none());
+}
+
+#[test]
+fn test_switch_config_no_cd_accessor() {
+    use crate::config::user::SwitchConfig;
+
+    // Default is false
+    let config = SwitchConfig::default();
+    assert!(!config.no_cd());
+
+    // Explicit false
+    let config = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    assert!(!config.no_cd());
+
+    // Explicit true
+    let config = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    assert!(config.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_merge() {
+    use crate::config::user::{Merge, SwitchConfig};
+
+    // Other overrides base
+    let base = SwitchConfig {
+        no_cd: Some(false),
+        ..Default::default()
+    };
+    let other = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&other);
+    assert!(merged.no_cd());
+
+    // Base preserved when other is None
+    let base = SwitchConfig {
+        no_cd: Some(true),
+        ..Default::default()
+    };
+    let merged = base.merge_with(&SwitchConfig::default());
+    assert!(merged.no_cd());
+
+    // Neither set
+    let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
+    assert!(!merged.no_cd()); // default false
+}
+
+#[test]
+fn test_switch_config_no_cd_from_toml() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let switch = config.switch(None).unwrap();
+    assert!(switch.no_cd());
+}
+
+#[test]
+fn test_switch_config_no_cd_resolved() {
+    let toml = r#"
+[switch]
+no-cd = true
+"#;
+    let config = UserConfig::load_from_str(toml).unwrap();
+    let resolved = config.resolved(None);
+    assert!(resolved.switch.no_cd());
 }
 
 #[test]
@@ -1166,8 +1296,8 @@ fn test_switch_picker_fallback_from_select() {
     // timeout_ms not available from select, so default applies
     assert_eq!(picker.timeout_ms, None);
     assert_eq!(
-        picker.picker_command_timeout(),
-        Some(std::time::Duration::from_millis(200))
+        picker.timeout(),
+        Some(std::time::Duration::from_millis(500))
     );
 }
 
@@ -1183,6 +1313,7 @@ fn test_switch_picker_prefers_new_over_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(100),
                 }),
+                ..Default::default()
             }),
             select: Some(SelectConfig {
                 pager: Some("bat".to_string()),
@@ -1208,6 +1339,7 @@ fn test_switch_picker_project_override() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(200),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1223,6 +1355,7 @@ fn test_switch_picker_project_override() {
                         pager: Some("bat".to_string()),
                         timeout_ms: None, // Fall back to global
                     }),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1248,6 +1381,7 @@ fn test_switch_picker_project_fallback_from_select() {
                     pager: Some("delta".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1296,6 +1430,7 @@ fn test_resolved_config_for_project() {
                     pager: Some("less".to_string()),
                     timeout_ms: Some(300),
                 }),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -1312,6 +1447,7 @@ fn test_resolved_config_for_project() {
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
     assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
+    assert!(!resolved.switch.no_cd()); // Default false
 }
 
 // =========================================================================
@@ -1450,6 +1586,42 @@ squash = false
 }
 
 #[test]
+fn test_copy_ignored_config_merges_global_and_project() {
+    let project_id = "github.com/user/repo";
+    let config = UserConfig::load_from_str(
+        r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+
+[projects."github.com/user/repo".step.copy-ignored]
+exclude = [".repo-local/", ".entire/"]
+"#,
+    )
+    .unwrap();
+
+    let expected_global = vec![".conductor/".to_string(), ".entire/".to_string()];
+    let expected_merged = vec![
+        ".conductor/".to_string(),
+        ".entire/".to_string(),
+        ".repo-local/".to_string(),
+    ];
+
+    assert_eq!(config.copy_ignored(None).exclude, expected_global);
+    assert_eq!(
+        config.copy_ignored(Some(project_id)).exclude,
+        expected_merged.clone()
+    );
+    assert_eq!(
+        config
+            .resolved(Some(project_id))
+            .step
+            .copy_ignored()
+            .exclude,
+        expected_merged
+    );
+}
+
+#[test]
 fn test_deprecated_commit_generation_format_serde() {
     // Test old format: [commit-generation] is still parsed for backward compatibility
     let content = r#"
@@ -1514,9 +1686,8 @@ args = ["-m", "claude-haiku-4.5"]
 fn test_validation_empty_worktree_path() {
     let content = r#"worktree-path = """#;
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    insta::assert_snapshot!(err, @"worktree-path cannot be empty");
 }
 
 #[test]
@@ -1542,9 +1713,8 @@ fn test_validation_project_empty_worktree_path() {
 worktree-path = ""
 "#;
     let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("worktree-path cannot be empty"), "{err}");
+    insta::assert_snapshot!(err, @"projects.github.com/user/repo.worktree-path cannot be empty");
 }
 
 #[test]
@@ -1571,108 +1741,23 @@ worktree-path = "/worktrees/{{ branch | sanitize }}"
 
 #[test]
 fn test_validation_template_mutual_exclusivity() {
-    let content = r#"
-[commit-generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_squash_template_mutual_exclusivity() {
-    let content = r#"
-[commit-generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_project_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit-generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_project_squash_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit-generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-// New format [commit.generation] validation tests
-
-#[test]
-fn test_validation_new_format_template_mutual_exclusivity() {
-    let content = r#"
-[commit.generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_squash_template_mutual_exclusivity() {
-    let content = r#"
-[commit.generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_project_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit.generation]
-template = "inline template"
-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn test_validation_new_format_project_squash_template_mutual_exclusivity() {
-    let content = r#"
-[projects."github.com/user/repo".commit.generation]
-squash-template = "inline template"
-squash-template-file = "path/to/file"
-"#;
-    let result = UserConfig::load_from_str(content);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("mutually exclusive"), "{err}");
+    let cases = [
+        ("[commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit-generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit-generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit.generation]\ntemplate = \"inline\"\ntemplate-file = \"path\""),
+        ("[projects.\"github.com/user/repo\".commit.generation]\nsquash-template = \"inline\"\nsquash-template-file = \"path\""),
+    ];
+    for content in cases {
+        let err = UserConfig::load_from_str(content).unwrap_err().to_string();
+        assert!(
+            err.contains("mutually exclusive"),
+            "{content}: expected 'mutually exclusive', got: {err}"
+        );
+    }
 }
 
 // =========================================================================
@@ -1860,7 +1945,7 @@ fn test_hooks_merge_append_semantics() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1879,7 +1964,7 @@ fn test_hooks_no_project_override_uses_global() {
 
     let effective = config.hooks(Some("github.com/other/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1902,7 +1987,7 @@ fn test_hooks_project_only_no_global() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
@@ -1934,13 +2019,13 @@ fn test_hooks_different_hook_types_not_merged() {
 
     // post-start: only global
     let post_start = effective.post_start.unwrap();
-    let start_commands = post_start.commands();
+    let start_commands: Vec<_> = post_start.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
     // pre-commit: only project
     let pre_commit = effective.pre_commit.unwrap();
-    let commit_commands = pre_commit.commands();
+    let commit_commands: Vec<_> = pre_commit.commands().collect();
     assert_eq!(commit_commands.len(), 1);
     assert_eq!(commit_commands[0].template, "echo project-commit");
 }
@@ -1958,7 +2043,7 @@ fn test_hooks_none_project_uses_global() {
 
     let effective = config.hooks(None);
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1984,7 +2069,6 @@ fn test_hooks_in_overridable_config_is_empty() {
 /// which matches the serde field names.
 #[test]
 fn test_valid_user_config_keys_includes_all_hook_types() {
-    use crate::git::HookType;
     use strum::IntoEnumIterator;
 
     let valid_keys = valid_user_config_keys();
@@ -2020,7 +2104,8 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" => {
+            "list" | "commit" | "merge" | "switch" | "step" | "select" | "commit-generation"
+            | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }
@@ -2087,7 +2172,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2132,7 +2217,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2287,10 +2372,107 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 
     let merged = global_hooks.merge_with(&project_hooks);
     let pre_merge = merged.pre_merge.unwrap();
-    let commands = pre_merge.commands();
+    let commands: Vec<_> = pre_merge.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "global-lint"); // Global first
     assert_eq!(commands[1].template, "project-lint"); // Project second
+}
+
+#[test]
+fn test_hooks_merge_folds_post_create_into_pre_start() {
+    // User config uses deprecated `post-create`, project uses `pre-start`.
+    // merge_with should combine them so the user's hook isn't silently dropped.
+    let user_hooks = parse_hooks("post-create = \"npm install\"");
+    let project_hooks = parse_hooks("pre-start = \"cargo test\"");
+
+    let merged = user_hooks.merge_with(&project_hooks);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(commands.len(), 2, "Both hooks should be present");
+    assert_eq!(commands[0].template, "npm install"); // User's post-create first
+    assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
+}
+
+#[test]
+fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
+    // Single config with both fields — merge_with folds post_create into pre_start.
+    // This is an unusual config (user wrote both), but if it goes through merge
+    // both commands should run rather than silently dropping one.
+    let both = parse_hooks("pre-start = \"npm install\"\npost-create = \"cargo build\"");
+    let empty = HooksConfig::default();
+
+    let merged = both.merge_with(&empty);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(
+        commands.len(),
+        2,
+        "Both commands from same source should be present"
+    );
+    assert_eq!(commands[0].template, "npm install"); // pre-start first
+    assert_eq!(commands[1].template, "cargo build"); // post-create second
+}
+
+#[test]
+fn test_hooks_merge_post_create_both_sides() {
+    // Both configs use deprecated `post-create` — should still combine
+    let global = parse_hooks("post-create = \"npm install\"");
+    let project = parse_hooks("post-create = \"cargo build\"");
+
+    let merged = global.merge_with(&project);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].template, "npm install");
+    assert_eq!(commands[1].template, "cargo build");
+}
+
+#[test]
+fn test_aliases_accessor_appends_on_collision() {
+    let toml_str = r#"
+[aliases]
+shared = "global-cmd"
+global-only = "only-global"
+
+[projects."test-project".aliases]
+shared = "project-cmd"
+project-only = "only-project"
+"#;
+    let config: UserConfig = toml::from_str(toml_str).unwrap();
+
+    let aliases = config.aliases(Some("test-project"));
+
+    // Non-colliding aliases are present
+    assert_eq!(aliases["global-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["global-only"].commands().next().unwrap().template,
+        "only-global"
+    );
+    assert_eq!(aliases["project-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["project-only"].commands().next().unwrap().template,
+        "only-project"
+    );
+
+    // Colliding alias: both commands run (global first, then per-project)
+    let shared: Vec<_> = aliases["shared"].commands().collect();
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared[0].template, "global-cmd");
+    assert_eq!(shared[1].template, "project-cmd");
+
+    // Without project: only global aliases
+    let global_only = config.aliases(None);
+    assert_eq!(global_only["shared"].commands().count(), 1);
+    assert_eq!(
+        global_only["shared"].commands().next().unwrap().template,
+        "global-cmd"
+    );
 }
 
 /// Test that reload_projects_from handles permission errors

@@ -71,8 +71,8 @@ impl WorktrunkConfig for ProjectConfig {
 }
 
 // Re-export public types
-pub use approvals::{Approvals, get_approvals_path};
-pub use commands::{Command, CommandConfig};
+pub use approvals::{Approvals, approvals_path};
+pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;
@@ -86,7 +86,7 @@ pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
-    redact_credentials, sanitize_branch_name, sanitize_db, short_hash,
+    redact_credentials, sanitize_branch_name, sanitize_db, short_hash, validate_template,
 };
 pub use hooks::HooksConfig;
 pub use project::{
@@ -94,17 +94,20 @@ pub use project::{
     find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
-    ResolvedConfig, SelectConfig, StageMode, SwitchConfig, SwitchPickerConfig, UserConfig,
-    UserProjectOverrides, default_config_path, default_system_config_path,
-    find_unknown_keys as find_unknown_user_keys, get_config_path, get_system_config_path,
-    set_config_path,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
+    OverridableConfig, ResolvedConfig, SelectConfig, StageMode, StepConfig, SwitchConfig,
+    SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, default_config_path,
+    default_system_config_path, find_unknown_keys as find_unknown_user_keys, set_config_path,
+    system_config_path,
 };
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
     use crate::git::Repository;
+    use crate::shell_exec::Cmd;
 
     /// Test fixture that creates a real temporary git repository.
     struct TestRepo {
@@ -115,10 +118,10 @@ mod tests {
     impl TestRepo {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            std::process::Command::new("git")
+            Cmd::new("git")
                 .args(["init"])
                 .current_dir(dir.path())
-                .output()
+                .run()
                 .unwrap();
             let repo = Repository::at(dir.path()).unwrap();
             Self { _dir: dir, repo }
@@ -131,17 +134,10 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        let config = UserConfig::default();
-        let toml = toml::to_string(&config).unwrap();
-        // worktree-path is not serialized when None (uses built-in default)
-        assert!(!toml.contains("worktree-path"));
-        // commit and commit-generation sections are not serialized when None
-        assert!(!toml.contains("[commit]"));
-        assert!(!toml.contains("[commit-generation]"));
-    }
+        // Default config serializes to empty (no optional fields)
+        assert_snapshot!(toml::to_string(&UserConfig::default()).unwrap(), @"[projects]");
 
-    #[test]
-    fn test_config_serialization_with_worktree_path() {
+        // With worktree-path set
         let config = UserConfig {
             configs: OverridableConfig {
                 worktree_path: Some("custom/{{ branch }}".to_string()),
@@ -149,9 +145,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("custom/{{ branch }}"));
+        assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
+        worktree-path = "custom/{{ branch }}"
+
+        [projects]
+        "#);
     }
 
     #[test]
@@ -306,9 +304,9 @@ mod tests {
         let toml = r#"post-create = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_create.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "npm install".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "npm install".to_string()));
     }
 
     #[test]
@@ -320,15 +318,15 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 2);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(Some("server".to_string()), "npm run dev".to_string())
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("watch".to_string()), "npm run watch".to_string())
         );
     }
@@ -344,7 +342,7 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         // Extract just the names for easier verification
         let names: Vec<_> = commands
@@ -374,7 +372,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         assert_eq!(commands.len(), 2);
         // Should be in TOML order: task1, task2
@@ -408,9 +406,9 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml = r#"pre-merge = "cargo test""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "cargo test".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "cargo test".to_string()));
     }
 
     #[test]
@@ -423,22 +421,22 @@ task2 = "echo 'Task 2 running' > task2.txt"
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 3);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(
                 Some("format".to_string()),
                 "cargo fmt -- --check".to_string()
             )
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("lint".to_string()), "cargo clippy".to_string())
         );
         assert_eq!(
-            commands[2],
+            *commands[2],
             Command::new(Some("test".to_string()), "cargo test".to_string())
         );
     }
@@ -450,8 +448,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        // Verify it serialized back as a string
-        assert!(serialized.contains(r#"post-create = "npm install""#));
+        assert_snapshot!(serialized, @r#"post-create = "npm install""#);
     }
 
     #[test]
@@ -465,10 +462,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        // Verify it serialized back as a named table
-        assert!(serialized.contains("[post-start]"));
-        assert!(serialized.contains(r#"server = "npm run dev""#));
-        assert!(serialized.contains(r#"watch = "npm run watch""#));
+        assert_snapshot!(serialized, @r#"
+        [post-start]
+        server = "npm run dev"
+        watch = "npm run watch"
+        "#);
     }
 
     #[test]
@@ -622,9 +620,10 @@ squash-template-file = "~/file.txt"
             squash_template_file: None,
         };
 
-        let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("llm -m model"));
-        assert!(toml.contains("template"));
+        assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
+        command = "llm -m model"
+        template = "template content"
+        "#);
     }
 
     #[test]
@@ -696,7 +695,7 @@ lint = "cargo clippy"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
@@ -706,7 +705,7 @@ lint = "cargo clippy"
             .hooks
             .pre_merge
             .expect("pre-merge should be present");
-        let commands = pre_merge.commands();
+        let commands: Vec<_> = pre_merge.commands().collect();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
         assert_eq!(commands[1].name.as_deref(), Some("lint"));
@@ -725,7 +724,7 @@ post-create = "npm install"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].name.is_none()); // single command has no name
         assert_eq!(commands[0].template, "npm install");

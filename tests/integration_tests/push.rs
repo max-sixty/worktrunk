@@ -81,7 +81,7 @@ fn test_push_with_dirty_target(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("conflict.txt")).unwrap();
     assert_eq!(main_contents, "old content");
 
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -109,7 +109,7 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
     assert_eq!(notes, "temporary notes");
 
     // Autostash should clean up after itself
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -162,7 +162,7 @@ fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("file.txt")).unwrap();
     assert_eq!(main_contents, "modified in target");
 
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -224,6 +224,73 @@ fn test_push_with_merge_commits(mut repo: TestRepo) {
         "push_with_merge_commits",
         &repo,
         &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[rstest]
+fn test_push_no_ff(mut repo: TestRepo) {
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // Push with --no-ff should create a merge commit on main
+    snapshot_push("push_no_ff", &repo, &["--no-ff", "main"], Some(&feature_wt));
+
+    // Verify a merge commit was created (HEAD on main should have 2 parents)
+    let cat_file = repo.git_output(&["cat-file", "-p", "main"]);
+    let parents: Vec<&str> = cat_file
+        .lines()
+        .filter(|l| l.starts_with("parent "))
+        .collect();
+    assert_eq!(
+        parents.len(),
+        2,
+        "Merge commit should have exactly 2 parents"
+    );
+
+    // Verify the merge commit message
+    let commit_msg = repo.git_output(&["log", "-1", "--format=%s", "main"]);
+    assert_eq!(commit_msg, "Merge branch 'feature' into main");
+}
+
+#[rstest]
+fn test_push_with_submodule_recurse_config(mut repo: TestRepo) {
+    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604
+    // When submodule.recurse=true is set, git push tries to recurse into
+    // submodules which fails for local worktree-to-worktree pushes.
+    repo.run_git(&["config", "submodule.recurse", "true"]);
+
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // Fast-forward push should succeed despite submodule.recurse=true
+    snapshot_push(
+        "push_with_submodule_recurse",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[rstest]
+fn test_push_no_ff_with_submodule_recurse_config(mut repo: TestRepo) {
+    // Regression test for https://github.com/max-sixty/worktrunk/issues/1604
+    repo.run_git(&["config", "submodule.recurse", "true"]);
+
+    repo.add_main_worktree();
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "test.txt", "test content", "Add test file");
+
+    // No-ff push should succeed despite submodule.recurse=true
+    snapshot_push(
+        "push_no_ff_with_submodule_recurse",
+        &repo,
+        &["--no-ff", "main"],
         Some(&feature_wt),
     );
 }

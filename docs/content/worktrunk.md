@@ -1,7 +1,10 @@
 +++
 title = "Worktrunk"
-description = "Git worktree management for parallel AI agents. Core commands, install guide, and quick start."
+description = "CLI for Git worktree management, designed for parallel AI agent workflows."
 weight = 1
+
+[extra]
+canonical = "/"
 +++
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents
@@ -85,6 +88,9 @@ git branch -d feat{% end %}</td>
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](@/switch.md#interactive-picker)** — browse worktrees with live diff and log previews
 - **[Copy build caches](@/step.md)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries) per branch
+- **[PR checkout](@/switch.md#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
+- **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -207,7 +213,7 @@ wt remove                         # after PR is merged
 <span style='background:var(--bright-white,#fff)'> </span>  lib.rs  |  2 <span class=g>++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
-<span class=c>◎ Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
 {% end %}
 
@@ -230,6 +236,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
   picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
+- Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

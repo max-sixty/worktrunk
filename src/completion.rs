@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
@@ -8,13 +9,8 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::{ProjectConfig, UserConfig};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{BranchCategory, HookType, Repository};
-
-/// Deprecated args that should never appear in completions.
-/// These are hidden from help AND completions, unlike other hidden args
-/// that appear when completing `--`.
-const DEPRECATED_ARGS: &[&str] = &["--no-background"];
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
 pub(crate) fn maybe_handle_env_completion() -> bool {
@@ -65,7 +61,7 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // Check if the current word is exactly "-" (single dash)
     // If so, we want to show both short flags (-h) AND long flags (--help)
     // clap only returns matches for the prefix, so we call complete twice
-    let current_word = args.get(index).map(|s| s.to_string_lossy());
+    let current_word = args.get(index).map(|s| s.to_string_lossy().into_owned());
     let include_long_flags = current_word.as_deref() == Some("-");
 
     let completions = match clap_complete::engine::complete(
@@ -109,17 +105,25 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         completions
     };
 
-    // Filter out deprecated args - they should never appear in completions
-    let completions: Vec<_> = completions
-        .into_iter()
-        .filter(|c| {
-            let value = c.get_value().to_string_lossy();
-            !DEPRECATED_ARGS.contains(&value.as_ref())
-        })
-        .collect();
+    // Bash does not filter COMPREPLY by prefix — its programmable completion
+    // (-F) passes the array as-is. Fish/zsh apply their own matching (substring,
+    // fuzzy), so they receive all candidates. For bash, we must filter here.
+    let shell_name = shell_name.to_string_lossy();
+    let completions = if shell_name.as_ref() == "bash" {
+        let prefix = current_word.as_deref().unwrap_or("").to_owned();
+        if prefix.is_empty() {
+            completions
+        } else {
+            completions
+                .into_iter()
+                .filter(|c| c.get_value().to_string_lossy().starts_with(&*prefix))
+                .collect()
+        }
+    } else {
+        completions
+    };
 
     // Write completions in the appropriate format for the shell
-    let shell_name = shell_name.to_string_lossy();
     let ifs = std::env::var("_CLAP_IFS").ok();
     let separator = ifs.as_deref().unwrap_or("\n");
 
@@ -160,7 +164,7 @@ pub(crate) fn branch_value_completer() -> ArgValueCompleter {
     })
 }
 
-/// Branch completion for positional arguments (switch, select).
+/// Branch completion for positional arguments (switch).
 /// Suppresses completions when --create flag is present.
 pub(crate) fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
@@ -188,7 +192,7 @@ pub(crate) fn worktree_only_completer() -> ArgValueCompleter {
     })
 }
 
-/// Hook command name completion for `wt step <hook-type> <name>`.
+/// Hook command name completion for `wt hook <hook-type> <name>`.
 /// Completes with command names from the project config for the hook type being invoked.
 pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
@@ -204,79 +208,71 @@ impl ValueCompleter for HookCommandCompleter {
             return Vec::new();
         }
 
-        let prefix = current.to_string_lossy();
-        complete_hook_commands()
-            .into_iter()
-            .filter(|candidate| {
-                candidate
-                    .get_value()
-                    .to_string_lossy()
-                    .starts_with(&*prefix)
-            })
-            .collect()
-    }
-}
+        // Return all candidates without prefix filtering — let the shell apply its
+        // own matching (substring in fish, fuzzy in zsh, prefix in bash). The
+        // bash-specific prefix filter in maybe_handle_env_completion() handles bash.
 
-fn complete_hook_commands() -> Vec<CompletionCandidate> {
-    // Get the hook type from the command line context
-    let hook_type = CONTEXT.with(|ctx| {
-        ctx.borrow().as_ref().and_then(|ctx| {
-            // Look for the hook subcommand in the args
-            for hook in &[
-                "post-create",
-                "post-start",
-                "pre-commit",
-                "pre-merge",
-                "post-merge",
-                "pre-remove",
-            ] {
-                if ctx.contains(hook) {
-                    return Some(*hook);
+        // Get the hook type from the command line context
+        let hook_type = CONTEXT.with(|ctx| {
+            ctx.borrow().as_ref().and_then(|ctx| {
+                for hook in &[
+                    "pre-start",
+                    "post-start",
+                    "pre-commit",
+                    "post-commit",
+                    "pre-merge",
+                    "post-merge",
+                    "pre-remove",
+                ] {
+                    if ctx.contains(hook) {
+                        return Some(*hook);
+                    }
                 }
-            }
-            None
-        })
-    });
+                // Deprecated alias: post-create → pre-start
+                if ctx.contains("post-create") {
+                    return Some("pre-start");
+                }
+                None
+            })
+        });
 
-    let Some(hook_type_str) = hook_type else {
-        return Vec::new();
-    };
-    let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
-        return Vec::new();
-    };
-
-    let mut candidates = Vec::new();
-
-    // Helper to extract named commands from a hook config
-    let add_named_commands =
-        |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
-            candidates.extend(
-                config
-                    .commands()
-                    .iter()
-                    .filter_map(|cmd| cmd.name.as_ref())
-                    .map(|name| CompletionCandidate::new(name.clone())),
-            );
+        let Some(hook_type_str) = hook_type else {
+            return Vec::new();
+        };
+        let Ok(hook_type) = hook_type_str.parse::<HookType>() else {
+            return Vec::new();
         };
 
-    // Load user config and add user hook names
-    // Uses overrides.hooks for completion (global hooks from user config file)
-    if let Ok(user_config) = UserConfig::load()
-        && let Some(config) = user_config.configs.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let mut candidates = Vec::new();
 
-    // Load project config and add project hook names
-    // Pass write_hints=false to avoid side effects during completion
-    if let Ok(repo) = Repository::current()
-        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-        && let Some(config) = project_config.hooks.get(hook_type)
-    {
-        add_named_commands(&mut candidates, config);
-    }
+        let add_named_commands =
+            |candidates: &mut Vec<_>, config: &worktrunk::config::CommandConfig| {
+                candidates.extend(
+                    config
+                        .commands()
+                        .filter_map(|cmd| cmd.name.as_ref())
+                        .map(|name| CompletionCandidate::new(name.clone())),
+                );
+            };
 
-    candidates
+        // Load user config and add user hook names
+        if let Ok(user_config) = UserConfig::load()
+            && let Some(config) = user_config.configs.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        // Load project config and add project hook names
+        // Pass write_hints=false to avoid side effects during completion
+        if let Ok(repo) = Repository::current()
+            && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(config) = project_config.hooks.get(hook_type)
+        {
+            add_named_commands(&mut candidates, config);
+        }
+
+        candidates
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -293,63 +289,58 @@ impl ValueCompleter for BranchCompleter {
             return Vec::new();
         }
 
-        // Filter branches by prefix - clap doesn't filter ArgValueCompleter results
-        let prefix = current.to_string_lossy();
-        complete_branches(
-            self.suppress_with_create,
-            self.exclude_remote_only,
-            self.worktree_only,
-        )
-        .into_iter()
-        .filter(|candidate| {
-            candidate
-                .get_value()
-                .to_string_lossy()
-                .starts_with(&*prefix)
-        })
-        .collect()
+        // Return all candidates without prefix filtering — let the shell apply its
+        // own matching (substring in fish, fuzzy in zsh, prefix in bash). Pre-filtering
+        // here prevents shells from using their native matching strategies.
+
+        if self.suppress_with_create && suppress_switch_branch_completion() {
+            return Vec::new();
+        }
+
+        let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        };
+
+        if branches.is_empty() {
+            return Vec::new();
+        }
+
+        // If remote-only branches aren't already excluded, drop them when the total
+        // count is large. Shells like bash/zsh prompt "do you wish to see all N
+        // possibilities?" which makes completion unusable in repos with many remotes.
+        // Threshold of 100 aligns with bash's default `completion-query-items`.
+        let exclude_remote_only = self.exclude_remote_only
+            || (!self.worktree_only
+                && branches.len() > 100
+                && branches
+                    .iter()
+                    .any(|b| matches!(b.category, BranchCategory::Remote(_))));
+
+        branches
+            .into_iter()
+            .filter(|branch| {
+                if self.worktree_only {
+                    matches!(branch.category, BranchCategory::Worktree)
+                } else if exclude_remote_only {
+                    !matches!(branch.category, BranchCategory::Remote(_))
+                } else {
+                    true
+                }
+            })
+            .map(|branch| {
+                let time_str = format_relative_time_short(branch.timestamp);
+                let help = match branch.category {
+                    BranchCategory::Worktree => format!("+ {}", time_str),
+                    BranchCategory::Local => format!("/ {}", time_str),
+                    BranchCategory::Remote(remotes) => {
+                        format!("⇣ {} {}", time_str, remotes.join(", "))
+                    }
+                };
+                CompletionCandidate::new(branch.name).help(Some(help.into()))
+            })
+            .collect()
     }
-}
-
-fn complete_branches(
-    suppress_with_create: bool,
-    exclude_remote_only: bool,
-    worktree_only: bool,
-) -> Vec<CompletionCandidate> {
-    if suppress_with_create && suppress_switch_branch_completion() {
-        return Vec::new();
-    }
-
-    let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
-    };
-
-    if branches.is_empty() {
-        return Vec::new();
-    }
-
-    branches
-        .into_iter()
-        .filter(|branch| {
-            if worktree_only {
-                matches!(branch.category, BranchCategory::Worktree)
-            } else if exclude_remote_only {
-                !matches!(branch.category, BranchCategory::Remote(_))
-            } else {
-                true
-            }
-        })
-        .map(|branch| {
-            let time_str = format_relative_time_short(branch.timestamp);
-            let help = match branch.category {
-                BranchCategory::Worktree => format!("+ {}", time_str),
-                BranchCategory::Local => format!("/ {}", time_str),
-                BranchCategory::Remote(remotes) => format!("⇣ {} {}", time_str, remotes.join(", ")),
-            };
-            CompletionCandidate::new(branch.name).help(Some(help.into()))
-        })
-        .collect()
 }
 
 fn suppress_switch_branch_completion() -> bool {
@@ -382,7 +373,96 @@ thread_local! {
 
 fn completion_command() -> Command {
     let cmd = cli::build_command();
+    let cmd = inject_alias_subcommands(cmd);
     hide_non_positional_options_for_completion(cmd)
+}
+
+/// Inject configured aliases as subcommands of `step` so they appear in completions.
+///
+/// Aliases are loaded from user config and project config (same merge order as
+/// `step_alias`). Aliases that shadow built-in step commands are skipped.
+fn inject_alias_subcommands(cmd: Command) -> Command {
+    let aliases = load_aliases_for_completion();
+    if aliases.is_empty() {
+        return cmd;
+    }
+
+    cmd.mut_subcommand("step", |mut step| {
+        for (name, cmd_config) in aliases {
+            // Skip aliases that shadow built-in step commands
+            if step
+                .get_subcommands()
+                .any(|s| s.get_name() == name.as_str())
+            {
+                continue;
+            }
+            // Use the first command's template for the help text
+            let first_template = cmd_config
+                .commands()
+                .next()
+                .map(|c| c.template.as_str())
+                .unwrap_or("");
+            let help = truncate_template(first_template);
+            // clap::Command::new() requires Into<Str>, and Str only implements
+            // From<&'static str> (not From<String>). Leak is fine: completion is
+            // a short-lived subprocess that exits after printing candidates.
+            let name: &'static str = Box::leak(name.into_boxed_str());
+            let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
+            let sub = Command::new(name)
+                .about(about)
+                .arg(clap::Arg::new("dry-run").long("dry-run"))
+                .arg(clap::Arg::new("yes").short('y').long("yes"))
+                .arg(
+                    clap::Arg::new("var")
+                        .long("var")
+                        .num_args(1)
+                        .action(clap::ArgAction::Append),
+                );
+            step = step.subcommand(sub);
+        }
+        step
+    })
+}
+
+/// Load aliases from user and project config for completion.
+///
+/// Merges user and project aliases with append semantics (matching hooks).
+fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
+    let mut aliases = BTreeMap::new();
+
+    if let Ok(repo) = Repository::current() {
+        // User config first
+        if let Ok(user_config) = UserConfig::load() {
+            let project_id = repo.project_identifier().ok();
+            aliases.extend(user_config.aliases(project_id.as_deref()));
+        }
+        // Project config appends
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+            && let Some(ref project_aliases) = project_config.aliases
+        {
+            append_aliases(&mut aliases, project_aliases);
+        }
+    } else if let Ok(user_config) = UserConfig::load() {
+        aliases.extend(user_config.aliases(None));
+    }
+
+    aliases
+}
+
+/// Truncate a template string for use as completion help text.
+fn truncate_template(template: &str) -> &str {
+    let s = template.trim();
+    let first_line = s.lines().next().unwrap_or(s);
+    if first_line.len() > 60 {
+        // Find the last char boundary at or before byte 57
+        let mut end = 57;
+        while end > 0 && !first_line.is_char_boundary(end) {
+            end -= 1;
+        }
+        &first_line[..end]
+    } else {
+        first_line
+    }
 }
 
 /// Hide non-positional options so they're filtered out when positional/subcommand
@@ -429,4 +509,37 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
     }
 
     process_command(cmd, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_template() {
+        // Short template — returned as-is
+        assert_eq!(truncate_template("echo hello"), "echo hello");
+
+        // Multiline — only first line
+        assert_eq!(truncate_template("line one\nline two"), "line one");
+
+        // Leading/trailing whitespace trimmed
+        assert_eq!(truncate_template("  spaced  \n"), "spaced");
+
+        // Exactly 60 chars — no truncation
+        let s60 = "a".repeat(60);
+        assert_eq!(truncate_template(&s60), s60.as_str());
+
+        // 61 chars — truncated to 57
+        let s61 = "b".repeat(61);
+        assert_eq!(truncate_template(&s61), &"b".repeat(57));
+
+        // Multi-byte chars where byte 57 falls mid-character.
+        // 'a' (1 byte) × 56 + '€' (3 bytes) × 2 = 62 bytes, > 60.
+        // Byte 57 is the second byte of the first '€', so the loop backs up to 56.
+        let multi = "a".repeat(56) + "€€";
+        let result = truncate_template(&multi);
+        assert_eq!(result.len(), 56);
+        assert_eq!(result, "a".repeat(56));
+    }
 }

@@ -9,7 +9,7 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
-use worktrunk::utils::get_now;
+use worktrunk::utils::epoch_now;
 
 use crate::commands::hook_filter::HookSource;
 
@@ -185,7 +185,7 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// - On Unix: uses process_group(0) to create a new process group (survives PTY closure)
 /// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
 ///
-/// Logs are centralized in the main worktree's `.git/wt-logs/` directory.
+/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 ///
 /// # Arguments
 /// * `repo` - Repository instance for accessing git common directory
@@ -372,37 +372,53 @@ fn spawn_detached_windows(
 
 /// Generate a staging path for worktree removal.
 ///
-/// Creates a sibling path with a unique suffix to enable instant rename-based removal.
-/// The path is guaranteed to be on the same filesystem as the original worktree
-/// (sibling paths share the same parent directory).
+/// Places the staging directory inside `.git/wt/trash/` so it is hidden from the
+/// user's workspace. For the main worktree, `.git/` is on the same filesystem,
+/// so `rename()` is an instant metadata operation. Linked worktrees on different
+/// mount points will get EXDEV and fall back to legacy removal.
 ///
-/// Format: `<path>.wt-removing-<timestamp>`
-pub fn generate_removing_path(worktree_path: &Path) -> PathBuf {
-    let timestamp = get_now();
+/// Format: `<wt/trash>/<name>-<timestamp>`
+pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
+    let timestamp = epoch_now();
     let name = worktree_path
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
-    worktree_path.with_file_name(format!("{}.wt-removing-{}", name, timestamp))
+    trash_dir.join(format!("{}-{}", name, timestamp))
 }
 
 /// Build shell command for background removal of a staged (renamed) worktree.
 ///
 /// This is used after the worktree has been renamed to a staging path,
 /// git metadata has been pruned, and the branch has been deleted synchronously.
-/// The command just does `rm -rf` on the staged directory.
 ///
-/// No sleep is needed because:
-/// 1. The shell cd happens before the rename (directive file is written first)
-/// 2. The original worktree path no longer exists immediately after rename
-pub fn build_remove_command_staged(staged_path: &std::path::Path) -> String {
+/// The delay mirrors `build_remove_command`'s `sleep 1`. After the rename,
+/// a placeholder directory is created at `original_path` so the shell's
+/// working directory remains valid until the wrapper has processed the `cd`
+/// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
+/// emit errors between binary exit and the `cd`.
+///
+/// The background command removes both the placeholder and the staged directory.
+pub fn build_remove_command_staged(
+    staged_path: &std::path::Path,
+    original_path: &std::path::Path,
+) -> String {
     use shell_escape::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
 
+    let original_path_str = original_path.to_string_lossy();
+    let original_escaped = escape(original_path_str.as_ref().into());
+
+    // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
+    // rmdir: remove the empty placeholder (safe — only removes empty directories).
+    // rm -rf: remove the staged worktree contents.
     // Use -- to prevent option parsing for paths starting with -
-    format!("rm -rf -- {}", staged_escaped)
+    format!(
+        "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
+        original_escaped, staged_escaped
+    )
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -439,7 +455,7 @@ pub fn build_remove_command(
     // Stop fsmonitor daemon first (best effort - ignore errors)
     // This prevents zombie daemons from accumulating when using builtin fsmonitor
     let stop_fsmonitor = format!(
-        "git -C {} fsmonitor--daemon stop 2>/dev/null || true",
+        "{{ git -C {} fsmonitor--daemon stop 2>/dev/null || true; }}",
         worktree_escaped
     );
 
@@ -464,29 +480,49 @@ pub fn build_remove_command(
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
 
     #[test]
     fn test_sanitize_for_filename() {
-        // Path separators (hash suffix appended)
-        assert!(sanitize_for_filename("feature/branch").starts_with("feature-branch-"));
-        assert!(sanitize_for_filename("feature\\branch").starts_with("feature-branch-"));
-
-        // Windows-illegal characters
-        assert!(sanitize_for_filename("bug:123").starts_with("bug-123-"));
-        assert!(sanitize_for_filename("fix<angle>").starts_with("fix-angle-"));
-        assert!(sanitize_for_filename("fix|pipe").starts_with("fix-pipe-"));
-        assert!(sanitize_for_filename("fix?question").starts_with("fix-question-"));
-        assert!(sanitize_for_filename("fix*wildcard").starts_with("fix-wildcard-"));
-        assert!(sanitize_for_filename("fix\"quotes\"").starts_with("fix-quotes-"));
-
-        // Multiple special characters
-        assert!(sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j").starts_with("a-b-c-d-e-f-g-h-i-j-"));
-
-        // Already safe (still gets hash suffix)
-        assert!(sanitize_for_filename("normal-branch").starts_with("normal-branch-"));
-        assert!(
-            sanitize_for_filename("branch_with_underscore").starts_with("branch_with_underscore-")
+        // Path separators, Windows-illegal characters, multiple special chars,
+        // already-safe names, and reserved prefix names
+        assert_snapshot!(
+            [
+                ("path separator /", sanitize_for_filename("feature/branch")),
+                ("path separator \\", sanitize_for_filename("feature\\branch")),
+                ("colon", sanitize_for_filename("bug:123")),
+                ("angle brackets", sanitize_for_filename("fix<angle>")),
+                ("pipe", sanitize_for_filename("fix|pipe")),
+                ("question mark", sanitize_for_filename("fix?question")),
+                ("wildcard", sanitize_for_filename("fix*wildcard")),
+                ("quotes", sanitize_for_filename("fix\"quotes\"")),
+                ("multiple special", sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j")),
+                ("already safe", sanitize_for_filename("normal-branch")),
+                ("underscore", sanitize_for_filename("branch_with_underscore")),
+                ("reserved prefix CONSOLE", sanitize_for_filename("CONSOLE")),
+                ("reserved prefix COM10", sanitize_for_filename("COM10")),
+            ]
+            .into_iter()
+            .map(|(label, val)| format!("{label}: {val}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+            @r"
+        path separator /: feature-branch-30k
+        path separator \: feature-branch-k37
+        colon: bug-123-4xh
+        angle brackets: fix-angle-q9m
+        pipe: fix-pipe-68k
+        question mark: fix-question-ab6
+        wildcard: fix-wildcard-38y
+        quotes: fix-quotes-2xu
+        multiple special: a-b-c-d-e-f-g-h-i-j-obi
+        already safe: normal-branch-83y
+        underscore: branch_with_underscore-b65
+        reserved prefix CONSOLE: CONSOLE-8fv
+        reserved prefix COM10: COM10-1s2
+        "
         );
 
         // Windows reserved device names are handled (produce valid filenames)
@@ -498,10 +534,6 @@ mod tests {
             let result = sanitize_for_filename(name);
             assert!(!result.is_empty() && result.len() > 3, "{name} -> {result}");
         }
-
-        // Longer names containing reserved prefixes are fine
-        assert!(sanitize_for_filename("CONSOLE").starts_with("CONSOLE-"));
-        assert!(sanitize_for_filename("COM10").starts_with("COM10-"));
 
         // Collision avoidance: different inputs produce different outputs
         let a = sanitize_for_filename("feature/x");
@@ -537,52 +569,37 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // Without branch deletion, without force
-        let cmd = build_remove_command(&path, None, false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("/tmp/test-worktree"));
-        assert!(!cmd.contains("branch -D"));
-        assert!(!cmd.contains("--force"));
+        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
 
         // With branch deletion, without force
-        let cmd = build_remove_command(&path, Some("feature-branch"), false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("git branch -D"));
-        assert!(cmd.contains("feature-branch"));
-        assert!(!cmd.contains("--force"));
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        let cmd = build_remove_command(&path, None, true);
-        assert!(cmd.contains("git worktree remove --force"));
+        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
 
         // With branch deletion and force
-        let cmd = build_remove_command(&path, Some("feature-branch"), true);
-        assert!(cmd.contains("git worktree remove --force"));
-        assert!(cmd.contains("git branch -D"));
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
-        assert!(cmd.contains("worktree remove"));
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]
     fn test_generate_removing_path() {
+        let trash_dir = PathBuf::from("/tmp/repo/.git/wt/trash");
         let path = PathBuf::from("/tmp/my-project.feature");
-        let removing_path = generate_removing_path(&path);
+        let removing_path = generate_removing_path(&trash_dir, &path);
 
-        // Should be a sibling path (same parent)
-        assert_eq!(removing_path.parent(), path.parent());
+        // Should be inside the trash directory
+        assert_eq!(removing_path.parent(), Some(trash_dir.as_path()));
 
         // Should have the expected prefix
         let name = removing_path.file_name().unwrap().to_string_lossy();
-        assert!(
-            name.starts_with("my-project.feature.wt-removing-"),
-            "got: {}",
-            name
-        );
+        assert!(name.starts_with("my-project.feature-"), "got: {}", name);
 
         // Should have a timestamp suffix (digits only after the prefix)
-        let timestamp_part = name.trim_start_matches("my-project.feature.wt-removing-");
+        let timestamp_part = name.trim_start_matches("my-project.feature-");
         assert!(
             timestamp_part.chars().all(|c| c.is_ascii_digit()),
             "timestamp part should be numeric: {}",
@@ -592,116 +609,42 @@ mod tests {
 
     #[test]
     fn test_build_remove_command_staged() {
-        let staged_path = PathBuf::from("/tmp/my-project.feature.wt-removing-1234567890");
+        let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+        let original_path = PathBuf::from("/tmp/my-project.feature");
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
 
-        let cmd = build_remove_command_staged(&staged_path);
-        assert!(cmd.starts_with("rm -rf -- ")); // -- prevents option parsing
-        assert!(cmd.contains("wt-removing-1234567890"));
-        assert!(!cmd.contains("branch -D")); // Branch deleted synchronously, not in background
-        assert!(!cmd.contains("sleep")); // No sleep in staged removal
-
-        // Shell escaping for special characters
-        let special_path = PathBuf::from("/tmp/test worktree.wt-removing-123");
-        let cmd = build_remove_command_staged(&special_path);
-        assert!(cmd.contains("rm -rf "));
-        // Verify the path is escaped (single-quoted for shell safety)
-        assert!(
-            cmd.contains("'/tmp/test worktree.wt-removing-123'"),
-            "path should be escaped: {}",
-            cmd
-        );
+        // Shell escaping for special characters (space in path)
+        let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
+        let special_original = PathBuf::from("/tmp/test worktree");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
     }
 
     #[test]
-    fn test_hook_log_hook_suffix() {
+    fn test_hook_log_suffix() {
         use worktrunk::git::HookType;
 
         // Suffix includes sanitized name with hash for collision avoidance
-        let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-post-start-server-"),
-            "Expected pattern: {suffix}"
-        );
+        // Constructor and parse produce identical suffixes
+        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PostStart, "server").suffix(), @"user-post-start-server-f4t");
+        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PreStart, "build").suffix(), @"project-pre-start-build-seq");
+        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup").suffix(), @"user-pre-remove-cleanup-non");
+        assert_snapshot!(HookLog::parse("user:post-start:server").unwrap().suffix(), @"user-post-start-server-f4t");
+        assert_snapshot!(HookLog::parse("project:pre-start:build").unwrap().suffix(), @"project-pre-start-build-seq");
 
-        let log = HookLog::hook(HookSource::Project, HookType::PostCreate, "build");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("project-post-create-build-"),
-            "Expected pattern: {suffix}"
-        );
-
-        let log = HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup");
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-pre-remove-cleanup-"),
-            "Expected pattern: {suffix}"
-        );
-    }
-
-    #[test]
-    fn test_hook_log_internal_suffix() {
-        let log = HookLog::internal(InternalOp::Remove);
-        assert_eq!(log.suffix(), "remove");
+        // Internal operation suffix
+        assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
     }
 
     #[test]
     fn test_hook_log_filename() {
         use worktrunk::git::HookType;
 
-        // Filenames now include hash suffixes for collision avoidance
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let filename = log.filename("main");
-        assert!(
-            filename.starts_with("main-"),
-            "Expected main- prefix: {filename}"
-        );
-        assert!(
-            filename.contains("-user-post-start-"),
-            "Expected -user-post-start-: {filename}"
-        );
-        assert!(
-            filename.ends_with(".log"),
-            "Expected .log suffix: {filename}"
-        );
+        assert_snapshot!(log.filename("main"), @"main-vfz-user-post-start-server-f4t.log");
+        // Slash in branch name gets sanitized
+        assert_snapshot!(log.filename("feature/auth"), @"feature-auth-j34-user-post-start-server-f4t.log");
 
-        let filename = log.filename("feature/auth");
-        assert!(
-            filename.starts_with("feature-"),
-            "Expected feature- prefix (slash sanitized): {filename}"
-        );
-        assert!(
-            filename.contains("-user-post-start-"),
-            "Expected -user-post-start-: {filename}"
-        );
-
-        let log = HookLog::internal(InternalOp::Remove);
-        let filename = log.filename("main");
-        assert!(
-            filename.starts_with("main-"),
-            "Expected main- prefix: {filename}"
-        );
-        assert!(
-            filename.ends_with("-remove.log"),
-            "Expected -remove.log suffix: {filename}"
-        );
-    }
-
-    #[test]
-    fn test_hook_log_parse_hook() {
-        let log = HookLog::parse("user:post-start:server").unwrap();
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("user-post-start-server-"),
-            "Expected pattern: {suffix}"
-        );
-
-        let log = HookLog::parse("project:post-create:build").unwrap();
-        let suffix = log.suffix();
-        assert!(
-            suffix.starts_with("project-post-create-build-"),
-            "Expected pattern: {suffix}"
-        );
+        assert_snapshot!(HookLog::internal(InternalOp::Remove).filename("main"), @"main-vfz-remove.log");
     }
 
     #[test]
@@ -712,40 +655,26 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_log_parse_invalid_source() {
-        let result = HookLog::parse("invalid:post-start:server");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown source"));
-    }
+    fn test_hook_log_parse_errors() {
+        // Unknown source
+        assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
-    #[test]
-    fn test_hook_log_parse_invalid_hook_type() {
-        let result = HookLog::parse("user:invalid-hook:server");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown hook type"));
-    }
+        // Unknown hook type
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, pre-start, post-start, post-switch, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
-    #[test]
-    fn test_hook_log_parse_invalid_internal_op() {
-        let result = HookLog::parse("internal:unknown");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown internal operation"));
-    }
+        // Unknown internal operation
+        assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");
 
-    #[test]
-    fn test_hook_log_parse_invalid_format() {
-        // Single word (no colons)
-        let result = HookLog::parse("remove");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid log spec"));
+        // Invalid formats: single word, two non-internal parts, missing segment
+        assert_snapshot!(HookLog::parse("remove").unwrap_err(), @"Invalid log spec: [1mremove[22m. Format: source:hook-type:name or internal:op");
+        assert_snapshot!(HookLog::parse("foo:bar").unwrap_err(), @"Invalid log spec: [1mfoo:bar[22m. Format: source:hook-type:name or internal:op");
+        assert_snapshot!(HookLog::parse("user:").unwrap_err(), @"Invalid log spec: [1muser:[22m. Format: source:hook-type:name or internal:op");
 
-        // Two parts but not internal:op (missing hook name)
-        let result = HookLog::parse("foo:bar");
-        assert!(result.is_err());
+        // Colons in hook names (ambiguous parsing)
+        assert_snapshot!(HookLog::parse("user:post-start:my:server").unwrap_err(), @"Invalid log spec: [1muser:post-start:my:server[22m. Format: source:hook-type:name or internal:op");
 
-        // Missing hook-type segment
-        let result = HookLog::parse("user:");
-        assert!(result.is_err());
+        // Empty hook name
+        assert_snapshot!(HookLog::parse("user:post-start:").unwrap_err(), @"Invalid log spec: [1muser:post-start:[22m. Format: source:hook-type:name or internal:op");
     }
 
     #[test]
@@ -788,21 +717,5 @@ mod tests {
         assert_eq!(spec, "internal:remove");
         let parsed = HookLog::parse(&spec).unwrap();
         assert_eq!(original, parsed);
-    }
-
-    #[test]
-    fn test_hook_log_parse_rejects_colons_in_name() {
-        // Hook names cannot contain colons (would make parsing ambiguous)
-        let result = HookLog::parse("user:post-start:my:server");
-        assert!(result.is_err(), "Colons in hook names should be rejected");
-        assert!(result.unwrap_err().contains("Invalid log spec"));
-    }
-
-    #[test]
-    fn test_hook_log_parse_rejects_empty_name() {
-        // Empty hook name should be rejected
-        let result = HookLog::parse("user:post-start:");
-        assert!(result.is_err(), "Empty hook name should be rejected");
-        assert!(result.unwrap_err().contains("Invalid log spec"));
     }
 }

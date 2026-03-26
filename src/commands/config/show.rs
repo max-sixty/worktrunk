@@ -3,15 +3,15 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
-    find_unknown_user_keys, get_system_config_path,
+    find_unknown_user_keys, system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -25,7 +25,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::version_str;
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
-use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
+use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -88,7 +88,7 @@ fn is_claude_available() -> bool {
 }
 
 /// Get the home directory for Claude Code config detection
-fn get_home_dir() -> Option<PathBuf> {
+fn home_dir() -> Option<PathBuf> {
     // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -99,7 +99,7 @@ fn get_home_dir() -> Option<PathBuf> {
 
 /// Check if the worktrunk plugin is installed in Claude Code
 fn is_plugin_installed() -> bool {
-    let Some(home) = get_home_dir() else {
+    let Some(home) = home_dir() else {
         return false;
     };
 
@@ -114,7 +114,7 @@ fn is_plugin_installed() -> bool {
 
 /// Check if the statusline is configured in Claude Code settings
 fn is_statusline_configured() -> bool {
-    let Some(home) = get_home_dir() else {
+    let Some(home) = home_dir() else {
         return false;
     };
 
@@ -131,7 +131,7 @@ fn is_statusline_configured() -> bool {
 }
 
 /// Get the git version string (e.g., "2.47.1")
-fn get_git_version() -> Option<String> {
+fn git_version() -> Option<String> {
     let output = Cmd::new("git").arg("--version").run().ok()?;
     if !output.status.success() {
         return None;
@@ -240,7 +240,7 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
         "{}",
         info_message(cformat!("{cmd}: <bold>{version}</>"))
     )?;
-    if let Some(git_version) = get_git_version() {
+    if let Some(git_version) = git_version() {
         writeln!(
             out,
             "{}",
@@ -273,7 +273,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let project_config = repo.load_project_config().ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = get_platform_for_repo(&repo, platform_override, None);
+    let platform = platform_for_repo(&repo, platform_override, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -349,7 +349,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
 /// Render the SYSTEM CONFIG section. Returns true if a system config file was found.
 fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
-    let Some(system_path) = get_system_config_path() else {
+    let Some(system_path) = system_config_path() else {
         return Ok(false);
     };
 
@@ -358,7 +358,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         "{}",
         format_heading(
             "SYSTEM CONFIG",
-            Some(&format_path_for_display(&system_path))
+            Some(&format!("@ {}", format_path_for_display(&system_path)))
         )
     )?;
 
@@ -394,7 +394,10 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
     writeln!(
         out,
         "{}",
-        format_heading("USER CONFIG", Some(&format_path_for_display(&config_path)))
+        format_heading(
+            "USER CONFIG",
+            Some(&format!("@ {}", format_path_for_display(&config_path)))
+        )
     )?;
 
     // Check if file exists
@@ -516,9 +519,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let repo_root = match repo.current_worktree().root() {
-        Ok(root) => root,
-        Err(_) => {
+    let config_path = match repo.project_config_path() {
+        Ok(Some(path)) => path,
+        _ => {
             writeln!(
                 out,
                 "{}",
@@ -530,14 +533,13 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
         out,
         "{}",
         format_heading(
             "PROJECT CONFIG",
-            Some(&format_path_for_display(&config_path))
+            Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
 
@@ -805,7 +807,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                         ))
                     )?;
-                } else if matches!(shell, Shell::Fish | Shell::Nushell)
+                } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
                     // File exists but has different content (e.g. outdated version)
@@ -883,8 +885,24 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Show potential false negatives (lines containing cmd but not detected)
     // Skip files that have valid integration detected (matched_lines) - those are fine,
     // and the other lines containing cmd are just part of the integration script.
+    // Also skip files already confirmed as integration by scan_shell_configs (e.g., Nushell/Fish
+    // wrapper files that ARE the integration, not config files that source it).
+    let confirmed_paths: HashSet<&Path> = scan_result
+        .configured
+        .iter()
+        .filter(|r| {
+            // For wrapper-based shells, the file at the path IS the integration — any
+            // action means it was recognized. For eval-based shells, only AlreadyExists
+            // means the config line was found.
+            r.shell.is_wrapper_based() || matches!(r.action, ConfigAction::AlreadyExists)
+        })
+        .map(|r| r.path.as_path())
+        .collect();
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
+        if !detection.unmatched_candidates.is_empty()
+            && detection.matched_lines.is_empty()
+            && !confirmed_paths.contains(detection.path.as_path())
+        {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
@@ -955,10 +973,15 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     // If we have unmatched candidates but no configured shells, suggest raising an issue
+    // Apply the same confirmed_paths filter used above to avoid including wrapper files
     if has_any_unmatched && !has_any_configured {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
-            .filter(|r| !r.unmatched_candidates.is_empty())
+            .filter(|r| {
+                !r.unmatched_candidates.is_empty()
+                    && r.matched_lines.is_empty()
+                    && !confirmed_paths.contains(r.path.as_path())
+            })
             .flat_map(|r| {
                 r.unmatched_candidates
                     .iter()
@@ -1127,7 +1150,7 @@ mod tests {
     #[test]
     fn test_get_git_version_returns_version() {
         // In a normal environment with git installed, should return a version
-        let version = get_git_version();
+        let version = git_version();
         assert!(version.is_some());
         let version = version.unwrap();
         // Version should look like a semver (e.g., "2.47.1")

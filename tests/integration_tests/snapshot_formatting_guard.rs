@@ -25,6 +25,7 @@ const BLANK_BEFORE_HINT_ALLOWED: &[&str] = &[
     // from per-shell status section. The `↳` here is a status item, not a hint.
     "config_show__config_show_partial_shell_config_shows_hint",
     "config_show__config_show_unmatched_candidate_warning",
+    "config_show__config_show_unmatched_candidate_not_suppressed_by_wrapper",
 ];
 
 #[test]
@@ -146,15 +147,67 @@ fn extract_output_sections(content: &str) -> Vec<(&str, &str)> {
     }
 
     // If no stdout/stderr sections, try expression format (content after closing ---)
-    if sections.is_empty()
-        && let Some(first_delim) = content.find("---")
-    {
-        let after_first = &content[first_delim + 3..];
-        if let Some(second_delim) = after_first.find("---") {
-            let output = &after_first[second_delim + 3..];
-            sections.push(("expression", output));
+    // Match `---` only at line boundaries to avoid false matches on content like
+    // `--- a/file.txt` in git diffs.
+    if sections.is_empty() {
+        let first_delim = if content.starts_with("---\n") {
+            Some(0)
+        } else {
+            content.find("\n---\n").map(|pos| pos + 1)
+        };
+        if let Some(pos) = first_delim {
+            let after_first = &content[pos + 3..];
+            if let Some(nl_pos) = after_first.find("\n---\n") {
+                let output = &after_first[nl_pos + 4..];
+                sections.push(("expression", output));
+            }
         }
     }
 
     sections
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_output_sections_ignores_mid_line_dashes() {
+        // Simulate a snapshot whose output body contains `--- a/file.txt` (git diff).
+        // The old code matched `---` as a bare substring and would split incorrectly.
+        let content = "\
+---
+source: tests/some_test.rs
+expression: output
+---
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1 +1 @@
+-old
++new
+";
+        let sections = extract_output_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, "expression");
+        assert!(
+            sections[0].1.contains("--- a/file.txt"),
+            "mid-line `---` should be part of the output, not a delimiter"
+        );
+    }
+
+    #[test]
+    fn test_extract_output_sections_expression_format() {
+        let content = "\
+---
+source: tests/some_test.rs
+expression: output
+---
+hello world
+";
+        let sections = extract_output_sections(content);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, "expression");
+        assert_eq!(sections[0].1.trim(), "hello world");
+    }
 }

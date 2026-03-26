@@ -1,6 +1,8 @@
 ---
 name: release
 description: Worktrunk release workflow. Use when user asks to "do a release", "release a new version", "cut a release", or wants to publish a new version to crates.io and GitHub.
+metadata:
+  internal: true
 ---
 
 # Release Workflow
@@ -24,7 +26,7 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
    ```
 9. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
 10. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
-11. **Wait for release workflow**: `gh run watch <run-id> --exit-status`
+11. **Wait for release workflow**: Poll with `gh pr checks --required` or `gh run view <run-id>` every 60 seconds until complete (avoid `gh run watch` — it can hang). Non-required checks are ignored
 
 The tag push triggers the release workflow which builds binaries and publishes to crates.io, Homebrew, and winget automatically.
 

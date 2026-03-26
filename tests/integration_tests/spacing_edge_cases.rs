@@ -129,3 +129,70 @@ fn test_column_alignment_extreme_diff_sizes(mut repo: TestRepo) {
 
     snapshot_list_with_width("alignment_extreme_diffs", &repo, 180);
 }
+
+// Width survey: visualize column layout at various terminal widths.
+// These snapshots show what columns are visible and how branch names render
+// at each size. The picker in Right layout gets terminal_width/2, so
+// "picker at 80 cols" = list at 40 cols.
+//
+// Context: https://github.com/max-sixty/worktrunk/pull/1564
+
+#[rstest]
+fn test_width_survey_typical_branches(mut repo: TestRepo) {
+    // Realistic mix: short default branch + medium feature branches
+    repo.add_worktree("feature/auth-redesign");
+    repo.add_worktree("fix/login-timeout");
+    repo.add_worktree("chore/update-deps");
+
+    // Add some dirty files so status columns have data
+    let auth_path = repo.worktrees.get("feature/auth-redesign").unwrap();
+    std::fs::write(auth_path.join("auth.rs"), "changed").unwrap();
+    std::fs::write(auth_path.join("tests.rs"), "changed").unwrap();
+
+    let fix_path = repo.worktrees.get("fix/login-timeout").unwrap();
+    std::fs::write(fix_path.join("timeout.rs"), "changed").unwrap();
+
+    for width in [30, 40, 50, 60, 80, 100, 120] {
+        snapshot_list_with_width(&format!("width_survey_typical_{width}"), &repo, width);
+    }
+}
+
+#[rstest]
+fn test_width_survey_long_branches(mut repo: TestRepo) {
+    // Long branch names that stress the allocator at narrow widths
+    repo.add_worktree("feature/implement-oauth2-social-login");
+    repo.add_worktree("fix/database-connection-pool-exhaustion");
+    repo.add_worktree("short");
+
+    let long_path = repo
+        .worktrees
+        .get("feature/implement-oauth2-social-login")
+        .unwrap();
+    std::fs::write(long_path.join("oauth.rs"), "changed").unwrap();
+
+    for width in [30, 40, 50, 60, 80, 100, 120] {
+        snapshot_list_with_width(&format!("width_survey_long_{width}"), &repo, width);
+    }
+}
+
+#[rstest]
+fn test_width_survey_picker_equivalent(mut repo: TestRepo) {
+    // Simulate what the picker sees in Right layout: half the terminal width.
+    // "picker_right_80" = picker list pane when terminal is 80 cols (list gets 40).
+    repo.add_worktree("feature/auth-redesign");
+    repo.add_worktree("fix/login-timeout");
+    repo.add_worktree("chore/update-deps");
+
+    let auth_path = repo.worktrees.get("feature/auth-redesign").unwrap();
+    std::fs::write(auth_path.join("auth.rs"), "changed").unwrap();
+
+    // Right layout: list gets terminal_width / 2
+    for terminal_width in [60, 80, 100, 120, 160] {
+        let list_width = terminal_width / 2;
+        snapshot_list_with_width(
+            &format!("width_survey_picker_right_{terminal_width}"),
+            &repo,
+            list_width,
+        );
+    }
+}

@@ -2,10 +2,11 @@ use clap::Subcommand;
 
 /// Run individual operations
 #[derive(Subcommand)]
+#[command(allow_external_subcommands = true)]
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -45,11 +46,11 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     )]
     Commit {
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -67,7 +68,7 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     ///
     /// Stages changes and generates message with LLM.
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -109,11 +110,11 @@ wt step squash --show-prompt | less
         target: Option<String>,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
 
         /// What to stage before committing [default: all]
@@ -147,6 +148,14 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Create a merge commit (no fast-forward)
+        #[arg(long = "no-ff", overrides_with = "ff")]
+        no_ff: bool,
+
+        /// Allow fast-forward (default)
+        #[arg(long, overrides_with = "no_ff", hide = true)]
+        ff: bool,
     },
 
     /// Rebase onto target
@@ -173,7 +182,7 @@ wt step rebase develop    # Rebase onto develop
     ///
     /// Includes committed, staged, unstaged, and untracked files.
     #[command(
-        after_long_help = r#"Shows all changes that `wt merge` would include: committed, staged, unstaged, and untracked files — in a single diff against the merge base.
+        after_long_help = r#"This is what `wt merge` would include — a single diff against the merge base.
 
 ## Extra git diff arguments
 
@@ -219,10 +228,7 @@ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default
     /// Copy gitignored files to another worktree
     ///
     /// Eliminates cold starts by copying build caches and dependencies.
-    #[command(
-        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
-
-## Setup
+    #[command(after_long_help = r#"## Setup
 
 Add to the project config:
 
@@ -234,15 +240,22 @@ copy = "wt step copy-ignored"
 
 ## What gets copied
 
-All gitignored files are copied by default. Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
 
-To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```text
 # .worktreeinclude
 .env
 node_modules/
 target/
+```
+
+After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
 ```
 
 ## Common patterns
@@ -260,7 +273,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
 
 ## Performance
 
@@ -273,7 +286,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ## Language-specific notes
 
@@ -286,7 +299,7 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
 ```toml
-[post-create]
+[pre-start]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
@@ -301,8 +314,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 - worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
-"#
-    )]
+"#)]
     CopyIgnored {
         /// Source worktree branch
         ///
@@ -325,13 +337,68 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         force: bool,
     },
 
+    /// \[experimental\] Evaluate a template expression
+    ///
+    /// Prints the result to stdout for use in scripts and shell substitutions.
+    #[command(
+        after_long_help = r#"All [hook template variables and filters](@/hook.md#template-variables) are available.
+
+## Examples
+
+Get the port for the current branch:
+
+```console
+$ wt step eval '{{ branch | hash_port }}'
+16066
+```
+
+Use in shell substitution:
+
+```console
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
+
+Combine multiple values:
+
+```console
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+16066,16739
+```
+
+Use conditionals and filters:
+
+```console
+$ wt step eval '{{ branch | sanitize_db }}'
+feature_auth_oauth2_a1b
+```
+
+Show available template variables:
+
+```console
+$ wt step eval --dry-run '{{ branch }}'
+branch=feature/auth-oauth2
+worktree_path=/home/user/projects/myapp-feature-auth-oauth2
+...
+Result: feature/auth-oauth2
+```
+
+Note: This command is experimental and may change in future versions.
+"#
+    )]
+    Eval {
+        /// Template expression to evaluate
+        template: String,
+
+        /// Show template variables and expanded result
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// \[experimental\] Run command in each worktree
     ///
     /// Executes sequentially with real-time output; continues on failure.
     #[command(
-        after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
-
-Context JSON is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
 ## Template variables
 
@@ -372,9 +439,9 @@ Note: This command is experimental and may change in future versions.
         args: Vec<String>,
     },
 
-    /// \[experimental\] Put a branch into the main worktree
+    /// \[experimental\] Swap a branch into the main worktree
     ///
-    /// The displaced branch moves to the promoted branch's worktree.
+    /// Exchanges branches and gitignored files between two worktrees.
     #[command(
         after_long_help = r#"**Experimental.** Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use `promote`; instead each worktree has a full environment. `promote` is the only Worktrunk command which changes a branch in an existing worktree.
 
@@ -412,7 +479,9 @@ Without an argument, promotes the current branch — or restores the default bra
 
 ## Gitignored files
 
-Gitignored files are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. See [copy-ignored](/step/#copy-ignored) for filtering with `.worktreeinclude`.
+Gitignored files (build artifacts, `node_modules/`, `.env`) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [`copy-ignored`](#wt-step-copy-ignored) and can be filtered with `.worktreeinclude`.
+
+The swap uses `rename()` for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from `.git/`, it falls back to reflink copy.
 "#
     )]
     Promote {
@@ -461,7 +530,7 @@ wt step prune
         dry_run: bool,
 
         /// Skip approval prompts
-        #[arg(short, long)]
+        #[arg(short, long, help_heading = "Automation")]
         yes: bool,
 
         /// Skip worktrees younger than this
@@ -476,10 +545,7 @@ wt step prune
     /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.
-    #[command(
-        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
-
-## Examples
+    #[command(after_long_help = r#"## Examples
 
 Preview what would be moved:
 
@@ -530,8 +596,7 @@ expected path. Untracked and gitignored files remain at the original location.
 - **Detached HEAD** — no branch to compute expected path
 
 Note: This command is experimental and may change in future versions.
-"#
-    )]
+"#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
         #[arg(add = crate::completion::worktree_only_completer())]
@@ -551,4 +616,8 @@ Note: This command is experimental and may change in future versions.
         #[arg(long)]
         clobber: bool,
     },
+
+    /// Catch-all for alias lookup
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }

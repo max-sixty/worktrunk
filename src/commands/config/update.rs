@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use worktrunk::config::{
-    DeprecationInfo, format_deprecation_warnings, format_migration_diff, get_config_path,
+    DeprecationInfo, config_path, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -100,7 +100,7 @@ fn format_update_preview(info: &DeprecationInfo) -> String {
 
 /// Check user config for deprecations and generate .new file if needed.
 fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
-    let config_path = match get_config_path() {
+    let config_path = match config_path() {
         Some(path) => path,
         None => return Ok(None),
     };
@@ -145,12 +145,10 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Err(_) => return Ok(None),
     };
 
-    let root = match repo.current_worktree().root() {
-        Ok(root) => root,
-        Err(_) => return Ok(None),
+    let config_path = match repo.project_config_path() {
+        Ok(Some(path)) => path,
+        _ => return Ok(None),
     };
-
-    let config_path = root.join(".config").join("wt.toml");
     if !config_path.exists() {
         return Ok(None);
     }

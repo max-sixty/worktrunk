@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -61,45 +62,45 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 Install shell integration (required for directory switching):
 
-  [2mwt config shell install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
 
 Create user config file with documented examples:
 
-  [2mwt config create[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create[0m
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-  [2mwt config create --project[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
 
 Show current configuration and file locations:
 
-  [2mwt config show[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config show[0m
 
 [1m[32mConfiguration files[0m
 
-        File                 Location                                Contains                     Committed & shared 
-   ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
-   User config    [2m~/.config/worktrunk/config.toml[0m Worktree path template, LLM commit configs, etc ✗                  
-   Project config [2m.config/wt.toml[0m                 Project hooks, dev server URL                   ✓                  
+      File                 Location                                Contains                     Committed & shared 
+ ────────────── ─────────────────────────────── ─────────────────────────────────────────────── ────────────────── 
+ User config    [2m~/.config/worktrunk/config.toml[0m Worktree path template, LLM commit configs, etc ✗                  
+ Project config [2m.config/wt.toml[0m                 Project hooks, dev server URL                   ✓                  
 
 Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
 [1mUser config[0m — personal preferences:
 
-  [2m# ~/.config/worktrunk/config.toml[0m
-  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
-  [2m[0m
-  [2m[commit.generation][0m
-  [2mcommand = "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m# ~/.config/worktrunk/config.toml[0m
+[107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
+[107m [0m 
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mcommand = [0m[2m[32m"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 
 [1mProject config[0m — shared team settings:
 
-  [2m# .config/wt.toml[0m
-  [2m[post-create][0m
-  [2mdeps = "npm ci"[0m
-  [2m[0m
-  [2m[pre-merge][0m
-  [2mtest = "npm test"[0m
+[107m [0m [2m# .config/wt.toml[0m
+[107m [0m [2m[36m[pre-start][0m
+[107m [0m [2mdeps = [0m[2m[32m"npm ci"[0m
+[107m [0m 
+[107m [0m [2m[36m[pre-merge][0m
+[107m [0m [2mtest = [0m[2m[32m"npm test"[0m
 
 [32mUSER CONFIGURATION[0m
 
@@ -116,7 +117,7 @@ Controls where new worktrees are created.
 
 [1mVariables:[0m
 
-- [2m{{ repo_path }}[0m — absolute path to the repository (e.g., [2m/Users/me/code/myproject[0m)
+- [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
@@ -124,23 +125,52 @@ Controls where new worktrees are created.
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
-  [2m# Default — sibling directory[0m
-  [2m# Creates: ~/code/myproject.feature-auth[0m
-  [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
-  [2m[0m
-  [2m# Inside the repository[0m
-  [2m# Creates: ~/code/myproject/.worktrees/feature-auth[0m
-  [2mworktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
-  [2m[0m
-  [2m# Centralized worktrees directory[0m
-  [2m# Creates: ~/worktrees/myproject/feature-auth[0m
-  [2mworktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+[107m [0m [2m# Default — sibling directory[0m
+[107m [0m [2m# Creates: ~/code/myproject.feature-auth[0m
+[107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+[107m [0m 
+[107m [0m [2m# Inside the repository[0m
+[107m [0m [2m# Creates: ~/code/myproject/.worktrees/feature-auth[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
+[107m [0m 
+[107m [0m [2m# Centralized worktrees directory[0m
+[107m [0m [2m# Creates: ~/worktrees/myproject/feature-auth[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+[107m [0m 
+[107m [0m [2m# Bare repository (git clone --bare <url> myproject/.git)[0m
+[107m [0m [2m# Creates: ~/code/myproject/feature-auth[0m
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ branch | sanitize }}"[0m
 
-[2m~[0m expands to the home directory. Relative paths are relative to the repository root.
+[2m~[0m expands to the home directory. Relative paths resolve from [2mrepo_path[0m.
 
 [1m[32mLLM commit messages[0m
 
 Generate commit messages automatically during merge. Requires an external CLI tool.
+
+[32mClaude Code[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+
+[32mCodex[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+
+[32mopencode[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+
+[32mllm[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "llm -m claude-haiku-4.5"[0m
+
+[32maichat[0m
+
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5"[0m
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
@@ -150,42 +180,64 @@ See LLM commits docs for setup and Custom prompt templates for template customiz
 
 Persistent flag values for [2mwt list[0m. Override on command line as needed.
 
-  [2m[list][0m
-  [2msummary = false    # Enable LLM branch summaries (requires [commit.generation])[0m
-  [2m[0m
-  [2mfull = false       # Show CI, main…± diffstat, and LLM summaries (--full)[0m
-  [2mbranches = false   # Include branches without worktrees (--branches)[0m
-  [2mremotes = false    # Include remote-only branches (--remotes)[0m
+[107m [0m [2m[36m[list][0m
+[107m [0m [2msummary = [0m[2m[33mfalse[0m[2m    [0m[2m# Enable LLM branch summaries (requires [commit.generation])[0m
+[107m [0m 
+[107m [0m [2mfull = [0m[2m[33mfalse[0m[2m       [0m[2m# Show CI, main…± diffstat, and LLM summaries (--full)[0m
+[107m [0m [2mbranches = [0m[2m[33mfalse[0m[2m   [0m[2m# Include branches without worktrees (--branches)[0m
+[107m [0m [2mremotes = [0m[2m[33mfalse[0m[2m    [0m[2m# Include remote-only branches (--remotes)[0m
+[107m [0m 
+[107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
 
 [32mCommit[0m
 
 Shared by [2mwt step commit[0m, [2mwt step squash[0m, and [2mwt merge[0m.
 
-  [2m[commit][0m
-  [2mstage = "all"      # What to stage before commit: "all", "tracked", or "none"[0m
+[107m [0m [2m[36m[commit][0m
+[107m [0m [2mstage = [0m[2m[32m"all"[0m[2m      [0m[2m# What to stage before commit: "all", "tracked", or "none"[0m
 
 [32mMerge[0m
 
-All flags are on by default. Set to false to change default behavior.
+Most flags are on by default. Set to false to change default behavior.
 
-  [2m[merge][0m
-  [2msquash = true      # Squash commits into one (--no-squash to preserve history)[0m
-  [2mcommit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
-  [2mrebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
-  [2mremove = true      # Remove worktree after merge (--no-remove to keep)[0m
-  [2mverify = true      # Run project hooks (--no-verify to skip)[0m
+[107m [0m [2m[36m[merge][0m
+[107m [0m [2msquash = [0m[2m[33mtrue[0m[2m      [0m[2m# Squash commits into one (--no-squash to preserve history)[0m
+[107m [0m [2mcommit = [0m[2m[33mtrue[0m[2m      [0m[2m# Commit uncommitted changes first (--no-commit to skip)[0m
+[107m [0m [2mrebase = [0m[2m[33mtrue[0m[2m      [0m[2m# Rebase onto target before merge (--no-rebase to skip)[0m
+[107m [0m [2mremove = [0m[2m[33mtrue[0m[2m      [0m[2m# Remove worktree after merge (--no-remove to keep)[0m
+[107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-verify to skip)[0m
+[107m [0m [2mno-ff = [0m[2m[33mfalse[0m[2m      [0m[2m# Create a merge commit even when fast-forward is possible (--no-ff)[0m
 
-[32mSwitch picker[0m
+[32mSwitch[0m
 
-Configuration for [2mwt switch[0m interactive picker.
+[107m [0m [2m[36m[switch][0m
+[107m [0m [2mno-cd = [0m[2m[33mtrue[0m[2m       [0m[2m# Skip directory change after switching (--cd to override)[0m
+[107m [0m 
+[107m [0m [2m[36m[switch.picker][0m
+[107m [0m [2m# Pager command for diff preview (overrides git's core.pager)[0m
+[107m [0m [2m# pager = "delta --paging=never"[0m
+[107m [0m 
+[107m [0m [2m# Wall-clock budget (ms) for picker data collection (default: 500)[0m
+[107m [0m [2m# Tasks still running when the budget expires are abandoned; 0 disables[0m
+[107m [0m [2m# timeout-ms = 500[0m
 
-  [2m[switch.picker][0m
-  [2m# Pager command for diff preview (overrides git's core.pager)[0m
-  [2m# pager = "delta --paging=never"[0m
-  [2m[0m
-  [2m# Timeout (ms) for git commands during picker loading (default: 200)[0m
-  [2m# Lower values show the TUI faster; 0 disables timeouts[0m
-  [2m# timeout-ms = 200[0m
+[32mStep[0m
+
+[107m [0m [2m[36m[step.copy-ignored][0m
+[107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m]  [0m[2m# Add more excludes after built-in defaults and .worktreeinclude[0m
+
+Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.pi/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+
+[32mAliases[0m
+
+Command templates that run with [2mwt step <name>[0m. See [2mwt step[0m aliases for usage and flags.
+
+[107m [0m [2m[36m[aliases][0m
+[107m [0m [2mgreet = [0m[2m[32m"echo Hello from {{ branch }}"[0m
+[107m [0m [2murl = [0m[2m[32m"echo http://localhost:{{ branch | hash_port }}"[0m
+
+Aliases defined here apply to all projects. For project-specific aliases, use the project config [2m[aliases][0m section instead.
 
 [32mUser project-specific settings[0m
 
@@ -197,15 +249,17 @@ For context:
 
 Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
-[1mSetting overrides (Experimental)[0m
+[1mSetting overrides [experimental][0m
 
-Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value. Hooks append — both global and per-project hooks run.
+Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
-  [2m[projects."github.com/user/repo"][0m
-  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"[0m
-  [2mlist.full = true[0m
-  [2mmerge.squash = false[0m
-  [2mpost-create.env = "cp .env.example .env"[0m
+[107m [0m [2m[36m[projects."github.com/user/repo"][0m
+[107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
+[107m [0m [2mlist.full = [0m[2m[33mtrue[0m
+[107m [0m [2mmerge.squash = [0m[2m[33mfalse[0m
+[107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
+[107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
+[107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 
 [32mCustom prompt templates[0m
 
@@ -221,38 +275,38 @@ Available variables:
 
 Default template:
 
-  [2m[commit.generation][0m
-  [2mtemplate = """[0m
-  [2mWrite a commit message for the staged changes below.[0m
-  [2m[0m
-  [2m<format>[0m
-  [2m- Subject line under 50 chars[0m
-  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
-  [2m- Output only the commit message, no quotes or code blocks[0m
-  [2m</format>[0m
-  [2m[0m
-  [2m<style>[0m
-  [2m- Imperative mood: "Add feature" not "Added feature"[0m
-  [2m- Match recent commit style (conventional commits if used)[0m
-  [2m- Describe the change, not the intent or benefit[0m
-  [2m</style>[0m
-  [2m[0m
-  [2m<diffstat>[0m
-  [2m{{ git_diff_stat }}[0m
-  [2m</diffstat>[0m
-  [2m[0m
-  [2m<diff>[0m
-  [2m{{ git_diff }}[0m
-  [2m</diff>[0m
-  [2m[0m
-  [2m<context>[0m
-  [2mBranch: {{ branch }}[0m
-  [2m{% if recent_commits %}<recent_commits>[0m
-  [2m{% for commit in recent_commits %}- {{ commit }}[0m
-  [2m{% endfor %}</recent_commits>{% endif %}[0m
-  [2m</context>[0m
-  [2m[0m
-  [2m"""[0m
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mtemplate = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2m[32mWrite a commit message for the staged changes below.[0m
+[107m [0m 
+[107m [0m [2m[32m<format>[0m
+[107m [0m [2m[32m- Subject line under 50 chars[0m
+[107m [0m [2m[32m- For material changes, add a blank line then a body paragraph explaining the change[0m
+[107m [0m [2m[32m- Output only the commit message, no quotes or code blocks[0m
+[107m [0m [2m[32m</format>[0m
+[107m [0m 
+[107m [0m [2m[32m<style>[0m
+[107m [0m [2m[32m- Imperative mood: "[0m[2mAdd feature[0m[2m[32m" not "[0m[2mAdded feature[0m[2m[32m"[0m
+[107m [0m [2m[32m- Match recent commit style (conventional commits if used)[0m
+[107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
+[107m [0m [2m[32m</style>[0m
+[107m [0m 
+[107m [0m [2m[32m<diffstat>[0m
+[107m [0m [2m[32m{{ git_diff_stat }}[0m
+[107m [0m [2m[32m</diffstat>[0m
+[107m [0m 
+[107m [0m [2m[32m<diff>[0m
+[107m [0m [2m[32m{{ git_diff }}[0m
+[107m [0m [2m[32m</diff>[0m
+[107m [0m 
+[107m [0m [2m[32m<context>[0m
+[107m [0m [2m[32mBranch: {{ branch }}[0m
+[107m [0m [2m[32m{% if recent_commits %}<recent_commits>[0m
+[107m [0m [2m[32m{% for commit in recent_commits %}- {{ commit }}[0m
+[107m [0m [2m[32m{% endfor %}</recent_commits>{% endif %}[0m
+[107m [0m [2m[32m</context>[0m
+[107m [0m 
+[107m [0m [2m[32m"[0m[2m[32m""[0m
 
 [1mSquash template[0m
 
@@ -263,35 +317,35 @@ Available variables (in addition to commit template variables):
 
 Default template:
 
-  [2m[commit.generation][0m
-  [2msquash-template = """[0m
-  [2mCombine these commits into a single commit message.[0m
-  [2m[0m
-  [2m<format>[0m
-  [2m- Subject line under 50 chars[0m
-  [2m- For material changes, add a blank line then a body paragraph explaining the change[0m
-  [2m- Output only the commit message, no quotes or code blocks[0m
-  [2m</format>[0m
-  [2m[0m
-  [2m<style>[0m
-  [2m- Imperative mood: "Add feature" not "Added feature"[0m
-  [2m- Match the style of commits being squashed (conventional commits if used)[0m
-  [2m- Describe the change, not the intent or benefit[0m
-  [2m</style>[0m
-  [2m[0m
-  [2m<commits branch="{{ branch }}" target="{{ target_branch }}">[0m
-  [2m{% for commit in commits %}- {{ commit }}[0m
-  [2m{% endfor %}</commits>[0m
-  [2m[0m
-  [2m<diffstat>[0m
-  [2m{{ git_diff_stat }}[0m
-  [2m</diffstat>[0m
-  [2m[0m
-  [2m<diff>[0m
-  [2m{{ git_diff }}[0m
-  [2m</diff>[0m
-  [2m[0m
-  [2m"""[0m
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2msquash-template = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2m[32mCombine these commits into a single commit message.[0m
+[107m [0m 
+[107m [0m [2m[32m<format>[0m
+[107m [0m [2m[32m- Subject line under 50 chars[0m
+[107m [0m [2m[32m- For material changes, add a blank line then a body paragraph explaining the change[0m
+[107m [0m [2m[32m- Output only the commit message, no quotes or code blocks[0m
+[107m [0m [2m[32m</format>[0m
+[107m [0m 
+[107m [0m [2m[32m<style>[0m
+[107m [0m [2m[32m- Imperative mood: "[0m[2mAdd feature[0m[2m[32m" not "[0m[2mAdded feature[0m[2m[32m"[0m
+[107m [0m [2m[32m- Match the style of commits being squashed (conventional commits if used)[0m
+[107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
+[107m [0m [2m[32m</style>[0m
+[107m [0m 
+[107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
+[107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
+[107m [0m [2m[32m{% endfor %}</commits>[0m
+[107m [0m 
+[107m [0m [2m[32m<diffstat>[0m
+[107m [0m [2m[32m{{ git_diff_stat }}[0m
+[107m [0m [2m[32m</diffstat>[0m
+[107m [0m 
+[107m [0m [2m[32m<diff>[0m
+[107m [0m [2m[32m{{ git_diff }}[0m
+[107m [0m [2m[32m</diff>[0m
+[107m [0m 
+[107m [0m [2m[32m"[0m[2m[32m""[0m
 
 [32mPROJECT CONFIGURATION[0m
 
@@ -301,21 +355,30 @@ See [2mwt hook[0m for hook types, execution order, template variables, and exa
 
 [32mNon-hook settings[0m
 
-  [2m# .config/wt.toml[0m
-  [2m[0m
-  [2m# URL column in wt list (dimmed when port not listening)[0m
-  [2m[list][0m
-  [2murl = "http://localhost:{{ branch | hash_port }}"[0m
-  [2m[0m
-  [2m# Override CI platform detection for self-hosted instances[0m
-  [2m[ci][0m
-  [2mplatform = "github"  # or "gitlab"[0m
+[107m [0m [2m# .config/wt.toml[0m
+[107m [0m 
+[107m [0m [2m# URL column in wt list (dimmed when port not listening)[0m
+[107m [0m [2m[36m[list][0m
+[107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
+[107m [0m 
+[107m [0m [2m# Override CI platform detection for self-hosted instances[0m
+[107m [0m [2m[36m[ci][0m
+[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
+[107m [0m 
+[107m [0m [2m# Add more gitignored excludes for wt step copy-ignored[0m
+[107m [0m [2m[36m[step.copy-ignored][0m
+[107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
+[107m [0m 
+[107m [0m [2m# Command aliases (run with wt step <name>)[0m
+[107m [0m [2m[36m[aliases][0m
+[107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
+[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
 
 [32mSHELL INTEGRATION[0m
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-  [2mwt config shell install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
 
 For manual setup, see [2mwt config shell init --help[0m.
 
@@ -337,11 +400,11 @@ Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING
 
 For nested config sections, use double underscores to separate levels:
 
-            Config                   Environment Variable          
-   ───────────────────────── ───────────────────────────────────── 
-   [2mworktree-path[0m             [2mWORKTRUNK_WORKTREE_PATH[0m               
-   [2mcommit.generation.command[0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND[0m 
-   [2mcommit.stage[0m              [2mWORKTRUNK_COMMIT__STAGE[0m               
+          Config                   Environment Variable          
+ ───────────────────────── ───────────────────────────────────── 
+ [2mworktree-path[0m             [2mWORKTRUNK_WORKTREE_PATH[0m               
+ [2mcommit.generation.command[0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND[0m 
+ [2mcommit.stage[0m              [2mWORKTRUNK_COMMIT__STAGE[0m               
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
@@ -349,18 +412,18 @@ Note the single underscore after [2mWORKTRUNK[0m and double underscores betwee
 
 Override the LLM command in CI to use a mock:
 
-  [2mWORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge[0m
+[107m [0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND=[0m[2m[32m"echo 'test: automated commit'"[0m[2m [0m[2m[34mwt[0m[2m merge[0m
 
 [32mOther environment variables[0m
 
-               Variable                                                   Purpose                                      
-   ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
-   [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers (useful for testing dev builds)           
-   [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
-   [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
-   [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     
-   [2mWORKTRUNK_DIRECTIVE_FILE[0m          Internal: set by shell wrappers to enable directory changes                       
-   [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)         
-   [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
-   [2mNO_COLOR[0m                          Disable colored output (standard)                                                 
-   [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY
+             Variable                                                   Purpose                                      
+ ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers (useful for testing dev builds)           
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     
+ [2mWORKTRUNK_DIRECTIVE_FILE[0m          Internal: set by shell wrappers to enable directory changes                       
+ [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)         
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                 
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY

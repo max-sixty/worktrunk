@@ -49,11 +49,11 @@ let output = wt_command()
 
 ### Method reference
 
-| Method | Use when |
-|--------|----------|
-| `repo.wt_command()` | Running wt commands with a TestRepo |
-| `wt_command()` | Running wt without a TestRepo (free function) |
-| `repo.git_command()` | Running git commands |
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `repo.wt_command()` | `Command` | Running wt commands with a TestRepo |
+| `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
+| `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
 ## Timing Tests: Long Timeouts with Fast Polling
 
@@ -285,6 +285,92 @@ fn test_config_loading() {
 
 For environment-dependent tests, use `Command::new()` with `.env()` to set variables in a subprocess, or use the test isolation helpers (`repo.wt_command()`, `wt_command()`).
 
+## Test Style
+
+### Snapshot env drift is cosmetic
+
+`insta_cmd` snapshots record the test's environment variables in an `env:` block.
+When test infrastructure changes add or reorder env vars (e.g., `NO_COLOR: ""`
+appearing in a snapshot that didn't have it before), the snapshot diff includes
+those lines even though the test output is unchanged. This is cosmetic drift —
+accept it without comment during review.
+
+### Inline snapshots over multi-assert
+
+When a test checks formatted output, use `insta::assert_snapshot!` with an
+inline snapshot instead of multiple `assert!(x.contains(...))` calls. Snapshots
+capture the complete output, so a single snapshot replaces many contains checks
+and catches regressions that spot-checks miss.
+
+```rust
+use insta::assert_snapshot;
+
+// ✅ GOOD: One snapshot captures all formatting
+assert_snapshot!(format_message("hello"), @"  │ hello");
+
+// ❌ BAD: Spot-checks that miss structural regressions
+assert!(result.contains("│"));
+assert!(result.contains("hello"));
+assert!(!result.contains("error"));
+```
+
+Import `assert_snapshot` directly (`use insta::assert_snapshot;`) rather than
+using the qualified `insta::assert_snapshot!` form.
+
+For first-time snapshot creation, leave the inline value empty (`@""`), then
+run `cargo insta test --accept` to fill it.
+
+To update existing file-based snapshots (e.g., after editing CLI help text),
+use `cargo insta test --accept`:
+
+```bash
+cargo insta test --accept -- --test integration "test_help"
+```
+
+Do not manually edit `.snap` files — they contain ANSI escape sequences that
+are difficult to reproduce by hand.
+
+### One test per belief
+
+Group related inputs into a single test when they verify the same belief about
+the code. A test named `test_wrap_text_at_width` that exercises short text, long
+text, single words, and edge cases is better than five separate test functions
+testing each input individually.
+
+```rust
+// ✅ GOOD: One test for the belief "wrapping respects word boundaries"
+#[test]
+fn test_wrap_text_at_width() {
+    assert_eq!(wrap_text_at_width("short text", 20), vec!["short text"]);
+    assert_eq!(wrap_text_at_width("hello world foo bar", 10), vec!["hello", "world foo", "bar"]);
+    assert_eq!(wrap_text_at_width("superlongword", 5), vec!["superlongword"]);
+    assert_eq!(wrap_text_at_width("", 20), vec![""]);
+}
+```
+
+Table-driven tests work well for functions that map inputs to expected outputs:
+
+```rust
+#[test]
+fn test_bash_token_styles() {
+    let cases = [
+        ("function", AnsiColor::Blue),
+        ("keyword", AnsiColor::Magenta),
+        ("string", AnsiColor::Green),
+    ];
+    for (name, expected) in cases {
+        let style = bash_token_style(name).expect(name);
+        assert_eq!(style.get_fg_color(), Some(Color::Ansi(expected)), "{name}");
+    }
+}
+```
+
+### Don't test constructors or dependencies
+
+Tests that verify `Style::new().bold()` produces a bold style, or that
+`StyledString::raw("x")` stores `"x"`, are testing the dependency — not our
+code. Delete these. Test the behavior that uses these types instead.
+
 ## Deterministic Time in Tests
 
 Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
@@ -294,10 +380,10 @@ Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is
 ```rust
 use crate::common::TEST_EPOCH;
 
-repo.git_command(&[
+repo.run_git(&[
     "config", "worktrunk.state.feature.ci-status",
     &format!(r#"{{"checked_at":{TEST_EPOCH},"head":"abc123"}}"#),
 ]);
 ```
 
-**For production code** that needs timestamps, use `worktrunk::utils::get_now()` which respects `WORKTRUNK_TEST_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.
+**For production code** that needs timestamps, use `worktrunk::utils::epoch_now()` which respects `WORKTRUNK_TEST_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.

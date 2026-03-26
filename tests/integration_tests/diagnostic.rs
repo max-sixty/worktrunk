@@ -12,7 +12,7 @@
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
-//! - `test_diagnostic_written_to_correct_location`: File in .git/wt-logs/
+//! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
 
 use std::fs;
@@ -55,7 +55,7 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     let diagnostic_path = repo
         .root_path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("diagnostic.md");
     assert!(
         diagnostic_path.exists(),
@@ -101,7 +101,7 @@ fn test_diagnostic_not_created_without_vv(mut repo: TestRepo) {
     let diagnostic_path = repo
         .root_path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("diagnostic.md");
     assert!(
         !diagnostic_path.exists(),
@@ -141,7 +141,7 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
     let content = fs::read_to_string(
         repo.root_path()
             .join(".git")
-            .join("wt-logs")
+            .join("wt/logs")
             .join("diagnostic.md"),
     )
     .unwrap();
@@ -201,7 +201,7 @@ fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
     let content = fs::read_to_string(
         repo.root_path()
             .join(".git")
-            .join("wt-logs")
+            .join("wt/logs")
             .join("diagnostic.md"),
     )
     .unwrap();
@@ -228,7 +228,7 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
     let content = fs::read_to_string(
         repo.root_path()
             .join(".git")
-            .join("wt-logs")
+            .join("wt/logs")
             .join("diagnostic.md"),
     )
     .unwrap();
@@ -276,7 +276,7 @@ fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     );
 }
 
-/// Diagnostic file should be written to .git/wt-logs/diagnostic.md
+/// Diagnostic file should be written to .git/wt/logs/diagnostic.md
 #[rstest]
 fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
     repo.add_worktree("feature");
@@ -284,14 +284,14 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
 
     repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
-    // Should be in .git/wt-logs/ directory
-    let wt_logs_dir = repo.root_path().join(".git").join("wt-logs");
+    // Should be in .git/wt/logs/ directory
+    let wt_logs_dir = repo.root_path().join(".git").join("wt/logs");
     assert!(wt_logs_dir.exists());
 
     let diagnostic_path = wt_logs_dir.join("diagnostic.md");
     assert!(
         diagnostic_path.exists(),
-        "diagnostic.md should be in wt-logs"
+        "diagnostic.md should be in wt/logs"
     );
 
     // Should be a markdown file
@@ -313,7 +313,7 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
     let verbose_log_path = repo
         .root_path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("verbose.log");
     assert!(
         verbose_log_path.exists(),
@@ -344,7 +344,7 @@ fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
     let diagnostic_path = repo
         .root_path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("diagnostic.md");
     assert!(
         diagnostic_path.exists(),
@@ -381,7 +381,7 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     let diagnostic_path = repo
         .root_path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("diagnostic.md");
     assert!(
         diagnostic_path.exists(),
@@ -407,7 +407,7 @@ fn test_v_does_not_enable_logging(repo: TestRepo) {
     assert!(output.status.success(), "Command should succeed");
 
     // Neither diagnostic.md nor verbose.log should exist with just -v
-    let wt_logs = repo.root_path().join(".git").join("wt-logs");
+    let wt_logs = repo.root_path().join(".git").join("wt/logs");
     let diagnostic_path = wt_logs.join("diagnostic.md");
     let verbose_log_path = wt_logs.join("verbose.log");
 
@@ -441,7 +441,7 @@ fn test_vv_outside_repo_no_crash() {
     let diagnostic_path = temp_dir
         .path()
         .join(".git")
-        .join("wt-logs")
+        .join("wt/logs")
         .join("diagnostic.md");
     assert!(
         !diagnostic_path.exists(),
@@ -467,7 +467,7 @@ fn test_diagnostic_gh_hint_with_vv(mut repo: TestRepo) {
 
     // Normalize the path in the hint. The path may be:
     // - Quoted on Windows (drive letter colon requires POSIX escaping): 'D:/a/.../diagnostic.md'
-    // - Unquoted on Unix (no special chars): _REPO_/.git/wt-logs/diagnostic.md
+    // - Unquoted on Unix (no special chars): _REPO_/.git/wt/logs/diagnostic.md
     let normalized = regex::Regex::new(r"--web '?[^' \x1b]*diagnostic\.md'?")
         .unwrap()
         .replace(hint_line, "--web [DIAGNOSTIC_PATH]");
