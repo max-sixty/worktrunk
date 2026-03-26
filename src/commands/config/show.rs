@@ -519,9 +519,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let repo_root = match repo.current_worktree().root() {
-        Ok(root) => root,
-        Err(_) => {
+    let config_path = match repo.project_config_path() {
+        Ok(Some(path)) => path,
+        _ => {
             writeln!(
                 out,
                 "{}",
@@ -533,7 +533,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
         out,
