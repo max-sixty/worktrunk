@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set 🤖 || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker set 🤖 || true"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set 💬 || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker set 💬 || true"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker clear || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker clear || true"
           }
         ]
       }
