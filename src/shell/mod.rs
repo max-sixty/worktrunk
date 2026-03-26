@@ -42,6 +42,19 @@ pub enum Shell {
 }
 
 impl Shell {
+    /// Whether this shell uses a standalone wrapper file as integration.
+    ///
+    /// Wrapper-based shells (Fish, Nushell) install a complete function file that the shell
+    /// autoloads. The file itself IS the integration. Eval-based shells (Bash, Zsh, PowerShell)
+    /// add an `eval`/`source` line to an existing config file like `.bashrc`.
+    ///
+    /// This distinction matters for:
+    /// - Installation: wrapper files are written whole; eval lines are appended
+    /// - Detection: wrapper file presence = confirmed integration, even if outdated
+    pub fn is_wrapper_based(&self) -> bool {
+        matches!(self, Self::Fish | Self::Nushell)
+    }
+
     /// Returns the config file paths for this shell.
     ///
     /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).

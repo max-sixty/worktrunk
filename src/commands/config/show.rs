@@ -808,7 +808,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                         ))
                     )?;
-                } else if matches!(shell, Shell::Fish | Shell::Nushell)
+                } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
                     // File exists but has different content (e.g. outdated version)
@@ -892,10 +892,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         .configured
         .iter()
         .filter(|r| {
-            // For shells with standalone wrapper files (Fish, Nushell), the file at the
-            // path IS the integration — any action means it was recognized. For eval-based
-            // shells (Bash, Zsh), only AlreadyExists means the config line was found.
-            matches!(r.shell, Shell::Fish | Shell::Nushell)
+            // For wrapper-based shells, the file at the path IS the integration — any
+            // action means it was recognized. For eval-based shells, only AlreadyExists
+            // means the config line was found.
+            r.shell.is_wrapper_based()
                 || matches!(r.action, ConfigAction::AlreadyExists)
         })
         .map(|r| r.path.as_path())
