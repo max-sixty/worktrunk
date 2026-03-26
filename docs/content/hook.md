@@ -306,7 +306,9 @@ The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` 
 
 The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
-# Pipeline Ordering <span class="badge-experimental"></span>
+# Pipeline Ordering
+
+<span class="badge-experimental"></span>
 
 By default, all commands in a `post-*` hook run concurrently in the background. When one command depends on another — `npm run build` needs `npm install` to finish first — use a list instead of a table:
 

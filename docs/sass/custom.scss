@@ -997,7 +997,7 @@ ul > li::marker {
 // Zola's heading slug generation or page TOC entries.
 .badge-experimental {
     display: inline-block;
-    vertical-align: middle;
+    vertical-align: 0.15em;
     white-space: nowrap;
 
     &::after {
@@ -1011,6 +1011,18 @@ ul > li::marker {
         padding: 0.05rem 0.5rem;
         line-height: 1.4;
     }
+}
+
+// Badge after heading — generated on a separate line so Zola's anchor link
+// doesn't wrap it. The badge lands in a <p> (CommonMark wraps inline HTML);
+// collapse that <p> to inline so it flows on the heading's line.
+:is(h1, h2, h3, h4):has(+ p > .badge-experimental:only-child) {
+    display: inline-block;
+}
+
+:is(h1, h2, h3, h4) + p:has(> .badge-experimental:only-child) {
+    display: inline;
+    margin: 0;
 }
 
 // ============================================================================

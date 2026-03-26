@@ -436,7 +436,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step eval [experimental]
+## wt step eval
+
+[experimental]
 
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
@@ -514,7 +516,9 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step for-each [experimental]
+## wt step for-each
+
+[experimental]
 
 Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
@@ -580,7 +584,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step promote [experimental]
+## wt step promote
+
+[experimental]
 
 Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
 
@@ -652,7 +658,9 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step prune [experimental]
+## wt step prune
+
+[experimental]
 
 Remove worktrees merged into the default branch.
 
@@ -720,7 +728,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt step relocate [experimental]
+## wt step relocate
+
+[experimental]
 
 Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
@@ -815,7 +825,9 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## Aliases [experimental]
+## Aliases
+
+[experimental]
 
 Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](https://worktrunk.dev/hook/#template-variables) as hooks.
 

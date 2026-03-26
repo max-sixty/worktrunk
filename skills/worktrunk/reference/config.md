@@ -230,7 +230,9 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides [experimental]
+#### Setting overrides
+
+[experimental]
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 

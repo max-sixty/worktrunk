@@ -460,7 +460,9 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step eval <span class="badge-experimental"></span>
+## wt step eval
+
+<span class="badge-experimental"></span>
 
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
@@ -540,7 +542,9 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step for-each <span class="badge-experimental"></span>
+## wt step for-each
+
+<span class="badge-experimental"></span>
 
 Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
@@ -608,7 +612,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step promote <span class="badge-experimental"></span>
+## wt step promote
+
+<span class="badge-experimental"></span>
 
 Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
 
@@ -682,7 +688,9 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step prune <span class="badge-experimental"></span>
+## wt step prune
+
+<span class="badge-experimental"></span>
 
 Remove worktrees merged into the default branch.
 
@@ -752,7 +760,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step relocate <span class="badge-experimental"></span>
+## wt step relocate
+
+<span class="badge-experimental"></span>
 
 Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
 
@@ -849,7 +859,9 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## Aliases <span class="badge-experimental"></span>
+## Aliases
+
+<span class="badge-experimental"></span>
 
 Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
