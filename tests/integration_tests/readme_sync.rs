@@ -1838,7 +1838,8 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     match fs::read_link(&symlink_path) {
         Ok(target) => {
             assert_eq!(
-                target, expected_target,
+                target,
+                expected_target,
                 "Symlink at {} points to {:?}, expected {:?}",
                 symlink_path.display(),
                 target,
