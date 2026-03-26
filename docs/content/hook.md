@@ -331,7 +331,13 @@ post-start = [
 ]
 ```
 
-The rule: lists run items in order, maps run entries concurrently. The entire pipeline runs in the background as one process.
+The TOML type determines execution:
+
+- **String** — one command (`post-start = "npm install"`)
+- **Map** — concurrent commands
+- **List** — serial steps (each item is a string or map)
+
+The entire pipeline runs in the background as one process.
 
 ## How it works
 
