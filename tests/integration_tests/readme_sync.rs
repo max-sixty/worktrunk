@@ -1862,13 +1862,11 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
 
     // Generate index.json with SHA-256 digest of SKILL.md
     let digest = {
-        let output = std::process::Command::new("sha256sum")
-            .arg(&skill_md_path)
-            .output()
-            .expect("sha256sum command failed");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let hash = stdout.split_whitespace().next().unwrap();
-        format!("sha256:{hash}")
+        use sha2::{Digest, Sha256};
+        let file_bytes = fs::read(&skill_md_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+        let hash = Sha256::digest(&file_bytes);
+        format!("sha256:{hash:x}")
     };
 
     // Parse the description from SKILL.md frontmatter

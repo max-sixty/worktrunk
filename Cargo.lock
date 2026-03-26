@@ -3247,6 +3247,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "shell-escape",
  "shellexpand",
  "signal-hook 0.4.3",
