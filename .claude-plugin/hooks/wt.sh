@@ -5,17 +5,19 @@
 # On other platforms, uses wt.
 # Usage: wt.sh [args...]
 
-if [[ "$(uname -o 2>/dev/null)" =~ ^(Msys|Cygwin)$ ]]; then
-    if command -v git-wt.exe >/dev/null 2>&1; then
-        WT=git-wt.exe
-    elif [[ "$(command -v wt 2>/dev/null)" != *WindowsApps* ]]; then
-        WT=wt
-    else
-        echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or replace the Windows Terminal alias" >&2
+# Resolve the worktrunk binary
+if command -v git-wt.exe >/dev/null 2>&1; then
+    WT=git-wt.exe
+elif command -v wt >/dev/null 2>&1; then
+    # On Windows, wt.exe in WindowsApps is Windows Terminal, not worktrunk
+    if [[ "$(command -v wt)" == *WindowsApps* ]]; then
+        echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias — see https://worktrunk.dev/worktrunk/#install" >&2
         exit 1
     fi
-else
     WT=wt
+else
+    echo "worktrunk: could not find 'wt' in PATH" >&2
+    exit 1
 fi
 
 "$WT" "$@"
