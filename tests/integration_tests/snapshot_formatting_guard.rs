@@ -25,6 +25,7 @@ const BLANK_BEFORE_HINT_ALLOWED: &[&str] = &[
     // from per-shell status section. The `↳` here is a status item, not a hint.
     "config_show__config_show_partial_shell_config_shows_hint",
     "config_show__config_show_unmatched_candidate_warning",
+    "config_show__config_show_unmatched_candidate_not_suppressed_by_wrapper",
 ];
 
 #[test]
