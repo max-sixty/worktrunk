@@ -1820,7 +1820,124 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
+/// Sync .well-known/agent-skills/ from skills/worktrunk/ for web discovery.
+///
+/// Copies SKILL.md and reference files (excluding README.md) to
+/// docs/static/.well-known/agent-skills/worktrunk/ and generates index.json
+/// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
+fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
+    let mut updated_files = Vec::new();
+
+    let skill_src = project_root.join("skills/worktrunk");
+    let well_known_dst = project_root.join("docs/static/.well-known/agent-skills/worktrunk");
+
+    // Ensure destination directories exist
+    fs::create_dir_all(well_known_dst.join("reference")).unwrap_or_else(|e| {
+        panic!(
+            "Failed to create directory {}: {}",
+            well_known_dst.display(),
+            e
+        )
+    });
+
+    // Sync SKILL.md
+    let skill_md_src = skill_src.join("SKILL.md");
+    let skill_md_dst = well_known_dst.join("SKILL.md");
+    let skill_md_content = fs::read_to_string(&skill_md_src)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_src.display(), e));
+    let current = fs::read_to_string(&skill_md_dst).unwrap_or_default();
+    if current != skill_md_content {
+        fs::write(&skill_md_dst, &skill_md_content)
+            .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_md_dst.display(), e));
+        updated_files.push("docs/static/.well-known/agent-skills/worktrunk/SKILL.md".to_string());
+    }
+
+    // Sync reference files (excluding README.md which is the project README)
+    let ref_src = skill_src.join("reference");
+    let ref_dst = well_known_dst.join("reference");
+    let mut entries: Vec<_> = fs::read_dir(&ref_src)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", ref_src.display(), e))
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && name != "README.md" {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    entries.sort();
+
+    // Remove stale files in destination that no longer exist in source
+    if let Ok(dst_entries) = fs::read_dir(&ref_dst) {
+        for entry in dst_entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && !entries.contains(&name) {
+                let _ = fs::remove_file(entry.path());
+                updated_files.push(format!(
+                    "docs/static/.well-known/agent-skills/worktrunk/reference/{name} (removed)"
+                ));
+            }
+        }
+    }
+
+    for name in &entries {
+        let src_file = ref_src.join(name);
+        let dst_file = ref_dst.join(name);
+        let src_content = fs::read_to_string(&src_file)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", src_file.display(), e));
+        let dst_content = fs::read_to_string(&dst_file).unwrap_or_default();
+        if src_content != dst_content {
+            fs::write(&dst_file, &src_content)
+                .unwrap_or_else(|e| panic!("Failed to write {}: {}", dst_file.display(), e));
+            updated_files.push(format!(
+                "docs/static/.well-known/agent-skills/worktrunk/reference/{name}"
+            ));
+        }
+    }
+
+    // Generate index.json with SHA-256 digest of SKILL.md
+    let digest = {
+        let output = std::process::Command::new("sha256sum")
+            .arg(&skill_md_dst)
+            .output()
+            .expect("sha256sum command failed");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let hash = stdout.split_whitespace().next().unwrap();
+        format!("sha256:{hash}")
+    };
+
+    // Parse the description from SKILL.md frontmatter
+    let description = skill_md_content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+        .and_then(|(frontmatter, _)| {
+            frontmatter
+                .lines()
+                .find(|line| line.starts_with("description:"))
+                .map(|line| line.trim_start_matches("description:").trim().to_string())
+        })
+        .unwrap_or_default();
+
+    let index_json = format!(
+        "{{\n  \"$schema\": \"https://schemas.agentskills.io/discovery/0.2.0/schema.json\",\n  \"skills\": [\n    {{\n      \"name\": \"worktrunk\",\n      \"type\": \"skill-md\",\n      \"description\": {description},\n      \"url\": \"./worktrunk/SKILL.md\",\n      \"digest\": \"{digest}\"\n    }}\n  ]\n}}\n",
+        description = serde_json::to_string(&description).unwrap(),
+    );
+
+    let index_dst = project_root.join("docs/static/.well-known/agent-skills/index.json");
+    let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
+    if current_index != index_json {
+        fs::write(&index_dst, &index_json)
+            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
+        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+    }
+
+    updated_files
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// then .well-known/agent-skills/ (skills → docs/static).
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
@@ -1833,9 +1950,17 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
 
+    // Step 3: Sync .well-known/agent-skills/ (skills/ → docs/static/)
+    // This reads the freshly-written skills from step 2
+    let well_known_files = sync_well_known_skills(project_root);
+
     // Aggregate results
     let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+    let all_files: Vec<_> = cmd_files
+        .into_iter()
+        .chain(skill_files)
+        .chain(well_known_files)
+        .collect();
 
     if !all_errors.is_empty() {
         panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));
