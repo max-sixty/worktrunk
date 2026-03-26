@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Cross-platform wrapper for the worktrunk CLI.
-# On Windows (MSYS/Cygwin), prefers git-wt.exe if available, then wt if it
-# isn't the Windows Terminal alias (which lives in WindowsApps).
-# On other platforms, uses wt.
+# Prefers git-wt.exe, falls back to wt. Rejects wt if it resolves to
+# Windows Terminal (WindowsApps/wt.exe).
 # Usage: wt.sh [args...]
 
 # Resolve the worktrunk binary
