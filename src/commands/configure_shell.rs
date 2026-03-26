@@ -374,7 +374,7 @@ pub fn scan_shell_configs(
 
         // For Fish/Nushell, also check if any candidate's parent directory exists
         // since we create the file there rather than modifying an existing one
-        let has_config_location = if matches!(shell, Shell::Fish | Shell::Nushell) {
+        let has_config_location = if shell.is_wrapper_based() {
             paths.iter().any(|p| p.parent().is_some_and(|d| d.exists())) || target_path.is_some()
         } else {
             target_path.is_some()
@@ -411,7 +411,7 @@ pub fn scan_shell_configs(
         } else if shell_filter.is_none() {
             // Track skipped shells (only when not explicitly filtering)
             // For Fish/Nushell, we check for parent directory; for others, the config file
-            let skipped_path = if matches!(shell, Shell::Fish | Shell::Nushell) {
+            let skipped_path = if shell.is_wrapper_based() {
                 paths
                     .first()
                     .and_then(|p| p.parent())
@@ -452,7 +452,7 @@ fn configure_shell_file(
     // For Fish and Nushell, we write the full wrapper to a file that gets autoloaded.
     // This allows updates to worktrunk to automatically provide the latest wrapper logic
     // without requiring reinstall.
-    if matches!(shell, Shell::Fish | Shell::Nushell) {
+    if shell.is_wrapper_based() {
         let init = shell::ShellInit::with_prefix(shell, cmd.to_string());
         let wrapper = if matches!(shell, Shell::Fish) {
             init.generate_fish_wrapper()

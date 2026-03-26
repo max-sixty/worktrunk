@@ -42,17 +42,18 @@ pub(crate) use invocation::{
 pub(crate) use crate::cli::OutputFormat;
 
 #[cfg(unix)]
-use commands::handle_select;
-use commands::worktree::{handle_no_ff_merge, handle_push};
+use commands::handle_picker;
+use commands::repository_ext::RepositoryCliExt;
+use commands::worktree::{BranchDeletionMode, handle_no_ff_merge, handle_push};
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, SquashResult, SwitchOptions, add_approvals,
-    clear_approvals, handle_completions, handle_config_create, handle_config_show,
+    MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
+    add_approvals, clear_approvals, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
     handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
-    handle_rebase, handle_remove, handle_remove_current, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
-    step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
+    handle_rebase, handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all,
+    handle_state_get, handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
+    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_diff, step_eval,
+    step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -149,12 +150,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, name.as_deref(), &vars),
-        HookCommand::PostCreate {
+        HookCommand::PreStart {
             name,
             yes,
             dry_run,
             vars,
-        } => run_non_toggle_hook(HookType::PostCreate, yes, dry_run, name.as_deref(), &vars),
+        } => run_non_toggle_hook(HookType::PreStart, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostStart {
             name,
             yes,
@@ -195,12 +196,34 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PostCommit {
+            name,
+            yes,
+            dry_run,
+            foreground,
+            vars,
+        } => run_toggleable_hook(
+            HookType::PostCommit,
+            yes,
+            dry_run,
+            foreground,
+            name.as_deref(),
+            &vars,
+        ),
         HookCommand::PostMerge {
             name,
             yes,
             dry_run,
+            foreground,
             vars,
-        } => run_non_toggle_hook(HookType::PostMerge, yes, dry_run, name.as_deref(), &vars),
+        } => run_toggleable_hook(
+            HookType::PostMerge,
+            yes,
+            dry_run,
+            foreground,
+            name.as_deref(),
+            &vars,
+        ),
         HookCommand::PreRemove {
             name,
             yes,
@@ -469,9 +492,9 @@ fn handle_list_command(
 
 #[cfg(unix)]
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
-    // Deprecated: show warning and delegate to handle_select
+    // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
-    handle_select(branches, remotes, None)
+    handle_picker(branches, remotes, None)
 }
 
 #[cfg(not(unix))]
@@ -507,7 +530,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             let Some(branch) = spec.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_select(spec.branches, spec.remotes, change_dir_flag);
+                    return handle_picker(spec.branches, spec.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
@@ -599,6 +622,8 @@ fn validate_remove_targets(
             .collect()
     };
 
+    let deletion_mode = BranchDeletionMode::from_flags(keep_branch, force_delete);
+
     let mut plans = RemovePlans {
         others: Vec::new(),
         branch_only: Vec::new(),
@@ -623,25 +648,39 @@ fn validate_remove_targets(
                 let is_current = current_worktree.as_ref() == Some(&path_canonical);
 
                 if is_current {
-                    match handle_remove_current(keep_branch, force_delete, force, config) {
+                    match repo.prepare_worktree_removal(
+                        RemoveTarget::Current,
+                        deletion_mode,
+                        force,
+                        config,
+                        None,
+                    ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
                     }
                     continue;
                 }
 
-                // Non-current worktree - branch is always Some because:
-                // - "@" resolves to current worktree (handled by is_current branch above)
-                // - Other names resolve via resolve_worktree_arg which always sets branch: Some(...)
-                let branch_for_remove = branch.as_ref().unwrap();
-
-                match handle_remove(branch_for_remove, keep_branch, force_delete, force, config) {
+                // Non-current worktree: remove by branch name, or by path for
+                // detached worktrees (which have no branch).
+                let target = if let Some(ref branch_name) = branch {
+                    RemoveTarget::Branch(branch_name)
+                } else {
+                    RemoveTarget::Path(&path_canonical)
+                };
+                match repo.prepare_worktree_removal(target, deletion_mode, force, config, None) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
                 }
             }
             ResolvedWorktree::BranchOnly { branch } => {
-                match handle_remove(&branch, keep_branch, force_delete, force, config) {
+                match repo.prepare_worktree_removal(
+                    RemoveTarget::Branch(&branch),
+                    deletion_mode,
+                    force,
+                    config,
+                    None,
+                ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),
                 }
@@ -689,13 +728,15 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
 
             if branches.is_empty() {
                 // Single worktree removal: validate FIRST, then approve, then execute
-                let result = handle_remove_current(
-                    !spec.delete_branch,
-                    spec.force_delete,
-                    spec.force,
-                    &config,
-                )
-                .context("Failed to remove worktree")?;
+                let result = repo
+                    .prepare_worktree_removal(
+                        RemoveTarget::Current,
+                        BranchDeletionMode::from_flags(!spec.delete_branch, spec.force_delete),
+                        spec.force,
+                        &config,
+                        None,
+                    )
+                    .context("Failed to remove worktree")?;
 
                 // Early exit for benchmarking time-to-first-output
                 if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {

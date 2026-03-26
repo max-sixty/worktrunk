@@ -34,14 +34,17 @@ pub trait RepositoryCliExt {
     /// Returns a `RemoveResult` describing what will be removed. The actual
     /// removal is performed by the output handler.
     ///
-    /// The `config` parameter is used to compute the expected worktree path
-    /// for path mismatch detection.
+    /// `current_path` overrides process-CWD discovery for determining which
+    /// worktree is "current". Pass `None` for normal CLI usage (discovers from
+    /// CWD). Pass `Some` when calling from a context where CWD may have changed
+    /// (e.g., background threads in the picker).
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
         config: &UserConfig,
+        current_path: Option<PathBuf>,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -77,12 +80,13 @@ impl RepositoryCliExt for Repository {
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
         config: &UserConfig,
+        current_path: Option<PathBuf>,
     ) -> anyhow::Result<RemoveResult> {
-        let current_path = self.current_worktree().root()?.to_path_buf();
+        let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
         let worktrees = self.list_worktrees()?;
-        // Home worktree: prefer default branch's worktree, fall back to first worktree,
-        // then repo base for bare repos with no worktrees.
-        let home_worktree_path = self.home_path()?;
+        // Primary worktree path: prefer default branch's worktree, fall back to first
+        // worktree, then repo base for bare repos with no worktrees.
+        let primary_path = self.home_path()?;
 
         // Phase 1: Resolve target to branch name and worktree disposition.
         // BranchOnly variants don't early-return — they go through shared validation below.
@@ -226,11 +230,17 @@ impl RepositoryCliExt for Repository {
             target_wt.ensure_clean("remove worktree", branch_name.as_deref(), true)?;
         }
 
-        // Compute main_path and changed_directory based on whether we're removing current
-        let (main_path, changed_directory) = if is_current {
-            (home_worktree_path, true)
+        // main_path: where post-remove hooks run from and background removal
+        // executes. Prefer the primary worktree for stability (the removed worktree
+        // is gone, and cwd may itself be a removal candidate during prune).
+        // Fall back to cwd when the primary worktree IS the one being removed
+        // (bare repo only — normal repos guard this in Phase 2 above).
+        // changed_directory: whether the user needs to cd away from cwd.
+        let changed_directory = is_current;
+        let main_path = if worktree_path == primary_path {
+            current_path
         } else {
-            (current_path, false)
+            primary_path
         };
 
         // Resolve target branch for integration reason display
@@ -390,6 +400,17 @@ impl RepositoryCliExt for Repository {
     }
 }
 
+/// Check if the current worktree is the primary worktree (should not be removed).
+///
+/// Returns true for the main worktree in normal repos and the default branch
+/// worktree in bare repos. Used by `wt merge` to skip removal silently, and
+/// by `prepare_worktree_removal` Phase 2 (which errors instead of skipping).
+pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
+    let current_root = repo.current_worktree().root()?;
+    let primary = repo.primary_worktree()?;
+    Ok(primary.as_deref() == Some(current_root.as_path()))
+}
+
 /// Compute integration reason for branch deletion.
 ///
 /// Returns `None` if:
@@ -400,7 +421,7 @@ impl RepositoryCliExt for Repository {
 ///
 /// Note: Integration is computed even for `Keep` mode so we can inform the user
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
-fn compute_integration_reason(
+pub(crate) fn compute_integration_reason(
     repo: &Repository,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
@@ -421,7 +442,7 @@ fn compute_integration_reason(
 ///
 /// The default branch is the integration target — checking it against itself is
 /// tautological (same logic as `wt list`'s `is_main` guard in `check_integration_state`).
-fn check_not_default_branch(
+pub(crate) fn check_not_default_branch(
     repo: &Repository,
     branch: &str,
     deletion_mode: &BranchDeletionMode,

@@ -600,7 +600,7 @@ pub fn plan_switch(
         Some(existing_path) if existing_path.exists() => {
             return Ok(SwitchPlan::Existing {
                 path: canonicalize(&existing_path).unwrap_or(existing_path),
-                branch: target.branch,
+                branch: Some(target.branch),
                 new_previous,
             });
         }
@@ -611,6 +611,31 @@ pub fn plan_switch(
             .into());
         }
         None => {}
+    }
+
+    // Phase 2b: Path-based fallback for detached worktrees.
+    // If the argument looks like a path (not a branch name), try to find a worktree there.
+    if !create {
+        let candidate = Path::new(branch);
+        let abs_path = if candidate.is_absolute() {
+            Some(candidate.to_path_buf())
+        } else if candidate.components().count() > 1 {
+            // Relative path with directory separators (e.g., "../repo.feature").
+            // Single-component names are ambiguous with branch names (already tried in Phase 2).
+            std::env::current_dir().ok().map(|cwd| cwd.join(candidate))
+        } else {
+            None
+        };
+        if let Some(abs_path) = abs_path
+            && let Some((path, wt_branch)) = repo.worktree_at_path(&abs_path)?
+        {
+            let canonical = canonicalize(&path).unwrap_or_else(|_| path.clone());
+            return Ok(SwitchPlan::Existing {
+                path: canonical,
+                branch: wt_branch,
+                new_previous,
+            });
+        }
     }
 
     // Phase 3: Compute expected path (only needed for create)
@@ -874,7 +899,7 @@ pub fn execute_switch(
                         .into_iter()
                         .flatten()
                         .collect();
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                     CreationMethod::ForkRef {
                         ref_type,
@@ -889,7 +914,7 @@ pub fn execute_switch(
                         };
                         let extra_vars: Vec<(&str, &str)> =
                             vec![(num_key, &num_str), (url_key, ref_url)];
-                        ctx.execute_post_create_commands(&extra_vars)?;
+                        ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
             }
@@ -906,7 +931,7 @@ pub fn execute_switch(
                     from_remote,
                 },
                 SwitchBranchInfo {
-                    branch,
+                    branch: Some(branch),
                     expected_path: None,
                 },
             ))

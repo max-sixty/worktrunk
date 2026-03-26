@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
-use crate::git::Repository;
+use crate::git::{HookType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -11,10 +12,10 @@ struct TestRepo {
 impl TestRepo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["init"])
             .current_dir(dir.path())
-            .output()
+            .run()
             .unwrap();
         let repo = Repository::at(dir.path()).unwrap();
         Self { _dir: dir, repo }
@@ -95,6 +96,9 @@ stage = "all"
 
 [merge]
 squash = true
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 
 [post-create]
 run = "npm install"
@@ -512,6 +516,32 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
     let config: UserConfig = toml::from_str(content).unwrap();
     assert!(!config.skip_shell_integration_prompt);
+}
+
+#[test]
+fn test_set_project_worktree_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# empty config\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_project_worktree_path(
+            "github.com/user/repo",
+            "../{{ branch | sanitize }}".to_string(),
+            Some(&config_path),
+        )
+        .unwrap();
+
+    assert_eq!(
+        config.worktree_path_for_project("github.com/user/repo"),
+        "../{{ branch | sanitize }}"
+    );
+
+    // Verify it was saved to disk
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("[projects.\"github.com/user/repo\"]"));
+    assert!(content.contains("worktree-path"));
 }
 
 // =========================================================================
@@ -1556,6 +1586,42 @@ squash = false
 }
 
 #[test]
+fn test_copy_ignored_config_merges_global_and_project() {
+    let project_id = "github.com/user/repo";
+    let config = UserConfig::load_from_str(
+        r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+
+[projects."github.com/user/repo".step.copy-ignored]
+exclude = [".repo-local/", ".entire/"]
+"#,
+    )
+    .unwrap();
+
+    let expected_global = vec![".conductor/".to_string(), ".entire/".to_string()];
+    let expected_merged = vec![
+        ".conductor/".to_string(),
+        ".entire/".to_string(),
+        ".repo-local/".to_string(),
+    ];
+
+    assert_eq!(config.copy_ignored(None).exclude, expected_global);
+    assert_eq!(
+        config.copy_ignored(Some(project_id)).exclude,
+        expected_merged.clone()
+    );
+    assert_eq!(
+        config
+            .resolved(Some(project_id))
+            .step
+            .copy_ignored()
+            .exclude,
+        expected_merged
+    );
+}
+
+#[test]
 fn test_deprecated_commit_generation_format_serde() {
     // Test old format: [commit-generation] is still parsed for backward compatibility
     let content = r#"
@@ -1879,7 +1945,7 @@ fn test_hooks_merge_append_semantics() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1898,7 +1964,7 @@ fn test_hooks_no_project_override_uses_global() {
 
     let effective = config.hooks(Some("github.com/other/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1921,7 +1987,7 @@ fn test_hooks_project_only_no_global() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
@@ -1953,13 +2019,13 @@ fn test_hooks_different_hook_types_not_merged() {
 
     // post-start: only global
     let post_start = effective.post_start.unwrap();
-    let start_commands = post_start.commands();
+    let start_commands: Vec<_> = post_start.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
     // pre-commit: only project
     let pre_commit = effective.pre_commit.unwrap();
-    let commit_commands = pre_commit.commands();
+    let commit_commands: Vec<_> = pre_commit.commands().collect();
     assert_eq!(commit_commands.len(), 1);
     assert_eq!(commit_commands[0].template, "echo project-commit");
 }
@@ -1977,7 +2043,7 @@ fn test_hooks_none_project_uses_global() {
 
     let effective = config.hooks(None);
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -2003,7 +2069,6 @@ fn test_hooks_in_overridable_config_is_empty() {
 /// which matches the serde field names.
 #[test]
 fn test_valid_user_config_keys_includes_all_hook_types() {
-    use crate::git::HookType;
     use strum::IntoEnumIterator;
 
     let valid_keys = valid_user_config_keys();
@@ -2039,7 +2104,8 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" | "aliases" => {
+            "list" | "commit" | "merge" | "switch" | "step" | "select" | "commit-generation"
+            | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }
@@ -2106,7 +2172,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2151,7 +2217,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2306,10 +2372,107 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 
     let merged = global_hooks.merge_with(&project_hooks);
     let pre_merge = merged.pre_merge.unwrap();
-    let commands = pre_merge.commands();
+    let commands: Vec<_> = pre_merge.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "global-lint"); // Global first
     assert_eq!(commands[1].template, "project-lint"); // Project second
+}
+
+#[test]
+fn test_hooks_merge_folds_post_create_into_pre_start() {
+    // User config uses deprecated `post-create`, project uses `pre-start`.
+    // merge_with should combine them so the user's hook isn't silently dropped.
+    let user_hooks = parse_hooks("post-create = \"npm install\"");
+    let project_hooks = parse_hooks("pre-start = \"cargo test\"");
+
+    let merged = user_hooks.merge_with(&project_hooks);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(commands.len(), 2, "Both hooks should be present");
+    assert_eq!(commands[0].template, "npm install"); // User's post-create first
+    assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
+}
+
+#[test]
+fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
+    // Single config with both fields — merge_with folds post_create into pre_start.
+    // This is an unusual config (user wrote both), but if it goes through merge
+    // both commands should run rather than silently dropping one.
+    let both = parse_hooks("pre-start = \"npm install\"\npost-create = \"cargo build\"");
+    let empty = HooksConfig::default();
+
+    let merged = both.merge_with(&empty);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(
+        commands.len(),
+        2,
+        "Both commands from same source should be present"
+    );
+    assert_eq!(commands[0].template, "npm install"); // pre-start first
+    assert_eq!(commands[1].template, "cargo build"); // post-create second
+}
+
+#[test]
+fn test_hooks_merge_post_create_both_sides() {
+    // Both configs use deprecated `post-create` — should still combine
+    let global = parse_hooks("post-create = \"npm install\"");
+    let project = parse_hooks("post-create = \"cargo build\"");
+
+    let merged = global.merge_with(&project);
+    let pre_start = merged
+        .get(HookType::PreStart)
+        .expect("should have pre-start");
+    let commands: Vec<_> = pre_start.commands().collect();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].template, "npm install");
+    assert_eq!(commands[1].template, "cargo build");
+}
+
+#[test]
+fn test_aliases_accessor_appends_on_collision() {
+    let toml_str = r#"
+[aliases]
+shared = "global-cmd"
+global-only = "only-global"
+
+[projects."test-project".aliases]
+shared = "project-cmd"
+project-only = "only-project"
+"#;
+    let config: UserConfig = toml::from_str(toml_str).unwrap();
+
+    let aliases = config.aliases(Some("test-project"));
+
+    // Non-colliding aliases are present
+    assert_eq!(aliases["global-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["global-only"].commands().next().unwrap().template,
+        "only-global"
+    );
+    assert_eq!(aliases["project-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["project-only"].commands().next().unwrap().template,
+        "only-project"
+    );
+
+    // Colliding alias: both commands run (global first, then per-project)
+    let shared: Vec<_> = aliases["shared"].commands().collect();
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared[0].template, "global-cmd");
+    assert_eq!(shared[1].template, "project-cmd");
+
+    // Without project: only global aliases
+    let global_only = config.aliases(None);
+    assert_eq!(global_only["shared"].commands().count(), 1);
+    assert_eq!(
+        global_only["shared"].commands().next().unwrap().template,
+        "global-cmd"
+    );
 }
 
 /// Test that reload_projects_from handles permission errors

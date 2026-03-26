@@ -1,0 +1,11 @@
+bot_name = "worktrunk-bot"
+
+[secrets]
+bot_token = "WORKTRUNK_BOT_TOKEN"
+claude_token = "CLAUDE_CODE_OAUTH_TOKEN"
+
+[setup]
+uses = ["./.github/actions/claude-setup"]
+
+[workflows.ci-fix]
+watched_workflows = ["ci", "publish-docs"]

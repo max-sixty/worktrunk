@@ -92,7 +92,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
 Stage and commit with LLM-generated message.
 
-Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ### Options
 
@@ -176,7 +176,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 Squash commits since branching. Stages changes and generates message with LLM.
 
-Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ### Options
 
@@ -331,8 +331,6 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
 
 Copy gitignored files to another worktree. Eliminates cold starts by copying build caches and dependencies.
 
-Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
-
 ### Setup
 
 Add to the project config:
@@ -345,15 +343,22 @@ copy = "wt step copy-ignored"
 
 ### What gets copied
 
-All gitignored files are copied by default. Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
 
-To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```text
 # .worktreeinclude
 .env
 node_modules/
 target/
+```
+
+After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
 ```
 
 ### Common patterns
@@ -371,7 +376,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
 
 ### Performance
 
@@ -384,7 +389,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-Use the `post-start` hook so the copy runs in the background. Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Language-specific notes
 
@@ -397,7 +402,7 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
 ```toml
-[post-create]
+[pre-start]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
@@ -453,13 +458,13 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step eval <span class="badge-experimental"></span>
+## wt step eval
+
+<span class="badge-experimental"></span>
 
 Evaluate a template expression. Prints the result to stdout for use in scripts and shell substitutions.
 
-Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
-
-Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+All [hook template variables and filters](@/hook.md#template-variables) are available.
 
 ### Examples
 
@@ -533,13 +538,13 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step for-each <span class="badge-experimental"></span>
+## wt step for-each
+
+<span class="badge-experimental"></span>
 
 Run command in each worktree. Executes sequentially with real-time output; continues on failure.
 
-Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
-
-Context JSON is piped to stdin for scripts that need structured data.
+A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
 ### Template variables
 
@@ -601,7 +606,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step promote <span class="badge-experimental"></span>
+## wt step promote
+
+<span class="badge-experimental"></span>
 
 Swap a branch into the main worktree. Exchanges branches and gitignored files between two worktrees.
 
@@ -675,7 +682,9 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step prune <span class="badge-experimental"></span>
+## wt step prune
+
+<span class="badge-experimental"></span>
 
 Remove worktrees merged into the default branch.
 
@@ -745,11 +754,11 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt step relocate <span class="badge-experimental"></span>
+## wt step relocate
+
+<span class="badge-experimental"></span>
 
 Move worktrees to expected paths. Relocates worktrees whose path doesn't match the worktree-path template.
-
-Moves worktrees to match the configured `worktree-path` template.
 
 ### Examples
 
@@ -844,7 +853,9 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
 ## Aliases
 
-[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+<span class="badge-experimental"></span>
+
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml

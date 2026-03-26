@@ -12,8 +12,8 @@
 //! # Parse trace logs (pipe from wt command)
 //! RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf trace > trace.json
 //!
-//! # Set up select test environment
-//! wt-perf setup select-test
+//! # Set up picker test environment
+//! wt-perf setup picker-test
 //! ```
 
 use std::io::{IsTerminal, Read, Write};
@@ -34,7 +34,7 @@ struct Cli {
 enum Commands {
     /// Set up a benchmark repository
     Setup {
-        /// Config name: typical-N, branches-N, branches-N-M, divergent, select-test
+        /// Config name: typical-N, branches-N, branches-N-M, divergent, picker-test
         config: String,
 
         /// Directory to create repo in (default: temp directory)
@@ -92,7 +92,7 @@ fn main() {
                 eprintln!("  branches-N      - N branches with 1 commit each");
                 eprintln!("  branches-N-M    - N branches with M commits each");
                 eprintln!("  divergent       - 200 branches × 20 commits (GH #461 scenario)");
-                eprintln!("  select-test     - Config for wt switch interactive picker testing");
+                eprintln!("  picker-test     - Config for wt switch interactive picker testing");
                 std::process::exit(1);
             });
 

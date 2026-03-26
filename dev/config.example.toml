@@ -13,7 +13,7 @@
 #
 # **Variables:**
 #
-# - `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 # - `{{ repo }}` — repository directory name (e.g., `myproject`)
 # - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 # - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
@@ -33,7 +33,11 @@
 # # Creates: ~/worktrees/myproject/feature-auth
 # worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 #
-# `~` expands to the home directory. Relative paths are relative to the repository root.
+# # Bare repository (git clone --bare <url> myproject/.git)
+# # Creates: ~/code/myproject/feature-auth
+# worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
+#
+# `~` expands to the home directory. Relative paths resolve from `repo_path`.
 #
 # ## LLM commit messages
 #
@@ -114,6 +118,13 @@
 # # Tasks still running when the budget expires are abandoned; 0 disables
 # # timeout-ms = 500
 #
+# ### Step
+#
+# [step.copy-ignored]
+# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+#
+# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+#
 # ### Aliases
 #
 # Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.
@@ -136,13 +147,14 @@
 #
 # #### Setting overrides [experimental]
 #
-# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
-# post-create.env = "cp .env.example .env"
+# pre-start.env = "cp .env.example .env"
+# step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
 # ### Custom prompt templates

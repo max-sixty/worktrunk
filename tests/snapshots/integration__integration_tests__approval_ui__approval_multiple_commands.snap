@@ -6,14 +6,15 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [33m▲[39m [33m[1morigin[22m needs approval to execute [1m4[22m commands:[39m
-[2m○[22m post-create [1mbranch[22m:
+[2m○[22m pre-start [1mbranch[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: {{ branch }}'[0m[2m
-[2m○[22m post-create [1mworktree[22m:
+[2m○[22m pre-start [1mworktree[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: {{ worktree_path }}'[0m[2m
-[2m○[22m post-create [1mrepo[22m:
+[2m○[22m pre-start [1mrepo[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: {{ repo }}'[0m[2m
-[2m○[22m post-create [1mpwd[22m:
+[2m○[22m pre-start [1mpwd[22m:
 [107m [0m [2m[0m[2m[34mcd[0m[2m [0m[2m[32m{{[0m[2m worktree_path [0m[2m[32m}}[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mpwd[0m[2m
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 [2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt hook approvals add[24m[22m

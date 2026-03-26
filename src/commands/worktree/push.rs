@@ -268,6 +268,7 @@ pub fn handle_push(
     ctx.repo
         .run_command(&[
             "push",
+            "--recurse-submodules=no",
             "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
             git_common_dir_str.as_ref(),
             &push_target,
@@ -299,8 +300,13 @@ pub fn handle_push(
 /// rebase has already run, so the feature branch tree IS the correct merge result.
 ///
 /// If the target branch has a checked-out worktree, its working tree is synced
-/// via `reset --hard` after the ref update. The stash guard pattern from
-/// `handle_push` is reused for dirty target worktrees.
+/// via `read-tree -m -u` after the ref update. We use a two-tree merge
+/// (`read-tree -m -u <old> <new>`) instead of `reset --hard` because it refuses
+/// to overwrite tracked files with local modifications (TOCTOU safety), while
+/// `reset --hard` would silently discard them. (`reset --keep` can't be used
+/// here because after `update-ref`, HEAD already points to the merge commit, so
+/// `reset --keep HEAD` sees old==new and is a no-op.) The stash guard pattern
+/// from `handle_push` is reused for dirty target worktrees.
 pub fn handle_no_ff_merge(
     target: Option<&str>,
     operations: Option<MergeOperations>,
@@ -359,12 +365,19 @@ pub fn handle_no_ff_merge(
         })?;
 
     // Sync the target worktree's working tree if it exists.
+    // Use `read-tree -m -u` (two-tree merge) instead of `reset --hard` so that
+    // any tracked-file modifications added between the pre-push dirty check and
+    // now cause the sync to fail rather than silently discarding work (TOCTOU
+    // safety). Note: `reset --keep` can't be used here because after
+    // `update-ref`, HEAD already equals the merge commit, making it a no-op.
     // The merge is already done (ref updated), so treat sync failure as a warning.
     if let Some(wt_path) = &ctx.target_worktree_path
         && wt_path.exists()
     {
         let target_wt = ctx.repo.worktree_at(wt_path);
-        if let Err(e) = target_wt.run_command(&["reset", "--hard", "HEAD"]) {
+        if let Err(e) =
+            target_wt.run_command(&["read-tree", "-m", "-u", &ctx.target_tip, &merge_sha])
+        {
             eprintln!(
                 "{}",
                 warning_message(cformat!(

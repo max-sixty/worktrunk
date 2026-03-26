@@ -13,7 +13,8 @@ use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::{HookFailureStrategy, execute_hook};
 use super::worktree::{
-    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, path_mismatch, plan_switch,
+    SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
+    path_mismatch, plan_switch,
 };
 use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
@@ -38,21 +39,60 @@ pub struct SwitchOptions<'a> {
 ///
 /// The hook context uses the **destination** branch argument as `{{ branch }}`,
 /// so hooks receive the user's raw input before resolution.
+///
+/// Directional vars:
+/// - `base` / `base_worktree_path`: current (source) branch and worktree
+/// - `target` / `target_worktree_path`: destination branch and worktree (if it exists)
 pub(crate) fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
     target_branch: &str,
     yes: bool,
 ) -> anyhow::Result<()> {
-    let current_path = repo.current_worktree().path().to_path_buf();
+    let current_wt = repo.current_worktree();
+    let current_path = current_wt.path().to_path_buf();
     let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
+        // Base vars: source (where the user currently is)
+        let base_branch = current_wt.branch().ok().flatten().unwrap_or_default();
+        let base_path_str = worktrunk::path::to_posix_path(&current_path.to_string_lossy());
+
+        let mut extra_vars: Vec<(&str, &str)> = vec![
+            ("base", &base_branch),
+            ("base_worktree_path", &base_path_str),
+        ];
+
+        // Target vars and Active overrides: destination worktree.
+        // For existing worktrees: override bare vars (worktree_path, worktree_name,
+        // worktree) to point to the destination (Active), not the source.
+        let dest_path = repo.worktree_for_branch(target_branch).ok().flatten();
+        let dest_name = dest_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+        let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
+        extra_vars.push(("target", target_branch));
+        if let Some(ref p) = dest_path_str {
+            // Existing destination: override bare vars to Active (destination)
+            extra_vars.push(("target_worktree_path", p));
+            extra_vars.push(("worktree_path", p));
+            extra_vars.push(("worktree", p)); // deprecated alias
+            if let Some(ref name) = dest_name {
+                extra_vars.push(("worktree_name", name));
+            }
+        }
+        // For creates (dest_path_str is None): worktree_path keeps its default
+        // (the source worktree = cwd). The planned destination path is computed
+        // later during plan_switch, after pre-switch hooks complete.
+
         execute_hook(
             &pre_ctx,
             HookType::PreSwitch,
-            &[],
+            &extra_vars,
             HookFailureStrategy::FailFast,
             None,
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
@@ -63,12 +103,12 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger post-create + post-start + post-switch hooks;
+/// Creates trigger pre-start + post-start + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PostCreate,
+            HookType::PreStart,
             HookType::PostStart,
             HookType::PostSwitch,
         ]
@@ -92,7 +132,7 @@ pub(crate) fn approve_switch_hooks(
         return Ok(false);
     }
 
-    let ctx = CommandContext::new(repo, config, Some(plan.branch()), plan.worktree_path(), yes);
+    let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
     let approved = approve_hooks(&ctx, switch_post_hook_types(plan.is_create()))?;
 
     if !approved {
@@ -136,28 +176,43 @@ pub(crate) fn spawn_switch_background_hooks(
     repo: &Repository,
     config: &UserConfig,
     result: &SwitchResult,
-    branch: &str,
+    branch: Option<&str>,
     yes: bool,
     extra_vars: &[(&str, &str)],
     hooks_display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let ctx = CommandContext::new(repo, config, Some(branch), result.path(), yes);
+    let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let mut hooks = super::hooks::prepare_background_hooks(
+    let mut flat_hooks = Vec::new();
+    let mut pipeline_hooks = Vec::new();
+
+    match super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
         extra_vars,
         hooks_display_path,
-    )?;
+    )? {
+        super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
+        super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+    }
+
     if matches!(result, SwitchResult::Created { .. }) {
-        hooks.extend(super::hooks::prepare_background_hooks(
+        match super::hooks::prepare_background_hooks(
             &ctx,
             HookType::PostStart,
             extra_vars,
             hooks_display_path,
-        )?);
+        )? {
+            super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
+            super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+        }
     }
-    super::hooks::spawn_background_hooks(&ctx, hooks)
+
+    // Spawn pipeline hooks as compound commands, flat hooks as independent processes
+    if !pipeline_hooks.is_empty() {
+        super::hooks::spawn_hook_pipeline(&ctx, pipeline_hooks)?;
+    }
+    super::hooks::spawn_background_hooks(&ctx, flat_hooks)
 }
 
 /// Handle the switch command.
@@ -205,6 +260,9 @@ pub fn handle_switch(
         run_pre_switch_hooks(&repo, config, branch, yes)?;
     }
 
+    // Offer to fix worktree-path for bare repos with hidden directory names (.git, .bare).
+    offer_bare_repo_worktree_path_fix(&repo, config)?;
+
     // Validate and resolve the target branch.
     let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
         match suggestion_ctx {
@@ -230,6 +288,21 @@ pub fn handle_switch(
     // doesn't leave behind a half-created worktree that blocks re-running.
     validate_switch_templates(&repo, config, &plan, execute, execute_args, hooks_approved)?;
 
+    // Capture source (base) worktree identity BEFORE the switch, so post-switch
+    // hooks can reference where the user came from via {{ base }} / {{ base_worktree_path }}.
+    let source_branch = repo
+        .current_worktree()
+        .branch()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let source_path = repo
+        .current_worktree()
+        .root()
+        .ok()
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
+        .unwrap_or_default();
+
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
@@ -238,10 +311,14 @@ pub fn handle_switch(
         return Ok(());
     }
 
-    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees)
+    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
+    // Skip for detached HEAD worktrees (branch is None) — no branch to compute expected path from.
     let branch_info = match &result {
         SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = path_mismatch(&repo, &branch_info.branch, path, config);
+            let expected_path = branch_info
+                .branch
+                .as_deref()
+                .and_then(|b| path_mismatch(&repo, b, path, config));
             SwitchBranchInfo {
                 expected_path,
                 ..branch_info
@@ -272,10 +349,22 @@ pub fn handle_switch(
         let _ = prompt_shell_integration(config, binary_name, skip_prompt);
     }
 
-    // Build extra vars for base branch context (used by both hooks and --execute)
-    // "base" is the branch we branched from when creating a new worktree.
-    // For existing worktrees, there's no base concept.
-    let extra_vars = switch_extra_vars(&result);
+    // Build extra vars for base/target context (used by both hooks and --execute).
+    // "base" is the source worktree the user switched from (all switches),
+    // or the branch they branched from (creates).
+    let mut extra_vars = switch_extra_vars(&result);
+    // For existing switches, add source worktree as base
+    if matches!(
+        result,
+        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_)
+    ) {
+        if !source_branch.is_empty() {
+            extra_vars.push(("base", &source_branch));
+        }
+        if !source_path.is_empty() {
+            extra_vars.push(("base_worktree_path", &source_path));
+        }
+    }
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
@@ -286,7 +375,7 @@ pub fn handle_switch(
             &repo,
             config,
             &result,
-            &branch_info.branch,
+            branch_info.branch.as_deref(),
             yes,
             &extra_vars,
             hooks_display_path.as_deref(),
@@ -297,7 +386,13 @@ pub fn handle_switch(
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
-        let ctx = CommandContext::new(&repo, config, Some(&branch_info.branch), result.path(), yes);
+        let ctx = CommandContext::new(
+            &repo,
+            config,
+            branch_info.branch.as_deref(),
+            result.path(),
+            yes,
+        );
         let template_vars = build_hook_context(&ctx, &extra_vars)?;
         let vars: HashMap<&str, &str> = template_vars
             .iter()

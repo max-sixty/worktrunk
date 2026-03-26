@@ -44,6 +44,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFailed to expand project post-create hook: undefined value @ line 1[39m
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
+[31m✗[39m [31mFailed to expand project pre-start hook: undefined value @ line 1[39m
 [107m [0m echo 'Upstream: {{ upstream }}' > upstream.txt
-[2m↳[22m [2mAvailable variables: [4mbase, base_worktree_path, branch, commit, default_branch, hook_type, main_worktree, main_worktree_path, primary_worktree_path, remote, remote_url, repo, repo_path, repo_root, short_commit, worktree, worktree_name, worktree_path[24m[22m
+[2m↳[22m [2mAvailable variables: [4mbase, base_worktree_path, branch, commit, cwd, default_branch, hook_type, main_worktree, main_worktree_path, primary_worktree_path, remote, remote_url, repo, repo_path, repo_root, short_commit, worktree, worktree_name, worktree_path[24m[22m

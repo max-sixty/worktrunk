@@ -165,14 +165,16 @@ failing = "exit 1"
 "#,
     );
 
-    // Failing user hook should produce warning but not block creation
+    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast.
+    // The worktree is already created before pre-start runs (it was renamed from
+    // post-create), so the worktree exists but the command exits non-zero.
     snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
 
-    // Worktree should still be created despite hook failure
+    // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.exists(),
-        "Worktree should be created even if post-create hook fails"
+        "Worktree should exist — it was created before pre-start ran"
     );
 }
 
@@ -613,6 +615,29 @@ cleanup = "echo 'USER_POST_REMOVE_RAN' > ../user_postremove_marker.txt"
     );
 }
 
+/// Post-remove hooks run at the primary worktree, not cwd. When removing a
+/// non-current worktree from a linked worktree, the output should show `@ [path]`
+/// pointing to the primary worktree where hooks execute.
+#[rstest]
+fn test_post_remove_hooks_run_at_primary_worktree(mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let other_wt = repo.add_worktree("other");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo done"
+"#,
+    );
+
+    // Remove feature from the "other" worktree (not primary)
+    snapshot_remove(
+        "post_remove_runs_at_primary",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(&other_wt),
+    );
+}
+
 /// Verify that post-remove hook template variables reference the removed worktree,
 /// not the worktree where the hook executes from.
 #[rstest]
@@ -626,7 +651,7 @@ fn test_user_post_remove_template_vars_reference_removed_worktree(mut repo: Test
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_wt_path)
-        .output()
+        .run()
         .unwrap();
     let feature_commit = String::from_utf8_lossy(&feature_commit.stdout);
     let feature_commit = feature_commit.trim();
@@ -894,6 +919,116 @@ lint = "exit 1"
 }
 
 // ============================================================================
+// User Post-Commit Hook Tests (Background, via `wt step commit`)
+// ============================================================================
+
+/// Helper for step commit snapshots
+fn snapshot_step_commit(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("commit");
+        cmd.args(args);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: test commit'",
+        );
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[rstest]
+fn test_user_post_commit_hook_executes(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_executes", &repo, &[], Some(&feature_wt));
+
+    // Post-commit runs in background in the worktree where the commit happened
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    wait_for_file_content(&marker_file);
+
+    let contents = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        contents.contains("USER_POST_COMMIT_RAN"),
+        "User post-commit hook should have run, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
+"#,
+    );
+
+    snapshot_step_commit(
+        "user_post_commit_skipped_no_verify",
+        &repo,
+        &["--no-verify"],
+        Some(&feature_wt),
+    );
+
+    // Wait to ensure background hook would have had time to run
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    let marker_file = feature_wt.join("user_postcommit.txt");
+    assert!(
+        !marker_file.exists(),
+        "User post-commit hook should be skipped with --no-verify"
+    );
+}
+
+#[rstest]
+fn test_user_post_commit_failure_does_not_block_commit(mut repo: TestRepo) {
+    // Create feature worktree with staged changes
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
+
+    // Write user config with failing post-commit hook
+    repo.write_test_config(
+        r#"[post-commit]
+failing = "exit 1"
+"#,
+    );
+
+    snapshot_step_commit("user_post_commit_failure", &repo, &[], Some(&feature_wt));
+
+    // The commit should have succeeded despite post-commit hook failure
+    // (post-commit runs in background and doesn't affect exit code)
+    let output = repo
+        .git_command()
+        .current_dir(&feature_wt)
+        .args(["log", "--oneline", "-1"])
+        .run()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feat: test commit"),
+        "Commit should have succeeded despite post-commit hook failure, got: {stdout}"
+    );
+}
+
+// ============================================================================
 // Template Variable Tests
 // ============================================================================
 
@@ -1103,6 +1238,24 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_pre_start_fails_on_failure(repo: TestRepo) {
+    // pre-start hooks use FailFast like all other pre-* hooks — consistent with
+    // the symmetric pre (blocking, fail-fast) / post (background, warn) pattern.
+    repo.write_project_config(r#"pre-start = "exit 1""#);
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "pre-start", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt hook pre-start should exit non-zero when the hook fails (fail-fast, like all pre-* hooks)"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_post_start(repo: TestRepo) {
     // Write project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'STANDALONE_POST_START' > hook_ran.txt""#);
@@ -1267,7 +1420,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "pre-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
@@ -1277,7 +1430,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No post-create hook configured"),
+        stderr.contains("No pre-start hook configured"),
         "Error should mention no hook configured, got: {stderr}"
     );
 }
@@ -1977,5 +2130,237 @@ fn test_remove_current_worktree_fires_post_switch_hook(mut repo: TestRepo) {
     assert!(
         content.contains("POST_SWITCH_AFTER_REMOVE"),
         "Post-switch hook should run when removing current worktree, got: {content}"
+    );
+}
+
+// ==========================================================================
+// Active model: directional template variables
+// ==========================================================================
+
+/// Pre-switch to existing worktree: worktree_path = destination (Active),
+/// base_worktree_path = source, cwd = source.
+#[rstest]
+fn test_pre_switch_vars_point_to_destination(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Hook captures worktree_path, base_worktree_path, and cwd
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'wt_path={{ worktree_path }} base={{ base }} base_wt={{ base_worktree_path }} cwd={{ cwd }}' > pre_switch_vars.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo.root_path().join("pre_switch_vars.txt");
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    let feature_name = feature_path.file_name().unwrap().to_string_lossy();
+    let main_name = repo
+        .root_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    // worktree_path should be the destination (Active)
+    assert!(
+        content.contains(&format!("/{feature_name} "))
+            || content.contains(&format!("\\{feature_name} ")),
+        "worktree_path should point to destination '{feature_name}', got: {content}"
+    );
+
+    // base should be the source branch
+    assert!(
+        content.contains("base=main"),
+        "base should be source branch 'main', got: {content}"
+    );
+
+    // cwd should be the source (where the hook actually runs)
+    assert!(
+        content.contains(&format!("/{main_name}")) || content.contains(&format!("\\{main_name}")),
+        "cwd should point to source worktree '{main_name}', got: {content}"
+    );
+}
+
+/// Post-remove: target/target_worktree_path point to where user ends up.
+#[rstest]
+fn test_post_remove_has_target_vars(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+capture = "echo 'branch={{ branch }} target={{ target }} target_wt={{ target_worktree_path }}' > ../postremove_target.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let vars_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("postremove_target.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    // branch should be the removed branch (Active)
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be removed branch 'feature', got: {content}"
+    );
+
+    // target should be the destination branch (where user ends up)
+    assert!(
+        content.contains("target=main"),
+        "target should be destination 'main', got: {content}"
+    );
+
+    // target_worktree_path should be the primary worktree
+    let main_name = repo
+        .root_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        content.contains(&main_name),
+        "target_worktree_path should contain primary worktree name '{main_name}', got: {content}"
+    );
+}
+
+/// Post-switch for existing switches: base vars reference the source worktree.
+#[rstest]
+fn test_post_switch_has_base_vars_for_existing(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Post-switch hooks run in the DESTINATION worktree (feature), so write
+    // to a path relative to the worktree that will exist after switch.
+    repo.write_test_config(
+        r#"[post-switch]
+capture = "echo 'branch={{ branch }} base={{ base }}' > post_switch_base.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["switch", "feature", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // File is written in the destination (feature) worktree
+    let vars_file = feature_path.join("post_switch_base.txt");
+    crate::common::wait_for_file_content(&vars_file);
+
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    // branch should be the destination (Active)
+    assert!(
+        content.contains("branch=feature"),
+        "branch should be destination 'feature', got: {content}"
+    );
+
+    // base should be the source branch we switched from
+    assert!(
+        content.contains("base=main"),
+        "base should be source 'main', got: {content}"
+    );
+}
+
+/// cwd always exists on disk — even when worktree_path points to a deleted directory.
+#[rstest]
+fn test_cwd_always_exists_in_post_remove(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+check = "test -d {{ cwd }} && echo 'cwd_exists=true' > ../cwd_check.txt || echo 'cwd_exists=false' > ../cwd_check.txt"
+"#,
+    );
+
+    repo.wt_command()
+        .args(["remove", "feature", "--force-delete", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let check_file = repo.root_path().parent().unwrap().join("cwd_check.txt");
+    crate::common::wait_for_file_content(&check_file);
+
+    let content = fs::read_to_string(&check_file).unwrap();
+    assert!(
+        content.contains("cwd_exists=true"),
+        "cwd should point to an existing directory, got: {content}"
+    );
+}
+
+// ============================================================================
+// Pipeline Tests (list form)
+// ============================================================================
+
+#[rstest]
+fn test_user_post_start_pipeline_serial_ordering(repo: TestRepo) {
+    // Pipeline: serial step creates a marker, concurrent step reads it.
+    // The compound shell command chains them with &&, so the marker
+    // exists when the concurrent step runs.
+    repo.write_test_config(
+        r#"post-start = [
+    "echo SETUP_DONE > pipeline_marker.txt",
+    { bg = "cat pipeline_marker.txt > bg_saw_marker.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_ordering",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let bg_file = worktree_path.join("bg_saw_marker.txt");
+    wait_for_file_content(&bg_file);
+
+    let content = fs::read_to_string(&bg_file).unwrap();
+    assert!(
+        content.contains("SETUP_DONE"),
+        "Concurrent step should see serial step's output, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
+    // First step fails → second step should not run (chained with &&).
+    repo.write_test_config(
+        r#"post-start = [
+    "exit 1",
+    { bg = "echo SHOULD_NOT_RUN > should_not_exist.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_failure",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Give background commands time to run (if they were going to)
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker_file = worktree_path.join("should_not_exist.txt");
+    assert!(
+        !marker_file.exists(),
+        "Later pipeline steps should NOT run after serial step failure"
     );
 }

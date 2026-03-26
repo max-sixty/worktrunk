@@ -41,11 +41,13 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "hook_type",          // Added by expand_commands / expand_command_template
+    "hook_type",            // Added by expand_commands / expand_command_template
     "hook_name", // Added by expand_commands / expand_command_template (named commands only)
-    "target",    // Added by merge/rebase hooks via extra_vars
-    "base",      // Added by creation hooks via extra_vars
-    "base_worktree_path", // Added by creation hooks via extra_vars
+    "target",    // Added by merge/remove hooks via extra_vars
+    "target_worktree_path", // Added by merge/remove hooks via extra_vars
+    "base",      // Added by creation/switch hooks via extra_vars
+    "base_worktree_path", // Added by creation/switch hooks via extra_vars
+    "cwd",       // Execution directory (always exists on disk)
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -490,6 +492,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use crate::shell_exec::Cmd;
 
     /// Test fixture that creates a real temporary git repository.
     struct TestRepo {
@@ -500,10 +503,10 @@ mod tests {
     impl TestRepo {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            std::process::Command::new("git")
+            Cmd::new("git")
                 .args(["init"])
                 .current_dir(dir.path())
-                .output()
+                .run()
                 .unwrap();
             let repo = Repository::at(dir.path()).unwrap();
             Self { _dir: dir, repo }

@@ -43,7 +43,7 @@ When creating a worktree, worktrunk:
 1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [post-create hooks](@/hook.md#post-create) (blocking)
+4. Runs [pre-start hooks](@/hook.md#pre-start) (blocking)
 5. Spawns [post-start hooks](@/hook.md#post-start) (background)
 6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
 
@@ -91,7 +91,6 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
 | `Alt-c` | Create new worktree from query |
-| `Alt-r` | Remove selected worktree |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |

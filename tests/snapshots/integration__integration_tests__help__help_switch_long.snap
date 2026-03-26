@@ -131,7 +131,7 @@ When creating a worktree, worktrunk:
 1. Runs pre-switch hooks (blocking, fail-fast)
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs post-create hooks (blocking)
+4. Runs pre-start hooks (blocking)
 5. Spawns post-start hooks (background)
 6. Spawns post-switch hooks (background)
 
@@ -168,7 +168,6 @@ When called without arguments, [2mwt switch[0m opens an interactive picker to 
  (type)        Filter worktrees               
  [2mEnter[0m         Switch to selected worktree    
  [2mAlt-c[0m         Create new worktree from query 
- [2mAlt-r[0m         Remove selected worktree       
  [2mEsc[0m           Cancel                         
  [2m1[0m–[2m5[0m           Switch preview tab             
  [2mAlt-p[0m         Toggle preview panel           

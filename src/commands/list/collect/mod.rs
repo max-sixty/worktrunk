@@ -202,7 +202,7 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
 #[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
-    /// Flags already resolved by the caller (used by `wt select`).
+    /// Flags already resolved by the caller (used by the picker).
     Resolved {
         show_branches: bool,
         show_remotes: bool,
@@ -433,7 +433,6 @@ pub fn collect(
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    // TODO: show ellipsis or indicator when default_branch is None and columns are empty
     let primary_path = repo.primary_worktree()?;
     let main_worktree = primary_path
         .as_ref()

@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.29.4"
+version = "0.32.0"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -90,8 +90,8 @@ strsim = "0.11"
 strum = { version = "0.28", features = ["derive"] }
 synoptic = "2"
 terminal_size = "0.4"
-toml = { version = "0.9", features = ["preserve_order"] }
-toml_edit = { version = "0.24", features = ["serde"] }
+toml = { version = "1.0", features = ["preserve_order"] }
+toml_edit = { version = "0.25", features = ["serde"] }
 # tree-sitter and tree-sitter-highlight should use matching versions.
 # tree-sitter-bash may lag behind (0.25.x works with tree-sitter 0.26.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
@@ -140,7 +140,7 @@ insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.27"
-toml = "0.9"
+toml = "1.0"
 criterion = "0.8"
 portable-pty = "0.9"
 regex = "1.12"

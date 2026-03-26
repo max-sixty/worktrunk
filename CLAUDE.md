@@ -88,7 +88,7 @@ The permission tests (`test_permission_error_prevents_save`, `test_approval_prom
 
 ### Shell/PTY Integration Tests
 
-PTY-based tests (approval prompts, TUI select, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
+PTY-based tests (approval prompts, TUI picker, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
 
 **IMPORTANT:** Tests that spawn interactive shells (`zsh -ic`, `bash -ic`) cause nextest's InputHandler to receive SIGTTOU when restoring terminal settings. This suspends the test process mid-run with `zsh: suspended (tty output)` or similar. See [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878) for details.
 
@@ -140,6 +140,16 @@ Documentation has three categories:
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
 
+### Help text authoring
+
+Help text renders in three contexts — check all three when editing:
+
+1. **Terminal** (`wt step X --help`): `about` and `subtitle` appear at the top, `after_long_help` appears below the Options block — separated by distance.
+2. **Web docs** (`docs/content/`): `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` — they appear as consecutive paragraphs.
+3. **Skill reference** (`skills/worktrunk/reference/`): mirrors web docs.
+
+Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
+
 After any doc changes, run tests to sync:
 
 ```bash
@@ -159,6 +169,7 @@ Never risk data loss without explicit user consent. A failed command that preser
 - **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error
 - **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
 - **No implicit destructive side effects** — A command must not silently delete, remove, or overwrite files/directories as a side effect of an unrelated operation. If cleanup is needed, make it a separate explicit action the user chooses to take
+- **Favor retaining data and failing on race conditions** — When there's a gap between checking safety and performing an operation, choose the variant that fails rather than silently discards work. Example: use `git reset --keep` (fails if tracked files were modified) over `git reset --hard` (silently overwrites). Similarly, prefer `git checkout --merge` over `git checkout --force`. If a safer variant doesn't exist, document the risk inline
 - **Time-of-check vs time-of-use** — Be conservative when there's a gap between checking safety and performing an operation. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
 
 For the full inventory of what Worktrunk creates and deletes, see the FAQ: [What files does Worktrunk create?](docs/content/faq.md#what-files-does-worktrunk-create) and [What can Worktrunk delete?](docs/content/faq.md#what-can-worktrunk-delete). New code that changes this surface area should be reviewed against these sections.
@@ -275,6 +286,8 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
+**Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
+
 ## Benchmarks
 
 Benchmarks measure `wt list` performance across worktree counts and repository sizes.
@@ -307,6 +320,7 @@ Never hand-roll utilities that already exist as crate dependencies. Check `Cargo
 | Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
 | Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
 | ANSI colors | `color_print::cformat!()` | Raw escape codes |
+| Template variable detection | `minijinja::undeclared_variables(false)` | Regex or substring matching for `{{ var }}` |
 
 ### Don't Suppress Warnings
 

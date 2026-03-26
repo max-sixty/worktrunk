@@ -28,7 +28,8 @@ use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_hook_commands,
-    run_hook_with_filter, spawn_background_hooks,
+    prepare_pipeline_hooks_with_configs, run_hook_with_filter, spawn_background_hooks,
+    spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -66,6 +67,24 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
+        // Pipeline configs (list form) use compound shell command path.
+        // Name filtering falls through to the flat path (individual command execution).
+        let has_pipeline = [user_config, project_config]
+            .iter()
+            .any(|c| c.is_some_and(CommandConfig::is_pipeline));
+
+        if has_pipeline && name_filter.is_none() {
+            let steps = prepare_pipeline_hooks_with_configs(
+                ctx,
+                user_config,
+                project_config,
+                hook_type,
+                extra_vars,
+                None,
+            )?;
+            return spawn_hook_pipeline(ctx, steps);
+        }
+
         let commands = prepare_hook_commands(
             ctx,
             HookCommandSpec {
@@ -92,11 +111,53 @@ fn run_post_hook(
     )
 }
 
-fn build_target_vars<'a>(
-    target: Option<&'a str>,
+/// Build best-effort directional vars for manual `wt hook` invocation.
+///
+/// When hooks run during real operations (switch, merge, remove), each call site
+/// builds precise extra_vars from the actual source/destination context. When
+/// invoked manually via `wt hook <type>`, we only have the current worktree —
+/// so we provide reasonable defaults: the current branch as both base and target,
+/// and the current worktree path for directional path vars.
+///
+/// This is the single source of truth for manual hook context — both `run_hook`
+/// (execution + dry-run) and `expand_command_template` (hook show --expanded)
+/// use this function.
+fn build_manual_hook_extra_vars<'a>(
+    ctx: &'a CommandContext,
+    hook_type: HookType,
     custom_vars: &'a [(&'a str, &'a str)],
+    default_branch: Option<&'a str>,
+    worktree_path_str: &'a str,
 ) -> Vec<(&'a str, &'a str)> {
-    let mut vars: Vec<(&str, &str)> = target.into_iter().map(|t| ("target", t)).collect();
+    let branch = ctx.branch_or_head();
+    let mut vars: Vec<(&str, &str)> = match hook_type {
+        // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
+        HookType::PreCommit | HookType::PostCommit => {
+            default_branch.into_iter().map(|t| ("target", t)).collect()
+        }
+        HookType::PreMerge | HookType::PostMerge => {
+            vec![
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+        // Switch hooks: base = current (we're "switching from" here)
+        HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
+            vec![
+                ("base", branch),
+                ("base_worktree_path", worktree_path_str),
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+        // Remove hooks: target = where user ends up (current worktree is the best guess)
+        HookType::PreRemove | HookType::PostRemove => {
+            vec![
+                ("target", branch),
+                ("target_worktree_path", worktree_path_str),
+            ]
+        }
+    };
     vars.extend(custom_vars.iter().copied());
     vars
 }
@@ -174,13 +235,14 @@ pub fn run_hook(
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
-    let extra_vars: Vec<(&str, &str)> = match hook_type {
-        HookType::PreCommit => build_target_vars(default_branch.as_deref(), &custom_vars_refs),
-        HookType::PreMerge | HookType::PostMerge => {
-            build_target_vars(Some(ctx.branch_or_head()), &custom_vars_refs)
-        }
-        _ => custom_vars_refs.to_vec(),
-    };
+    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
+    let extra_vars = build_manual_hook_extra_vars(
+        &ctx,
+        hook_type,
+        &custom_vars_refs,
+        default_branch.as_deref(),
+        &worktree_path_str,
+    );
 
     if dry_run {
         let commands = prepare_hook_commands(
@@ -216,9 +278,10 @@ pub fn run_hook(
     }
 
     // Execute the hook based on type
+    // pre-* hooks are blocking (fail-fast), post-* hooks run in background
     match hook_type {
         HookType::PreSwitch
-        | HookType::PostCreate
+        | HookType::PreStart
         | HookType::PreRemove
         | HookType::PreCommit
         | HookType::PreMerge => run_filtered_hook(
@@ -230,7 +293,11 @@ pub fn run_hook(
             name_filter,
             HookFailureStrategy::FailFast,
         ),
-        HookType::PostStart | HookType::PostSwitch | HookType::PostRemove => run_post_hook(
+        HookType::PostStart
+        | HookType::PostSwitch
+        | HookType::PostCommit
+        | HookType::PostMerge
+        | HookType::PostRemove => run_post_hook(
             &ctx,
             foreground,
             user_config,
@@ -238,15 +305,6 @@ pub fn run_hook(
             hook_type,
             &extra_vars,
             name_filter,
-        ),
-        HookType::PostMerge => run_filtered_hook(
-            &ctx,
-            user_config,
-            proj_config,
-            hook_type,
-            &extra_vars,
-            name_filter,
-            HookFailureStrategy::Warn,
         ),
     }
 }
@@ -261,10 +319,8 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     // Load project config (error if missing - this command requires it)
     let config_path = repo
-        .current_worktree()
-        .root()?
-        .join(".config")
-        .join("wt.toml");
+        .project_config_path()?
+        .context("Cannot determine project config location — no worktree found")?;
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
@@ -385,10 +441,11 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     // Parse hook type filter if provided
     let filter: Option<HookType> = hook_type_filter.map(|s| match s {
         "pre-switch" => HookType::PreSwitch,
-        "post-create" => HookType::PostCreate,
+        "pre-start" | "post-create" => HookType::PreStart,
         "post-start" => HookType::PostStart,
         "post-switch" => HookType::PostSwitch,
         "pre-commit" => HookType::PreCommit,
+        "post-commit" => HookType::PostCommit,
         "pre-merge" => HookType::PreMerge,
         "post-merge" => HookType::PostMerge,
         "pre-remove" => HookType::PreRemove,
@@ -455,33 +512,24 @@ fn render_user_hooks(
     )?;
 
     // Collect all user hooks (global hooks from the user config file)
-    // Note: uses overrides.hooks for display, not the merged hooks() accessor
+    // Note: uses overrides.hooks for display, not the merged hooks() accessor.
+    // get() handles the post-create → pre-start deprecation merge.
     let user_hooks = &config.configs.hooks;
-    let hooks = [
-        (HookType::PreSwitch, &user_hooks.pre_switch),
-        (HookType::PostCreate, &user_hooks.post_create),
-        (HookType::PostStart, &user_hooks.post_start),
-        (HookType::PostSwitch, &user_hooks.post_switch),
-        (HookType::PreCommit, &user_hooks.pre_commit),
-        (HookType::PreMerge, &user_hooks.pre_merge),
-        (HookType::PostMerge, &user_hooks.post_merge),
-        (HookType::PreRemove, &user_hooks.pre_remove),
-        (HookType::PostRemove, &user_hooks.post_remove),
-    ];
+    let hooks: Vec<_> = HookType::iter()
+        .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
+        .collect();
 
     let mut has_any = false;
-    for (hook_type, hook_config) in hooks {
+    for (hook_type, cfg) in &hooks {
         // Apply filter if specified
         if let Some(f) = filter
-            && f != hook_type
+            && f != *hook_type
         {
             continue;
         }
 
-        if let Some(cfg) = hook_config {
-            has_any = true;
-            render_hook_commands(out, hook_type, cfg, None, ctx)?;
-        }
+        has_any = true;
+        render_hook_commands(out, *hook_type, cfg, None, ctx)?;
     }
 
     if !has_any {
@@ -501,8 +549,9 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let repo_root = repo.current_worktree().root()?;
-    let config_path = repo_root.join(".config").join("wt.toml");
+    let config_path = repo
+        .project_config_path()?
+        .context("Cannot determine project config location — no worktree found")?;
 
     writeln!(
         out,
@@ -518,32 +567,22 @@ fn render_project_hooks(
         return Ok(());
     };
 
-    // Collect all project hooks
-    let hooks = [
-        (HookType::PreSwitch, &config.hooks.pre_switch),
-        (HookType::PostCreate, &config.hooks.post_create),
-        (HookType::PostStart, &config.hooks.post_start),
-        (HookType::PostSwitch, &config.hooks.post_switch),
-        (HookType::PreCommit, &config.hooks.pre_commit),
-        (HookType::PreMerge, &config.hooks.pre_merge),
-        (HookType::PostMerge, &config.hooks.post_merge),
-        (HookType::PreRemove, &config.hooks.pre_remove),
-        (HookType::PostRemove, &config.hooks.post_remove),
-    ];
+    // Collect all project hooks (get() handles post-create → pre-start merge)
+    let hooks: Vec<_> = HookType::iter()
+        .filter_map(|ht| config.hooks.get(ht).map(|cfg| (ht, cfg)))
+        .collect();
 
     let mut has_any = false;
-    for (hook_type, hook_config) in hooks {
+    for (hook_type, cfg) in &hooks {
         // Apply filter if specified
         if let Some(f) = filter
-            && f != hook_type
+            && f != *hook_type
         {
             continue;
         }
 
-        if let Some(cfg) = hook_config {
-            has_any = true;
-            render_hook_commands(out, hook_type, cfg, Some((approvals, project_id)), ctx)?;
-        }
+        has_any = true;
+        render_hook_commands(out, *hook_type, cfg, Some((approvals, project_id)), ctx)?;
     }
 
     if !has_any {
@@ -562,7 +601,7 @@ fn render_hook_commands(
     approval_context: Option<(&Approvals, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let commands = config.commands();
+    let commands: Vec<_> = config.commands().collect();
     if commands.is_empty() {
         return Ok(());
     }
@@ -611,23 +650,15 @@ fn expand_command_template(
     hook_type: HookType,
     hook_name: Option<&str>,
 ) -> anyhow::Result<String> {
-    // Build extra vars based on hook type (same logic as run_hook approval)
     let default_branch = ctx.repo.default_branch();
-    let extra_vars: Vec<(&str, &str)> = match hook_type {
-        HookType::PreCommit => {
-            // Pre-commit uses default branch as target (for comparison context)
-            default_branch
-                .as_deref()
-                .into_iter()
-                .map(|t| ("target", t))
-                .collect()
-        }
-        HookType::PreMerge | HookType::PostMerge => {
-            // Pre-merge and post-merge use current branch as target
-            vec![("target", ctx.branch_or_head())]
-        }
-        _ => Vec::new(),
-    };
+    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
+    let extra_vars = build_manual_hook_extra_vars(
+        ctx,
+        hook_type,
+        &[],
+        default_branch.as_deref(),
+        &worktree_path_str,
+    );
     let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
