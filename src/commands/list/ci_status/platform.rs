@@ -155,35 +155,17 @@ pub fn platform_for_repo(
     }
 
     // Search all remotes for a supported platform.
-    // Tries raw config URLs first, then falls back to effective URLs
-    // (with url.insteadOf rewrites) for unrecognized hostnames.
-    let remotes = repo.all_remote_urls();
-    for (remote_name, url) in &remotes {
-        if let Some(platform) = detect_platform_from_url(url) {
-            log::debug!(
-                "Detected CI platform {} from remote '{}'",
-                platform,
-                remote_name
-            );
-            return Some(platform);
-        }
-    }
-
-    // Fallback: try effective URLs for remotes with unrecognized hostnames
-    for (remote_name, raw_url) in &remotes {
-        if let Some(parsed) = GitRemoteUrl::parse(raw_url)
-            && !parsed.is_known_forge()
-            && let Some(forge_url) = repo.forge_remote_url(remote_name)
-            && forge_url != *raw_url
-            && let Some(platform) = detect_platform_from_url(&forge_url)
-        {
-            log::debug!(
-                "Detected CI platform {} from remote '{}' (via insteadOf fallback)",
-                platform,
-                remote_name
-            );
-            return Some(platform);
-        }
+    // Uses find_forge_remote which handles url.insteadOf fallback automatically.
+    if let Some((remote_name, url)) =
+        repo.find_forge_remote(|parsed| parsed.is_github() || parsed.is_gitlab())
+    {
+        let platform = detect_platform_from_url(&url)?;
+        log::debug!(
+            "Detected CI platform {} from remote '{}'",
+            platform,
+            remote_name
+        );
+        return Some(platform);
     }
 
     None

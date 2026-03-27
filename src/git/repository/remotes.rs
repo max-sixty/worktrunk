@@ -206,6 +206,44 @@ impl Repository {
             .clone()
     }
 
+    /// Search all remotes for a URL matching a predicate, with insteadOf fallback.
+    ///
+    /// First pass: checks raw config URLs against the predicate.
+    /// Second pass: for remotes whose raw hostname isn't a known forge, checks the
+    /// effective URL (with `url.insteadOf` rewrites applied).
+    ///
+    /// Returns the first matching `(remote_name, url)` pair, or `None`.
+    pub fn find_forge_remote<F>(&self, predicate: F) -> Option<(String, String)>
+    where
+        F: Fn(&GitRemoteUrl) -> bool,
+    {
+        let remotes = self.all_remote_urls();
+
+        // Fast path: check raw config URLs
+        for (remote_name, url) in &remotes {
+            if let Some(parsed) = GitRemoteUrl::parse(url)
+                && predicate(&parsed)
+            {
+                return Some((remote_name.clone(), url.clone()));
+            }
+        }
+
+        // Fallback: try effective URLs for remotes with unrecognized hostnames
+        for (remote_name, raw_url) in &remotes {
+            if let Some(parsed) = GitRemoteUrl::parse(raw_url)
+                && !parsed.is_known_forge()
+                && let Some(forge_url) = self.forge_remote_url(remote_name)
+                && forge_url != *raw_url
+                && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
+                && predicate(&parsed)
+            {
+                return Some((remote_name.clone(), forge_url));
+            }
+        }
+
+        None
+    }
+
     /// Get the primary remote URL with forge hostname resolution.
     ///
     /// Like [`primary_remote_url`](Self::primary_remote_url) but falls back to the

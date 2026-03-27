@@ -15,33 +15,11 @@ use super::{
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
 ///
-/// Tries raw config URLs first, then falls back to effective URLs (with
-/// `url.insteadOf` rewrites) for users with custom hostname aliases.
+/// Uses [`Repository::find_forge_remote`] to handle `url.insteadOf` aliases.
 fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    // Fast path: check raw config URLs
-    let remotes: Vec<(String, String)> = repo.all_remote_urls();
-    for (_, url) in &remotes {
-        if let Some(parsed) = GitRemoteUrl::parse(url)
-            && parsed.is_github()
-        {
-            return Some((parsed.owner().to_string(), parsed.repo().to_string()));
-        }
-    }
-
-    // Fallback: try effective URLs (with insteadOf rewrites) for unrecognized hostnames
-    for (remote_name, raw_url) in &remotes {
-        if let Some(parsed) = GitRemoteUrl::parse(raw_url)
-            && !parsed.is_known_forge()
-            && let Some(forge_url) = repo.forge_remote_url(remote_name)
-            && forge_url != *raw_url
-            && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
-            && parsed.is_github()
-        {
-            return Some((parsed.owner().to_string(), parsed.repo().to_string()));
-        }
-    }
-
-    None
+    let (_, url) = repo.find_forge_remote(|parsed| parsed.is_github())?;
+    let parsed = GitRemoteUrl::parse(&url)?;
+    Some((parsed.owner().to_string(), parsed.repo().to_string()))
 }
 
 /// Detect GitHub PR CI status for a branch.
