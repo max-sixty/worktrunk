@@ -313,7 +313,10 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
 /// Simulates the multi-key SSH pattern: custom host in .git/config, real forge via insteadOf.
 fn setup_insteadof(repo: &TestRepo, remote: &str, custom_url: &str, real_prefix: &str) {
     // Extract the org prefix from the custom URL for the insteadOf mapping
-    let custom_prefix = custom_url.rsplit_once('/').map(|(p, _)| p).unwrap_or(custom_url);
+    let custom_prefix = custom_url
+        .rsplit_once('/')
+        .map(|(p, _)| p)
+        .unwrap_or(custom_url);
     repo.run_git(&["config", &format!("remote.{remote}.url"), custom_url]);
     repo.run_git(&[
         "config",
