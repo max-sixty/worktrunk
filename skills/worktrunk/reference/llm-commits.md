@@ -49,13 +49,12 @@ These examples assume a feature worktree with changes to commit.
 
 Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
-```bash
-$ wt merge
-◎ Squashing 3 commits into a single commit (5 files, +48)...
-◎ Generating squash commit message...
-   feat(auth): Implement JWT authentication system
-   ...
-```
+{% terminal(cmd="wt merge") %}
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span> ...
+{% end %}
 
 ### wt step commit
 
