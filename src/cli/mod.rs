@@ -272,12 +272,11 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
+1. Runs [pre-switch hooks](@/hook.md#pre-switch) — blocks until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](@/hook.md#pre-start) (blocking)
-5. Spawns [post-start hooks](@/hook.md#post-start) (background)
-6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
+4. Runs [pre-start hooks](@/hook.md#pre-start) — blocks until complete
+5. Spawns [post-start](@/hook.md#post-start) and [post-switch hooks](@/hook.md#post-switch) in the background
 
 ```console
 wt switch feature                        # Existing branch → creates worktree
@@ -1108,8 +1107,8 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
 
 | Event | `pre-` (blocking) | `post-` (background) |
 |-------|-------------------|---------------------|
-| **start** | `pre-start` | `post-start` |
 | **switch** | `pre-switch` | `post-switch` |
+| **start** | `pre-start` | `post-start` |
 | **commit** | `pre-commit` | `post-commit` |
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
@@ -1133,6 +1132,15 @@ fi
 """
 ```
 
+## post-switch
+
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
+
+```toml
+[post-switch]
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
+```
+
 ## pre-start
 
 Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
@@ -1151,15 +1159,6 @@ Dev servers, long builds, file watchers, copying caches.
 [post-start]
 copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
-## post-switch
-
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
-
-```toml
-[post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 ```
 
 ## pre-commit

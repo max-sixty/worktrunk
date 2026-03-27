@@ -40,12 +40,11 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
+1. Runs [pre-switch hooks](@/hook.md#pre-switch) — blocks until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](@/hook.md#pre-start) (blocking)
-5. Spawns [post-start hooks](@/hook.md#post-start) (background)
-6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
+4. Runs [pre-start hooks](@/hook.md#pre-start) — blocks until complete
+5. Spawns [post-start](@/hook.md#post-start) and [post-switch hooks](@/hook.md#post-switch) in the background
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
