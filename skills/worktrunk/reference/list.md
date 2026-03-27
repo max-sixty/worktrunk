@@ -8,7 +8,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail) and line diffs since the merge-base. With [additional config](#llm-summaries), it also shows LLM-generated summaries of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
 
 ## Examples
 
@@ -24,30 +24,30 @@ List all worktrees:
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
 
-Include CI status and line diffs:
+Include CI status, line diffs, and LLM summaries:
 
 {% terminal(cmd="wt list --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                              <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware     <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation         <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                           <span class=d>|</span>     <span class=g>●</span>   <span class=d>41ee0834</span>
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden</span>
 {% end %}
 
 Include branches that don't have worktrees:
 
 {% terminal(cmd="wt list --branches --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-+ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                      <span class=d>|</span>     <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>96379229</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
-  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>b40716dc</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Summary</b>                                              <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>
+@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>  Refactor API to REST architecture with middleware     <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                                                                                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>  Harden auth with constant-time token validation         <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                                                                                           <span class=d>|</span>     <span class=g>●</span>   <span class=d>41ee0834</span>
+  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>       Explore GraphQL schema and resolvers                              <span class=d>96379229</span>
+  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>       Start API documentation                                           <span class=d>b40716dc</span>
 
-<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden</span>
 {% end %}
 
 Output as JSON for scripting:
