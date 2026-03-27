@@ -365,11 +365,11 @@ fn update_section(
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages
-/// Matches: <!-- wt <args> -->\n```bash\n$ wt <args>\n```
+/// Matches: <!-- wt <args> -->\n```bash\nwt <args>\n```
 /// The HTML comment triggers expansion, the code block shows in terminal help
 /// Note: Pattern expects ```bash``` because --help-page converts ```console``` first
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n\$ wt [^\n]+\n```").unwrap());
+    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\nwt [^\n]+\n```").unwrap());
 
 /// Map commands to their snapshot files for help page expansion
 fn command_to_snapshot(command: &str) -> Option<&'static str> {
@@ -1567,7 +1567,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             continue;
         }
 
-        // Expand command placeholders ($ wt list -> terminal shortcode with snapshot output)
+        // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
         let snapshots_dir = project_root.join("tests/snapshots");
         let generated = match expand_command_placeholders(&generated, &snapshots_dir) {
             Ok(expanded) => expanded,

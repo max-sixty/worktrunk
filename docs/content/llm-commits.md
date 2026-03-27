@@ -64,7 +64,7 @@ These examples assume a feature worktree with changes to commit.
 Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
 ```bash
-$ wt merge
+wt merge
 ◎ Squashing 3 commits into a single commit (5 files, +48)...
 ◎ Generating squash commit message...
    feat(auth): Implement JWT authentication system
@@ -76,7 +76,7 @@ $ wt merge
 Stages and commits with LLM-generated message:
 
 ```bash
-$ wt step commit
+wt step commit
 ```
 
 ### wt step squash
@@ -84,7 +84,7 @@ $ wt step commit
 Squashes branch commits into one with LLM-generated message:
 
 ```bash
-$ wt step squash
+wt step squash
 ```
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.

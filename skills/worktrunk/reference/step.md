@@ -447,34 +447,34 @@ All [hook template variables and filters](https://worktrunk.dev/hook/#template-v
 Get the port for the current branch:
 
 ```bash
-$ wt step eval '{{ branch | hash_port }}'
+wt step eval '{{ branch | hash_port }}'
 16066
 ```
 
 Use in shell substitution:
 
 ```bash
-$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
 ```
 
 Combine multiple values:
 
 ```bash
-$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
 16066,16739
 ```
 
 Use conditionals and filters:
 
 ```bash
-$ wt step eval '{{ branch | sanitize_db }}'
+wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
 ```
 
 Show available template variables:
 
 ```bash
-$ wt step eval --dry-run '{{ branch }}'
+wt step eval --dry-run '{{ branch }}'
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
@@ -590,7 +590,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 
 ```bash
 # from ~/project (main worktree)
-$ wt step promote feature
+wt step promote feature
 ```
 
 Before:

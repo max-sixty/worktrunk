@@ -78,7 +78,7 @@ Include branches that don't have worktrees:
 Output as JSON for scripting:
 
 ```bash
-$ wt list --format=json
+wt list --format=json
 ```
 
 ## Columns

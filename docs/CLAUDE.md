@@ -184,12 +184,12 @@ The `wt list` examples use **HTML comments + code blocks** that expand to full s
 ```
 <!-- wt list -->
 ```console
-$ wt list
+wt list
 ```
 ```
 
 This renders differently in each context:
-- **Terminal help (`--help`)**: HTML comment skipped, code block shows as dimmed `$ wt list`
+- **Terminal help (`--help`)**: HTML comment skipped, code block shows as dimmed `wt list`
 - **Web docs (`--help-page`)**: Both are replaced with the standard template format:
 
 ```

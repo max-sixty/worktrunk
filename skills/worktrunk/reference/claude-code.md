@@ -8,8 +8,8 @@ The worktrunk Claude Code plugin provides two features:
 ## Installation
 
 ```bash
-$ claude plugin marketplace add max-sixty/worktrunk
-$ claude plugin install worktrunk@worktrunk
+claude plugin marketplace add max-sixty/worktrunk
+claude plugin install worktrunk@worktrunk
 ```
 
 ## Configuration skill
@@ -46,9 +46,9 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 Set status markers manually for any workflow:
 
 ```bash
-$ wt config state marker set "🚧"                   # Current branch
-$ wt config state marker set "✅" --branch feature  # Specific branch
-$ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
+wt config state marker set "🚧"                   # Current branch
+wt config state marker set "✅" --branch feature  # Specific branch
+git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
 ## Statusline

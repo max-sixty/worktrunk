@@ -84,19 +84,19 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
 
 Include CI status, line diffs, and LLM summaries:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m[2m[0m
 
 Include branches that don't have worktrees:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m[2m[0m
 
 Output as JSON for scripting:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m[0m
 
 [1m[32mColumns[0m
 

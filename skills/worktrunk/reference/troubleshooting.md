@@ -9,8 +9,8 @@ Claude-specific troubleshooting guidance for common worktrunk issues.
 Check if the configured tool is installed:
 
 ```bash
-$ wt config show  # shows the configured command
-$ which claude    # or: which codex, which llm, which aichat
+wt config show  # shows the configured command
+which claude    # or: which codex, which llm, which aichat
 ```
 
 If empty, install one of the supported tools. See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup instructions.
@@ -20,7 +20,7 @@ If empty, install one of the supported tools. See [LLM commits docs](https://wor
 Test the configured command directly by piping a prompt to it. See `reference/llm-commits.md` for the exact command syntax for each tool.
 
 ```bash
-$ echo "say hello" | <your-configured-command>
+echo "say hello" | <your-configured-command>
 ```
 
 Common issues:
