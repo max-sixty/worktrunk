@@ -8,8 +8,8 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 | Event | `pre-` (blocking) | `post-` (background) |
 |-------|-------------------|---------------------|
-| **start** | `pre-start` | `post-start` |
 | **switch** | `pre-switch` | `post-switch` |
+| **start** | `pre-start` | `post-start` |
 | **commit** | `pre-commit` | `post-commit` |
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
@@ -33,6 +33,15 @@ fi
 """
 ```
 
+## post-switch
+
+Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
+
+```toml
+[post-switch]
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
+```
+
 ## pre-start
 
 Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
@@ -51,15 +60,6 @@ Dev servers, long builds, file watchers, copying caches.
 [post-start]
 copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
-## post-switch
-
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
-
-```toml
-[post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 ```
 
 ## pre-commit
@@ -499,9 +499,9 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>show</span></b>         Show configured hooks
   <b><span class=c>pre-switch</span></b>   Run pre-switch hooks
+  <b><span class=c>post-switch</span></b>  Run post-switch hooks
   <b><span class=c>pre-start</span></b>    Run pre-start hooks
   <b><span class=c>post-start</span></b>   Run post-start hooks
-  <b><span class=c>post-switch</span></b>  Run post-switch hooks
   <b><span class=c>pre-commit</span></b>   Run pre-commit hooks
   <b><span class=c>post-commit</span></b>  Run post-commit hooks
   <b><span class=c>pre-merge</span></b>    Run pre-merge hooks

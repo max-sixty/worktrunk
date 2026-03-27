@@ -132,8 +132,7 @@ When creating a worktree, worktrunk:
 2. Creates worktree at configured path
 3. Switches to new directory
 4. Runs pre-start hooks (blocking)
-5. Spawns post-start hooks (background)
-6. Spawns post-switch hooks (background)
+5. Spawns post-start and post-switch hooks (background, concurrent)
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m

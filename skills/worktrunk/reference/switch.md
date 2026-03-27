@@ -28,8 +28,7 @@ When creating a worktree, worktrunk:
 2. Creates worktree at configured path
 3. Switches to new directory
 4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start) (blocking)
-5. Spawns [post-start hooks](https://worktrunk.dev/hook/#post-start) (background)
-6. Spawns [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background)
+5. Spawns [post-start](https://worktrunk.dev/hook/#post-start) and [post-switch hooks](https://worktrunk.dev/hook/#post-switch) (background, concurrent)
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
