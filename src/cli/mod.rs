@@ -908,7 +908,7 @@ wt merge --no-commit
 `wt merge` runs these steps:
 
 1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. With `--no-squash`, this is the only commit step; with squash — the default — this is skipped and changes are staged during squash instead.
-2. **Squash** — Combines all commits since target into one, like GitHub's "Squash and merge". Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
 3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
 5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history with rebased commits plus a merge commit. Non-fast-forward merges are rejected.
@@ -1115,7 +1115,7 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged to `.git/wt/logs/{branch}-{source}-{hook}-{name}.log`. Use `-v` to see expanded command details for background hooks.
 
-The most common starting point is `post-start` — it runs background tasks like dev servers, file copying, and builds when creating a worktree.
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
 ## pre-switch
 

@@ -16,7 +16,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged to `.git/wt/logs/{branch}-{source}-{hook}-{name}.log`. Use `-v` to see expanded command details for background hooks.
 
-The most common starting point is `post-start` — it runs background tasks like dev servers, file copying, and builds when creating a worktree.
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
 ## pre-switch
 

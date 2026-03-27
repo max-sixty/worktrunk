@@ -63,7 +63,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Location:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# - macOS/Linux: `~/.config/worktrunk/config.toml`, or `$XDG_CONFIG_HOME` if set[0m
+[107m [0m [2m# - macOS/Linux: `~/.config/worktrunk/config.toml` (or `$XDG_CONFIG_HOME` if set)[0m
 [107m [0m [2m# - Windows: `%APPDATA%\worktrunk\config.toml`[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Worktree path template[0m
