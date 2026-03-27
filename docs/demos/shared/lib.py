@@ -397,6 +397,47 @@ fi
     install_env["HOME"] = str(env.home)
     run([str(wt_bin), "config", "shell", "install", "fish", "--yes"], env=install_env)
 
+    # Fish syntax highlighting colors — use ANSI names so the VHS terminal
+    # theme controls the actual rendered RGB values (light vs dark).
+    # Two mechanisms: fish_variables for --shell/--snapshot mode (fish reads at
+    # startup), colors.fish for VHS recordings (VHS applies Env HOME after fish
+    # starts, so fish_variables from the demo home isn't read).
+    fish_config_dir = env.home / ".config" / "fish"
+    fish_config_dir.mkdir(parents=True, exist_ok=True)
+    color_vars = {
+        "fish_color_autosuggestion": "brblack",
+        "fish_color_command": "yellow",  # amber — matches website .cmd color
+        "fish_color_comment": "brblack",
+        "fish_color_end": "normal",
+        "fish_color_error": "red",
+        "fish_color_escape": "cyan",
+        "fish_color_keyword": "yellow",
+        "fish_color_normal": "normal",
+        "fish_color_operator": "normal",
+        "fish_color_param": "normal",
+        "fish_color_quote": "green",
+        "fish_color_redirection": "normal",
+    }
+
+    # fish_variables file (for --shell and --snapshot modes)
+    lines = [
+        "# This file contains fish universal variable definitions.",
+        "# VERSION: 3.0",
+    ]
+    lines.extend(f"SETUVAR {k}:{v}" for k, v in color_vars.items())
+    lines.extend([
+        "SETUVAR fish_color_cancel:\\x2d\\x2dreverse",
+        "SETUVAR fish_color_search_match:\\x2d\\x2dbackground\\x3d111",
+        "SETUVAR fish_color_selection:\\x2d\\x2dbackground\\x3dbrblack",
+        "SETUVAR fish_color_valid_path:\\x2d\\x2dunderline",
+        "SETUVAR fish_greeting:",
+    ])
+    (fish_config_dir / "fish_variables").write_text("\n".join(lines) + "\n")
+
+    # colors.fish script (sourced in VHS tape hidden section)
+    color_lines = [f"set -g {k} {v}" for k, v in color_vars.items()]
+    (fish_config_dir / "colors.fish").write_text("\n".join(color_lines) + "\n")
+
     # User config directory (demos add their own config.toml)
     config_dir = env.home / ".config" / "worktrunk"
     config_dir.mkdir(parents=True)
@@ -636,7 +677,6 @@ def setup_fish_config(env: DemoEnv, wsl_create: bool = False) -> None:
 
     fish_config = fish_config_dir / "config.fish"
     fish_config.write_text(f"""# Demo fish config
-set -U fish_greeting ""
 # wsl abbreviation: switch to worktree and launch Claude
 abbr --add wsl '{wsl_cmd}'
 starship init fish | source
@@ -1134,6 +1174,7 @@ def record_snapshot(
             "TERM": "xterm-256color",
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
+            "GIT_PAGER": "",  # Plain text output, no delta formatting
         }
     )
 
@@ -1215,6 +1256,7 @@ def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
         "STARSHIP_CONFIG": starship_config,
         "TARGET_DEBUG": (repo_root / "target" / "debug").resolve(),
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+        "GIT_PAGER": "",  # Overridden per-theme in record_all_themes
     }
 
 
@@ -1244,6 +1286,9 @@ def record_all_themes(
 
     for theme_name, output_gif in output_gifs.items():
         theme = THEMES[theme_name]
+        delta_flags = "delta --paging=never"
+        if theme_name == "light":
+            delta_flags += " --light"
         replacements = {
             **base_replacements,
             "OUTPUT_GIF": output_gif,
@@ -1251,6 +1296,7 @@ def record_all_themes(
             "WIDTH": size.width,
             "HEIGHT": size.height,
             "FONTSIZE": size.fontsize,
+            "GIT_PAGER": delta_flags,
         }
 
         rendered = render_tape(tape_template, replacements, repo_root)

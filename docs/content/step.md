@@ -871,7 +871,7 @@ wt step deploy --var env=staging          # pass extra template variables
 wt step deploy --yes                      # skip approval prompt
 ```
 
-When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#security) on first run, same as project hooks. User-config aliases are trusted.
+When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 
 Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
 

@@ -92,7 +92,7 @@ Enable in user config:
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+Summaries are cached and regenerated only when the diff changes.
 
 ## Prompt templates
 
