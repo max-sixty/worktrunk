@@ -1,30 +1,7 @@
 //! Command configuration types for hook pipelines.
 //!
-//! The data structure determines execution order:
-//! - **String** → single command
-//! - **Map** (TOML table) → concurrent commands
-//! - **List** (TOML array) → serial pipeline (steps execute in order)
-//!
-//! List elements can be strings (anonymous serial steps) or maps (named commands).
-//! A single-entry map is a named serial step; a multi-entry map is a concurrent group.
-//!
-//! Examples:
-//! ```toml
-//! # Single command
-//! post-start = "npm install"
-//!
-//! # Concurrent (map)
-//! [hooks.post-start]
-//! build = "npm run build"
-//! lint = "npm run lint"
-//!
-//! # Serial pipeline with concurrent stage
-//! [hooks]
-//! post-start = [
-//!     { install = "npm install" },
-//!     { build = "npm run build", lint = "npm run lint" }
-//! ]
-//! ```
+//! See `wt hook --help` → "Pipeline Ordering" for user-facing docs.
+//! See [`HookStep`] and [`CommandConfig`] for the internal model.
 
 use std::collections::BTreeMap;
 
