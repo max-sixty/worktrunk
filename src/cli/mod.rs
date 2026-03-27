@@ -1227,7 +1227,11 @@ Project commands require approval on first run:
 ▲ repo needs approval to execute 3 commands:
 
 ○ pre-start install:
-   echo 'Installing dependencies...'
+   npm ci
+○ pre-start build:
+   cargo build --release
+○ pre-start env:
+   echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]
 ```

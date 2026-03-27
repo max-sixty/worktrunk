@@ -166,17 +166,16 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 ### Example approval prompt
 
-```
-▲ repo needs approval to execute 3 commands:
+<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
-❯ Allow and remember? [y/N]
-```
+<span class="d">○</span> post-create <b>install</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
+<span class="d">○</span> post-create <b>build</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
+<span class="d">○</span> post-create <b>env</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+
+<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
