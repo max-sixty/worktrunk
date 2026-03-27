@@ -1776,6 +1776,13 @@ TODO: Add request/response examples for each endpoint
     // Remove the worktree but keep the branch
     repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
+    // === Create fix-typos worktree (already merged — shows dimmed as removable) ===
+    // Story: A quick typo fix that was already squash-merged into main.
+    // The worktree is still around and can be removed. Shows dimmed in list output.
+    let fix_typos = repo.add_worktree("fix-typos");
+    repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
+    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
