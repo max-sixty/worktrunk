@@ -151,14 +151,14 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 ```console
 $ wt list
   Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
-@ feature-auth  +   –      +53                         0e631add  1d    Initial commit
+@ feature-auth  +   ↑      +27   -8   ↑1               4bc72dc9  2h    Add authentication module
 ^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 column hidden
+○ Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden
 
 ```
 
-The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.
 
 When done, either:
 

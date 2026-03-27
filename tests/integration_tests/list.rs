@@ -840,9 +840,12 @@ mod tests {
 
 /// Set up a Quick Start example repo with main + feature-auth.
 ///
-/// Creates a simple scenario:
-/// - main: Initial codebase
-/// - feature-auth: Uncommitted changes adding authentication (WIP state)
+/// Creates a scenario with a committed feature branch plus staged WIP:
+/// - main: Initial codebase (1 commit behind remote)
+/// - feature-auth: 1 commit ahead of main + staged WIP changes (adds + removes)
+///
+/// The staged WIP extends auth.rs and restructures lib.rs, producing both
+/// additions and deletions in HEAD± to showcase more of `wt list`.
 ///
 /// Returns the feature-auth worktree path.
 fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
@@ -851,7 +854,55 @@ fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // Create feature-auth worktree
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (not committed - realistic WIP state)
+    // === Commit: Add authentication module (1 commit ahead of main) ===
+    std::fs::write(
+        feature_auth.join("auth.rs"),
+        r#"//! Authentication module for user session management.
+
+use std::time::{Duration, SystemTime};
+
+/// A user session with token and expiry.
+pub struct Session {
+    token: String,
+    expires_at: SystemTime,
+}
+
+impl Session {
+    /// Creates a new session with the given token and TTL.
+    pub fn new(token: String, ttl: Duration) -> Self {
+        Self {
+            token,
+            expires_at: SystemTime::now() + ttl,
+        }
+    }
+
+    /// Returns true if the session has not expired.
+    pub fn is_valid(&self) -> bool {
+        SystemTime::now() < self.expires_at
+    }
+
+    /// Validates the token format.
+    pub fn validate_token(token: &str) -> bool {
+        token.len() >= 32 && token.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    std::fs::write(
+        feature_auth.join("lib.rs"),
+        format!("mod auth;\n\n{}", lib_content),
+    )
+    .unwrap();
+
+    repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
+    repo.commit_staged_with_age("Add authentication module", 2 * HOUR, &feature_auth);
+
+    // === Staged WIP: extend auth + restructure lib (produces both +N and -N in HEAD±) ===
+
+    // Extend auth.rs with is_authenticated and tests
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
@@ -909,15 +960,26 @@ mod tests {
     )
     .unwrap();
 
-    // Update lib.rs to include the new module
-    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    // Restructure lib.rs: remove test module, add pub use + init
     std::fs::write(
         feature_auth.join("lib.rs"),
-        format!("mod auth;\n\n{}", lib_content),
+        r#"mod auth;
+
+pub use auth::Session;
+
+/// Adds two numbers.
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+/// Initializes the application with default settings.
+pub fn init() -> bool {
+    true
+}
+"#,
     )
     .unwrap();
 
-    // Stage all changes (but don't commit - WIP state for wt list demo)
     repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
 
     feature_auth
@@ -1831,7 +1893,7 @@ fn test_quickstart_merge(mut repo: TestRepo) {
     // Create feature-auth worktree with one commit
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (same as setup_quickstart_repo)
+    // Add authentication module (full WIP version — all staged, no commit, for wt merge)
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
