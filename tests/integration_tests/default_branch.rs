@@ -306,72 +306,79 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
     );
 }
 
-/// Test that forge_remote_url falls back to effective URL when raw URL has a custom hostname.
-///
-/// Simulates the url.insteadOf pattern used for multi-key SSH setups:
-///   .git/config: url = git@work-ssh:org/repo.git  (custom hostname)
-///   local config: url."git@github.com:org".insteadOf "git@work-ssh:org"
-///   git remote get-url → git@github.com:org/repo.git  (real hostname via insteadOf)
-#[rstest]
-fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
-    // Set the raw remote URL to use a custom hostname (not a known forge).
-    // The hostname must NOT contain "github" or "gitlab" since is_known_forge()
-    // uses substring matching (e.g., "github-work" would match as GitHub).
-    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
+// --- Forge URL resolution helpers ---
 
-    // Configure insteadOf to map the custom hostname to github.com.
-    // This simulates a user's SSH multi-key setup where ~/.ssh/config
-    // defines custom hosts and git config rewrites URLs.
+/// Configure a remote with a custom hostname and an insteadOf rewrite to a real forge.
+///
+/// Simulates the multi-key SSH pattern: custom host in .git/config, real forge via insteadOf.
+fn setup_insteadof(repo: &TestRepo, remote: &str, custom_url: &str, real_prefix: &str) {
+    // Extract the org prefix from the custom URL for the insteadOf mapping
+    let custom_prefix = custom_url.rsplit_once('/').map(|(p, _)| p).unwrap_or(custom_url);
+    repo.run_git(&["config", &format!("remote.{remote}.url"), custom_url]);
     repo.run_git(&[
         "config",
-        "url.git@github.com:org.insteadOf",
-        "git@work-ssh:org",
+        &format!("url.{real_prefix}.insteadOf"),
+        custom_prefix,
     ]);
+}
+
+/// Set up push tracking so `branch.push_remote()` and `github_push_url()` work.
+fn setup_push_tracking(repo: &TestRepo, branch: &str, remote: &str) {
+    repo.run_git(&["config", &format!("branch.{branch}.remote"), remote]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{branch}.merge"),
+        &format!("refs/heads/{branch}"),
+    ]);
+    repo.run_git(&[
+        "update-ref",
+        &format!("refs/remotes/{remote}/{branch}"),
+        branch,
+    ]);
+}
+
+/// Test forge_remote_url: insteadOf fallback resolves custom hostname to real forge.
+#[rstest]
+fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
 
-    // raw remote_url should return the custom hostname
-    let raw_url = git_repo.remote_url("origin").unwrap();
-    assert_eq!(raw_url, "git@work-ssh:org/repo.git");
-    assert!(
-        !GitRemoteUrl::parse(&raw_url).unwrap().is_known_forge(),
-        "Raw URL should have an unrecognized hostname"
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        "git@work-ssh:org/repo.git"
+    );
+    assert_eq!(
+        git_repo.effective_remote_url("origin").unwrap(),
+        "git@github.com:org/repo.git"
     );
 
-    // effective_remote_url should apply insteadOf and return the real hostname
-    let effective_url = git_repo.effective_remote_url("origin").unwrap();
-    assert_eq!(effective_url, "git@github.com:org/repo.git");
-
-    // forge_remote_url should detect the unknown hostname and fall back to the effective URL
     let forge_url = git_repo.forge_remote_url("origin").unwrap();
     let parsed = GitRemoteUrl::parse(&forge_url).unwrap();
-    assert!(
-        parsed.is_known_forge(),
-        "forge_remote_url should resolve to a known forge, got: {}",
-        forge_url
-    );
+    assert!(parsed.is_known_forge());
     assert_eq!(parsed.host(), "github.com");
     assert_eq!(parsed.owner(), "org");
     assert_eq!(parsed.repo(), "repo");
 }
 
-/// Test that forge_remote_url returns raw URL when it already has a known forge hostname.
+/// Test forge_remote_url: returns raw URL directly when hostname is already a known forge.
 #[rstest]
 fn test_forge_remote_url_known_forge_no_fallback(repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
 
-    // The fixture already has a github.com remote URL
     let raw_url = git_repo.remote_url("origin").unwrap();
     let forge_url = git_repo.forge_remote_url("origin").unwrap();
-
-    // Should return the raw URL directly (no fallback needed)
     assert_eq!(forge_url, raw_url);
 }
 
-/// Test that forge_remote_url returns raw URL when neither raw nor effective URL is a known forge.
+/// Test forge_remote_url: returns raw URL when neither raw nor effective is a known forge.
 #[rstest]
 fn test_forge_remote_url_unknown_forge_returns_raw(repo: TestRepo) {
-    // Set both raw and effective URLs to unknown forges (no insteadOf configured)
     repo.run_git(&[
         "config",
         "remote.origin.url",
@@ -379,23 +386,46 @@ fn test_forge_remote_url_unknown_forge_returns_raw(repo: TestRepo) {
     ]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-
-    let forge_url = git_repo.forge_remote_url("origin").unwrap();
     assert_eq!(
-        forge_url, "git@bitbucket.org:org/repo.git",
-        "Should return raw URL when neither is a known forge"
+        git_repo.forge_remote_url("origin").unwrap(),
+        "git@bitbucket.org:org/repo.git"
     );
 }
 
-/// Test that primary_forge_remote_url resolves through insteadOf.
+/// Test forge_remote_url: returns raw URL when insteadOf rewrites to another unknown host.
+#[rstest]
+fn test_forge_remote_url_insteadof_to_unknown_forge(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@custom-host:org/repo.git",
+        "git@other-host:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.forge_remote_url("origin").unwrap(),
+        "git@custom-host:org/repo.git"
+    );
+}
+
+/// Test forge_remote_url / effective_remote_url: return None for nonexistent remote.
+#[rstest]
+fn test_forge_remote_url_nonexistent_remote(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.forge_remote_url("nonexistent").is_none());
+    assert!(git_repo.effective_remote_url("nonexistent").is_none());
+}
+
+/// Test primary_forge_remote_url resolves through insteadOf.
 #[rstest]
 fn test_primary_forge_remote_url_with_insteadof(repo: TestRepo) {
-    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
-    repo.run_git(&[
-        "config",
-        "url.git@github.com:org.insteadOf",
-        "git@work-ssh:org",
-    ]);
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
     let url = git_repo.primary_forge_remote_url().unwrap();
@@ -404,200 +434,106 @@ fn test_primary_forge_remote_url_with_insteadof(repo: TestRepo) {
     assert_eq!(parsed.host(), "github.com");
 }
 
-/// Test that effective_remote_url returns the same URL when no insteadOf is configured.
+/// Test effective_remote_url: matches raw URL when no insteadOf is configured.
 #[rstest]
 fn test_effective_remote_url_without_insteadof(repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
-
-    let raw = git_repo.remote_url("origin").unwrap();
-    let effective = git_repo.effective_remote_url("origin").unwrap();
-    // Without insteadOf, raw and effective should be the same
-    assert_eq!(raw, effective);
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        git_repo.effective_remote_url("origin").unwrap()
+    );
 }
 
-/// Test find_forge_remote with insteadOf alias.
-///
-/// Verifies the two-pass iteration: raw URLs first, then effective URLs.
+/// Test find_forge_remote: two-pass iteration finds forge via insteadOf fallback.
 #[rstest]
 fn test_find_forge_remote_insteadof(repo: TestRepo) {
-    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
-    repo.run_git(&[
-        "config",
-        "url.git@github.com:org.insteadOf",
-        "git@work-ssh:org",
-    ]);
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
 
-    // Should find GitHub via insteadOf fallback
-    let result = git_repo.find_forge_remote(|parsed| parsed.is_github());
-    assert!(
-        result.is_some(),
-        "Should find GitHub via insteadOf fallback"
-    );
-    let (remote_name, url) = result.unwrap();
+    let (remote_name, url) = git_repo
+        .find_forge_remote(|parsed| parsed.is_github())
+        .expect("Should find GitHub via insteadOf fallback");
     assert_eq!(remote_name, "origin");
-    let parsed = GitRemoteUrl::parse(&url).unwrap();
-    assert_eq!(parsed.host(), "github.com");
+    assert_eq!(GitRemoteUrl::parse(&url).unwrap().host(), "github.com");
 
-    // Should NOT find GitLab
-    let result = git_repo.find_forge_remote(|parsed| parsed.is_gitlab());
-    assert!(result.is_none(), "Should not find GitLab");
+    assert!(
+        git_repo
+            .find_forge_remote(|parsed| parsed.is_gitlab())
+            .is_none(),
+        "Should not find GitLab"
+    );
 }
 
-/// Test find_forge_remote with a known forge hostname (fast path).
+/// Test find_forge_remote: fast path matches raw URL without fallback.
 #[rstest]
 fn test_find_forge_remote_known_forge(repo: TestRepo) {
-    // Set origin to a GitHub URL so the fast path (raw URL check) works
     repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let result = git_repo.find_forge_remote(|parsed| parsed.is_github());
-    assert!(result.is_some(), "Should find GitHub on fast path");
-    let (name, url) = result.unwrap();
+    let (name, url) = git_repo
+        .find_forge_remote(|parsed| parsed.is_github())
+        .expect("Should find GitHub on fast path");
     assert_eq!(name, "origin");
     assert_eq!(url, "git@github.com:org/repo.git");
 }
 
-/// Test github_push_url with insteadOf alias on push remote.
-///
-/// When the push remote URL has a custom hostname, github_push_url should
-/// fall back to the forge-aware URL resolution.
+/// Test find_forge_remote: returns None when no remotes are configured.
 #[rstest]
-fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
-    // Set origin URL to custom hostname
-    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
-    // Configure insteadOf to map to github.com
-    repo.run_git(&[
-        "config",
-        "url.git@github.com:org.insteadOf",
-        "git@work-ssh:org",
-    ]);
-    // Set up push tracking for main branch (both config and remote-tracking ref)
-    repo.run_git(&["config", "branch.main.remote", "origin"]);
-    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
-    repo.run_git(&["update-ref", "refs/remotes/origin/main", "main"]);
+fn test_find_forge_remote_no_remotes(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let branch = git_repo.branch("main");
-    let push_url = branch.github_push_url();
+    assert!(git_repo.find_forge_remote(|p| p.is_github()).is_none());
+}
 
-    // Should resolve through insteadOf to a GitHub URL
-    assert!(
-        push_url.is_some(),
-        "github_push_url should resolve via insteadOf"
+/// Test github_push_url: resolves through insteadOf on push remote.
+#[rstest]
+fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
     );
-    let url = push_url.unwrap();
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo
+        .branch("main")
+        .github_push_url()
+        .expect("github_push_url should resolve via insteadOf");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
     assert!(parsed.is_github());
     assert_eq!(parsed.host(), "github.com");
 }
 
-/// Test github_push_url returns None when push remote is a non-GitHub forge.
-///
-/// Even after insteadOf fallback, if the URL resolves to GitLab (not GitHub),
-/// github_push_url should return None.
+/// Test github_push_url: returns None for non-GitHub forge (GitLab).
 #[rstest]
 fn test_github_push_url_non_github_forge_returns_none(repo: TestRepo) {
-    // Set origin URL to a GitLab remote
     repo.run_git(&["config", "remote.origin.url", "git@gitlab.com:org/repo.git"]);
-    // Set up push tracking for main branch
-    repo.run_git(&["config", "branch.main.remote", "origin"]);
-    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
-    repo.run_git(&["update-ref", "refs/remotes/origin/main", "main"]);
+    setup_push_tracking(&repo, "main", "origin");
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let branch = git_repo.branch("main");
-
-    // GitLab URL is a known forge but not GitHub — should return None
-    assert!(
-        branch.github_push_url().is_none(),
-        "github_push_url should return None for GitLab remotes"
-    );
+    assert!(git_repo.branch("main").github_push_url().is_none());
 }
 
-/// Test github_push_url returns None when push remote has unknown hostname
-/// and insteadOf resolves to a non-GitHub forge.
+/// Test github_push_url: returns None when insteadOf resolves to GitLab (not GitHub).
 #[rstest]
 fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {
-    // Set origin URL to custom hostname
-    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
-    // insteadOf maps to GitLab, not GitHub
-    repo.run_git(&[
-        "config",
-        "url.git@gitlab.com:org.insteadOf",
-        "git@work-ssh:org",
-    ]);
-    // Set up push tracking
-    repo.run_git(&["config", "branch.main.remote", "origin"]);
-    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
-    repo.run_git(&["update-ref", "refs/remotes/origin/main", "main"]);
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    let branch = git_repo.branch("main");
-
-    // Fallback resolves to GitLab, not GitHub — should return None
-    assert!(
-        branch.github_push_url().is_none(),
-        "github_push_url should return None when insteadOf resolves to GitLab"
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@gitlab.com:org",
     );
-}
-
-/// Test find_forge_remote returns None when no remotes are configured.
-#[rstest]
-fn test_find_forge_remote_no_remotes(repo: TestRepo) {
-    // Remove the origin remote
-    repo.run_git(&["remote", "remove", "origin"]);
+    setup_push_tracking(&repo, "main", "origin");
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    let result = git_repo.find_forge_remote(|parsed| parsed.is_github());
-    assert!(result.is_none(), "Should return None with no remotes");
-}
-
-/// Test forge_remote_url when effective URL differs from raw but is also not a known forge.
-///
-/// When insteadOf rewrites to another custom hostname (not github/gitlab),
-/// forge_remote_url should still return the raw URL as best-effort.
-#[rstest]
-fn test_forge_remote_url_insteadof_to_unknown_forge(repo: TestRepo) {
-    repo.run_git(&[
-        "config",
-        "remote.origin.url",
-        "git@custom-host:org/repo.git",
-    ]);
-    // insteadOf rewrites to another unknown host
-    repo.run_git(&[
-        "config",
-        "url.git@other-host:org.insteadOf",
-        "git@custom-host:org",
-    ]);
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-
-    let forge_url = git_repo.forge_remote_url("origin").unwrap();
-    // Neither raw nor effective is a known forge — should return raw URL
-    assert_eq!(
-        forge_url, "git@custom-host:org/repo.git",
-        "Should return raw URL when insteadOf also resolves to unknown forge"
-    );
-}
-
-/// Test effective_remote_url returns None for nonexistent remote.
-#[rstest]
-fn test_effective_remote_url_nonexistent_remote(repo: TestRepo) {
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert!(
-        git_repo.effective_remote_url("nonexistent").is_none(),
-        "Should return None for nonexistent remote"
-    );
-}
-
-/// Test forge_remote_url returns None for nonexistent remote.
-#[rstest]
-fn test_forge_remote_url_nonexistent_remote(repo: TestRepo) {
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert!(
-        git_repo.forge_remote_url("nonexistent").is_none(),
-        "Should return None for nonexistent remote"
-    );
+    assert!(git_repo.branch("main").github_push_url().is_none());
 }

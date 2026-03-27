@@ -228,16 +228,14 @@ impl Repository {
             }
         }
 
-        // Fallback: try effective URLs for remotes with unrecognized hostnames
+        // Fallback: try effective URLs (with insteadOf rewrites) for unrecognized hostnames
         for (remote_name, raw_url) in &remotes {
-            if let Some(parsed) = GitRemoteUrl::parse(raw_url)
-                && !parsed.is_known_forge()
-                && let Some(forge_url) = self.forge_remote_url(remote_name)
-                && forge_url != *raw_url
-                && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
+            if let Some(effective_url) = self.effective_remote_url(remote_name)
+                && effective_url != *raw_url
+                && let Some(parsed) = GitRemoteUrl::parse(&effective_url)
                 && predicate(&parsed)
             {
-                return Some((remote_name.clone(), forge_url));
+                return Some((remote_name.clone(), effective_url));
             }
         }
 
