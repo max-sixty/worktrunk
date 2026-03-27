@@ -111,6 +111,6 @@ Custom command templates configured in user config ([2m~/.config/worktrunk/conf
 [107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # pass extra template variables[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
 
-When defined in both user and project config, user aliases take precedence. Project-config aliases require command approval on first run (same as project hooks). User-config aliases are trusted.
+When defined in both user and project config, both run — user first, then project. Project-config aliases require command approval on first run, same as project hooks. User-config aliases are trusted.
 
 Alias names that match a built-in step command ([2mcommit[0m, [2msquash[0m, etc.) are shadowed by the built-in and will never run.

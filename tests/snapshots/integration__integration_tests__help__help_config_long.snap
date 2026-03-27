@@ -418,7 +418,7 @@ Override the LLM command in CI to use a mock:
 
              Variable                                                   Purpose                                      
  ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers (useful for testing dev builds)           
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds            
  [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
  [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
  [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     

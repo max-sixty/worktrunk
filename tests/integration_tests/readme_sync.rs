@@ -420,7 +420,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
         let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = trim_lines(&html);
+        let normalized = encode_leading_spaces(&trim_lines(&html));
 
         // Build the terminal shortcode with standard template markers
         // cmd= parameter enables giallo syntax highlighting on the command line
@@ -464,6 +464,19 @@ fn trim_lines(content: &str) -> String {
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+/// Encode leading spaces on the first line as `&#32;` HTML entities.
+/// Zola trims leading whitespace from shortcode bodies, stripping the
+/// two-space gutter that aligns table headers with data rows in `wt list`.
+/// HTML entities survive the trim and render as spaces in `<pre>` blocks.
+fn encode_leading_spaces(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("");
+    let leading = first_line.len() - first_line.trim_start().len();
+    if leading == 0 {
+        return content.to_string();
+    }
+    format!("{}{}", "&#32;".repeat(leading), &content[leading..])
 }
 
 /// Parse snapshot content for docs (with ANSI to HTML conversion)
@@ -1933,4 +1946,25 @@ fn test_command_pages_and_skill_files_are_in_sync() {
             all_files.join("\n  ")
         );
     }
+}
+
+/// Verify that post_process_for_html() transforms the approval prompt code block
+/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
+/// without updating the replacement in help.rs, the .replace() silently stops
+/// matching and the web docs fall back to a plain code block.
+#[test]
+fn test_approval_prompt_styled_in_hook_page() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = wt_command()
+        .args(["hook", "--help-page"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt hook --help-page");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#"class="y""#),
+        "hook --help-page should contain styled approval prompt (class=\"y\" for yellow ▲). \
+         If cli/mod.rs approval example changed, update the replacement in help.rs post_process_for_html()."
+    );
 }

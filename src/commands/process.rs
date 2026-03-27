@@ -660,7 +660,7 @@ mod tests {
         assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
         // Unknown hook type
-        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, pre-start, post-start, post-switch, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
         // Unknown internal operation
         assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");

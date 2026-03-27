@@ -33,7 +33,7 @@ List all worktrees:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list.snap — edit source to update -->
 
 {% terminal(cmd="wt list") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
@@ -48,7 +48,7 @@ Include CI status, line diffs, and LLM summaries:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap — edit source to update -->
 
 {% terminal(cmd="wt list --full") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
@@ -63,7 +63,7 @@ Include branches that don't have worktrees:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap — edit source to update -->
 
 {% terminal(cmd="wt list --branches --full") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
@@ -89,17 +89,17 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) <span class="badge-experimental"></span> |
+| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) <span class="badge-experimental"></span> |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status (`--full`) |
+| CI | Pipeline status; `--full` only |
 | Path | Worktree directory |
-| URL | Dev server URL from project config (dimmed if port not listening) |
+| URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch (header label stays `main` for compactness). `main…±` uses a merge-base (three-dot) diff.
+Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
 
 ### CI status
 
@@ -115,7 +115,7 @@ The CI column shows GitHub/GitLab pipeline status:
 | <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ### LLM summaries
 
@@ -141,7 +141,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
 | | `∅` | Orphan branch (no common ancestor with the default branch) |
-| | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
+| | `✗` | Would conflict if merged to the default branch; with `--full`, includes uncommitted changes |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
 | | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
@@ -207,17 +207,17 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `working_tree` | object | Working tree state (see below) |
 | `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
-| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
-| `main` | object | Relationship to the default branch (see below, absent when is_main) |
-| `remote` | object | Tracking branch info (see below, absent when no tracking) |
+| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"`; absent when clean |
+| `main` | object | Relationship to the default branch (see below); absent when is_main |
+| `remote` | object | Tracking branch info (see below); absent when no tracking |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
-| `ci` | object | CI status (see below, absent when no CI) |
-| `url` | string | Dev server URL from project config (absent when not configured) |
-| `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
-| `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
+| `ci` | object | CI status (see below); absent when no CI |
+| `url` | string | Dev server URL from project config; absent when not configured |
+| `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
+| `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 

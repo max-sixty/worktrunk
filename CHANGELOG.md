@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.33.0
+
+### Improved
+
+- **Hook execution pipelines**: Post-* hooks support TOML array syntax for serial dependencies — steps execute in order, with maps within steps running concurrently. `post-start = [{ install = "npm install" }, { build = "npm run build", lint = "npm run lint" }]` runs install first, then build and lint in parallel. [Docs](https://worktrunk.dev/hook/) ([#1713](https://github.com/max-sixty/worktrunk/pull/1713))
+
+- **Copy-ignored exclude patterns**: `wt step copy-ignored` now skips built-in VCS metadata and tool-state directories (`.bzr/`, `.conductor/`, `.entire/`, `.hg/`, `.jj/`, `.pi/`, `.pijul/`, `.sl/`, `.svn/`, `.worktrees/`) by default. Additional excludes are configurable via `[step.copy-ignored] exclude = [...]` in user or project config. ([#1667](https://github.com/max-sixty/worktrunk/pull/1667), thanks @shunkakinoki for [#1653](https://github.com/max-sixty/worktrunk/issues/1653))
+
+- **Copy-ignored parallelized**: `wt step copy-ignored` directory walks run in parallel with a dedicated 4-thread pool, improving performance on multi-core systems. ([#1721](https://github.com/max-sixty/worktrunk/pull/1721))
+
+- **Alias append semantics**: Aliases now use append semantics across all config layers, matching hook merge behavior. Within user config, per-project aliases append to global aliases on collision (global first). Across configs, project-config aliases also run alongside user aliases (user first, then project with approval) — previously the user version silently suppressed the project version. ([#1724](https://github.com/max-sixty/worktrunk/pull/1724), [#1727](https://github.com/max-sixty/worktrunk/pull/1727))
+
+- **Agent skill discovery**: The website now serves `.well-known/agent-skills/` for web-based skill discovery by AI agents. ([#1751](https://github.com/max-sixty/worktrunk/pull/1751))
+
+### Fixed
+
+- **Picker alt-r skipped remove hooks**: Removing a worktree via `alt-r` in the picker bypassed pre-remove and post-remove hooks. Pre-remove hooks now run synchronously (non-zero exit aborts removal), and post-remove hooks spawn in the background. ([#1710](https://github.com/max-sixty/worktrunk/pull/1710))
+
+- **False positive shell integration warning**: `wt config show` reported "Found wt in ... but not detected as integration" for Nushell and Fish wrapper files that ARE the integration. Fixes [#1735](https://github.com/max-sixty/worktrunk/issues/1735). ([#1736](https://github.com/max-sixty/worktrunk/pull/1736), thanks @saschabratton)
+
+- **Bare repo config path ignored**: `wt hook approvals add` and other config commands failed to find `.config/wt.toml` in bare repositories because they looked relative to the current worktree instead of the primary worktree. Fixes [#1744](https://github.com/max-sixty/worktrunk/issues/1744). ([#1745](https://github.com/max-sixty/worktrunk/pull/1745), thanks @jrdncstr)
+
+### Documentation
+
+- Help text for `wt step` subcommands cleaned up — redundant openers removed. ([#1737](https://github.com/max-sixty/worktrunk/pull/1737))
+
+- Experimental badge placement fixed in generated documentation. ([#1742](https://github.com/max-sixty/worktrunk/pull/1742), [#1729](https://github.com/max-sixty/worktrunk/pull/1729), [#1734](https://github.com/max-sixty/worktrunk/pull/1734), [#1746](https://github.com/max-sixty/worktrunk/pull/1746))
+
+### Internal
+
+- Copy-ignored built-in exclude constants consolidated. ([#1738](https://github.com/max-sixty/worktrunk/pull/1738))
+
+- `Cmd::env()` accepts `AsRef<OsStr>` for direct path compatibility. ([#1723](https://github.com/max-sixty/worktrunk/pull/1723))
+
+- Picker width survey snapshots for layout testing at various terminal sizes. ([#1613](https://github.com/max-sixty/worktrunk/pull/1613))
+
 ## 0.32.0
 
 ### Improved
