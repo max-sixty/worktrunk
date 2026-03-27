@@ -72,7 +72,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# **Variables:**[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root, e.g. `/Users/me/code/myproject`; for bare repos, the bare directory itself[0m
+[107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
@@ -206,7 +206,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Setting overrides [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values like `worktree-path` replace the global value; everything else — hooks, aliases, and more — appends, global first.[0m
+[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
