@@ -176,7 +176,7 @@ With `summary = true` and [`commit.generation`](@/config.md#commit) configured, 
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](@/llm-commits.md#branch-summaries) for details.
+Summaries are cached and regenerated only when the diff changes. See [LLM Commits](@/llm-commits.md#branch-summaries) for details.
 
 ## JSON API
 
