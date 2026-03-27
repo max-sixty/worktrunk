@@ -1776,6 +1776,13 @@ TODO: Add request/response examples for each endpoint
     // Remove the worktree but keep the branch
     repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
+    // === Create fix-typos worktree (already merged — shows dimmed as removable) ===
+    // Story: A quick typo fix that was already squash-merged into main.
+    // The worktree is still around and can be removed. Shows dimmed in list output.
+    let fix_typos = repo.add_worktree("fix-typos");
+    repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
+    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
@@ -1783,6 +1790,33 @@ TODO: Add request/response examples for each endpoint
     mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
     mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+
+    // === Mock LLM summaries ===
+    // Summary requires --full + [list] summary = true + [commit.generation] command
+    // Pre-populate the cache so tests don't need a real LLM
+    repo.write_test_config(
+        r#"
+[list]
+summary = true
+
+[commit.generation]
+command = "echo unused"
+"#,
+    );
+    mock_summary_cache(
+        repo,
+        "fix-auth",
+        Some(&fix_auth),
+        "Harden auth with constant-time token validation",
+    );
+    mock_summary_cache(
+        repo,
+        "feature-api",
+        Some(&feature_api),
+        "Refactor API to REST architecture with middleware",
+    );
+    mock_summary_cache(repo, "exp", None, "Explore GraphQL schema and resolvers");
+    mock_summary_cache(repo, "wip", None, "Start API documentation");
 
     feature_api
 }
@@ -1831,6 +1865,82 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Use the same sanitization as production code for cache filenames
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    std::fs::write(&cache_file, &cache_json).unwrap();
+}
+
+/// Mock summary cache by computing the real diff hash and writing a cache entry.
+///
+/// Mirrors `summary::generate_summary_core` — computes the combined diff
+/// (branch + working tree), hashes it, and writes a CachedSummary JSON file.
+fn mock_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    worktree_path: Option<&std::path::Path>,
+    summary: &str,
+) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Compute combined diff (matching compute_combined_diff in summary.rs)
+    let mut diff = String::new();
+
+    // Branch diff: main...<branch>
+    let head_output = repo
+        .git_command()
+        .args(["rev-parse", branch])
+        .run()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    let merge_base = format!("main...{}", head);
+    if let Ok(output) = repo.git_command().args(["diff", &merge_base]).run() {
+        let branch_diff = String::from_utf8_lossy(&output.stdout);
+        diff.push_str(&branch_diff);
+    }
+
+    // Working tree diff (only if worktree exists)
+    if let Some(wt_path) = worktree_path {
+        let wt_str = wt_path.display().to_string();
+        if let Ok(output) = repo
+            .git_command()
+            .args(["-C", &wt_str, "diff", "HEAD"])
+            .run()
+        {
+            let wt_diff = String::from_utf8_lossy(&output.stdout);
+            if !wt_diff.trim().is_empty() {
+                diff.push_str(&wt_diff);
+            }
+        }
+    }
+
+    // Hash the diff (matches summary::hash_diff)
+    let mut hasher = DefaultHasher::new();
+    diff.hash(&mut hasher);
+    let diff_hash = hasher.finish();
+
+    // Write cache file
+    let cache_json = format!(
+        r#"{{"summary":"{}","diff_hash":{},"branch":"{}"}}"#,
+        summary, diff_hash, branch
+    );
+
+    let output = repo
+        .git_command()
+        .args(["rev-parse", "--git-common-dir"])
+        .run()
+        .unwrap();
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+
+    let cache_dir = git_path.join("wt").join("cache").join("summaries");
+    std::fs::create_dir_all(&cache_dir).unwrap();
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
@@ -2014,8 +2124,8 @@ fn test_readme_example_list(mut repo: TestRepo) {
 
 /// Generate README example: `wt list --full` output
 ///
-/// Shows additional columns: main…± (line diffs in commits) and CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2023,6 +2133,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
@@ -2030,7 +2141,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -2038,6 +2149,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
