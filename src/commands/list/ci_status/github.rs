@@ -14,14 +14,35 @@ use super::{
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
+///
+/// Tries raw config URLs first, then falls back to effective URLs (with
+/// `url.insteadOf` rewrites) for users with custom hostname aliases.
 fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    for (_, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url)
+    // Fast path: check raw config URLs
+    let remotes: Vec<(String, String)> = repo.all_remote_urls();
+    for (_, url) in &remotes {
+        if let Some(parsed) = GitRemoteUrl::parse(url)
             && parsed.is_github()
         {
             return Some((parsed.owner().to_string(), parsed.repo().to_string()));
         }
     }
+
+    // Fallback: try effective URLs (with insteadOf rewrites) for unrecognized hostnames
+    for (remote_name, raw_url) in &remotes {
+        if let Some(parsed) = GitRemoteUrl::parse(raw_url)
+            && !parsed.is_known_forge()
+        {
+            if let Some(forge_url) = repo.forge_remote_url(remote_name)
+                && forge_url != *raw_url
+                && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
+                && parsed.is_github()
+            {
+                return Some((parsed.owner().to_string(), parsed.repo().to_string()));
+            }
+        }
+    }
+
     None
 }
 
