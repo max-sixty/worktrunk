@@ -173,18 +173,16 @@ pub fn platform_for_repo(
     for (remote_name, raw_url) in &remotes {
         if let Some(parsed) = GitRemoteUrl::parse(raw_url)
             && !parsed.is_known_forge()
+            && let Some(forge_url) = repo.forge_remote_url(remote_name)
+            && forge_url != *raw_url
+            && let Some(platform) = detect_platform_from_url(&forge_url)
         {
-            if let Some(forge_url) = repo.forge_remote_url(remote_name)
-                && forge_url != *raw_url
-                && let Some(platform) = detect_platform_from_url(&forge_url)
-            {
-                log::debug!(
-                    "Detected CI platform {} from remote '{}' (via insteadOf fallback)",
-                    platform,
-                    remote_name
-                );
-                return Some(platform);
-            }
+            log::debug!(
+                "Detected CI platform {} from remote '{}' (via insteadOf fallback)",
+                platform,
+                remote_name
+            );
+            return Some(platform);
         }
     }
 

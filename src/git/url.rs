@@ -506,26 +506,38 @@ mod tests {
     #[test]
     fn test_is_known_forge() {
         // GitHub and GitLab are known forges
-        assert!(GitRemoteUrl::parse("https://github.com/owner/repo.git")
-            .unwrap()
-            .is_known_forge());
-        assert!(GitRemoteUrl::parse("git@gitlab.com:owner/repo.git")
-            .unwrap()
-            .is_known_forge());
-        assert!(GitRemoteUrl::parse("https://github.mycompany.com/owner/repo.git")
-            .unwrap()
-            .is_known_forge());
+        assert!(
+            GitRemoteUrl::parse("https://github.com/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            GitRemoteUrl::parse("git@gitlab.com:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            GitRemoteUrl::parse("https://github.mycompany.com/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
 
         // Custom hostnames are not known forges
-        assert!(!GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
-            .unwrap()
-            .is_known_forge());
-        assert!(!GitRemoteUrl::parse("git@custom-host:owner/repo.git")
-            .unwrap()
-            .is_known_forge());
-        assert!(!GitRemoteUrl::parse("git@work-ssh:owner/repo.git")
-            .unwrap()
-            .is_known_forge());
+        assert!(
+            !GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            !GitRemoteUrl::parse("git@custom-host:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            !GitRemoteUrl::parse("git@work-ssh:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
     }
 
     // Security-critical tests for nested GitLab groups.

@@ -95,25 +95,23 @@ impl Repository {
         let raw_url = self.remote_url(remote)?;
 
         // Fast path: raw URL already has a known forge hostname
-        if let Some(parsed) = GitRemoteUrl::parse(&raw_url) {
-            if parsed.is_known_forge() {
-                return Some(raw_url);
-            }
+        if let Some(parsed) = GitRemoteUrl::parse(&raw_url)
+            && parsed.is_known_forge()
+        {
+            return Some(raw_url);
         }
 
         // Fallback: try effective URL (with insteadOf rewrites)
-        if let Some(effective_url) = self.effective_remote_url(remote) {
-            if effective_url != raw_url {
-                if let Some(parsed) = GitRemoteUrl::parse(&effective_url) {
-                    if parsed.is_known_forge() {
-                        log::debug!(
-                            "Using effective URL for forge detection (raw hostname not recognized): {}",
-                            effective_url
-                        );
-                        return Some(effective_url);
-                    }
-                }
-            }
+        if let Some(effective_url) = self.effective_remote_url(remote)
+            && effective_url != raw_url
+            && let Some(parsed) = GitRemoteUrl::parse(&effective_url)
+            && parsed.is_known_forge()
+        {
+            log::debug!(
+                "Using effective URL for forge detection (raw hostname not recognized): {}",
+                effective_url
+            );
+            return Some(effective_url);
         }
 
         // Best effort: return raw URL even though hostname isn't recognized

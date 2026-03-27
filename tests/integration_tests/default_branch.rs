@@ -317,11 +317,7 @@ fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
     // Set the raw remote URL to use a custom hostname (not a known forge).
     // The hostname must NOT contain "github" or "gitlab" since is_known_forge()
     // uses substring matching (e.g., "github-work" would match as GitHub).
-    repo.run_git(&[
-        "config",
-        "remote.origin.url",
-        "git@work-ssh:org/repo.git",
-    ]);
+    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
 
     // Configure insteadOf to map the custom hostname to github.com.
     // This simulates a user's SSH multi-key setup where ~/.ssh/config

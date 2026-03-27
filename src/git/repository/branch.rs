@@ -185,15 +185,13 @@ impl<'a> Branch<'a> {
         }
 
         // Fallback: try forge-aware URL resolution for insteadOf aliases
-        if !parsed.is_known_forge() {
-            if let Some(push_remote) = self.push_remote() {
-                if let Some(forge_url) = self.repo.forge_remote_url(&push_remote) {
-                    let parsed = GitRemoteUrl::parse(&forge_url)?;
-                    if parsed.is_github() {
-                        return Some(forge_url);
-                    }
-                }
-            }
+        if !parsed.is_known_forge()
+            && let Some(push_remote) = self.push_remote()
+            && let Some(forge_url) = self.repo.forge_remote_url(&push_remote)
+            && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
+            && parsed.is_github()
+        {
+            return Some(forge_url);
         }
 
         None

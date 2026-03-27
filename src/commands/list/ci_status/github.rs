@@ -32,14 +32,12 @@ fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
     for (remote_name, raw_url) in &remotes {
         if let Some(parsed) = GitRemoteUrl::parse(raw_url)
             && !parsed.is_known_forge()
+            && let Some(forge_url) = repo.forge_remote_url(remote_name)
+            && forge_url != *raw_url
+            && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
+            && parsed.is_github()
         {
-            if let Some(forge_url) = repo.forge_remote_url(remote_name)
-                && forge_url != *raw_url
-                && let Some(parsed) = GitRemoteUrl::parse(&forge_url)
-                && parsed.is_github()
-            {
-                return Some((parsed.owner().to_string(), parsed.repo().to_string()));
-            }
+            return Some((parsed.owner().to_string(), parsed.repo().to_string()));
         }
     }
 
