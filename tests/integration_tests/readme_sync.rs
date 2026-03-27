@@ -1947,3 +1947,24 @@ fn test_command_pages_and_skill_files_are_in_sync() {
         );
     }
 }
+
+/// Verify that post_process_for_html() transforms the approval prompt code block
+/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
+/// without updating the replacement in help.rs, the .replace() silently stops
+/// matching and the web docs fall back to a plain code block.
+#[test]
+fn test_approval_prompt_styled_in_hook_page() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = wt_command()
+        .args(["hook", "--help-page"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt hook --help-page");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#"class="y""#),
+        "hook --help-page should contain styled approval prompt (class=\"y\" for yellow ▲). \
+         If cli/mod.rs approval example changed, update the replacement in help.rs post_process_for_html()."
+    );
+}
