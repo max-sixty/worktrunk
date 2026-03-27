@@ -6,7 +6,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 # Hook Types
 
-| Event | `pre-` (blocking) | `post-` (background) |
+| Event | `pre-` — blocking | `post-` — background |
 |-------|-------------------|---------------------|
 | **switch** | `pre-switch` | `post-switch` |
 | **start** | `pre-start` | `post-start` |
@@ -118,7 +118,7 @@ kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/d
 remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
-During `wt merge`, hooks run in this order: pre-commit → post-commit (background) → pre-merge → pre-remove → post-remove + post-merge (background). See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
+During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. As usual, post-* hooks run in the background. See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
 
 # Security
 
@@ -137,7 +137,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
-- Use `--yes` to bypass prompts (useful for CI/automation)
+- Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-verify` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
@@ -203,7 +203,7 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | merge | feature being merged | = bare vars | merge target |
 | remove | branch being removed | = bare vars | where you end up |
 
-Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch (hook runs in the source, `worktree_path` is the destination), post-remove (active worktree is gone, hook runs in primary), and post-merge with removal (same — active is gone, hook runs in target).
+Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
 Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks. Undefined variables error — use conditionals:
 
@@ -212,15 +212,6 @@ Some variables are conditional: `upstream` requires remote tracking; `base`/`tar
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
-
-### Migration from earlier versions
-
-`worktree_path` changed meaning in two hook types:
-
-- **pre-switch** (existing worktrees): previously the source worktree, now the destination. Use `{{ base_worktree_path }}` or `{{ cwd }}` for the source.
-- **post-merge**: previously the merge target worktree, now the feature worktree (active). Use `{{ target_worktree_path }}` or `{{ cwd }}` for where code landed.
-
-New variables `cwd`, `target_worktree_path`, `base`, and `base_worktree_path` are available in more hook types than before.
 
 ## Worktrunk filters
 
@@ -232,7 +223,7 @@ Templates support Jinja2 filters for transforming values:
 | `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 63 chars) |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers (lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words). The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
 [post-start]
@@ -363,18 +354,16 @@ Pipelines matter when there's a dependency chain — typically setup steps that 
 
 # Designing Effective Hooks
 
-## post-start vs pre-start
+## pre-start vs post-start
 
 Both run when creating a worktree. The difference:
 
 | Hook | Execution | Best for |
 |------|-----------|----------|
-| `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
 | `pre-start` | Blocks until complete | Tasks the developer needs before working (dependency install) |
+| `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
 
-Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
-
-Background processes spawned by `post-start` outlive the worktree — pair them with `post-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation. For finer control over execution order within `post-start`, see [Pipeline ordering](#pipeline-ordering).
 
 ## Copying untracked files
 
@@ -483,7 +472,7 @@ fi
 
 ## Python virtual environments
 
-Use `uv sync` to recreate virtual environments (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt` for pip-based projects):
+Use `uv sync` to recreate virtual environments, or `python -m venv .venv && .venv/bin/pip install -r requirements.txt` for pip-based projects:
 
 ```toml
 [pre-start]
