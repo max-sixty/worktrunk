@@ -492,3 +492,112 @@ fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
     assert!(parsed.is_github());
     assert_eq!(parsed.host(), "github.com");
 }
+
+/// Test github_push_url returns None when push remote is a non-GitHub forge.
+///
+/// Even after insteadOf fallback, if the URL resolves to GitLab (not GitHub),
+/// github_push_url should return None.
+#[rstest]
+fn test_github_push_url_non_github_forge_returns_none(repo: TestRepo) {
+    // Set origin URL to a GitLab remote
+    repo.run_git(&["config", "remote.origin.url", "git@gitlab.com:org/repo.git"]);
+    // Set up push tracking for main branch
+    repo.run_git(&["config", "branch.main.remote", "origin"]);
+    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
+    repo.run_git(&["update-ref", "refs/remotes/origin/main", "main"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let branch = git_repo.branch("main");
+
+    // GitLab URL is a known forge but not GitHub — should return None
+    assert!(
+        branch.github_push_url().is_none(),
+        "github_push_url should return None for GitLab remotes"
+    );
+}
+
+/// Test github_push_url returns None when push remote has unknown hostname
+/// and insteadOf resolves to a non-GitHub forge.
+#[rstest]
+fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {
+    // Set origin URL to custom hostname
+    repo.run_git(&["config", "remote.origin.url", "git@work-ssh:org/repo.git"]);
+    // insteadOf maps to GitLab, not GitHub
+    repo.run_git(&[
+        "config",
+        "url.git@gitlab.com:org.insteadOf",
+        "git@work-ssh:org",
+    ]);
+    // Set up push tracking
+    repo.run_git(&["config", "branch.main.remote", "origin"]);
+    repo.run_git(&["config", "branch.main.merge", "refs/heads/main"]);
+    repo.run_git(&["update-ref", "refs/remotes/origin/main", "main"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let branch = git_repo.branch("main");
+
+    // Fallback resolves to GitLab, not GitHub — should return None
+    assert!(
+        branch.github_push_url().is_none(),
+        "github_push_url should return None when insteadOf resolves to GitLab"
+    );
+}
+
+/// Test find_forge_remote returns None when no remotes are configured.
+#[rstest]
+fn test_find_forge_remote_no_remotes(repo: TestRepo) {
+    // Remove the origin remote
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let result = git_repo.find_forge_remote(|parsed| parsed.is_github());
+    assert!(result.is_none(), "Should return None with no remotes");
+}
+
+/// Test forge_remote_url when effective URL differs from raw but is also not a known forge.
+///
+/// When insteadOf rewrites to another custom hostname (not github/gitlab),
+/// forge_remote_url should still return the raw URL as best-effort.
+#[rstest]
+fn test_forge_remote_url_insteadof_to_unknown_forge(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "remote.origin.url",
+        "git@custom-host:org/repo.git",
+    ]);
+    // insteadOf rewrites to another unknown host
+    repo.run_git(&[
+        "config",
+        "url.git@other-host:org.insteadOf",
+        "git@custom-host:org",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    let forge_url = git_repo.forge_remote_url("origin").unwrap();
+    // Neither raw nor effective is a known forge — should return raw URL
+    assert_eq!(
+        forge_url, "git@custom-host:org/repo.git",
+        "Should return raw URL when insteadOf also resolves to unknown forge"
+    );
+}
+
+/// Test effective_remote_url returns None for nonexistent remote.
+#[rstest]
+fn test_effective_remote_url_nonexistent_remote(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(
+        git_repo.effective_remote_url("nonexistent").is_none(),
+        "Should return None for nonexistent remote"
+    );
+}
+
+/// Test forge_remote_url returns None for nonexistent remote.
+#[rstest]
+fn test_forge_remote_url_nonexistent_remote(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(
+        git_repo.forge_remote_url("nonexistent").is_none(),
+        "Should return None for nonexistent remote"
+    );
+}
