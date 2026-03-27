@@ -117,7 +117,7 @@ Controls where new worktrees are created.
 
 [1mVariables:[0m
 
-- [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
+- [2m{{ repo_path }}[0m — absolute path to the repository root, e.g. [2m/Users/me/code/myproject[0m; for bare repos, the bare directory itself
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
@@ -251,7 +251,7 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m).
 
 [1mSetting overrides [experimental][0m
 
-Override global user config for a specific project. Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Override global user config for a specific project. Scalar values like [2mworktree-path[0m replace the global value; everything else — hooks, aliases, and more — appends, global first.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
@@ -418,7 +418,7 @@ Override the LLM command in CI to use a mock:
 
              Variable                                                   Purpose                                      
  ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers (useful for testing dev builds)           
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds            
  [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
  [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
  [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     
