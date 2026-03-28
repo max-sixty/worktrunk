@@ -219,6 +219,7 @@ pub enum ShowConfig {
         cli_branches: bool,
         cli_remotes: bool,
         cli_full: bool,
+        cli_ignored: bool,
     },
 }
 
@@ -330,59 +331,116 @@ pub fn collect(
     let url_template = url_template_cell.into_inner().unwrap();
 
     // Resolve show flags: merge CLI overrides with config (warmed in parallel phase)
-    let (show_branches, show_remotes, skip_tasks, command_timeout, collect_deadline) =
-        match show_config {
-            ShowConfig::Resolved {
+    let (
+        show_branches,
+        show_remotes,
+        skip_tasks,
+        command_timeout,
+        collect_deadline,
+        show_ignored,
+        ignore_patterns,
+    ) = match show_config {
+        ShowConfig::Resolved {
+            show_branches,
+            show_remotes,
+            skip_tasks,
+            command_timeout,
+            collect_deadline,
+        } => (
+            show_branches,
+            show_remotes,
+            skip_tasks,
+            command_timeout,
+            collect_deadline,
+            false,
+            None,
+        ),
+        ShowConfig::DeferredToParallel {
+            cli_branches,
+            cli_remotes,
+            cli_full,
+            cli_ignored,
+        } => {
+            let config = repo.config();
+            let show_branches = cli_branches || config.list.branches();
+            let show_remotes = cli_remotes || config.list.remotes();
+            let show_full = cli_full || config.list.full();
+            let skip_tasks: HashSet<TaskKind> = if show_full {
+                HashSet::new()
+            } else {
+                [
+                    TaskKind::BranchDiff,
+                    TaskKind::CiStatus,
+                    TaskKind::WorkingTreeConflicts,
+                    TaskKind::SummaryGenerate,
+                ]
+                .into_iter()
+                .collect()
+            };
+            // Resolve timeouts from merged config (--full disables both)
+            let (command_timeout, collect_deadline) = if show_full {
+                (None, None)
+            } else {
+                let task_timeout = config.list.task_timeout();
+                let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
+                (task_timeout, deadline)
+            };
+            let ignore_patterns = config.list.ignore.clone();
+            (
                 show_branches,
                 show_remotes,
                 skip_tasks,
                 command_timeout,
                 collect_deadline,
-            } => (
-                show_branches,
-                show_remotes,
-                skip_tasks,
-                command_timeout,
-                collect_deadline,
-            ),
-            ShowConfig::DeferredToParallel {
-                cli_branches,
-                cli_remotes,
-                cli_full,
-            } => {
-                let config = repo.config();
-                let show_branches = cli_branches || config.list.branches();
-                let show_remotes = cli_remotes || config.list.remotes();
-                let show_full = cli_full || config.list.full();
-                let skip_tasks: HashSet<TaskKind> = if show_full {
-                    HashSet::new()
-                } else {
-                    [
-                        TaskKind::BranchDiff,
-                        TaskKind::CiStatus,
-                        TaskKind::WorkingTreeConflicts,
-                        TaskKind::SummaryGenerate,
-                    ]
-                    .into_iter()
+                cli_ignored,
+                ignore_patterns,
+            )
+        }
+    };
+
+    // Compile ignore patterns once for use across worktrees, branches, and remotes.
+    // Uses string matching (not path matching) for branch names since they contain
+    // `/` separators but aren't filesystem paths.
+    let compiled_ignore: Vec<glob::Pattern> = if show_ignored {
+        Vec::new()
+    } else {
+        ignore_patterns
+            .as_ref()
+            .map(|p| {
+                p.iter()
+                    .filter_map(|s| match glob::Pattern::new(s) {
+                        Ok(pat) => Some(pat),
+                        Err(e) => {
+                            log::warn!("Invalid [list].ignore pattern {:?}: {}", s, e);
+                            None
+                        }
+                    })
                     .collect()
-                };
-                // Resolve timeouts from merged config (--full disables both)
-                let (command_timeout, collect_deadline) = if show_full {
-                    (None, None)
-                } else {
-                    let task_timeout = config.list.task_timeout();
-                    let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
-                    (task_timeout, deadline)
-                };
-                (
-                    show_branches,
-                    show_remotes,
-                    skip_tasks,
-                    command_timeout,
-                    collect_deadline,
-                )
-            }
-        };
+            })
+            .unwrap_or_default()
+    };
+    let branch_ignored =
+        |name: &str| -> bool { compiled_ignore.iter().any(|pat| pat.matches(name)) };
+
+    // Filter out ignored worktrees by path or branch name
+    let (worktrees, ignored_worktree_count) = if compiled_ignore.is_empty() {
+        (worktrees, 0)
+    } else {
+        let before = worktrees.len();
+        let filtered: Vec<_> = worktrees
+            .into_iter()
+            .filter(|wt| {
+                let path = canonicalize(&wt.path)
+                    .ok()
+                    .unwrap_or_else(|| wt.path.clone());
+                let path_matches = compiled_ignore.iter().any(|pat| pat.matches_path(&path));
+                let name_matches = wt.branch.as_deref().is_some_and(&branch_ignored);
+                !(path_matches || name_matches)
+            })
+            .collect();
+        let ignored = before - filtered.len();
+        (filtered, ignored)
+    };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees = if show_branches {
@@ -400,6 +458,20 @@ pub fn collect(
     } else {
         Vec::new()
     };
+
+    // Filter ignored local branches
+    let (branches_without_worktrees, ignored_branch_count) = if compiled_ignore.is_empty() {
+        (branches_without_worktrees, 0)
+    } else {
+        let before = branches_without_worktrees.len();
+        let filtered: Vec<_> = branches_without_worktrees
+            .into_iter()
+            .filter(|(name, _)| !branch_ignored(name))
+            .collect();
+        let ignored = before - filtered.len();
+        (filtered, ignored)
+    };
+
     let remote_branches = if show_remotes {
         if let Some(result) = remote_branches_cell.into_inner() {
             result?
@@ -410,6 +482,21 @@ pub fn collect(
     } else {
         Vec::new()
     };
+
+    // Filter ignored remote branches
+    let (remote_branches, ignored_remote_count) = if compiled_ignore.is_empty() {
+        (remote_branches, 0)
+    } else {
+        let before = remote_branches.len();
+        let filtered: Vec<_> = remote_branches
+            .into_iter()
+            .filter(|(name, _)| !branch_ignored(name))
+            .collect();
+        let ignored = before - filtered.len();
+        (filtered, ignored)
+    };
+
+    let total_ignored = ignored_worktree_count + ignored_branch_count + ignored_remote_count;
 
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
@@ -948,6 +1035,7 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            total_ignored,
             error_count,
             timed_out_count,
         );
@@ -975,6 +1063,7 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
+            total_ignored,
             error_count,
             timed_out_count,
         );

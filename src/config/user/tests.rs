@@ -315,6 +315,7 @@ fn test_list_config_serde() {
         summary: None,
         task_timeout_ms: Some(500),
         timeout_ms: None,
+        ignore: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ListConfig = serde_json::from_str(&json).unwrap();
@@ -557,6 +558,7 @@ fn test_merge_list_config() {
         summary: Some(true),
         task_timeout_ms: Some(1000),
         timeout_ms: Some(2000),
+        ignore: None,
     };
     let override_config = ListConfig {
         full: None,            // Should fall back to base
@@ -565,6 +567,7 @@ fn test_merge_list_config() {
         summary: None,         // Should fall back to base
         task_timeout_ms: None, // Should fall back to base
         timeout_ms: None,      // Should fall back to base
+        ignore: None,
     };
 
     let merged = base.merge_with(&override_config);
@@ -1010,6 +1013,7 @@ fn test_list_config_accessor_methods_with_values() {
         summary: Some(true),
         task_timeout_ms: Some(5000),
         timeout_ms: Some(3000),
+        ignore: None,
     };
     assert!(config.full());
     assert!(config.branches());
