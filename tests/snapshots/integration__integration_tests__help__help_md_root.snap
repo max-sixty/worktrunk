@@ -10,6 +10,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -35,7 +36,7 @@ Commands:
   switch  Switch to a worktree; create if needed
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
-  merge   Merge current branch into target
+  merge   Merge current branch into the target branch
   step    Run individual operations
   hook    Run configured hooks
   config  Manage user & project configs
