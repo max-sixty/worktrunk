@@ -45,6 +45,12 @@ wt step commit --show-prompt | llm -m gpt-5-nano
 "#
     )]
     Commit {
+        /// Branch to operate on
+        ///
+        /// Defaults to current worktree.
+        #[arg(short, long, add = crate::completion::worktree_only_completer())]
+        branch: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
         yes: bool,

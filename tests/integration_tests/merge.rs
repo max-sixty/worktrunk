@@ -1849,6 +1849,51 @@ fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     });
 }
 
+#[rstest]
+fn test_step_commit_branch_flag(mut repo: TestRepo) {
+    // Create a feature worktree and add a dirty file there
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature_file.txt"), "feature content")
+        .expect("Failed to write file");
+
+    // Run step commit from the main worktree, targeting the feature branch
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None); // cwd = main worktree
+        cmd.arg("commit")
+            .args(["--branch", "feature", "--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add feature file'",
+        );
+        cmd
+    });
+
+    // Verify the commit happened in the feature worktree
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("feat: add feature file"),
+        "Commit should appear in feature worktree, got: {log_output}"
+    );
+}
+
+#[rstest]
+fn test_step_commit_branch_flag_nonexistent(repo: TestRepo) {
+    // Try to commit on a branch that has no worktree
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--branch", "nonexistent"]);
+        cmd
+    });
+}
+
 // =============================================================================
 // Error message snapshot tests
 // =============================================================================

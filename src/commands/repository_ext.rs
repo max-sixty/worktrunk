@@ -457,7 +457,7 @@ pub(crate) fn check_not_default_branch(
 }
 
 /// Warn about untracked files that will be auto-staged.
-fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
+pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
     let files = parse_untracked_files(status_output);
     if files.is_empty() {
         return Ok(());
