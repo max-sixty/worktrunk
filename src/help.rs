@@ -18,6 +18,10 @@
 //! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
 //!         │
 //!         ▼
+//! convert_dollar_console_to_terminal() — ```console with $ → {% terminal() %} shortcode
+//! console→bash replacement             — remaining ```console → ```bash
+//!         │
+//!         ▼
 //! post_process_for_html()        — text replacements on after_long_help markdown:
 //!         │                        [experimental] → badge <span>
 //!         │                        `●` green → colored <span>
@@ -360,10 +364,11 @@ Commands with pages: merge, switch, remove, list"
     };
 
     // Get combined docs: about + subtitle + after_long_help
-    // Transform for web docs: console→bash, status colors, demo images
+    // Transform for web docs: $→terminal shortcode, console→bash, status colors, demo images
     // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
     let raw_help = combine_command_docs(sub);
+    let raw_help = convert_dollar_console_to_terminal(&raw_help);
     let raw_help = raw_help.replace("```console\n", "```bash\n");
 
     // Split content at first subdoc placeholder
@@ -492,6 +497,81 @@ fn post_process_for_html(text: &str) -> String {
              <span class=\"c\">❯</span> Allow and remember? <b>[y/N]</b>\n\
              {% end %}",
         )
+}
+
+/// Convert `$ `‐prefixed console blocks into `{% terminal() %}` shortcodes.
+///
+/// Convention: `$ ` in a console block signals a command+output transcript.
+/// Command‐only blocks use bare commands (no `$ `).
+///
+/// Transforms:
+/// ````text
+/// ```console
+/// $ wt step eval '{{ branch | hash_port }}'
+/// 16066
+/// ```
+/// ````
+///
+/// Into:
+/// ```text
+/// {% terminal() %}
+/// <span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
+/// 16066
+/// {% end %}
+/// ```
+///
+/// Must run BEFORE the `console` → `bash` replacement so the fence is still
+/// `console` when we detect it.
+fn convert_dollar_console_to_terminal(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut lines = text.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        if line.trim_start() == "```console"
+            && let Some(&next) = lines.peek()
+            && let Some(command) = next.strip_prefix("$ ")
+        {
+            lines.next(); // consume the $ line
+
+            // Collect output lines until closing ```
+            let mut output = Vec::new();
+            for content_line in lines.by_ref() {
+                if content_line.trim_start() == "```" {
+                    break;
+                }
+                output.push(content_line);
+            }
+
+            // Emit terminal shortcode
+            result.push_str("{% terminal() %}\n");
+            result.push_str("<span class=\"cmd\">");
+            // HTML-escape the command (< > & could appear in arguments)
+            for ch in command.chars() {
+                match ch {
+                    '<' => result.push_str("&lt;"),
+                    '>' => result.push_str("&gt;"),
+                    '&' => result.push_str("&amp;"),
+                    _ => result.push(ch),
+                }
+            }
+            result.push_str("</span>\n");
+            for output_line in &output {
+                result.push_str(output_line);
+                result.push('\n');
+            }
+            result.push_str("{% end %}");
+            result.push('\n');
+            continue;
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    // .lines() strips the trailing newline; match original
+    if !text.ends_with('\n') {
+        result.pop();
+    }
+    result
 }
 
 /// Move `[experimental]` from heading lines to a separate line after the heading.
@@ -652,6 +732,7 @@ fn format_subcommand_section(
 
     // Get combined docs: about + subtitle + after_long_help
     let raw_help = combine_command_docs(sub);
+    let raw_help = convert_dollar_console_to_terminal(&raw_help);
     let raw_help = raw_help.replace("```console\n", "```bash\n");
 
     // Extract [experimental] marker from content start → badge after heading.

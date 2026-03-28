@@ -470,10 +470,10 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-```bash
-wt step eval '{{ branch | hash_port }}'
+{% terminal() %}
+<span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
 16066
-```
+{% end %}
 
 Use in shell substitution:
 
@@ -483,27 +483,27 @@ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
 
 Combine multiple values:
 
-```bash
-wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+{% terminal() %}
+<span class="cmd">wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'</span>
 16066,16739
-```
+{% end %}
 
 Use conditionals and filters:
 
-```bash
-wt step eval '{{ branch | sanitize_db }}'
+{% terminal() %}
+<span class="cmd">wt step eval '{{ branch | sanitize_db }}'</span>
 feature_auth_oauth2_a1b
-```
+{% end %}
 
 Show available template variables:
 
-```bash
-wt step eval --dry-run '{{ branch }}'
+{% terminal() %}
+<span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
 Result: feature/auth-oauth2
-```
+{% end %}
 
 Note: This command is experimental and may change in future versions.
 
