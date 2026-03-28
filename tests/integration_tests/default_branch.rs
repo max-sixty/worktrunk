@@ -372,10 +372,6 @@ fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
 /// Test forge_remote_url: returns raw URL directly when hostname is already a known forge.
 #[rstest]
 fn test_forge_remote_url_known_forge_no_fallback(repo: TestRepo) {
-    repo.run_git(&[
-        "config",
-        "remote.origin.url",
-        "git@github.com:org/repo.git",
     repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
