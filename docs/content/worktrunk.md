@@ -107,27 +107,20 @@ A demo with some advanced features:
 
 **Homebrew (macOS & Linux):**
 
-```bash
-brew install worktrunk && wt config shell install
-```
+{{ terminal(cmd="brew install worktrunk && wt config shell install") }}
 
 Shell integration allows commands to change directories.
 
 **Cargo:**
 
-```bash
-cargo install worktrunk && wt config shell install
-```
+{{ terminal(cmd="cargo install worktrunk && wt config shell install") }}
 
 <details>
 <summary><strong>Windows</strong></summary>
 
 On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
-```bash
-winget install max-sixty.worktrunk
-git-wt config shell install
-```
+{{ terminal(cmd="winget install max-sixty.worktrunk|||git-wt config shell install") }}
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
@@ -135,9 +128,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 
 **Arch Linux:**
 
-```bash
-paru worktrunk-bin && wt config shell install
-```
+{{ terminal(cmd="paru worktrunk-bin && wt config shell install") }}
 
 ## Quick start
 
@@ -173,11 +164,7 @@ When done, either:
 
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
-```bash
-wt step commit                    # commit staged changes
-gh pr create                      # or glab mr create
-wt remove                         # after PR is merged
-```
+{{ terminal(cmd="wt step commit                    # commit staged changes|||gh pr create                      # or glab mr create|||wt remove                         # after PR is merged") }}
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
@@ -202,11 +189,7 @@ wt remove                         # after PR is merged
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
-```bash
-wt switch -x claude -c feature-a -- 'Add user authentication'
-wt switch -x claude -c feature-b -- 'Fix the pagination bug'
-wt switch -x claude -c feature-c -- 'Write tests for the API'
-```
+{{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md) to automate setup (install deps, start dev servers).
 
