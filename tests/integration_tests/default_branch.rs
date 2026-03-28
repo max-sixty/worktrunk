@@ -1,6 +1,6 @@
 use crate::common::{TestRepo, repo, repo_with_remote};
 use rstest::rstest;
-use worktrunk::git::Repository;
+use worktrunk::git::{GitRemoteUrl, Repository};
 
 #[rstest]
 fn test_get_default_branch_with_origin_head(#[from(repo_with_remote)] repo: TestRepo) {
@@ -304,4 +304,233 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
         "Error should mention cannot determine default branch, got: {}",
         err_msg
     );
+}
+
+// --- Forge URL resolution helpers ---
+
+/// Configure a remote with a custom hostname and an insteadOf rewrite to a real forge.
+///
+/// Simulates the multi-key SSH pattern: custom host in .git/config, real forge via insteadOf.
+fn setup_insteadof(repo: &TestRepo, remote: &str, custom_url: &str, real_prefix: &str) {
+    // Extract the org prefix from the custom URL for the insteadOf mapping
+    let custom_prefix = custom_url
+        .rsplit_once('/')
+        .map(|(p, _)| p)
+        .unwrap_or(custom_url);
+    repo.run_git(&["config", &format!("remote.{remote}.url"), custom_url]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{real_prefix}.insteadOf"),
+        custom_prefix,
+    ]);
+}
+
+/// Set up push tracking so `branch.push_remote()` and `github_push_url()` work.
+fn setup_push_tracking(repo: &TestRepo, branch: &str, remote: &str) {
+    repo.run_git(&["config", &format!("branch.{branch}.remote"), remote]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{branch}.merge"),
+        &format!("refs/heads/{branch}"),
+    ]);
+    repo.run_git(&[
+        "update-ref",
+        &format!("refs/remotes/{remote}/{branch}"),
+        branch,
+    ]);
+}
+
+/// Test forge_remote_url: insteadOf fallback resolves custom hostname to real forge.
+#[rstest]
+fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        "git@work-ssh:org/repo.git"
+    );
+    assert_eq!(
+        git_repo.effective_remote_url("origin").unwrap(),
+        "git@github.com:org/repo.git"
+    );
+
+    let forge_url = git_repo.forge_remote_url("origin").unwrap();
+    let parsed = GitRemoteUrl::parse(&forge_url).unwrap();
+    assert!(parsed.is_known_forge());
+    assert_eq!(parsed.host(), "github.com");
+    assert_eq!(parsed.owner(), "org");
+    assert_eq!(parsed.repo(), "repo");
+}
+
+/// Test forge_remote_url: returns raw URL directly when hostname is already a known forge.
+#[rstest]
+fn test_forge_remote_url_known_forge_no_fallback(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let forge_url = git_repo.forge_remote_url("origin").unwrap();
+    assert_eq!(forge_url, "git@github.com:org/repo.git");
+}
+
+/// Test forge_remote_url: returns None when neither raw nor effective is a known forge.
+#[rstest]
+fn test_forge_remote_url_unknown_forge_returns_none(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "remote.origin.url",
+        "git@bitbucket.org:org/repo.git",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.forge_remote_url("origin").is_none());
+}
+
+/// Test forge_remote_url: returns None when insteadOf rewrites to another unknown host.
+#[rstest]
+fn test_forge_remote_url_insteadof_to_unknown_forge_returns_none(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@custom-host:org/repo.git",
+        "git@other-host:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.forge_remote_url("origin").is_none());
+}
+
+/// Test forge_remote_url / effective_remote_url: return None for nonexistent remote.
+#[rstest]
+fn test_forge_remote_url_nonexistent_remote(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.forge_remote_url("nonexistent").is_none());
+    assert!(git_repo.effective_remote_url("nonexistent").is_none());
+}
+
+/// Test primary_forge_remote_url resolves through insteadOf.
+#[rstest]
+fn test_primary_forge_remote_url_with_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo.primary_forge_remote_url().unwrap();
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(parsed.is_github());
+    assert_eq!(parsed.host(), "github.com");
+}
+
+/// Test effective_remote_url: matches raw URL when no insteadOf is configured.
+#[rstest]
+fn test_effective_remote_url_without_insteadof(repo: TestRepo) {
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo.remote_url("origin").unwrap(),
+        git_repo.effective_remote_url("origin").unwrap()
+    );
+}
+
+/// Test find_forge_remote: two-pass iteration finds forge via insteadOf fallback.
+#[rstest]
+fn test_find_forge_remote_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    let (remote_name, url) = git_repo
+        .find_forge_remote(|parsed| parsed.is_github())
+        .expect("Should find GitHub via insteadOf fallback");
+    assert_eq!(remote_name, "origin");
+    assert_eq!(GitRemoteUrl::parse(&url).unwrap().host(), "github.com");
+
+    assert!(
+        git_repo
+            .find_forge_remote(|parsed| parsed.is_gitlab())
+            .is_none(),
+        "Should not find GitLab"
+    );
+}
+
+/// Test find_forge_remote: fast path matches raw URL without fallback.
+#[rstest]
+fn test_find_forge_remote_known_forge(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let (name, url) = git_repo
+        .find_forge_remote(|parsed| parsed.is_github())
+        .expect("Should find GitHub on fast path");
+    assert_eq!(name, "origin");
+    assert_eq!(url, "git@github.com:org/repo.git");
+}
+
+/// Test find_forge_remote: returns None when no remotes are configured.
+#[rstest]
+fn test_find_forge_remote_no_remotes(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.find_forge_remote(|p| p.is_github()).is_none());
+}
+
+/// Test github_push_url: resolves through insteadOf on push remote.
+#[rstest]
+fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let url = git_repo
+        .branch("main")
+        .github_push_url()
+        .expect("github_push_url should resolve via insteadOf");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(parsed.is_github());
+    assert_eq!(parsed.host(), "github.com");
+}
+
+/// Test github_push_url: returns None for non-GitHub forge (GitLab).
+#[rstest]
+fn test_github_push_url_non_github_forge_returns_none(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@gitlab.com:org/repo.git"]);
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.branch("main").github_push_url().is_none());
+}
+
+/// Test github_push_url: returns None when insteadOf resolves to GitLab (not GitHub).
+#[rstest]
+fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@gitlab.com:org",
+    );
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert!(git_repo.branch("main").github_push_url().is_none());
 }

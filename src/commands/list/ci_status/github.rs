@@ -14,15 +14,12 @@ use super::{
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
+///
+/// Uses [`Repository::find_forge_remote`] to handle `url.insteadOf` aliases.
 fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    for (_, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url)
-            && parsed.is_github()
-        {
-            return Some((parsed.owner().to_string(), parsed.repo().to_string()));
-        }
-    }
-    None
+    let (_, url) = repo.find_forge_remote(|parsed| parsed.is_github())?;
+    let parsed = GitRemoteUrl::parse(&url)?;
+    Some((parsed.owner().to_string(), parsed.repo().to_string()))
 }
 
 /// Detect GitHub PR CI status for a branch.

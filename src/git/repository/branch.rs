@@ -149,7 +149,7 @@ impl<'a> Branch<'a> {
     /// Uses `%(push:remotename)` which returns either a remote name or URL directly
     /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
     /// Returns `None` if no push remote is configured or the remote has no URL.
-    pub fn push_remote_url(&self) -> Option<String> {
+    fn push_remote_url(&self) -> Option<String> {
         // %(push:remotename) returns either a remote name or URL directly
         // Unlike @{push}, this doesn't fail when pushremote is a URL
         let push_remote = self
@@ -175,10 +175,22 @@ impl<'a> Branch<'a> {
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
     /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`.
+    /// otherwise returns `None`. Uses forge-aware URL resolution to handle
+    /// `url.insteadOf` aliases (e.g., custom SSH hostnames).
+    ///
+    /// Handles both remote-name and URL-based pushremotes (the latter is set by
+    /// `gh pr checkout` for fork PRs).
     pub fn github_push_url(&self) -> Option<String> {
         let url = self.push_remote_url()?;
         let parsed = GitRemoteUrl::parse(&url)?;
-        parsed.is_github().then_some(url)
+        if parsed.is_github() {
+            return Some(url);
+        }
+
+        // Fallback: resolve through forge_remote_url for insteadOf aliases
+        let push_remote = self.push_remote()?;
+        let forge_url = self.repo.forge_remote_url(&push_remote)?;
+        let parsed = GitRemoteUrl::parse(&forge_url)?;
+        parsed.is_github().then_some(forge_url)
     }
 }

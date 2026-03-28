@@ -158,6 +158,15 @@ impl GitRemoteUrl {
     pub fn is_gitlab(&self) -> bool {
         self.host.to_ascii_lowercase().contains("gitlab")
     }
+
+    /// Check if this URL points to any known forge (GitHub or GitLab).
+    ///
+    /// Used for `url.insteadOf` fallback: when the hostname isn't recognized,
+    /// worktrunk checks the effective URL (with insteadOf rewrites applied)
+    /// to find the real forge hostname.
+    pub fn is_known_forge(&self) -> bool {
+        self.is_github() || self.is_gitlab()
+    }
 }
 
 /// Extract owner from a git remote URL.
@@ -491,6 +500,43 @@ mod tests {
             !GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
                 .unwrap()
                 .is_gitlab()
+        );
+    }
+
+    #[test]
+    fn test_is_known_forge() {
+        // GitHub and GitLab are known forges
+        assert!(
+            GitRemoteUrl::parse("https://github.com/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            GitRemoteUrl::parse("git@gitlab.com:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            GitRemoteUrl::parse("https://github.mycompany.com/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+
+        // Custom hostnames are not known forges
+        assert!(
+            !GitRemoteUrl::parse("https://bitbucket.org/owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            !GitRemoteUrl::parse("git@custom-host:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
+        );
+        assert!(
+            !GitRemoteUrl::parse("git@work-ssh:owner/repo.git")
+                .unwrap()
+                .is_known_forge()
         );
     }
 
