@@ -11,10 +11,11 @@ expression: output
 # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, evals it after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 #
-# Note: We use `eval (cat ... | string collect)` instead of `source` because:
-# 1. fish's `source` doesn't propagate exit codes to the parent function
-# 2. `eval (cat ...)` without `string collect` splits on newlines, breaking multiline directives
-# With `string collect`, we get proper exit code propagation for cd and other directives.
+# Note: We use `eval (string collect < file)` instead of `source` because
+# fish's `source` doesn't propagate exit codes to the parent function.
+# We read the directive with `string collect` (builtin) instead of `cat`
+# (external) to avoid spawning a subprocess whose CWD may have been renamed
+# by worktree removal.
 function wt
     set -l use_source false
     set -l args
@@ -39,13 +40,16 @@ function wt
     set -l exit_code $status
 
     if test -s "$directive_file"
-        eval (cat "$directive_file" | string collect)
+        # Use fish builtin instead of cat to avoid spawning a subprocess
+        # whose CWD may have been renamed by worktree removal.
+        set -l directive (string collect < "$directive_file")
+        eval $directive
         if test $exit_code -eq 0
             set exit_code $status
         end
     end
 
-    rm -f "$directive_file"
+    command rm -f "$directive_file"
     return $exit_code
 end
 
