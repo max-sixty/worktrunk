@@ -150,7 +150,10 @@ fn test_help_list_narrow_terminal() {
 /// Tests --help-description outputs the meta description for docs frontmatter.
 #[rstest]
 #[case("switch", "Switch to a worktree; create if needed.")]
-#[case("merge", "Merge current branch into target. Squash & rebase")]
+#[case(
+    "merge",
+    "Merge current branch into the target branch. Squash & rebase"
+)]
 #[case("hook", "Run configured hooks.")]
 fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
     let output = wt_command()
