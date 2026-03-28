@@ -21,7 +21,7 @@ Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) t
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details.
 
@@ -80,10 +80,10 @@ Jinja2's operator precedence has pipe `|` with higher precedence than concatenat
 
 The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
 
-Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
+Generate `.env.local` with the correct `DATABASE_URL` using a `pre-start` hook:
 
 ```toml
-[post-create]
+[pre-start]
 env = """
 cat > .env.local << EOF
 DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
@@ -189,7 +189,7 @@ git rebase $(wt config state default-branch)
 Reference Taskfile/Justfile/Makefile in hooks:
 
 ```toml
-[post-create]
+[pre-start]
 "setup" = "task install"
 
 [pre-merge]
@@ -247,7 +247,7 @@ Each worktree gets its own tmux session with a multi-pane layout. Sessions are n
 
 ```toml
 # .config/wt.toml
-[post-create]
+[pre-start]
 tmux = """
 S={{ branch | sanitize }}
 W={{ worktree_path }}

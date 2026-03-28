@@ -10,10 +10,10 @@
 # All hooks support two formats:
 #
 # Single command:
-#   post-create = "npm install"
+#   pre-start = "npm install"
 #
 # Named table (multiple commands):
-#   [post-create]
+#   [pre-start]
 #   deps = "npm install"
 #   build = "npm run build"
 #
@@ -39,10 +39,10 @@
 # Hooks
 # ============================================================================
 
-# Post-Create: Runs after worktree creation, BLOCKS until complete
+# Pre-Start: Runs after worktree creation, BLOCKS until complete
 # Use for: installing dependencies, setting up databases, copying configs
 #
-# [post-create]
+# [pre-start]
 # deps = "npm ci"
 # env = "cp .env.example .env"
 

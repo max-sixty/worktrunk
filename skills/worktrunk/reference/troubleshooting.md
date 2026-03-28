@@ -67,10 +67,10 @@ Move long-running commands to background:
 
 ```toml
 # Before — blocks for minutes
-post-create = "npm run build"
+pre-start = "npm run build"
 
 # After — fast setup, build in background
-post-create = "npm install"
+pre-start = "npm install"
 post-start = "npm run build"
 ```
 

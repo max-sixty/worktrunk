@@ -322,10 +322,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# All hooks support two formats:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Single command:[0m
-[107m [0m [2m#   post-create = "npm install"[0m
+[107m [0m [2m#   pre-start = "npm install"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Named table (multiple commands):[0m
-[107m [0m [2m#   [post-create][0m
+[107m [0m [2m#   [pre-start][0m
 [107m [0m [2m#   deps = "npm install"[0m
 [107m [0m [2m#   build = "npm run build"[0m
 [107m [0m [2m#[0m
@@ -351,10 +351,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# Hooks[0m
 [107m [0m [2m# ============================================================================[0m
 [107m [0m [2m[0m
-[107m [0m [2m# Post-Create: Runs after worktree creation, BLOCKS until complete[0m
+[107m [0m [2m# Pre-Start: Runs after worktree creation, BLOCKS until complete[0m
 [107m [0m [2m# Use for: installing dependencies, setting up databases, copying configs[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [post-create][0m
+[107m [0m [2m# [pre-start][0m
 [107m [0m [2m# deps = "npm ci"[0m
 [107m [0m [2m# env = "cp .env.example .env"[0m
 [107m [0m [2m[0m

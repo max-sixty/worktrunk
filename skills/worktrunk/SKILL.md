@@ -38,7 +38,7 @@ Worktrunk uses two separate config files with different scopes and behaviors:
 ### Project Config (`.config/wt.toml`)
 - **Scope**: Team-wide automation shared by all developers
 - **Location**: `<repo>/.config/wt.toml` (checked into git)
-- **Contains**: Hooks for worktree lifecycle (post-create, pre-merge, etc.)
+- **Contains**: Hooks for worktree lifecycle (pre-start, pre-merge, etc.)
 - **Permission model**: Proactive (create directly, changes are reversible via git)
 - **See**: `reference/hook.md` for detailed guidance
 
@@ -106,7 +106,7 @@ Common request for workflow automation. Follow discovery process:
    - For Python: Check pyproject.toml
 
 3. **Design appropriate hooks** (7 hook types available)
-   - Dependencies (fast, must complete) → `post-create`
+   - Dependencies (fast, must complete) → `pre-start`
    - Tests/linting (must pass) → `pre-commit` or `pre-merge`
    - Long builds, dev servers → `post-start`
    - Terminal/IDE updates → `post-switch`
@@ -122,7 +122,7 @@ Common request for workflow automation. Follow discovery process:
 5. **Create `.config/wt.toml`**
    ```toml
    # Install dependencies when creating worktrees
-   post-create = "npm install"
+   pre-start = "npm install"
 
    # Validate code quality before committing
    [pre-commit]
@@ -149,7 +149,7 @@ When users want to add automation to an existing project:
 1. **Read existing config**: `cat .config/wt.toml`
 
 2. **Determine hook type** - When should this run?
-   - Creating worktree (blocking) → `post-create`
+   - Creating worktree (blocking) → `pre-start`
    - Creating worktree (background) → `post-start`
    - Every switch → `post-switch`
    - Before committing → `pre-commit`
@@ -162,10 +162,10 @@ When users want to add automation to an existing project:
    Single command to named table:
    ```toml
    # Before
-   post-create = "npm install"
+   pre-start = "npm install"
 
    # After (adding db:migrate)
-   [post-create]
+   [pre-start]
    install = "npm install"
    migrate = "npm run db:migrate"
    ```
@@ -242,7 +242,7 @@ Load **reference files** for detailed configuration, hook specifications, and tr
 Find specific sections with grep:
 ```bash
 grep -A 20 "## Setup" reference/llm-commits.md
-grep -A 30 "### post-create" reference/hook.md
+grep -A 30 "### pre-start" reference/hook.md
 grep -A 20 "## Warning Messages" reference/shell-integration.md
 ```
 

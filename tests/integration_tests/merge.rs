@@ -1182,7 +1182,7 @@ command = "{llm_path_str}"
     );
 }
 
-// NOTE: test_readme_example_hooks_post_create and test_readme_example_hooks_pre_merge
+// NOTE: test_readme_example_hooks_pre_start and test_readme_example_hooks_pre_merge
 // were removed - they're covered by PTY-based tests in shell_wrapper.rs that capture
 // combined stdout/stderr for README examples.
 
