@@ -38,11 +38,11 @@ The `--create` flag creates a new branch from `--base` — the default branch un
 
 If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
-1. Runs [pre-switch hooks](@/hook.md#pre-switch), blocking until complete
+1. Runs [pre-switch hooks](@/hook.md#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](@/hook.md#pre-start), blocking until complete
-5. Spawns [post-start](@/hook.md#post-start) and [post-switch hooks](@/hook.md#post-switch) in the background
+4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
+5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
