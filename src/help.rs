@@ -846,3 +846,52 @@ fn expand_demo_placeholders(text: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn test_convert_dollar_console_to_terminal() {
+        // Command+output → terminal shortcode
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ wt step eval '{{ branch | hash_port }}'\n16066\n```"
+        ), @r#"
+        {% terminal() %}
+        <span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
+        16066
+        {% end %}
+        "#);
+
+        // Command only (no $) → unchanged
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\nwt step commit --stage=tracked\n```"
+        ), @r"
+        ```console
+        wt step commit --stage=tracked
+        ```
+        ");
+
+        // Multi-line output
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ wt step eval --dry-run '{{ branch }}'\nbranch=feature/auth\nResult: feature/auth\n```"
+        ), @r#"
+        {% terminal() %}
+        <span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
+        branch=feature/auth
+        Result: feature/auth
+        {% end %}
+        "#);
+
+        // HTML escaping in command
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ echo 'PORT=8080' > .env\noutput\n```"
+        ), @r#"
+        {% terminal() %}
+        <span class="cmd">echo 'PORT=8080' &gt; .env</span>
+        output
+        {% end %}
+        "#);
+    }
+}
