@@ -181,12 +181,12 @@ Each command has three documentation pieces in `src/cli.rs`:
 
 The `wt list` examples use **HTML comments + code blocks** that expand to full snapshot output. In `cli.rs`, you write:
 
-```
+`````
 <!-- wt list -->
 ```console
 wt list
 ```
-```
+`````
 
 This renders differently in each context:
 - **Terminal help (`--help`)**: HTML comment skipped, code block shows as dimmed `wt list`
