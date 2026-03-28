@@ -372,16 +372,20 @@ fn test_forge_remote_url_insteadof_fallback(repo: TestRepo) {
 /// Test forge_remote_url: returns raw URL directly when hostname is already a known forge.
 #[rstest]
 fn test_forge_remote_url_known_forge_no_fallback(repo: TestRepo) {
-    let git_repo = Repository::at(repo.root_path()).unwrap();
+    repo.run_git(&[
+        "config",
+        "remote.origin.url",
+        "git@github.com:org/repo.git",
+    ]);
 
-    let raw_url = git_repo.remote_url("origin").unwrap();
+    let git_repo = Repository::at(repo.root_path()).unwrap();
     let forge_url = git_repo.forge_remote_url("origin").unwrap();
-    assert_eq!(forge_url, raw_url);
+    assert_eq!(forge_url, "git@github.com:org/repo.git");
 }
 
-/// Test forge_remote_url: returns raw URL when neither raw nor effective is a known forge.
+/// Test forge_remote_url: returns None when neither raw nor effective is a known forge.
 #[rstest]
-fn test_forge_remote_url_unknown_forge_returns_raw(repo: TestRepo) {
+fn test_forge_remote_url_unknown_forge_returns_none(repo: TestRepo) {
     repo.run_git(&[
         "config",
         "remote.origin.url",
@@ -389,15 +393,12 @@ fn test_forge_remote_url_unknown_forge_returns_raw(repo: TestRepo) {
     ]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert_eq!(
-        git_repo.forge_remote_url("origin").unwrap(),
-        "git@bitbucket.org:org/repo.git"
-    );
+    assert!(git_repo.forge_remote_url("origin").is_none());
 }
 
-/// Test forge_remote_url: returns raw URL when insteadOf rewrites to another unknown host.
+/// Test forge_remote_url: returns None when insteadOf rewrites to another unknown host.
 #[rstest]
-fn test_forge_remote_url_insteadof_to_unknown_forge(repo: TestRepo) {
+fn test_forge_remote_url_insteadof_to_unknown_forge_returns_none(repo: TestRepo) {
     setup_insteadof(
         &repo,
         "origin",
@@ -406,10 +407,7 @@ fn test_forge_remote_url_insteadof_to_unknown_forge(repo: TestRepo) {
     );
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert_eq!(
-        git_repo.forge_remote_url("origin").unwrap(),
-        "git@custom-host:org/repo.git"
-    );
+    assert!(git_repo.forge_remote_url("origin").is_none());
 }
 
 /// Test forge_remote_url / effective_remote_url: return None for nonexistent remote.

@@ -21,8 +21,7 @@
 //!    effective URL instead. This is a local operation (no network I/O), costing
 //!    only one extra git subprocess.
 //!
-//! 3. **Best effort** — if neither URL resolves to a known forge, return the
-//!    raw URL so callers can still attempt to parse owner/repo from it.
+//! 3. **Fail** — if neither URL resolves to a known forge, return `None`.
 //!
 //! ## Entry points
 //!
@@ -128,7 +127,7 @@ impl Repository {
     /// URL (with `insteadOf` rewrites applied) to find a known forge hostname.
     ///
     /// Returns the raw URL if it already has a known forge hostname, the effective
-    /// URL if it resolves to a known forge, or the raw URL as a best-effort fallback.
+    /// URL if it resolves to a known forge, or `None`.
     pub fn forge_remote_url(&self, remote: &str) -> Option<String> {
         let raw_url = self.remote_url(remote)?;
 
@@ -152,8 +151,7 @@ impl Repository {
             return Some(effective_url);
         }
 
-        // Best effort: return raw URL even though hostname isn't recognized
-        Some(raw_url)
+        None
     }
 
     /// Find a remote that points to a specific owner/repo.
