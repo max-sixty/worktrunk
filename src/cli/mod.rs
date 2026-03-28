@@ -1494,6 +1494,9 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 ## Hook type examples
 
 ```toml
+# Single command (string) — top-level, before any table headers
+post-merge = "cargo install --path ."
+
 [pre-switch]
 # Pull if last fetch was more than 6 hours ago
 pull = """
@@ -1524,9 +1527,6 @@ notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
-
-# Single command (string)
-post-merge = "cargo install --path ."
 
 [pre-remove]
 archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
