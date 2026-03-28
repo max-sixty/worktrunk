@@ -12,10 +12,9 @@ $ wt step commit
 
 Manual merge workflow with review between steps:
 
-<span class="cmd">wt step commit</span>
-<span class="cmd">wt step squash</span>
-<span class="cmd">wt step rebase</span>
-<span class="cmd">wt step push</span>
+```bash
+$ wt step commit|||wt step squash|||wt step rebase|||wt step push
+```
 
 ## Operations
 
@@ -104,11 +103,7 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```bash
-# Inspect the rendered prompt
-$ wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-$ wt step commit --show-prompt | llm -m gpt-5-nano
+$ # Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 
 ### Command reference
@@ -248,9 +243,9 @@ This is what `wt merge` would include — a single diff against the merge base.
 
 Arguments after `--` are forwarded to `git diff`:
 
-<span class="cmd">wt step diff -- --stat</span>
-<span class="cmd">wt step diff -- --name-only</span>
-<span class="cmd">wt step diff -- -- '*.rs'</span>
+```bash
+$ wt step diff -- --stat|||wt step diff -- --name-only|||wt step diff -- -- '*.rs'
+```
 
 The diff is pipeable to tools like `delta`:
 
@@ -262,9 +257,9 @@ $ wt step diff | delta
 
 Equivalent to:
 
-<span class="cmd">cp "$(git rev-parse --git-dir)/index" /tmp/idx</span>
-<span class="cmd">GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .</span>
-<span class="cmd">GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))</span>
+```bash
+$ cp &quot;$(git rev-parse --git-dir)/index&quot; /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
@@ -571,8 +566,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 ### Example
 
 ```bash
-# from ~/project (main worktree)
-$ wt step promote feature
+$ # from ~/project (main worktree)|||wt step promote feature
 ```
 
 Before:
@@ -650,8 +644,9 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
-<span class="cmd">wt step prune --min-age=0s     # no age guard</span>
-<span class="cmd">wt step prune --min-age=2d     # skip worktrees younger than 2 days</span>
+```bash
+$ wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days
+```
 
 ### Examples
 
@@ -810,10 +805,9 @@ deploy = "make deploy BRANCH={{ branch }}"
 port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-<span class="cmd">wt step deploy                            # run the alias</span>
-<span class="cmd">wt step deploy --dry-run                  # show expanded command</span>
-<span class="cmd">wt step deploy --var env=staging          # pass extra template variables</span>
-<span class="cmd">wt step deploy --yes                      # skip approval prompt</span>
+```bash
+$ wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --var env=staging          # pass extra template variables|||wt step deploy --yes                      # skip approval prompt
+```
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 

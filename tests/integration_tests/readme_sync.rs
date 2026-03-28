@@ -1776,6 +1776,32 @@ fn remove_section(content: &str, heading: &str) -> String {
     }
 }
 
+/// Convert ```console blocks with $ to terminal shortcodes in all docs files.
+///
+/// Command pages already have this conversion via --help-page, but hand-written
+/// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
+/// and get the same treatment.
+fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
+    let docs_dir = project_root.join("docs/content");
+    let mut updated_files = Vec::new();
+
+    for entry in fs::read_dir(&docs_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let content = fs::read_to_string(&path).unwrap();
+            let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
+            if converted != content {
+                fs::write(&path, &converted).unwrap();
+                let rel = path.strip_prefix(project_root).unwrap_or(&path);
+                updated_files.push(rel.display().to_string());
+            }
+        }
+    }
+
+    updated_files
+}
+
 /// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
 /// (excluding _index.md which is a Zola template)
 /// Returns (errors, updated_files)
@@ -1927,6 +1953,10 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
 
+    // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
+    // (command pages already converted via --help-page; this catches hand-written docs)
+    let console_files = convert_console_blocks_in_docs(project_root);
+
     // Step 2: Sync skill files (docs/content/*.md → skills/*)
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
@@ -1939,6 +1969,7 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
     let all_files: Vec<_> = cmd_files
         .into_iter()
+        .chain(console_files)
         .chain(skill_files)
         .chain(well_known_files)
         .collect();

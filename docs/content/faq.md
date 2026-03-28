@@ -31,9 +31,9 @@ Git's built-in worktree commands work but require manual lifecycle management:
 Worktrunk automates the full lifecycle:
 
 {% terminal() %}
-<span class="cmd">wt switch --create feature-branch</span>  # Creates worktree, runs setup hooks
+<span class="cmd">wt switch --create feature-branch  # Creates worktree, runs setup hooks</span>
 # ...work...
-<span class="cmd">wt merge</span>                            # Merges into default branch, cleans up
+<span class="cmd">wt merge                            # Merges into default branch, cleans up</span>
 {% end %}
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.

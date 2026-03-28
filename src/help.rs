@@ -50,6 +50,7 @@ use std::process;
 use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
+use worktrunk::docs::convert_dollar_console_to_terminal;
 use worktrunk::styling::eprintln;
 
 use crate::cli;
@@ -499,113 +500,6 @@ fn post_process_for_html(text: &str) -> String {
         )
 }
 
-/// Convert `$ `‐prefixed console blocks into `{% terminal() %}` shortcodes.
-///
-/// Convention: `$ ` in a console block signals a command+output transcript.
-/// Command‐only blocks use bare commands (no `$ `).
-///
-/// Transforms:
-/// ````text
-/// ```console
-/// $ wt step eval '{{ branch | hash_port }}'
-/// 16066
-/// ```
-/// ````
-///
-/// Into:
-/// ```text
-/// {% terminal() %}
-/// <span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
-/// 16066
-/// {% end %}
-/// ```
-///
-/// Must run BEFORE the `console` → `bash` replacement so the fence is still
-/// `console` when we detect it.
-fn convert_dollar_console_to_terminal(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut lines = text.lines().peekable();
-
-    while let Some(line) = lines.next() {
-        if line.trim_start() == "```console"
-            && let Some(&next) = lines.peek()
-            && next.starts_with("$ ")
-        {
-            // Collect all lines until closing ```
-            let mut block_lines = Vec::new();
-            for content_line in lines.by_ref() {
-                if content_line.trim_start() == "```" {
-                    break;
-                }
-                block_lines.push(content_line);
-            }
-
-            // Count $ commands and check for {{ }} (Tera conflict)
-            let commands: Vec<_> = block_lines
-                .iter()
-                .filter_map(|l| l.strip_prefix("$ "))
-                .collect();
-            let has_template_syntax = commands.iter().any(|c| c.contains("{{"));
-
-            if commands.len() == 1 && !has_template_syntax {
-                // Single command, no {{ }} — use cmd parameter for Syntect highlighting
-                let cmd = commands[0];
-                let body_lines: Vec<_> = block_lines
-                    .iter()
-                    .filter(|l| !l.starts_with("$ "))
-                    .collect();
-                if body_lines.is_empty() {
-                    // No output — self-closing shortcode ({{ }} syntax)
-                    result.push_str(&format!(
-                        "{{{{ terminal(cmd=\"{}\") }}}}\n",
-                        cmd.replace('"', "&quot;")
-                    ));
-                } else {
-                    result.push_str(&format!(
-                        "{{% terminal(cmd=\"{}\") %}}\n",
-                        cmd.replace('"', "&quot;")
-                    ));
-                    for bl in &body_lines {
-                        result.push_str(bl);
-                        result.push('\n');
-                    }
-                    result.push_str("{% end %}\n");
-                }
-            } else {
-                // Multiple commands or {{ }} — use body with <span class="cmd">
-                result.push_str("{% terminal() %}\n");
-                for bl in &block_lines {
-                    if let Some(cmd) = bl.strip_prefix("$ ") {
-                        result.push_str("<span class=\"cmd\">");
-                        for ch in cmd.chars() {
-                            match ch {
-                                '<' => result.push_str("&lt;"),
-                                '>' => result.push_str("&gt;"),
-                                '&' => result.push_str("&amp;"),
-                                _ => result.push(ch),
-                            }
-                        }
-                        result.push_str("</span>\n");
-                    } else {
-                        result.push_str(bl);
-                        result.push('\n');
-                    }
-                }
-                result.push_str("{% end %}\n");
-            }
-            continue;
-        }
-        result.push_str(line);
-        result.push('\n');
-    }
-
-    // .lines() strips the trailing newline; match original
-    if !text.ends_with('\n') {
-        result.pop();
-    }
-    result
-}
-
 /// Move `[experimental]` from heading lines to a separate line after the heading.
 ///
 /// Transforms `## Foo [experimental]` into:
@@ -877,68 +771,4 @@ fn expand_demo_placeholders(text: &str) -> String {
         }
     }
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use insta::assert_snapshot;
-
-    #[test]
-    fn test_convert_dollar_console_to_terminal() {
-        // Command+output → terminal shortcode
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ wt step eval '{{ branch | hash_port }}'\n16066\n```"
-        ), @r#"
-        {% terminal() %}
-        <span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
-        16066
-        {% end %}
-        "#);
-
-        // Command only (no $) → unchanged
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\nwt step commit --stage=tracked\n```"
-        ), @r"
-        ```console
-        wt step commit --stage=tracked
-        ```
-        ");
-
-        // Multi-line output
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ wt step eval --dry-run '{{ branch }}'\nbranch=feature/auth\nResult: feature/auth\n```"
-        ), @r#"
-        {% terminal() %}
-        <span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
-        branch=feature/auth
-        Result: feature/auth
-        {% end %}
-        "#);
-
-        // Single command with output, no {{ }} → cmd parameter
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ echo 'PORT=8080' > .env\noutput\n```"
-        ), @r#"
-        {% terminal(cmd="echo 'PORT=8080' > .env") %}
-        output
-        {% end %}
-        "#);
-
-        // Command only (single, no output) → self-closing shortcode
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ wt remove\n```"
-        ), @r#"{{ terminal(cmd="wt remove") }}
-        "#);
-
-        // Multiple commands → body approach with <span class="cmd">
-        assert_snapshot!(convert_dollar_console_to_terminal(
-            "```console\n$ wt step push\n$ wt step push develop\n```"
-        ), @r#"
-        {% terminal() %}
-        <span class="cmd">wt step push</span>
-        <span class="cmd">wt step push develop</span>
-        {% end %}
-        "#);
-    }
 }

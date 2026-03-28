@@ -22,13 +22,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 ## Examples
 
-{% terminal() %}
-<span class="cmd">wt switch feature-auth           # Switch to worktree</span>
-<span class="cmd">wt switch -                      # Previous worktree (like cd -)</span>
-<span class="cmd">wt switch --create new-feature   # Create new branch and worktree</span>
-<span class="cmd">wt switch --create hotfix --base production</span>
-<span class="cmd">wt switch pr:123                 # Switch to PR #123's branch</span>
-{% end %}
+{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch") }}
 
 ## Creating a branch
 
@@ -46,12 +40,7 @@ When creating a worktree, worktrunk:
 4. Runs [pre-start hooks](@/hook.md#pre-start) — blocks until complete
 5. Spawns [post-start](@/hook.md#post-start) and [post-switch hooks](@/hook.md#post-switch) in the background
 
-{% terminal() %}
-<span class="cmd">wt switch feature                        # Existing branch → creates worktree</span>
-<span class="cmd">wt switch --create feature               # New branch and worktree</span>
-<span class="cmd">wt switch --create fix --base release    # New branch from release</span>
-<span class="cmd">wt switch --create temp --no-verify      # Skip hooks</span>
-{% end %}
+{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-verify      # Skip hooks") }}
 
 ## Shortcuts
 
@@ -63,13 +52,7 @@ When creating a worktree, worktrunk:
 | `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
-{% terminal() %}
-<span class="cmd">wt switch -                      # Back to previous</span>
-<span class="cmd">wt switch ^                      # Default branch worktree</span>
-<span class="cmd">wt switch --create fix --base=@  # Branch from current HEAD</span>
-<span class="cmd">wt switch pr:123                 # PR #123's branch</span>
-<span class="cmd">wt switch mr:101                 # MR !101's branch</span>
-{% end %}
+{{ terminal(cmd="wt switch -                      # Back to previous|||wt switch ^                      # Default branch worktree|||wt switch --create fix --base=@  # Branch from current HEAD|||wt switch pr:123                 # PR #123's branch|||wt switch mr:101                 # MR !101's branch") }}
 
 ## Interactive picker
 
@@ -116,10 +99,7 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-{% terminal() %}
-<span class="cmd">wt switch pr:101                 # GitHub PR #101</span>
-<span class="cmd">wt switch mr:101                 # GitLab MR !101</span>
-{% end %}
+{{ terminal(cmd="wt switch pr:101                 # GitHub PR #101|||wt switch mr:101                 # GitLab MR !101") }}
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 

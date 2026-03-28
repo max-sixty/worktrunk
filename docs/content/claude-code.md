@@ -57,9 +57,9 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 Set status markers manually for any workflow:
 
 {% terminal() %}
-<span class="cmd">wt config state marker set "🚧"</span>                   # Current branch
-<span class="cmd">wt config state marker set "✅" --branch feature</span>  # Specific branch
-<span class="cmd">git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'</span>  # Direct
+<span class="cmd">wt config state marker set "🚧"                   # Current branch</span>
+<span class="cmd">wt config state marker set "✅" --branch feature  # Specific branch</span>
+<span class="cmd">git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct</span>
 {% end %}
 
 ## Statusline

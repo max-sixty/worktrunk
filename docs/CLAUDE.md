@@ -222,17 +222,17 @@ The examples in `cli.rs` are just command stubs — the actual output comes from
 
 ### Code block convention
 
-All shell commands use `$ ` prefix in `` ```console `` blocks. The `$ ` is the signal for `convert_dollar_console_to_terminal()` in `help.rs` to emit terminal shortcodes on the web:
+All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_console_to_terminal()` (`src/docs.rs`, shared library function) converts them to terminal shortcodes. The sync test also runs this on hand-written docs.
 
-| Detected pattern | Web output |
-|------------------|------------|
-| Single `$ ` command, no `{{ }}` | `{{ terminal(cmd="...") }}` — self-closing, Syntect highlighting |
-| Single `$ ` command + output, no `{{ }}` | `{% terminal(cmd="...") %}output{% end %}` — Syntect highlighting |
-| Multiple `$ ` commands, or `{{ }}` in command | `{% terminal() %}` with `<span class="cmd">` body — accent color |
-| No `$ ` (non-shell blocks) | `console` → `bash` conversion (unchanged) |
-| README (`console` on GitHub) | GitHub's console lexer handles `$ ` natively |
+| Detected pattern | Web output | Highlighting |
+|------------------|------------|--------------|
+| Any `$ ` commands, no `{{ }}` | `cmd` parameter with `\|\|\|` delimiter | Full Syntect |
+| `{{ }}` in command | `{% terminal() %}` with `<span class="cmd">` body | Accent color only |
+| No `$ ` | `console` → `bash` conversion | Syntect (no `$ ` prompt) |
 
-In hand-written docs, use shortcodes directly: `{{ terminal(cmd="...") }}` for command-only, `{% terminal(cmd="...") %}output{% end %}` for command+output, or `{% terminal() %}` with `<span class="cmd">` in the body when the command contains `{{ }}`.
+The `cmd` parameter supports multiple commands joined by `|||`. The template splits, highlights each through Syntect individually, and wraps commands in `<span class="cmd">` (CSS `::before` adds `$ `). Comment lines (`#`) are highlighted but not wrapped (no prompt).
+
+Hand-written docs can use either `console` fences with `$ ` (auto-converted by the sync test) or shortcodes directly.
 
 ### CLI and web compatibility
 

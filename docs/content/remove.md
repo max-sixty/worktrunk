@@ -19,10 +19,7 @@ Remove current worktree:
 
 Remove specific worktrees / branches:
 
-{% terminal() %}
-<span class="cmd">wt remove feature-branch</span>
-<span class="cmd">wt remove old-feature another-branch</span>
-{% end %}
+{{ terminal(cmd="wt remove feature-branch|||wt remove old-feature another-branch") }}
 
 Keep the branch:
 
@@ -57,11 +54,7 @@ Worktrunk has two force flags for different situations:
 | `--force` (`-f`) | Worktree | Worktree has untracked files |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
-{% terminal() %}
-<span class="cmd">wt remove feature --force       # Remove worktree with untracked files</span>
-<span class="cmd">wt remove feature -D            # Delete unmerged branch</span>
-<span class="cmd">wt remove feature --force -D    # Both</span>
-{% end %}
+{{ terminal(cmd="wt remove feature --force       # Remove worktree with untracked files|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both") }}
 
 Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
