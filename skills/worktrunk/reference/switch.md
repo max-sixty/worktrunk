@@ -106,15 +106,14 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <span class=c>[BRANCH]</span>
           Branch name or shortcut
 
-          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch),
-          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab
-          MR)
+          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39;
+          (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
 
-          Arguments after <b>--</b> are appended to the execute command. Each argument
-          is expanded for templates, then POSIX shell-escaped.
+          Arguments after <b>--</b> are appended to the execute command. Each argument is expanded for
+          templates, then POSIX shell-escaped.
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
@@ -128,26 +127,23 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
           Command to run after switch
 
-          Replaces the wt process with the command after switching, giving it
-          full terminal control. Useful for launching editors, AI agents, or
-          other interactive tools.
+          Replaces the wt process with the command after switching, giving it full terminal control.
+          Useful for launching editors, AI agents, or other interactive tools.
 
-          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
-          etc.) and filters. <b>{{ base }}</b> and <b>{{ base_worktree_path }}</b> require
-          --create.
+          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
+          base }} and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
 
           Especially useful with shell aliases:
 
             <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
             <b>wsc feature-branch -- &#39;Fix GH #322&#39;</b>
 
-          Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
-          Arguments after <b>--</b> are passed to the command, so <b>wsc feature -- &#39;Fix</b>
-          GH #322&#39; runs <b>claude &#39;Fix GH #322&#39;</b>, starting Claude with a prompt.
+          Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code. Arguments after <b>--</b>
+          are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
+          starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the
-          worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
-          session named after the branch.
+          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
+          new -s {{ branch | sanitize }}&#39; starts a tmux session named after the branch.
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
@@ -155,11 +151,11 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--no-cd</span></b>
           Skip directory change after switching
 
-          Hooks still run normally. Useful when hooks handle navigation (e.g.,
-          tmux workflows) or for CI/automation. Use --cd to override.
+          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
+          for CI/automation. Use --cd to override.
 
-          In picker mode (no branch argument), prints the selected branch name
-          and exits without switching. Useful for scripting.
+          In picker mode (no branch argument), prints the selected branch name and exits without
+          switching. Useful for scripting.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

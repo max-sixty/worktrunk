@@ -386,8 +386,8 @@ Commands with pages: merge, switch, remove, list"
         post_process_for_html(&text)
     };
 
-    // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = help_reference(&[subcommand], Some(80));
+    // Get the help reference block (wrap at 100 chars for web docs, with colors for HTML)
+    let reference_block = help_reference(&[subcommand], Some(100));
 
     // Output the generated content (frontmatter is in skeleton files)
     // Uses region markers so sync can replace just this content
@@ -693,8 +693,8 @@ fn format_subcommand_section(
         .chain(std::iter::once(subcommand_name))
         .collect();
 
-    // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = help_reference(&command_path, Some(80));
+    // Get help reference (wrap at 100 chars for web docs, with colors for HTML)
+    let reference_block = help_reference(&command_path, Some(100));
 
     // Format the section: heading, badge (outside heading), main content, command reference
     let mut section = format!("## {full_command}\n\n");
