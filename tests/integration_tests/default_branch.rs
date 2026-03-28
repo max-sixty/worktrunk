@@ -376,7 +376,7 @@ fn test_forge_remote_url_known_forge_no_fallback(repo: TestRepo) {
         "config",
         "remote.origin.url",
         "git@github.com:org/repo.git",
-    ]);
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
     let forge_url = git_repo.forge_remote_url("origin").unwrap();
