@@ -124,14 +124,12 @@ The [2m--create[0m flag creates a new branch from [2m--base[0m — the defau
 
 [1m[32mCreating worktrees[0m
 
-If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one, running hooks.
+If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one:
 
-When creating a worktree, worktrunk:
-
-1. Runs pre-switch hooks — blocks until complete
+1. Runs pre-switch hooks, blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs pre-start hooks — blocks until complete
+4. Runs pre-start hooks, blocking until complete
 5. Spawns post-start and post-switch hooks in the background
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
@@ -157,20 +155,20 @@ When creating a worktree, worktrunk:
 
 [1m[32mInteractive picker[0m
 
-When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
 
 [1mKeybindings:[0m
 
-      Key                  Action             
- ───────────── ────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list         
- (type)        Filter worktrees               
- [2mEnter[0m         Switch to selected worktree    
- [2mAlt-c[0m         Create new worktree from query 
- [2mEsc[0m           Cancel                         
- [2m1[0m–[2m5[0m           Switch preview tab             
- [2mAlt-p[0m         Toggle preview panel           
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down         
+      Key                       Action                   
+ ───────────── ───────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                    
+ (type)        Filter worktrees                          
+ [2mEnter[0m         Switch to selected worktree               
+ [2mAlt-c[0m         Create new worktree named as entered text 
+ [2mEsc[0m           Cancel                                    
+ [2m1[0m–[2m5[0m           Switch preview tab                        
+ [2mAlt-p[0m         Toggle preview panel                      
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
 
 [1mPreview tabs[0m — toggle with number keys:
 

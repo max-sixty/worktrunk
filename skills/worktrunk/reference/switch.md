@@ -20,14 +20,12 @@ The `--create` flag creates a new branch from `--base` — the default branch un
 
 ## Creating worktrees
 
-If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](https://worktrunk.dev/hook/).
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
-When creating a worktree, worktrunk:
-
-1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#pre-switch) — blocks until complete
+1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#pre-switch), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start) — blocks until complete
+4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start), blocking until complete
 5. Spawns [post-start](https://worktrunk.dev/hook/#post-start) and [post-switch hooks](https://worktrunk.dev/hook/#post-switch) in the background
 
 ```bash
@@ -57,7 +55,7 @@ wt switch mr:101                 # MR !101's branch
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
 
 **Keybindings:**
 
@@ -66,7 +64,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `↑`/`↓` | Navigate worktree list |
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
-| `Alt-c` | Create new worktree from query |
+| `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
