@@ -529,38 +529,70 @@ fn convert_dollar_console_to_terminal(text: &str) -> String {
     while let Some(line) = lines.next() {
         if line.trim_start() == "```console"
             && let Some(&next) = lines.peek()
-            && let Some(command) = next.strip_prefix("$ ")
+            && next.starts_with("$ ")
         {
-            lines.next(); // consume the $ line
-
-            // Collect output lines until closing ```
-            let mut output = Vec::new();
+            // Collect all lines until closing ```
+            let mut block_lines = Vec::new();
             for content_line in lines.by_ref() {
                 if content_line.trim_start() == "```" {
                     break;
                 }
-                output.push(content_line);
+                block_lines.push(content_line);
             }
 
-            // Emit terminal shortcode
-            result.push_str("{% terminal() %}\n");
-            result.push_str("<span class=\"cmd\">");
-            // HTML-escape the command (< > & could appear in arguments)
-            for ch in command.chars() {
-                match ch {
-                    '<' => result.push_str("&lt;"),
-                    '>' => result.push_str("&gt;"),
-                    '&' => result.push_str("&amp;"),
-                    _ => result.push(ch),
+            // Count $ commands and check for {{ }} (Tera conflict)
+            let commands: Vec<_> = block_lines
+                .iter()
+                .filter_map(|l| l.strip_prefix("$ "))
+                .collect();
+            let has_template_syntax = commands.iter().any(|c| c.contains("{{"));
+
+            if commands.len() == 1 && !has_template_syntax {
+                // Single command, no {{ }} — use cmd parameter for Syntect highlighting
+                let cmd = commands[0];
+                let body_lines: Vec<_> = block_lines
+                    .iter()
+                    .filter(|l| !l.starts_with("$ "))
+                    .collect();
+                if body_lines.is_empty() {
+                    // No output — self-closing shortcode ({{ }} syntax)
+                    result.push_str(&format!(
+                        "{{{{ terminal(cmd=\"{}\") }}}}\n",
+                        cmd.replace('"', "&quot;")
+                    ));
+                } else {
+                    result.push_str(&format!(
+                        "{{% terminal(cmd=\"{}\") %}}\n",
+                        cmd.replace('"', "&quot;")
+                    ));
+                    for bl in &body_lines {
+                        result.push_str(bl);
+                        result.push('\n');
+                    }
+                    result.push_str("{% end %}\n");
                 }
+            } else {
+                // Multiple commands or {{ }} — use body with <span class="cmd">
+                result.push_str("{% terminal() %}\n");
+                for bl in &block_lines {
+                    if let Some(cmd) = bl.strip_prefix("$ ") {
+                        result.push_str("<span class=\"cmd\">");
+                        for ch in cmd.chars() {
+                            match ch {
+                                '<' => result.push_str("&lt;"),
+                                '>' => result.push_str("&gt;"),
+                                '&' => result.push_str("&amp;"),
+                                _ => result.push(ch),
+                            }
+                        }
+                        result.push_str("</span>\n");
+                    } else {
+                        result.push_str(bl);
+                        result.push('\n');
+                    }
+                }
+                result.push_str("{% end %}\n");
             }
-            result.push_str("</span>\n");
-            for output_line in &output {
-                result.push_str(output_line);
-                result.push('\n');
-            }
-            result.push_str("{% end %}");
-            result.push('\n');
             continue;
         }
         result.push_str(line);
@@ -884,13 +916,28 @@ mod tests {
         {% end %}
         "#);
 
-        // HTML escaping in command
+        // Single command with output, no {{ }} → cmd parameter
         assert_snapshot!(convert_dollar_console_to_terminal(
             "```console\n$ echo 'PORT=8080' > .env\noutput\n```"
         ), @r#"
-        {% terminal() %}
-        <span class="cmd">echo 'PORT=8080' &gt; .env</span>
+        {% terminal(cmd="echo 'PORT=8080' > .env") %}
         output
+        {% end %}
+        "#);
+
+        // Command only (single, no output) → self-closing shortcode
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ wt remove\n```"
+        ), @r#"{{ terminal(cmd="wt remove") }}
+        "#);
+
+        // Multiple commands → body approach with <span class="cmd">
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ wt step push\n$ wt step push develop\n```"
+        ), @r#"
+        {% terminal() %}
+        <span class="cmd">wt step push</span>
+        <span class="cmd">wt step push develop</span>
         {% end %}
         "#);
     }

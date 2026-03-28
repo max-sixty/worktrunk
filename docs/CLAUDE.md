@@ -222,17 +222,17 @@ The examples in `cli.rs` are just command stubs — the actual output comes from
 
 ### Code block convention
 
-Shell code blocks follow a conditional convention matching the Rust ecosystem (Rust Book, Cargo, uv):
+All shell commands use `$ ` prefix in `` ```console `` blocks. The `$ ` is the signal for `convert_dollar_console_to_terminal()` in `help.rs` to emit terminal shortcodes on the web:
 
-| Context | Fence | `$ ` prefix | Rendering |
-|---------|-------|-------------|-----------|
-| Command only | `` ```console `` | No | → `` ```bash `` on web (Syntect highlighting) |
-| Command + output | `` ```console `` | Yes | → `{% terminal() %}` on web (CSS `$ ` + accent color) |
-| README (GitHub) | `` ```console `` | Yes | GitHub's console lexer handles `$ ` correctly |
+| Detected pattern | Web output |
+|------------------|------------|
+| Single `$ ` command, no `{{ }}` | `{{ terminal(cmd="...") }}` — self-closing, Syntect highlighting |
+| Single `$ ` command + output, no `{{ }}` | `{% terminal(cmd="...") %}output{% end %}` — Syntect highlighting |
+| Multiple `$ ` commands, or `{{ }}` in command | `{% terminal() %}` with `<span class="cmd">` body — accent color |
+| No `$ ` (non-shell blocks) | `console` → `bash` conversion (unchanged) |
+| README (`console` on GitHub) | GitHub's console lexer handles `$ ` natively |
 
-In `cli.rs`, write `$ ` on the command line when showing output below it. The `$ ` is the signal for `convert_dollar_console_to_terminal()` in `help.rs` to emit a terminal shortcode. Command-only blocks get the standard `console` → `bash` conversion and full Syntect highlighting.
-
-For hand-written docs that show command+output, use `{% terminal() %}` directly (with `cmd` parameter when possible, or `<span class="cmd">` in the body when the command contains `{{ }}`).
+In hand-written docs, use shortcodes directly: `{{ terminal(cmd="...") }}` for command-only, `{% terminal(cmd="...") %}output{% end %}` for command+output, or `{% terminal() %}` with `<span class="cmd">` in the body when the command contains `{{ }}`.
 
 ### CLI and web compatibility
 

@@ -15,27 +15,19 @@ Manage user & project configs. Includes shell integration, hooks, and saved stat
 
 Install shell integration (required for directory switching):
 
-```bash
-wt config shell install
-```
+{{ terminal(cmd="wt config shell install") }}
 
 Create user config file with documented examples:
 
-```bash
-wt config create
-```
+{{ terminal(cmd="wt config create") }}
 
 Create project config file (`.config/wt.toml`) for hooks:
 
-```bash
-wt config create --project
-```
+{{ terminal(cmd="wt config create --project") }}
 
 Show current configuration and file locations:
 
-```bash
-wt config show
-```
+{{ terminal(cmd="wt config show") }}
 
 ## Configuration files
 
@@ -383,9 +375,7 @@ test = "cargo test"
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-```bash
-wt config shell install
-```
+{{ terminal(cmd="wt config shell install") }}
 
 For manual setup, see `wt config shell init --help`.
 
@@ -419,9 +409,7 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 
 Override the LLM command in CI to use a mock:
 
-```bash
-WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
-```
+{{ terminal(cmd="WORKTRUNK_COMMIT__GENERATION__COMMAND=&quot;echo 'test: automated commit'&quot; wt merge") }}
 
 ### Other environment variables
 
@@ -483,9 +471,7 @@ If a config file doesn't exist, shows defaults that would be used.
 
 Use `--full` to run diagnostic checks:
 
-```bash
-wt config show --full
-```
+{{ terminal(cmd="wt config show --full") }}
 
 This tests:
 - **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
@@ -535,34 +521,22 @@ Use `wt config show` to view file-based configuration.
 ### Examples
 
 Get the default branch:
-```bash
-wt config state default-branch
-```
+{{ terminal(cmd="wt config state default-branch") }}
 
 Set the default branch manually:
-```bash
-wt config state default-branch set main
-```
+{{ terminal(cmd="wt config state default-branch set main") }}
 
 Set a marker for current branch:
-```bash
-wt config state marker set "🚧 WIP"
-```
+{{ terminal(cmd="wt config state marker set &quot;🚧 WIP&quot;") }}
 
 Clear all CI status cache:
-```bash
-wt config state ci-status clear --all
-```
+{{ terminal(cmd="wt config state ci-status clear --all") }}
 
 Show all stored state:
-```bash
-wt config state get
-```
+{{ terminal(cmd="wt config state get") }}
 
 Clear all stored state:
-```bash
-wt config state clear
-```
+{{ terminal(cmd="wt config state clear") }}
 
 ### Command reference
 
@@ -732,9 +706,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
-```bash
-git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
-```
+{{ terminal(cmd="git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;🚧&quot;,&quot;set_at&quot;:0}'") }}
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`.
 
@@ -801,24 +773,16 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 ### Examples
 
 List all log files:
-```bash
-wt config state logs get
-```
+{{ terminal(cmd="wt config state logs get") }}
 
 Query the command log:
-```bash
-tail -5 .git/wt/logs/commands.jsonl | jq .
-```
+{{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 View a specific hook log:
-```bash
-cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
-```
+{{ terminal(cmd="cat &quot;$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log&quot;") }}
 
 Clear all logs:
-```bash
-wt config state logs clear
-```
+{{ terminal(cmd="wt config state logs clear") }}
 
 ### Command reference
 

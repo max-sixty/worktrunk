@@ -255,11 +255,11 @@ pub(crate) enum Commands {
 ## Examples
 
 ```console
-wt switch feature-auth           # Switch to worktree
-wt switch -                      # Previous worktree (like cd -)
-wt switch --create new-feature   # Create new branch and worktree
-wt switch --create hotfix --base production
-wt switch pr:123                 # Switch to PR #123's branch
+$ wt switch feature-auth           # Switch to worktree
+$ wt switch -                      # Previous worktree (like cd -)
+$ wt switch --create new-feature   # Create new branch and worktree
+$ wt switch --create hotfix --base production
+$ wt switch pr:123                 # Switch to PR #123's branch
 ```
 
 ## Creating a branch
@@ -279,10 +279,10 @@ When creating a worktree, worktrunk:
 5. Spawns [post-start](@/hook.md#post-start) and [post-switch hooks](@/hook.md#post-switch) in the background
 
 ```console
-wt switch feature                        # Existing branch → creates worktree
-wt switch --create feature               # New branch and worktree
-wt switch --create fix --base release    # New branch from release
-wt switch --create temp --no-verify      # Skip hooks
+$ wt switch feature                        # Existing branch → creates worktree
+$ wt switch --create feature               # New branch and worktree
+$ wt switch --create fix --base release    # New branch from release
+$ wt switch --create temp --no-verify      # Skip hooks
 ```
 
 ## Shortcuts
@@ -296,11 +296,11 @@ wt switch --create temp --no-verify      # Skip hooks
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```console
-wt switch -                      # Back to previous
-wt switch ^                      # Default branch worktree
-wt switch --create fix --base=@  # Branch from current HEAD
-wt switch pr:123                 # PR #123's branch
-wt switch mr:101                 # MR !101's branch
+$ wt switch -                      # Back to previous
+$ wt switch ^                      # Default branch worktree
+$ wt switch --create fix --base=@  # Branch from current HEAD
+$ wt switch pr:123                 # PR #123's branch
+$ wt switch mr:101                 # MR !101's branch
 ```
 
 ## Interactive picker
@@ -343,8 +343,8 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```console
-wt switch pr:101                 # GitHub PR #101
-wt switch mr:101                 # GitLab MR !101
+$ wt switch pr:101                 # GitHub PR #101
+$ wt switch mr:101                 # GitLab MR !101
 ```
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
@@ -471,27 +471,27 @@ List all worktrees:
 
 <!-- wt list -->
 ```console
-wt list
+$ wt list
 ```
 
 Include CI status, line diffs, and LLM summaries:
 
 <!-- wt list --full -->
 ```console
-wt list --full
+$ wt list --full
 ```
 
 Include branches that don't have worktrees:
 
 <!-- wt list --branches --full -->
 ```console
-wt list --branches --full
+$ wt list --branches --full
 ```
 
 Output as JSON for scripting:
 
 ```console
-wt list --format=json
+$ wt list --format=json
 ```
 
 ## Columns
@@ -583,28 +583,28 @@ Query structured data with `--format=json`:
 
 ```console
 # Current worktree path (for scripts)
-wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+$ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
 
 # Branches with uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+$ wt list --format=json | jq '.[] | select(.working_tree.modified)'
 
 # Worktrees with merge conflicts
-wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
+$ wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
 # Branches ahead of main (needs merging)
-wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
+$ wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
 # Integrated branches (safe to remove)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
+$ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
 # Branches without worktrees
-wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
+$ wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
 # Worktrees ahead of remote (needs pushing)
-wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+$ wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
 
 # Stale CI (local changes not reflected in CI)
-wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+$ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -753,26 +753,26 @@ Missing a field that would be generally useful? Open an issue at https://github.
 Remove current worktree:
 
 ```console
-wt remove
+$ wt remove
 ```
 
 Remove specific worktrees / branches:
 
 ```console
-wt remove feature-branch
-wt remove old-feature another-branch
+$ wt remove feature-branch
+$ wt remove old-feature another-branch
 ```
 
 Keep the branch:
 
 ```console
-wt remove --no-delete-branch feature-branch
+$ wt remove --no-delete-branch feature-branch
 ```
 
 Force-delete an unmerged branch:
 
 ```console
-wt remove -D experimental
+$ wt remove -D experimental
 ```
 
 ## Branch cleanup
@@ -801,9 +801,9 @@ Worktrunk has two force flags for different situations:
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
 ```console
-wt remove feature --force       # Remove worktree with untracked files
-wt remove feature -D            # Delete unmerged branch
-wt remove feature --force -D    # Both
+$ wt remove feature --force       # Remove worktree with untracked files
+$ wt remove feature -D            # Delete unmerged branch
+$ wt remove feature --force -D    # Both
 ```
 
 Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
@@ -870,37 +870,37 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 Merge to the default branch:
 
 ```console
-wt merge
+$ wt merge
 ```
 
 Merge to a different branch:
 
 ```console
-wt merge develop
+$ wt merge develop
 ```
 
 Keep the worktree after merging:
 
 ```console
-wt merge --no-remove
+$ wt merge --no-remove
 ```
 
 Preserve commit history (no squash):
 
 ```console
-wt merge --no-squash
+$ wt merge --no-squash
 ```
 
 Create a merge commit — semi-linear history:
 
 ```console
-wt merge --no-ff
+$ wt merge --no-ff
 ```
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
-wt merge --no-commit
+$ wt merge --no-commit
 ```
 
 ## Pipeline
@@ -1030,16 +1030,16 @@ lint = "cargo clippy"
 Commit with LLM-generated message:
 
 ```console
-wt step commit
+$ wt step commit
 ```
 
 Manual merge workflow with review between steps:
 
 ```console
-wt step commit
-wt step squash
-wt step rebase
-wt step push
+$ wt step commit
+$ wt step squash
+$ wt step rebase
+$ wt step push
 ```
 
 ## Operations
@@ -1083,10 +1083,10 @@ port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
 ```console
-wt step deploy                            # run the alias
-wt step deploy --dry-run                  # show expanded command
-wt step deploy --var env=staging          # pass extra template variables
-wt step deploy --yes                      # skip approval prompt
+$ wt step deploy                            # run the alias
+$ wt step deploy --dry-run                  # show expanded command
+$ wt step deploy --var env=staging          # pass extra template variables
+$ wt step deploy --yes                      # skip approval prompt
 ```
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
@@ -1377,14 +1377,14 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
 ```console
-wt hook pre-merge              # Run all pre-merge hooks
-wt hook pre-merge test         # Run hooks named "test" from both sources
-wt hook pre-merge user:        # Run all user hooks
-wt hook pre-merge project:     # Run all project hooks
-wt hook pre-merge user:test    # Run only user's "test" hook
-wt hook pre-merge project:test # Run only project's "test" hook
-wt hook pre-merge --yes        # Skip approval prompts (for CI)
-wt hook pre-start --var branch=feature/test     # Override template variable
+$ wt hook pre-merge              # Run all pre-merge hooks
+$ wt hook pre-merge test         # Run hooks named "test" from both sources
+$ wt hook pre-merge user:        # Run all user hooks
+$ wt hook pre-merge project:     # Run all project hooks
+$ wt hook pre-merge user:test    # Run only user's "test" hook
+$ wt hook pre-merge project:test # Run only project's "test" hook
+$ wt hook pre-merge --yes        # Skip approval prompts (for CI)
+$ wt hook pre-start --var branch=feature/test     # Override template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
@@ -1604,25 +1604,25 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 Install shell integration (required for directory switching):
 
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 Create user config file with documented examples:
 
 ```console
-wt config create
+$ wt config create
 ```
 
 Create project config file (`.config/wt.toml`) for hooks:
 
 ```console
-wt config create --project
+$ wt config create --project
 ```
 
 Show current configuration and file locations:
 
 ```console
-wt config show
+$ wt config show
 ```
 
 ## Configuration files
@@ -1970,7 +1970,7 @@ test = "cargo test"
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 For manual setup, see `wt config shell init --help`.
@@ -2006,7 +2006,7 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 Override the LLM command in CI to use a mock:
 
 ```console
-WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
+$ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables

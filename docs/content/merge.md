@@ -24,39 +24,27 @@ Unlike `git merge`, this merges current into target — not target into current.
 
 Merge to the default branch:
 
-```bash
-wt merge
-```
+{{ terminal(cmd="wt merge") }}
 
 Merge to a different branch:
 
-```bash
-wt merge develop
-```
+{{ terminal(cmd="wt merge develop") }}
 
 Keep the worktree after merging:
 
-```bash
-wt merge --no-remove
-```
+{{ terminal(cmd="wt merge --no-remove") }}
 
 Preserve commit history (no squash):
 
-```bash
-wt merge --no-squash
-```
+{{ terminal(cmd="wt merge --no-squash") }}
 
 Create a merge commit — semi-linear history:
 
-```bash
-wt merge --no-ff
-```
+{{ terminal(cmd="wt merge --no-ff") }}
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-```bash
-wt merge --no-commit
-```
+{{ terminal(cmd="wt merge --no-commit") }}
 
 ## Pipeline
 

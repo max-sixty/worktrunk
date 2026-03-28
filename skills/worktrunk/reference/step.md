@@ -7,17 +7,15 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 Commit with LLM-generated message:
 
 ```bash
-wt step commit
+$ wt step commit
 ```
 
 Manual merge workflow with review between steps:
 
-```bash
-wt step commit
-wt step squash
-wt step rebase
-wt step push
-```
+<span class="cmd">wt step commit</span>
+<span class="cmd">wt step squash</span>
+<span class="cmd">wt step rebase</span>
+<span class="cmd">wt step push</span>
 
 ## Operations
 
@@ -91,7 +89,7 @@ Controls what to stage before committing:
 | `none` | Don't stage anything, commit only what's already staged |
 
 ```bash
-wt step commit --stage=tracked
+$ wt step commit --stage=tracked
 ```
 
 Configure the default in user config:
@@ -107,10 +105,10 @@ Output the rendered LLM prompt to stdout without running the command. Useful for
 
 ```bash
 # Inspect the rendered prompt
-wt step commit --show-prompt | less
+$ wt step commit --show-prompt | less
 
 # Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 
 ### Command reference
@@ -173,7 +171,7 @@ Controls what to stage before squashing:
 | `none` | Don't stage anything, squash only committed changes |
 
 ```bash
-wt step squash --stage=none
+$ wt step squash --stage=none
 ```
 
 Configure the default in user config:
@@ -188,7 +186,7 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```bash
-wt step squash --show-prompt | less
+$ wt step squash --show-prompt | less
 ```
 
 ### Command reference
@@ -250,27 +248,23 @@ This is what `wt merge` would include — a single diff against the merge base.
 
 Arguments after `--` are forwarded to `git diff`:
 
-```bash
-wt step diff -- --stat
-wt step diff -- --name-only
-wt step diff -- -- '*.rs'
-```
+<span class="cmd">wt step diff -- --stat</span>
+<span class="cmd">wt step diff -- --name-only</span>
+<span class="cmd">wt step diff -- -- '*.rs'</span>
 
 The diff is pipeable to tools like `delta`:
 
 ```bash
-wt step diff | delta
+$ wt step diff | delta
 ```
 
 ### How it works
 
 Equivalent to:
 
-```bash
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
-```
+<span class="cmd">cp "$(git rev-parse --git-dir)/index" /tmp/idx</span>
+<span class="cmd">GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .</span>
+<span class="cmd">GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))</span>
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
@@ -451,9 +445,7 @@ Get the port for the current branch:
 
 Use in shell substitution:
 
-```bash
-curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
-```
+<span class="cmd">curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health</span>
 
 Combine multiple values:
 
@@ -521,25 +513,23 @@ All variables are shell-escaped. See [`wt hook` template variables](https://work
 Check status across all worktrees:
 
 ```bash
-wt step for-each -- git status --short
+$ wt step for-each -- git status --short
 ```
 
 Run npm install in all worktrees:
 
 ```bash
-wt step for-each -- npm install
+$ wt step for-each -- npm install
 ```
 
 Use branch name in command:
 
-```bash
-wt step for-each -- "echo Branch: {{ branch }}"
-```
+<span class="cmd">wt step for-each -- "echo Branch: {{ branch }}"</span>
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```bash
-git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ &quot;$(git rev-parse @{u} 2>/dev/null)&quot; ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -582,7 +572,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 
 ```bash
 # from ~/project (main worktree)
-wt step promote feature
+$ wt step promote feature
 ```
 
 Before:
@@ -660,23 +650,21 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
-```bash
-wt step prune --min-age=0s     # no age guard
-wt step prune --min-age=2d     # skip worktrees younger than 2 days
-```
+<span class="cmd">wt step prune --min-age=0s     # no age guard</span>
+<span class="cmd">wt step prune --min-age=2d     # skip worktrees younger than 2 days</span>
 
 ### Examples
 
 Preview what would be removed:
 
 ```bash
-wt step prune --dry-run
+$ wt step prune --dry-run
 ```
 
 Remove all merged worktrees:
 
 ```bash
-wt step prune
+$ wt step prune
 ```
 
 ### Command reference
@@ -725,25 +713,25 @@ Move worktrees to expected paths. Relocates worktrees whose path doesn't match t
 Preview what would be moved:
 
 ```bash
-wt step relocate --dry-run
+$ wt step relocate --dry-run
 ```
 
 Move all mismatched worktrees:
 
 ```bash
-wt step relocate
+$ wt step relocate
 ```
 
 Auto-commit and clobber blockers (never fails):
 
 ```bash
-wt step relocate --commit --clobber
+$ wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
 
 ```bash
-wt step relocate feature bugfix
+$ wt step relocate feature bugfix
 ```
 
 ### Swap handling
@@ -822,12 +810,10 @@ deploy = "make deploy BRANCH={{ branch }}"
 port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-```bash
-wt step deploy                            # run the alias
-wt step deploy --dry-run                  # show expanded command
-wt step deploy --var env=staging          # pass extra template variables
-wt step deploy --yes                      # skip approval prompt
-```
+<span class="cmd">wt step deploy                            # run the alias</span>
+<span class="cmd">wt step deploy --dry-run                  # show expanded command</span>
+<span class="cmd">wt step deploy --var env=staging          # pass extra template variables</span>
+<span class="cmd">wt step deploy --yes                      # skip approval prompt</span>
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 

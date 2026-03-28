@@ -1655,9 +1655,13 @@ static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
 static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
 
-/// Regex to strip Zola terminal shortcodes ({% terminal() %}...{% end %})
-static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
+/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %})
+static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?s)\{% terminal\([^)]*\) %\}\n?(.*?)\{% end %\}"#).unwrap());
+
+/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }})
+static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\{\{ terminal\(cmd="([^"]*)"\) \}\}"#).unwrap());
 
 /// Regex to replace Zola experimental shortcode with plain text for skill files
 static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
@@ -1694,8 +1698,11 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes, keeping inner content
-    let content = ZOLA_TERMINAL_PATTERN.replace_all(&content, "$1");
+    // Strip terminal shortcodes:
+    // - Body form: keep inner content
+    // - Self-closing: convert to `$ command` (plain text with prompt)
+    let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, "$1");
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN.replace_all(&content, "```bash\n$$ $1\n```");
 
     // Strip AUTO-GENERATED marker comments (keep content)
     let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");

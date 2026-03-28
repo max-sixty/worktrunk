@@ -5,9 +5,13 @@
 " ~ fence %}
 {% set raw = md | markdown %}
 {% set hl = raw | regex_replace(pattern="(?s)<pre[^>]*><code[^>]*>(.*)</code>\s*</pre>", rep="$1") | trim %}
+{% if body is defined %}
 {% set clean_body = body | regex_replace(pattern='<span class="cmd">[^<]*</span>\n?', rep="") %}
 <pre class="terminal"><code><span class="cmd">{{ hl | safe }}</span>
 {{ clean_body | safe }}</code></pre>
+{% else %}
+<pre class="terminal"><code><span class="cmd">{{ hl | safe }}</span></code></pre>
+{% endif %}
 {% else %}
 <pre class="terminal"><code>{{ body | safe }}</code></pre>
 {% endif %}

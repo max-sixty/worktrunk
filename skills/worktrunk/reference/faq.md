@@ -10,24 +10,20 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-```bash
 # Plain git worktree workflow
-git worktree add -b feature-branch ../myapp-feature main
-cd ../myapp-feature
+<span class="cmd">git worktree add -b feature-branch ../myapp-feature main</span>
+<span class="cmd">cd ../myapp-feature</span>
 # ...work, commit, push...
-cd ../myapp
-git merge feature-branch
-git worktree remove ../myapp-feature
-git branch -d feature-branch
-```
+<span class="cmd">cd ../myapp</span>
+<span class="cmd">git merge feature-branch</span>
+<span class="cmd">git worktree remove ../myapp-feature</span>
+<span class="cmd">git branch -d feature-branch</span>
 
 Worktrunk automates the full lifecycle:
 
-```bash
-wt switch --create feature-branch  # Creates worktree, runs setup hooks
+<span class="cmd">wt switch --create feature-branch</span>  # Creates worktree, runs setup hooks
 # ...work...
-wt merge                            # Merges into default branch, cleans up
-```
+<span class="cmd">wt merge</span>                            # Merges into default branch, cleans up
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
@@ -132,9 +128,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-```bash
-git worktree lock ../myproject.feature --reason "Contains local database"
-```
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -185,13 +179,11 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-```bash
 # Recent commands
-tail -5 .git/wt/logs/commands.jsonl | jq .
+<span class="cmd">tail -5 .git/wt/logs/commands.jsonl | jq .</span>
 
 # Failed commands
-jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
-```
+<span class="cmd">jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl</span>
 
 Clear with `wt config state logs clear`.
 
@@ -216,7 +208,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
 ```bash
-cargo install worktrunk --no-default-features
+$ cargo install worktrunk --no-default-features
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
@@ -226,7 +218,7 @@ This disables bash syntax highlighting in command output but keeps all core func
 ### Quick tests
 
 ```bash
-cargo test
+$ cargo test
 ```
 
 ### Full integration tests
@@ -234,7 +226,7 @@ cargo test
 Shell integration tests require bash, zsh, fish, and nushell:
 
 ```bash
-cargo test --test integration --features shell-integration-tests
+$ cargo test --test integration --features shell-integration-tests
 ```
 
 ## How can I contribute?

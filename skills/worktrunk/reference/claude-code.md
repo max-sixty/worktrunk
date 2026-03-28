@@ -7,10 +7,8 @@ The worktrunk Claude Code plugin provides two features:
 
 ## Installation
 
-```bash
-claude plugin marketplace add max-sixty/worktrunk
-claude plugin install worktrunk@worktrunk
-```
+<span class="cmd">claude plugin marketplace add max-sixty/worktrunk</span>
+<span class="cmd">claude plugin install worktrunk@worktrunk</span>
 
 ## Configuration skill
 
@@ -27,7 +25,6 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The plugin tracks Claude sessions with status markers in `wt list`:
 
-{% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Path</b>                 <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      .                    <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
@@ -36,7 +33,6 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 + wip-docs       <span class=c>?</span> <span class=d>–</span>                                  ../repo.wip-docs     <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
-{% end %}
 
 - 🤖 — Claude is working
 - 💬 — Claude is waiting for input
@@ -45,11 +41,9 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 
 Set status markers manually for any workflow:
 
-```bash
-wt config state marker set "🚧"                   # Current branch
-wt config state marker set "✅" --branch feature  # Specific branch
-git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
-```
+<span class="cmd">wt config state marker set "🚧"</span>                   # Current branch
+<span class="cmd">wt config state marker set "✅" --branch feature</span>  # Specific branch
+<span class="cmd">git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'</span>  # Direct
 
 ## Statusline
 

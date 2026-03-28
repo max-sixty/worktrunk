@@ -74,17 +74,13 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 Stages and commits with LLM-generated message:
 
-```bash
-wt step commit
-```
+{{ terminal(cmd="wt step commit") }}
 
 ### wt step squash
 
 Squashes branch commits into one with LLM-generated message:
 
-```bash
-wt step squash
-```
+{{ terminal(cmd="wt step squash") }}
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 

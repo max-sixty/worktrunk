@@ -281,17 +281,17 @@ pub enum HookCommand {
 
 Pre-approve all commands for current project:
 ```console
-wt hook approvals add
+$ wt hook approvals add
 ```
 
 Clear approvals for current project:
 ```console
-wt hook approvals clear
+$ wt hook approvals clear
 ```
 
 Clear global approvals:
 ```console
-wt hook approvals clear --global
+$ wt hook approvals clear --global
 ```
 
 ## How approvals work

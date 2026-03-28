@@ -21,7 +21,7 @@ Controls what to stage before committing:
 | `none` | Don't stage anything, commit only what's already staged |
 
 ```console
-wt step commit --stage=tracked
+$ wt step commit --stage=tracked
 ```
 
 Configure the default in user config:
@@ -37,10 +37,10 @@ Output the rendered LLM prompt to stdout without running the command. Useful for
 
 ```console
 # Inspect the rendered prompt
-wt step commit --show-prompt | less
+$ wt step commit --show-prompt | less
 
 # Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
@@ -83,7 +83,7 @@ Controls what to stage before squashing:
 | `none` | Don't stage anything, squash only committed changes |
 
 ```console
-wt step squash --stage=none
+$ wt step squash --stage=none
 ```
 
 Configure the default in user config:
@@ -98,7 +98,7 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```console
-wt step squash --show-prompt | less
+$ wt step squash --show-prompt | less
 ```
 "#
     )]
@@ -135,8 +135,8 @@ wt step squash --show-prompt | less
 ## Examples
 
 ```console
-wt step push             # Fast-forward main to current branch
-wt step push develop     # Fast-forward develop instead
+$ wt step push             # Fast-forward main to current branch
+$ wt step push develop     # Fast-forward develop instead
 ```
 
 Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
@@ -165,8 +165,8 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
 ## Examples
 
 ```console
-wt step rebase            # Rebase onto default branch
-wt step rebase develop    # Rebase onto develop
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
 ```
 "#
     )]
@@ -189,15 +189,15 @@ wt step rebase develop    # Rebase onto develop
 Arguments after `--` are forwarded to `git diff`:
 
 ```console
-wt step diff -- --stat
-wt step diff -- --name-only
-wt step diff -- -- '*.rs'
+$ wt step diff -- --stat
+$ wt step diff -- --name-only
+$ wt step diff -- -- '*.rs'
 ```
 
 The diff is pipeable to tools like `delta`:
 
 ```console
-wt step diff | delta
+$ wt step diff | delta
 ```
 
 ## How it works
@@ -205,9 +205,9 @@ wt step diff | delta
 Equivalent to:
 
 ```console
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+$ cp "$(git rev-parse --git-dir)/index" /tmp/idx
+$ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+$ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
@@ -355,7 +355,7 @@ $ wt step eval '{{ branch | hash_port }}'
 Use in shell substitution:
 
 ```console
-curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
 ```
 
 Combine multiple values:
@@ -409,25 +409,25 @@ All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#te
 Check status across all worktrees:
 
 ```console
-wt step for-each -- git status --short
+$ wt step for-each -- git status --short
 ```
 
 Run npm install in all worktrees:
 
 ```console
-wt step for-each -- npm install
+$ wt step for-each -- npm install
 ```
 
 Use branch name in command:
 
 ```console
-wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- "echo Branch: {{ branch }}"
 ```
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```console
-git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -449,7 +449,7 @@ Note: This command is experimental and may change in future versions.
 
 ```console
 # from ~/project (main worktree)
-wt step promote feature
+$ wt step promote feature
 ```
 
 Before:
@@ -505,8 +505,8 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
-wt step prune --min-age=0s     # no age guard
-wt step prune --min-age=2d     # skip worktrees younger than 2 days
+$ wt step prune --min-age=0s     # no age guard
+$ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
 
 ## Examples
@@ -514,13 +514,13 @@ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 Preview what would be removed:
 
 ```console
-wt step prune --dry-run
+$ wt step prune --dry-run
 ```
 
 Remove all merged worktrees:
 
 ```console
-wt step prune
+$ wt step prune
 ```
 "#
     )]
@@ -550,25 +550,25 @@ wt step prune
 Preview what would be moved:
 
 ```console
-wt step relocate --dry-run
+$ wt step relocate --dry-run
 ```
 
 Move all mismatched worktrees:
 
 ```console
-wt step relocate
+$ wt step relocate
 ```
 
 Auto-commit and clobber blockers (never fails):
 
 ```console
-wt step relocate --commit --clobber
+$ wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
 
 ```console
-wt step relocate feature bugfix
+$ wt step relocate feature bugfix
 ```
 
 ## Swap handling

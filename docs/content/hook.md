@@ -286,16 +286,16 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
-```bash
-wt hook pre-merge              # Run all pre-merge hooks
-wt hook pre-merge test         # Run hooks named "test" from both sources
-wt hook pre-merge user:        # Run all user hooks
-wt hook pre-merge project:     # Run all project hooks
-wt hook pre-merge user:test    # Run only user's "test" hook
-wt hook pre-merge project:test # Run only project's "test" hook
-wt hook pre-merge --yes        # Skip approval prompts (for CI)
-wt hook pre-start --var branch=feature/test     # Override template variable
-```
+{% terminal() %}
+<span class="cmd">wt hook pre-merge              # Run all pre-merge hooks</span>
+<span class="cmd">wt hook pre-merge test         # Run hooks named "test" from both sources</span>
+<span class="cmd">wt hook pre-merge user:        # Run all user hooks</span>
+<span class="cmd">wt hook pre-merge project:     # Run all project hooks</span>
+<span class="cmd">wt hook pre-merge user:test    # Run only user's "test" hook</span>
+<span class="cmd">wt hook pre-merge project:test # Run only project's "test" hook</span>
+<span class="cmd">wt hook pre-merge --yes        # Skip approval prompts (for CI)</span>
+<span class="cmd">wt hook pre-start --var branch=feature/test     # Override template variable</span>
+{% end %}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
@@ -546,19 +546,13 @@ Project hooks require approval on first run to prevent untrusted projects from r
 ### Examples
 
 Pre-approve all commands for current project:
-```bash
-wt hook approvals add
-```
+{{ terminal(cmd="wt hook approvals add") }}
 
 Clear approvals for current project:
-```bash
-wt hook approvals clear
-```
+{{ terminal(cmd="wt hook approvals clear") }}
 
 Clear global approvals:
-```bash
-wt hook approvals clear --global
-```
+{{ terminal(cmd="wt hook approvals clear --global") }}
 
 ### How approvals work
 
