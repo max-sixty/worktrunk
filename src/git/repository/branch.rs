@@ -144,12 +144,50 @@ impl<'a> Branch<'a> {
         (!remote.is_empty()).then(|| remote.to_string())
     }
 
+    /// Get the URL of the remote where this branch would be pushed.
+    ///
+    /// Uses `%(push:remotename)` which returns either a remote name or URL directly
+    /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
+    /// Returns `None` if no push remote is configured or the remote has no URL.
+    fn push_remote_url(&self) -> Option<String> {
+        // %(push:remotename) returns either a remote name or URL directly
+        // Unlike @{push}, this doesn't fail when pushremote is a URL
+        let push_remote = self
+            .repo
+            .run_command(&[
+                "for-each-ref",
+                "--format=%(push:remotename)",
+                &format!("refs/heads/{}", self.name),
+            ])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+
+        // If it's already a URL, return it directly
+        if push_remote.contains("://") || push_remote.starts_with("git@") {
+            Some(push_remote)
+        } else {
+            // It's a remote name, look up its URL
+            self.repo.remote_url(&push_remote)
+        }
+    }
+
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
     /// Returns the push remote URL if configured and pointing to GitHub,
     /// otherwise returns `None`. Uses forge-aware URL resolution to handle
     /// `url.insteadOf` aliases (e.g., custom SSH hostnames).
+    ///
+    /// Handles both remote-name and URL-based pushremotes (the latter is set by
+    /// `gh pr checkout` for fork PRs).
     pub fn github_push_url(&self) -> Option<String> {
+        let url = self.push_remote_url()?;
+        let parsed = GitRemoteUrl::parse(&url)?;
+        if parsed.is_github() {
+            return Some(url);
+        }
+
+        // Fallback: resolve through forge_remote_url for insteadOf aliases
         let push_remote = self.push_remote()?;
         let forge_url = self.repo.forge_remote_url(&push_remote)?;
         let parsed = GitRemoteUrl::parse(&forge_url)?;
