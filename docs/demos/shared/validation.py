@@ -81,21 +81,40 @@ def check_dependencies() -> list[str]:
     return missing
 
 
-def extract_frame(gif_path: Path, frame_number: int, output_path: Path) -> bool:
-    """Extract a single frame from a GIF. Returns True on success."""
+def extract_frames(
+    gif_path: Path, frames: list[int], out_dir: Path
+) -> dict[int, Path]:
+    """Extract multiple frames from a GIF in a single ffmpeg pass.
+
+    Returns a mapping from frame number to extracted PNG path.
+    """
+    if not frames:
+        return {}
+
+    # Build select filter: select='eq(n,150)+eq(n,160)+eq(n,170)+...'
+    select_expr = "+".join(f"eq(n\\,{f})" for f in frames)
+    pattern = str(out_dir / "frame_%04d.png")
+
     result = subprocess.run(
         [
             "ffmpeg",
             "-loglevel", "error",
             "-i", str(gif_path),
-            "-vf", f"select=eq(n\\,{frame_number})",
-            "-vframes", "1",
-            "-update", "1",
-            str(output_path),
+            "-vf", f"select='{select_expr}'",
+            "-vsync", "vfr",
+            str(pattern),
         ],
         capture_output=True,
     )
-    return result.returncode == 0 and output_path.exists()
+    if result.returncode != 0:
+        return {}
+
+    # ffmpeg numbers output files sequentially (frame_0001.png, frame_0002.png, ...)
+    return {
+        frame: out_dir / f"frame_{i + 1:04d}.png"
+        for i, frame in enumerate(frames)
+        if (out_dir / f"frame_{i + 1:04d}.png").exists()
+    }
 
 
 def ocr_image(image_path: Path) -> str:
@@ -116,26 +135,15 @@ def ocr_image(image_path: Path) -> str:
     return ""
 
 
-def _check_frame(
-    gif_path: Path,
-    frame_number: int,
+def _check_patterns(
+    text: str,
     expected: list[str],
     forbidden: list[str],
-    work_dir: Path,
 ) -> tuple[bool, list[str]]:
-    """Check a single frame against expected/forbidden patterns.
+    """Check text against expected/forbidden patterns.
 
-    Returns (passed, errors). A frame passes when all expected patterns are
-    present AND no forbidden patterns are found.
+    Returns (passed, errors).
     """
-    frame_path = work_dir / f"frame_{frame_number}.png"
-    if not extract_frame(gif_path, frame_number, frame_path):
-        return False, [f"Failed to extract frame {frame_number}"]
-
-    text = ocr_image(frame_path)
-    if not text:
-        return False, [f"OCR returned no text for frame {frame_number}"]
-
     text_lower = text.lower()
     errors = []
 
@@ -157,23 +165,40 @@ def validate_checkpoint(
 ) -> tuple[bool, str]:
     """Validate a checkpoint by scanning its frame range.
 
+    Extracts all sampled frames in one ffmpeg call, then OCRs each
+    sequentially until one matches (early return on success).
+
     Returns (passed, detail_message).
     """
+    frame_numbers = list(range(checkpoint.start, checkpoint.end + 1, checkpoint.step))
+    frame_paths = extract_frames(gif_path, frame_numbers, work_dir)
+
+    if not frame_paths:
+        label = f"frames {checkpoint.start}-{checkpoint.end}"
+        return False, f"failed to extract {label}"
+
     best_errors: list[str] = []
     frames_checked = 0
 
-    for frame in range(checkpoint.start, checkpoint.end + 1, checkpoint.step):
+    for frame in frame_numbers:
+        frame_path = frame_paths.get(frame)
+        if frame_path is None:
+            continue
+
         frames_checked += 1
-        passed, errors = _check_frame(
-            gif_path, frame, checkpoint.expected, checkpoint.forbidden, work_dir
-        )
+        text = ocr_image(frame_path)
+        if not text:
+            continue
+
+        passed, errors = _check_patterns(text, checkpoint.expected, checkpoint.forbidden)
         if passed:
             return True, f"matched at frame {frame} ({frames_checked} checked)"
-        # Track the attempt with fewest errors (closest to passing)
         if not best_errors or len(errors) < len(best_errors):
             best_errors = errors
 
     label = f"frames {checkpoint.start}-{checkpoint.end}"
+    if not frames_checked:
+        return False, f"no readable frames in {label}"
     return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 
