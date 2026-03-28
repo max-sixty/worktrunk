@@ -17,7 +17,7 @@ $ claude plugin install worktrunk@worktrunk
 The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
 
 - Setting up LLM-generated commit messages
-- Adding project hooks (post-create, pre-merge, pre-commit)
+- Adding project hooks (pre-start, pre-merge, pre-commit)
 - Configuring worktree path templates
 - Fixing shell integration issues
 

@@ -98,7 +98,7 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** {{ experimental() }}: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
+- **Nushell** <span class="badge-experimental"></span>: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -173,21 +173,18 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 ### Example approval prompt
 
-<!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_approval_prompt.snap — edit source to update -->
+{% terminal() %}
+<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
-```
-▲ repo needs approval to execute 3 commands:
+<span class="d">○</span> pre-start <b>install</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
+<span class="d">○</span> pre-start <b>build</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
+<span class="d">○</span> pre-start <b>env</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
-❯ Allow and remember? [y/N]
-```
-
-<!-- END AUTO-GENERATED -->
+<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
+{% end %}
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 

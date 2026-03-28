@@ -177,6 +177,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# # Tasks still running when the budget expires are abandoned; 0 disables[0m
 [107m [0m [2m# # timeout-ms = 500[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# ### Step[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [step.copy-ignored][0m
+[107m [0m [2m# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.[0m
@@ -199,13 +206,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# #### Setting overrides [experimental][0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.[0m
+[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m# list.full = true[0m
 [107m [0m [2m# merge.squash = false[0m
 [107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
+[107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Custom prompt templates[0m
@@ -314,10 +322,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# All hooks support two formats:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Single command:[0m
-[107m [0m [2m#   post-create = "npm install"[0m
+[107m [0m [2m#   pre-start = "npm install"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Named table (multiple commands):[0m
-[107m [0m [2m#   [post-create][0m
+[107m [0m [2m#   [pre-start][0m
 [107m [0m [2m#   deps = "npm install"[0m
 [107m [0m [2m#   build = "npm run build"[0m
 [107m [0m [2m#[0m
@@ -343,10 +351,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# Hooks[0m
 [107m [0m [2m# ============================================================================[0m
 [107m [0m [2m[0m
-[107m [0m [2m# Post-Create: Runs after worktree creation, BLOCKS until complete[0m
+[107m [0m [2m# Pre-Start: Runs after worktree creation, BLOCKS until complete[0m
 [107m [0m [2m# Use for: installing dependencies, setting up databases, copying configs[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [post-create][0m
+[107m [0m [2m# [pre-start][0m
 [107m [0m [2m# deps = "npm ci"[0m
 [107m [0m [2m# env = "cp .env.example .env"[0m
 [107m [0m [2m[0m

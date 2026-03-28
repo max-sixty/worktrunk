@@ -32,7 +32,7 @@ fn test_get_default_branch_without_origin_head(#[from(repo_with_remote)] repo: T
     let cached = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&cached.stdout).trim(), "main");
 }
@@ -44,7 +44,7 @@ fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRep
     let _ = repo
         .git_command()
         .args(["config", "--unset", "worktrunk.default-branch"])
-        .output();
+        .run();
 
     // First call queries remote and caches to worktrunk config
     Repository::at(repo.root_path())
@@ -54,7 +54,7 @@ fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRep
     let cached = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(cached.status.success());
 
@@ -134,12 +134,9 @@ fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
     // Create additional branches (no remote configured)
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command()
-        .args(["branch", "bugfix"])
-        .status()
-        .unwrap();
+    repo.git_command().args(["branch", "bugfix"]).run().unwrap();
 
     // Now we have multiple branches: main, feature, bugfix
     // Should detect "main" from the common names list
@@ -158,16 +155,13 @@ fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
     // Rename main to master, then create other branches
     repo.git_command()
         .args(["branch", "-m", "main", "master"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command()
-        .args(["branch", "bugfix"])
-        .status()
-        .unwrap();
+    repo.git_command().args(["branch", "bugfix"]).run().unwrap();
 
     // Now we have: master, feature, bugfix (no "main")
     // Should detect "master" from the common names list
@@ -186,17 +180,17 @@ fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
     // Rename main to something non-standard, create the configured default
     repo.git_command()
         .args(["branch", "-m", "main", "primary"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set init.defaultBranch - this should be checked before common names
     repo.git_command()
         .args(["config", "init.defaultBranch", "primary"])
-        .status()
+        .run()
         .unwrap();
 
     // Now we have: primary, feature (no common names like main/master)
@@ -213,7 +207,7 @@ fn test_configured_default_branch_does_not_exist_returns_none(repo: TestRepo) {
     // Configure a non-existent branch
     repo.git_command()
         .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
-        .status()
+        .run()
         .unwrap();
 
     // Should return None when configured branch doesn't exist locally
@@ -230,7 +224,7 @@ fn test_invalid_default_branch_config_returns_configured_value(repo: TestRepo) {
     // Configure a non-existent branch
     repo.git_command()
         .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
-        .status()
+        .run()
         .unwrap();
 
     // Should report the invalid configuration
@@ -245,7 +239,7 @@ fn test_invalid_default_branch_config_returns_none_when_valid(repo: TestRepo) {
     // Configure the existing "main" branch
     repo.git_command()
         .args(["config", "worktrunk.default-branch", "main"])
-        .status()
+        .run()
         .unwrap();
 
     // Should return None since the configured branch exists
@@ -267,10 +261,10 @@ fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     // Rename main to something non-standard
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command().args(["branch", "abc"]).status().unwrap();
-    repo.git_command().args(["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // In normal repos (not bare), symbolic-ref HEAD isn't used because HEAD
@@ -292,10 +286,10 @@ fn test_resolve_caret_fails_when_default_branch_unavailable(repo: TestRepo) {
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command().args(["branch", "abc"]).status().unwrap();
-    repo.git_command().args(["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
 
     // Now resolving "^" should fail with an error
     let git_repo = Repository::at(repo.root_path()).unwrap();

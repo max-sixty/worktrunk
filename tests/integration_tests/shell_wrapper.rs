@@ -2628,9 +2628,9 @@ command = "{}"
     ///
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
-    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
+    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_start.snap
     #[rstest]
-    fn test_readme_example_hooks_post_create(repo: TestRepo) {
+    fn test_readme_example_hooks_pre_start(repo: TestRepo) {
         // Create project config with pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();

@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_background_hooks,
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
 };
 use super::repository_ext::RepositoryCliExt;
 
@@ -240,7 +240,7 @@ impl CommitOptions<'_> {
                 .collect();
             let hooks =
                 prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_background_hooks(self.ctx, hooks)?;
+            spawn_prepared_hooks(self.ctx, hooks)?;
         }
 
         Ok(())

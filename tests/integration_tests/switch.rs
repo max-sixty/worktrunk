@@ -229,7 +229,7 @@ fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] rep
     let upstream_check = repo
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
-        .output()
+        .run()
         .unwrap();
 
     assert!(
@@ -984,7 +984,7 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -1620,7 +1620,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1687,7 +1687,7 @@ fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1801,7 +1801,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -1818,7 +1818,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2045,7 +2045,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2072,7 +2072,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2129,7 +2129,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2147,7 +2147,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2232,7 +2232,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2301,7 +2301,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2618,7 +2618,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2677,7 +2677,7 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2936,7 +2936,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2957,7 +2957,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -3055,7 +3055,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -3083,7 +3083,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )

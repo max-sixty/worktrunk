@@ -3,9 +3,9 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -519,9 +519,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let repo_root = match repo.current_worktree().root() {
-        Ok(root) => root,
-        Err(_) => {
+    let config_path = match repo.project_config_path() {
+        Ok(Some(path)) => path,
+        _ => {
             writeln!(
                 out,
                 "{}",
@@ -533,7 +533,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
         out,
@@ -808,7 +807,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                         ))
                     )?;
-                } else if matches!(shell, Shell::Fish | Shell::Nushell)
+                } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
                     // File exists but has different content (e.g. outdated version)
@@ -886,8 +885,24 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Show potential false negatives (lines containing cmd but not detected)
     // Skip files that have valid integration detected (matched_lines) - those are fine,
     // and the other lines containing cmd are just part of the integration script.
+    // Also skip files already confirmed as integration by scan_shell_configs (e.g., Nushell/Fish
+    // wrapper files that ARE the integration, not config files that source it).
+    let confirmed_paths: HashSet<&Path> = scan_result
+        .configured
+        .iter()
+        .filter(|r| {
+            // For wrapper-based shells, the file at the path IS the integration — any
+            // action means it was recognized. For eval-based shells, only AlreadyExists
+            // means the config line was found.
+            r.shell.is_wrapper_based() || matches!(r.action, ConfigAction::AlreadyExists)
+        })
+        .map(|r| r.path.as_path())
+        .collect();
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
+        if !detection.unmatched_candidates.is_empty()
+            && detection.matched_lines.is_empty()
+            && !confirmed_paths.contains(detection.path.as_path())
+        {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
@@ -958,10 +973,15 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     // If we have unmatched candidates but no configured shells, suggest raising an issue
+    // Apply the same confirmed_paths filter used above to avoid including wrapper files
     if has_any_unmatched && !has_any_configured {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
-            .filter(|r| !r.unmatched_candidates.is_empty())
+            .filter(|r| {
+                !r.unmatched_candidates.is_empty()
+                    && r.matched_lines.is_empty()
+                    && !confirmed_paths.contains(r.path.as_path())
+            })
             .flat_map(|r| {
                 r.unmatched_candidates
                     .iter()

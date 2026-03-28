@@ -9,10 +9,11 @@ yellow = "#d29922"
 green = "#2ea043"
 red = "#d73a49"
 muted = "#57606a"
+soft = "#8b7355"
 gold = "#d97706"
 
 [directory]
-style = "bold fg:gold"
+style = "bold fg:soft"
 truncation_length = 3
 truncate_to_repo = true
 home_symbol = "~"
@@ -39,9 +40,9 @@ format = " [$duration]($style)"
 style = "fg:muted"
 
 [character]
-success_symbol = "[❯](fg:gold)"
+success_symbol = "[❯](fg:soft)"
 error_symbol = "[❯](fg:red)"
-vicmd_symbol = "[❮](fg:gold)"
+vicmd_symbol = "[❮](fg:soft)"
 
 [time]
 disabled = true

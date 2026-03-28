@@ -35,10 +35,10 @@
 //! ```
 //!
 //! **Manually-written pages** (faq.md, llm-commits.md) bypass this pipeline.
-//! They use `{{ experimental() }}` (Zola shortcode) for badges.
+//! They use `<span class="badge-experimental"></span>` directly for badges.
 //!
 //! **Skill reference files** mirror docs/ content via `transform_docs_for_skill()`,
-//! which strips Zola syntax (terminal shortcodes, `{{ experimental() }}` → `[experimental]`)
+//! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
 //! for plain-markdown consumption.
 
 use std::process;
@@ -403,10 +403,13 @@ Commands with pages: merge, switch, remove, list"
     std::println!("```");
 
     // Subdocs follow, each with their own command reference at the end.
-    // post_process_for_html is already applied inside format_subcommand_section,
-    // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
-        let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
+        // Apply post-processing to non-marker text (e.g., the Aliases section after
+        // the last subdoc marker). Must happen before expansion — after expansion,
+        // post_process_for_html has already run on each subcommand section internally
+        // (in format_subcommand_section), so re-running it would double-convert.
+        let subdocs = post_process_for_html(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name);
         std::println!();
         std::println!("# Subcommands");
         std::println!();
@@ -427,12 +430,18 @@ Commands with pages: merge, switch, remove, list"
 /// | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
 /// | `[experimental]` | `<span class="badge-experimental"></span>` (text via CSS) |
 /// | plain URL | markdown link |
+/// | approval prompt code block | `{% terminal() %}` with colored symbols and gutter |
 ///
 /// Only runs on `after_long_help` markdown — not on terminal reference blocks (those go
 /// through ANSI-to-HTML via `convert_command_reference_to_html` in readme_sync.rs).
 ///
 /// The terminal counterpart is `md_help::colorize_status_symbols()`.
 fn post_process_for_html(text: &str) -> String {
+    // First pass: move [experimental] from heading lines to a separate line after
+    // the heading. This keeps the badge outside Zola's heading anchor link.
+    // Terminal help keeps [experimental] on the heading line (different render path).
+    let text = move_experimental_from_headings(text);
+
     text
         // CI status colors (in table cells)
         .replace("`●` green", "<span style='color:#0a0'>●</span> green")
@@ -454,6 +463,78 @@ fn post_process_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
+        // Approval prompt: plain code block → terminal shortcode with colored symbols
+        // and gutter. CLI shows a plain ``` block; web shows styled terminal output
+        // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).
+        .replace(
+            "```\n\
+             ▲ repo needs approval to execute 3 commands:\n\
+             \n\
+             ○ pre-start install:\n\
+             \x20\x20\x20npm ci\n\
+             ○ pre-start build:\n\
+             \x20\x20\x20cargo build --release\n\
+             ○ pre-start env:\n\
+             \x20\x20\x20echo 'PORT={{ branch | hash_port }}' > .env.local\n\
+             \n\
+             ❯ Allow and remember? [y/N]\n\
+             ```",
+            "{% terminal() %}\n\
+             <span class=\"y\">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>\n\
+             \n\
+             <span class=\"d\">○</span> pre-start <b>install</b>:\n\
+             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">npm</span> ci</span>\n\
+             <span class=\"d\">○</span> pre-start <b>build</b>:\n\
+             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">cargo</span> build <span class=\"c\">--release</span></span>\n\
+             <span class=\"d\">○</span> pre-start <b>env</b>:\n\
+             <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">echo</span> <span class=\"g\">'PORT={{ branch | hash_port }}'</span> <span class=\"c\">></span> .env.local</span>\n\
+             \n\
+             <span class=\"c\">❯</span> Allow and remember? <b>[y/N]</b>\n\
+             {% end %}",
+        )
+}
+
+/// Move `[experimental]` from heading lines to a separate line after the heading.
+///
+/// Transforms `## Foo [experimental]` into:
+/// ```text
+/// ## Foo
+///
+/// [experimental]
+/// ```
+///
+/// This keeps the badge outside Zola's `<a class="zola-anchor">` wrapper so it's
+/// not part of the heading link. The `[experimental]` is then replaced with the
+/// badge `<span>` by the caller's `.replace()` chain.
+fn move_experimental_from_headings(text: &str) -> String {
+    if !text.contains(" [experimental]") {
+        return text.to_string();
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut in_code_block = false;
+
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+        }
+
+        if !in_code_block
+            && line.starts_with('#')
+            && let Some(heading) = line.strip_suffix(" [experimental]")
+        {
+            result.push_str(heading);
+            result.push_str("\n\n[experimental]");
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    // .lines() strips the trailing newline; restore original behavior
+    if !text.ends_with('\n') {
+        result.pop();
+    }
+    result
 }
 
 /// Increase markdown heading levels by one (## -> ###, ### -> ####, etc.)
@@ -573,16 +654,14 @@ fn format_subcommand_section(
     let raw_help = combine_command_docs(sub);
     let raw_help = raw_help.replace("```console\n", "```bash\n");
 
-    // Extract [experimental] marker from content start → badge on heading instead.
-    // The badge span is empty — text comes from CSS ::after — so it doesn't affect
-    // Zola's heading slug generation or page TOC entries.
-    let (heading_badge, raw_help) = if let Some(rest) = raw_help.strip_prefix("[experimental] ") {
-        (
-            " <span class=\"badge-experimental\"></span>",
-            rest.to_string(),
-        )
+    // Extract [experimental] marker from content start → badge after heading.
+    // Placed after the heading (not inside it) so Zola's anchor link doesn't
+    // wrap the badge. CSS positions it inline with the heading text.
+    let (has_experimental, raw_help) = if let Some(rest) = raw_help.strip_prefix("[experimental] ")
+    {
+        (true, rest.to_string())
     } else {
-        ("", raw_help)
+        (false, raw_help)
     };
 
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
@@ -610,8 +689,11 @@ fn format_subcommand_section(
     // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
     let reference_block = help_reference(&command_path, Some(80));
 
-    // Format the section: heading, main content, command reference, then nested subdocs
-    let mut section = format!("## {full_command}{heading_badge}\n\n");
+    // Format the section: heading, badge (outside heading), main content, command reference
+    let mut section = format!("## {full_command}\n\n");
+    if has_experimental {
+        section.push_str("<span class=\"badge-experimental\"></span>\n\n");
+    }
 
     if !main_help.is_empty() {
         section.push_str(main_help.trim());
@@ -624,10 +706,9 @@ fn format_subcommand_section(
     section.push_str("\n```\n");
 
     // Expand nested subdocs after the command reference.
-    // post_process_for_html is already applied inside format_subcommand_section,
-    // so we don't apply it again here (it would corrupt HTML inside reference blocks).
     if let Some(subdocs) = subdoc_content {
-        let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &full_command);
+        let subdocs = post_process_for_html(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command);
         section.push('\n');
         section.push_str(subdocs_expanded.trim());
         section.push('\n');

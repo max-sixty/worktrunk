@@ -438,6 +438,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  ./build docs social             Build all demos for both targets
   ./build docs                    Build all doc site demos (light + dark)
   ./build social                  Build all social media demos (light only)
   ./build docs --only wt-merge    Build specific demo for docs
@@ -446,7 +447,10 @@ Examples:
 """,
     )
     parser.add_argument(
-        "target", choices=["docs", "social"], help="Target to build demos for"
+        "target",
+        nargs="+",
+        choices=["docs", "social"],
+        help="Target(s) to build demos for",
     )
     parser.add_argument("--only", help="Only record specific demo (e.g., wt-switch)")
     parser.add_argument(
@@ -485,24 +489,47 @@ Examples:
         print("--text and --snapshot are mutually exclusive")
         return
 
+    if args.only and len(args.target) > 1:
+        print("--only cannot be used with multiple targets")
+        return
+
     # Check dependencies (VHS is built from source, not required in PATH)
     deps = ["wt", "starship", "zellij"]
     check_dependencies(deps)
     if not args.text and not args.snapshot:
+        check_dependencies(["delta"])
         check_ffmpeg_libass()
+
+    # Kill stale Zellij processes from previous demo runs (they interfere
+    # with new recordings by holding locks or sockets)
+    subprocess.run(["pkill", "-f", "zellij.*wt-demos"], capture_output=True)
 
     # Ensure VHS is built (requires Go)
     vhs_binary = str(ensure_vhs_binary())
 
-    # Output goes to mode/theme subdirectories
-    mode_out_dir = OUT_DIR / args.target
+    # Build each target sequentially (parallel targets cause Zellij conflicts)
+    all_failed = []
+    for target in dict.fromkeys(args.target):  # deduplicate, preserve order
+        failed = build_target(
+            target, args, vhs_binary,
+        )
+        all_failed.extend(f"{target}/{name}" for name in failed)
+
+    if all_failed:
+        print(f"\n{'=' * 60}")
+        print(f"Failed: {', '.join(all_failed)}")
+        sys.exit(1)
+
+
+def build_target(target: str, args, vhs_binary: str) -> list[str]:
+    """Build all demos for a single target. Returns list of failed demo names."""
+    mode_out_dir = OUT_DIR / target
     mode_out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy starship config to docs/ only
-    if args.target == "docs":
+    if target == "docs":
         shutil.copy(FIXTURES_DIR / "starship.toml", mode_out_dir / "starship.toml")
 
-    target_config = TARGETS[args.target]
+    target_config = TARGETS[target]
     demos = target_config["demos"]
     demo_size = target_config["size"]
     themes = target_config["themes"]
@@ -513,8 +540,8 @@ Examples:
         if not demos:
             all_names = [n for _, n, _ in target_config["demos"]]
             print(f"Unknown demo: {args.only}")
-            print(f"Available for {args.target}: {', '.join(all_names)}")
-            return
+            print(f"Available for {target}: {', '.join(all_names)}")
+            return []
 
     # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
     if args.snapshot:
@@ -525,7 +552,7 @@ Examples:
             print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
         if not demos:
             print("No snapshotable demos found")
-            return
+            return []
 
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
@@ -536,12 +563,12 @@ Examples:
         setup_func(env)
         print(f"Demo repo: {env.repo}")
         spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
-        return
+        return []
 
     # Record demos
+    failed = []
     if args.sequential or len(demos) == 1:
-        print(f"\nRecording {len(demos)} demo(s) sequentially...")
-        failed = []
+        print(f"\n[{target}] Recording {len(demos)} demo(s) sequentially...")
         for tape_file, output_name, setup_func in demos:
             try:
                 record_demo(
@@ -559,7 +586,7 @@ Examples:
                 print(f"✗ {output_name}: {e}")
                 failed.append(output_name)
     else:
-        print(f"\nRecording {len(demos)} demo(s) in parallel...")
+        print(f"\n[{target}] Recording {len(demos)} demo(s) in parallel...")
         max_workers = min(len(demos), os.cpu_count() or 4)
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -579,7 +606,6 @@ Examples:
                 for tape_file, output_name, setup_func in demos
             }
 
-            failed = []
             for future in as_completed(futures):
                 output_name = futures[future]
                 try:
@@ -588,10 +614,7 @@ Examples:
                     print(f"✗ {output_name}: {e}")
                     failed.append(output_name)
 
-    if failed:
-        print(f"\n{'=' * 60}")
-        print(f"Failed: {', '.join(failed)}")
-        sys.exit(1)
+    return failed
 
 
 if __name__ == "__main__":

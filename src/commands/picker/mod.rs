@@ -23,15 +23,18 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
+use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
+use super::hooks::{HookFailureStrategy, execute_hook, spawn_background_hooks};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{
     BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
     execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
+use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
@@ -65,33 +68,94 @@ struct PickerCollector {
 }
 
 impl PickerCollector {
-    /// Execute worktree removal silently: stop fsmonitor, remove worktree, delete branch.
+    /// Execute removal in background: pre-remove hooks + worktree + branch + post-remove hooks.
     ///
-    /// No output, no hooks, no cd directives — we're inside skim's TUI.
-    fn do_removal(result: &RemoveResult) -> anyhow::Result<()> {
-        let RemoveResult::RemovedWorktree {
-            main_path,
-            worktree_path,
-            branch_name,
-            deletion_mode,
-            target_branch,
-            force_worktree,
-            ..
-        } = result
-        else {
-            return Ok(());
-        };
+    /// Called from a background thread after the picker optimistically removes the item
+    /// from the list. The entire operation runs off skim's event loop so the TUI stays
+    /// responsive. If pre-remove hooks fail, the removal is aborted (but the item is
+    /// already gone from the picker — a tradeoff until we can show in-progress state).
+    ///
+    /// `repo` is only used for `BranchOnly` deletion. `RemovedWorktree` constructs
+    /// its own from `main_path` (which may differ from the picker's startup repo in
+    /// bare-repo setups).
+    fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
+        match result {
+            RemoveResult::RemovedWorktree {
+                main_path,
+                worktree_path,
+                branch_name,
+                deletion_mode,
+                target_branch,
+                force_worktree,
+                removed_commit,
+                ..
+            } => {
+                let repo = Repository::at(main_path)?;
+                let config = repo.user_config();
+                let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
 
-        let repo = Repository::at(main_path)?;
-        // Branch deletion result intentionally ignored — best-effort in TUI context.
-        execute_removal(
-            &repo,
-            worktree_path,
-            branch_name.as_deref(),
-            *deletion_mode,
-            target_branch.as_deref(),
-            *force_worktree,
-        )?;
+                // Run pre-remove hooks (synchronously in this background thread).
+                // Non-zero exit aborts the removal, matching `wt remove` semantics.
+                let target_ref = repo
+                    .worktree_at(main_path)
+                    .branch()
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
+                let extra_vars: Vec<(&str, &str)> = vec![
+                    ("target", &target_ref),
+                    ("target_worktree_path", &target_path_str),
+                ];
+                let pre_ctx =
+                    CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
+                execute_hook(
+                    &pre_ctx,
+                    worktrunk::HookType::PreRemove,
+                    &extra_vars,
+                    HookFailureStrategy::FailFast,
+                    None,
+                    None, // no display path in TUI context
+                )?;
+
+                let output = execute_removal(
+                    &repo,
+                    worktree_path,
+                    branch_name.as_deref(),
+                    *deletion_mode,
+                    target_branch.as_deref(),
+                    *force_worktree,
+                )?;
+                if let Some(staged) = output.staged_path {
+                    let _ = std::fs::remove_dir_all(&staged);
+                }
+
+                // Spawn post-remove hooks in background (log to files, no terminal output).
+                let post_ctx =
+                    CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
+                let post_hooks = post_ctx.prepare_post_remove_commands(
+                    hook_branch,
+                    worktree_path,
+                    removed_commit.as_deref(),
+                    None, // no display path in TUI context
+                )?;
+                if !post_hooks.is_empty() {
+                    spawn_background_hooks(&post_ctx, post_hooks)?;
+                }
+            }
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                ..
+            } => {
+                if !deletion_mode.should_keep() {
+                    let default_branch = repo.default_branch();
+                    let target = default_branch.as_deref().unwrap_or("HEAD");
+                    let _ =
+                        delete_branch_if_safe(repo, branch_name, target, deletion_mode.is_force());
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -106,81 +170,79 @@ impl CommandCollector for PickerCollector {
         if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
             let selected_output = signal.trim().to_string();
             if !selected_output.is_empty() {
-                // Look up worktree data from the item list. For detached worktrees,
-                // we need the path since they have no unique branch name.
-                let worktree_info = {
-                    let items = self.items.lock().unwrap();
-                    items
+                // Validate removal before touching the list. prepare_worktree_removal
+                // runs a few git commands (~15-20ms) — acceptable on skim's event loop.
+                // Only remove the item and spawn background deletion if this succeeds.
+                let caller_path = self.repo.current_worktree().root().ok();
+                let config = self.repo.user_config();
+
+                // Resolve removal target by path when possible (handles both
+                // branched and detached worktrees). Branch-only items won't
+                // match any worktree path, so they fall through to Branch.
+                let worktree_path = self.repo.list_worktrees().ok().and_then(|wts| {
+                    // Match by branch first, then fall back to detached (branch: None).
+                    let by_branch = wts
                         .iter()
-                        .find(|item| item.output().as_ref() == selected_output)
-                        .and_then(|item| item.as_any().downcast_ref::<WorktreeSkimItem>())
-                        .and_then(|skim_item| skim_item.item.worktree_data())
-                        .map(|data| (data.path.clone(), data.detached))
+                        .find(|wt| wt.branch.as_deref() == Some(selected_output.as_str()));
+                    let matched = by_branch.or_else(|| wts.iter().find(|wt| wt.branch.is_none()));
+                    matched.map(|wt| wt.path.clone())
+                });
+                let target = match &worktree_path {
+                    Some(path) => RemoveTarget::Path(path),
+                    None => RemoveTarget::Branch(&selected_output),
                 };
 
-                let detached_path = worktree_info
-                    .as_ref()
-                    .filter(|(_, d)| *d)
-                    .map(|(p, _)| p.clone());
+                let preparation = self.repo.prepare_worktree_removal(
+                    target,
+                    BranchDeletionMode::SafeDelete,
+                    false,
+                    config,
+                    caller_path,
+                );
 
-                // Remove item from the list immediately so the TUI updates fast.
-                // Git operations run in the background after we return.
-                {
-                    let mut items = self.items.lock().unwrap();
-                    if let Some(path) = &detached_path {
-                        // Detached items all share output "(detached)" —
-                        // match by worktree path to remove only this one.
-                        items.retain(|item| {
-                            item.as_any()
-                                .downcast_ref::<WorktreeSkimItem>()
-                                .and_then(|s| s.item.worktree_data())
-                                .is_none_or(|d| d.path != *path)
-                        });
-                    } else {
-                        items.retain(|item| item.output().as_ref() != selected_output);
+                match preparation {
+                    Ok(result) => {
+                        // Removal validated — remove item from the picker list.
+                        //
+                        // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails
+                        // at runtime (TypeId mismatch between reader thread and main thread
+                        // compilation units in skim 0.20). All item lookups use output()
+                        // matching instead.
+                        {
+                            let mut items = self.items.lock().unwrap();
+                            items.retain(|item| item.output().as_ref() != selected_output);
+                        }
+
+                        // If removing the current worktree, cd to home so skim and git
+                        // commands continue to work after the directory disappears.
+                        if matches!(
+                            &result,
+                            RemoveResult::RemovedWorktree {
+                                changed_directory: true,
+                                ..
+                            }
+                        ) && let Ok(home) = self.repo.home_path()
+                        {
+                            let _ = std::env::set_current_dir(&home);
+                        }
+
+                        // Defer actual git removal to a background thread so skim's
+                        // event loop stays responsive.
+                        let repo = self.repo.clone();
+                        let _ = std::thread::Builder::new()
+                            .name(format!("picker-remove-{selected_output}"))
+                            .spawn(move || {
+                                if let Err(e) = Self::do_removal(&repo, &result) {
+                                    log::warn!(
+                                        "picker: failed to remove '{selected_output}': {e:#}"
+                                    );
+                                }
+                            });
+                    }
+                    Err(e) => {
+                        log::info!("picker: cannot remove '{selected_output}': {e:#}");
                     }
                 }
-
-                // If removing the current worktree, update process CWD so skim
-                // and git commands continue to work. Use starts_with to handle
-                // CWD being a subdirectory of the worktree root.
-                if let Some((path, _)) = &worktree_info
-                    && let (Some(current), Some(canon_path)) =
-                        (std::env::current_dir().ok(), dunce::canonicalize(path).ok())
-                    && current.starts_with(&canon_path)
-                    && let Ok(home) = self.repo.home_path()
-                {
-                    let _ = std::env::set_current_dir(&home);
-                }
-
-                // Defer git operations to a background thread so skim's event
-                // loop stays responsive. invoke() is called on skim's main
-                // thread — blocking it freezes the TUI.
-                let repo = self.repo.clone();
-                let _ = std::thread::Builder::new()
-                    .name(format!("picker-remove-{selected_output}"))
-                    .spawn(move || {
-                        let config = repo.user_config();
-                        let target = if let Some(path) = &detached_path {
-                            RemoveTarget::Path(path)
-                        } else {
-                            RemoveTarget::Branch(&selected_output)
-                        };
-                        let removal = repo
-                            .prepare_worktree_removal(
-                                target,
-                                BranchDeletionMode::SafeDelete,
-                                false,
-                                config,
-                            )
-                            .and_then(|result| {
-                                Self::do_removal(&result)?;
-                                Ok(result)
-                            });
-                        if let Err(e) = removal {
-                            log::warn!("picker: failed to remove '{selected_output}': {e:#}");
-                        }
-                    });
 
                 // Clear signal for next removal
                 let _ = std::fs::write(&self.signal_path, "");
@@ -645,7 +707,39 @@ pub mod tests {
     use super::{PickerAction, PickerCollector, resolve_identifier};
     use crate::commands::worktree::{BranchDeletionMode, RemoveResult};
     use std::fs;
+    use std::path::PathBuf;
     use worktrunk::shell_exec::Cmd;
+
+    /// Create a git repo with one commit at `tmp/repo` and return the path.
+    fn init_test_repo(tmp: &tempfile::TempDir) -> PathBuf {
+        let repo_path = tmp.path().join("repo");
+        Cmd::new("git")
+            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        fs::write(repo_path.join("file.txt"), "hello").unwrap();
+        Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo_path)
+            .run()
+            .unwrap();
+        repo_path
+    }
 
     #[test]
     fn test_preview_state_data_roundtrip() {
@@ -719,39 +813,22 @@ pub mod tests {
     #[test]
     fn test_execute_removal_removes_worktree_and_branch() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = tmp.path().join("repo");
+        let repo_path = init_test_repo(&tmp);
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
         let wt_path = tmp.path().join("repo.feature");
 
-        Cmd::new("git")
-            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
-            .run()
-            .unwrap();
-        fs::write(repo_path.join("file.txt"), "hello").unwrap();
-        Cmd::new("git")
-            .args(["add", "."])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args([
-                "worktree",
-                "add",
-                "-b",
-                "feature",
-                wt_path.to_str().unwrap(),
-            ])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
         assert!(wt_path.exists());
 
         let result = RemoveResult::RemovedWorktree {
-            main_path: repo_path.clone(),
+            main_path: repo_path,
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
@@ -763,24 +840,107 @@ pub mod tests {
             removed_commit: None,
         };
 
-        PickerCollector::do_removal(&result).unwrap();
+        PickerCollector::do_removal(&repo, &result).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
 
-        let output = Cmd::new("git")
-            .args(["branch", "--list", "feature"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        assert!(output.stdout.is_empty(), "branch should be deleted");
+        let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
+        assert!(output.is_empty(), "branch should be deleted");
     }
 
     #[test]
-    fn test_execute_removal_branch_only_is_noop() {
+    fn test_do_removal_branch_only_deletes_integrated_branch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = init_test_repo(&tmp);
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+
+        // Create a branch at the same commit (fully integrated into main)
+        repo.run_command(&["branch", "feature"]).unwrap();
+
         let result = RemoveResult::BranchOnly {
-            branch_name: "gone".to_string(),
+            branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
         };
-        PickerCollector::do_removal(&result).unwrap();
+        PickerCollector::do_removal(&repo, &result).unwrap();
+
+        let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
+        assert!(output.is_empty(), "integrated branch should be deleted");
     }
+
+    #[test]
+    fn test_do_removal_branch_only_retains_unmerged_branch() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = init_test_repo(&tmp);
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+
+        // Create a branch with an unmerged commit
+        repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
+        fs::write(repo_path.join("new.txt"), "unmerged work").unwrap();
+        repo.run_command(&["add", "."]).unwrap();
+        repo.run_command(&["commit", "-m", "unmerged work"])
+            .unwrap();
+        repo.run_command(&["checkout", "main"]).unwrap();
+
+        let result = RemoveResult::BranchOnly {
+            branch_name: "unmerged".to_string(),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            pruned: false,
+        };
+        PickerCollector::do_removal(&repo, &result).unwrap();
+
+        // Branch should be retained — SafeDelete won't delete unmerged branches
+        let output = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
+        assert!(
+            !output.is_empty(),
+            "unmerged branch should be retained with SafeDelete"
+        );
+    }
+
+    #[test]
+    fn test_do_removal_removes_detached_worktree() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo_path = init_test_repo(&tmp);
+        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let wt_path = tmp.path().join("repo.detached");
+
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "to-detach",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // Detach HEAD in the new worktree
+        Cmd::new("git")
+            .args(["checkout", "--detach", "HEAD"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+
+        assert!(wt_path.exists());
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: repo_path,
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: None,
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+        };
+
+        PickerCollector::do_removal(&repo, &result).unwrap();
+        assert!(!wt_path.exists(), "detached worktree should be removed");
+    }
+
+    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at
+    // runtime due to TypeId mismatch between skim's reader thread and the main
+    // compilation unit (skim 0.20 bug). The invoke() code path uses output()
+    // matching instead. Full invoke() tests require interactive skim — verified
+    // via tmux-cli during development.
 }

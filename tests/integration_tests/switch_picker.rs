@@ -599,7 +599,7 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -639,7 +639,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -651,7 +651,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
             "-m",
             "Add tracked file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -705,7 +705,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         let output = repo
             .git_command()
             .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to add files");
         let output = repo
@@ -717,7 +717,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
                 "-m",
                 &format!("Add file {i} with content"),
             ])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to commit");
     }
@@ -770,7 +770,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -782,7 +782,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
             "-m",
             "Add new feature implementation",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -799,7 +799,7 @@ fn test_new_feature() {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -811,7 +811,7 @@ fn test_new_feature() {
             "-m",
             "Add tests for new feature",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -853,7 +853,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -865,7 +865,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
             "-m",
             "Add new file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -906,7 +906,7 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -982,7 +982,7 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
     let branch_output = repo
         .git_command()
         .args(["branch", "--list", "new-feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),

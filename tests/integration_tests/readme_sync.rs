@@ -420,7 +420,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
         let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = trim_lines(&html);
+        let normalized = encode_leading_spaces(&trim_lines(&html));
 
         // Build the terminal shortcode with standard template markers
         // cmd= parameter enables giallo syntax highlighting on the command line
@@ -464,6 +464,19 @@ fn trim_lines(content: &str) -> String {
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+/// Encode leading spaces on the first line as `&#32;` HTML entities.
+/// Zola trims leading whitespace from shortcode bodies, stripping the
+/// two-space gutter that aligns table headers with data rows in `wt list`.
+/// HTML entities survive the trim and render as spaces in `<pre>` blocks.
+fn encode_leading_spaces(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("");
+    let leading = first_line.len() - first_line.trim_start().len();
+    if leading == 0 {
+        return content.to_string();
+    }
+    format!("{}{}", "&#32;".repeat(leading), &content[leading..])
 }
 
 /// Parse snapshot content for docs (with ANSI to HTML conversion)
@@ -1820,7 +1833,85 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
+/// Sync .well-known/agent-skills/ index.json and verify symlink.
+///
+/// The skill files are served via a symlink:
+///   docs/static/.well-known/agent-skills/worktrunk → ../../../../skills/worktrunk
+///
+/// This function verifies the symlink is correct and generates index.json
+/// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
+fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
+    let mut updated_files = Vec::new();
+
+    let well_known_dir = project_root.join("docs/static/.well-known/agent-skills");
+    let symlink_path = well_known_dir.join("worktrunk");
+
+    // Verify the symlink exists and points to the right place
+    let expected_target = Path::new("../../../../skills/worktrunk");
+    match fs::read_link(&symlink_path) {
+        Ok(target) => {
+            assert_eq!(
+                target,
+                expected_target,
+                "Symlink at {} points to {:?}, expected {:?}",
+                symlink_path.display(),
+                target,
+                expected_target
+            );
+        }
+        Err(_) => {
+            panic!(
+                "Expected symlink at {} → {:?}, but it doesn't exist or isn't a symlink",
+                symlink_path.display(),
+                expected_target
+            );
+        }
+    }
+
+    // Read SKILL.md (through the symlink) for digest and description
+    let skill_md_path = symlink_path.join("SKILL.md");
+    let skill_md_content = fs::read_to_string(&skill_md_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+
+    // Generate index.json with SHA-256 digest of SKILL.md
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let file_bytes = fs::read(&skill_md_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+        let hash = Sha256::digest(&file_bytes);
+        format!("sha256:{hash:x}")
+    };
+
+    // Parse the description from SKILL.md frontmatter
+    let description = skill_md_content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+        .and_then(|(frontmatter, _)| {
+            frontmatter
+                .lines()
+                .find(|line| line.starts_with("description:"))
+                .map(|line| line.trim_start_matches("description:").trim().to_string())
+        })
+        .unwrap_or_default();
+
+    let index_json = format!(
+        "{{\n  \"$schema\": \"https://schemas.agentskills.io/discovery/0.2.0/schema.json\",\n  \"skills\": [\n    {{\n      \"name\": \"worktrunk\",\n      \"type\": \"skill-md\",\n      \"description\": {description},\n      \"url\": \"./worktrunk/SKILL.md\",\n      \"digest\": \"{digest}\"\n    }}\n  ]\n}}\n",
+        description = serde_json::to_string(&description).unwrap(),
+    );
+
+    let index_dst = well_known_dir.join("index.json");
+    let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
+    if current_index != index_json {
+        fs::write(&index_dst, &index_json)
+            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
+        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+    }
+
+    updated_files
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// then .well-known/agent-skills/ (skills → docs/static).
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
@@ -1833,9 +1924,17 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
 
+    // Step 3: Sync .well-known/agent-skills/ (skills/ → docs/static/)
+    // This reads the freshly-written skills from step 2
+    let well_known_files = sync_well_known_skills(project_root);
+
     // Aggregate results
     let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+    let all_files: Vec<_> = cmd_files
+        .into_iter()
+        .chain(skill_files)
+        .chain(well_known_files)
+        .collect();
 
     if !all_errors.is_empty() {
         panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));
@@ -1847,4 +1946,25 @@ fn test_command_pages_and_skill_files_are_in_sync() {
             all_files.join("\n  ")
         );
     }
+}
+
+/// Verify that post_process_for_html() transforms the approval prompt code block
+/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
+/// without updating the replacement in help.rs, the .replace() silently stops
+/// matching and the web docs fall back to a plain code block.
+#[test]
+fn test_approval_prompt_styled_in_hook_page() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = wt_command()
+        .args(["hook", "--help-page"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt hook --help-page");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#"class="y""#),
+        "hook --help-page should contain styled approval prompt (class=\"y\" for yellow ▲). \
+         If cli/mod.rs approval example changed, update the replacement in help.rs post_process_for_html()."
+    );
 }

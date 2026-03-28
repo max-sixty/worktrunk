@@ -21,7 +21,7 @@ Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) t
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details.
 
@@ -49,8 +49,9 @@ The URL column in `wt list` shows each worktree's dev server:
 @ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
 + feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>b772e68b</span>  <span class=d>5h</span>
++ <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                           <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 {% end %}
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
@@ -79,10 +80,10 @@ Jinja2's operator precedence has pipe `|` with higher precedence than concatenat
 
 The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
 
-Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
+Generate `.env.local` with the correct `DATABASE_URL` using a `pre-start` hook:
 
 ```toml
-[post-create]
+[pre-start]
 env = """
 cat > .env.local << EOF
 DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
@@ -165,7 +166,7 @@ With `summary = true` and [`commit.generation`](https://worktrunk.dev/config/#co
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. See [LLM Commits](https://worktrunk.dev/llm-commits/#branch-summaries) for details.
+Summaries are cached and regenerated only when the diff changes. See [LLM Commits](https://worktrunk.dev/llm-commits/#branch-summaries) for details.
 
 ## JSON API
 
@@ -188,7 +189,7 @@ git rebase $(wt config state default-branch)
 Reference Taskfile/Justfile/Makefile in hooks:
 
 ```toml
-[post-create]
+[pre-start]
 "setup" = "task install"
 
 [pre-merge]
@@ -246,7 +247,7 @@ Each worktree gets its own tmux session with a multi-pane layout. Sessions are n
 
 ```toml
 # .config/wt.toml
-[post-create]
+[pre-start]
 tmux = """
 S={{ branch | sanitize }}
 W={{ worktree_path }}
