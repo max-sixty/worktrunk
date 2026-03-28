@@ -322,8 +322,8 @@ pub enum StateCommand {
         name = "default-branch",
         after_long_help = r#"Useful in scripts to avoid hardcoding `main` or `master`:
 
-```bash
-git rebase $(wt config state default-branch)
+```console
+$ git rebase $(wt config state default-branch)
 ```
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
