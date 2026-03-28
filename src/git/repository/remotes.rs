@@ -1,4 +1,42 @@
 //! Remote and URL operations for Repository.
+//!
+//! # Forge resolution
+//!
+//! Worktrunk needs to identify the forge (GitHub, GitLab) behind a remote URL
+//! for PR status, API calls, and push-remote detection. This is straightforward
+//! when the raw URL contains a recognized hostname (`github.com`, `gitlab.com`,
+//! etc.), but breaks when users configure `url.insteadOf` for multi-key SSH
+//! setups — the raw URL may contain a custom hostname like `github-work`.
+//!
+//! ## Resolution algorithm
+//!
+//! All forge-aware lookups follow the same two-pass strategy:
+//!
+//! 1. **Fast path** — parse the raw config URL (`remote.<name>.url`). If the
+//!    hostname is a known forge (contains "github" or "gitlab"), use it directly.
+//!
+//! 2. **insteadOf fallback** — if the hostname is unrecognized, call
+//!    `git remote get-url <name>` which applies `url.insteadOf` rewrites to
+//!    produce the effective URL. If *that* hostname is a known forge, use the
+//!    effective URL instead. This is a local operation (no network I/O), costing
+//!    only one extra git subprocess.
+//!
+//! 3. **Best effort** — if neither URL resolves to a known forge, return the
+//!    raw URL so callers can still attempt to parse owner/repo from it.
+//!
+//! ## Entry points
+//!
+//! | Function                    | Scope             | Used by                           |
+//! |-----------------------------|-------------------|-----------------------------------|
+//! | `forge_remote_url(remote)`  | Single remote     | `platform_for_repo` (hint path),  |
+//! |                             |                   | `github_push_url`                 |
+//! | `find_forge_remote(pred)`   | All remotes       | `github_owner_repo`,              |
+//! |                             |                   | `platform_for_repo` (search path) |
+//! | `primary_forge_remote_url`  | Primary remote    | `fetch_pr_info` (hostname for gh) |
+//!
+//! Lower-level helpers:
+//! - `remote_url` — raw config value, no rewriting
+//! - `effective_remote_url` — `git remote get-url`, with `insteadOf` applied
 
 use anyhow::Context;
 
