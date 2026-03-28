@@ -595,9 +595,9 @@ fn test_list_config_ignore_local_branch(repo: TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 
     // Create branches without worktrees
