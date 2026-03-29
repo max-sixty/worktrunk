@@ -15,7 +15,9 @@
 ///
 /// `{{ }}` in commands (e.g., Jinja2 template expressions) are replaced with
 /// placeholders so Tera doesn't interpret them. The terminal shortcode template
-/// replaces them back before Syntect highlighting.
+/// replaces them back before Syntect highlighting. Double quotes are also
+/// replaced with a placeholder since they'd close the `cmd="..."` parameter
+/// (Tera has no backslash-escape mechanism for string literals).
 ///
 /// Blocks without `$ ` are left unchanged for the `console` → `bash` replacement.
 pub fn convert_dollar_console_to_terminal(text: &str) -> String {
