@@ -35,8 +35,7 @@ $ wt step commit|||wt step squash|||wt step rebase|||wt step push
 
 wt step - Run individual operations
 
-The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone
-utilities.
+The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone utilities.
 
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
@@ -117,8 +116,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
-            changes
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked changes
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
@@ -203,8 +201,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
-            changes
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked changes
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 

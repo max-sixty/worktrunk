@@ -11,7 +11,7 @@ group = "Commands"
 
 Run configured hooks.
 
-Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
+Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user and project hooks are supported.
 
 # Hook Types
 
@@ -23,109 +23,22 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged to `.git/wt/logs/{branch}-{source}-{hook}-{name}.log`. Use `-v` to see expanded command details for background hooks.
+`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](@/config.md#wt-config-state-logs) to find and manage log files). Use `-v` to see expanded command details for background hooks.
 
 The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
-## pre-switch
-
-Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution).
-
-```toml
-[pre-switch]
-# Pull if last fetch was more than 6 hours ago
-pull = """
-FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
-if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
-    git pull
-fi
-"""
-```
-
-## post-switch
-
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current.
-
-```toml
-[post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
-```
-
-## pre-start
-
-Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
-
-```toml
-[pre-start]
-install = "npm ci"
-env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
-```
-
-## post-start
-
-Dev servers, long builds, file watchers, copying caches.
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
-## pre-commit
-
-Formatters, linters, type checking — runs during `wt merge` before the squash commit.
-
-```toml
-[pre-commit]
-format = "cargo fmt -- --check"
-lint = "cargo clippy -- -D warnings"
-```
-
-## post-commit
-
-CI triggers, notifications, background linting.
-
-```toml
-[post-commit]
-notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
-```
-
-## pre-merge
-
-Tests, security scans, build verification — runs after rebase, before merge to target.
-
-```toml
-[pre-merge]
-test = "cargo test"
-build = "cargo build --release"
-```
-
-## post-merge
-
-Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree.
-
-```toml
-post-merge = "cargo install --path ."
-```
-
-## pre-remove
-
-Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
-
-```toml
-[pre-remove]
-archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
-```
-
-## post-remove
-
-Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree, so cleanup scripts can identify resources to tear down.
-
-```toml
-[post-remove]
-kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
-remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
-```
+| Hook | Purpose |
+|------|---------|
+| `pre-switch` | Runs before branch resolution or worktree creation. `{{ branch }}` is the destination as typed (before resolution) |
+| `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
+| `pre-start` | Tasks that must complete before `post-start`/`--execute`: dependency install, env file generation |
+| `post-start` | Dev servers, long builds, file watchers, copying caches |
+| `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
+| `post-commit` | CI triggers, notifications, background linting |
+| `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
+| `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
+| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
+| `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
 During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. As usual, post-* hooks run in the background. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
@@ -146,7 +59,7 @@ Project commands require approval on first run:
 <span class="c">❯</span> Allow and remember? <b>[y/N]</b>
 {% end %}
 
-- Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
+- Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-verify` to skip hooks
@@ -482,6 +395,51 @@ install = "uv sync"
 ```
 
 For copying dependencies and caches between worktrees, see [`wt step copy-ignored`](@/step.md#language-specific-notes).
+
+## Hook type examples
+
+```toml
+# Single command (string) — top-level, before any table headers
+post-merge = "cargo install --path ."
+
+[pre-switch]
+# Pull if last fetch was more than 6 hours ago
+pull = """
+FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    git pull
+fi
+"""
+
+[post-switch]
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
+
+[pre-start]
+install = "npm ci"
+env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
+
+[post-start]
+copy = "wt step copy-ignored"
+server = "npm run dev -- --port {{ branch | hash_port }}"
+
+[pre-commit]
+format = "cargo fmt -- --check"
+lint = "cargo clippy -- -D warnings"
+
+[post-commit]
+notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
+
+[pre-merge]
+test = "cargo test"
+build = "cargo build --release"
+
+[pre-remove]
+archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
+
+[post-remove]
+kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
+remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
 
 ## See also
 
