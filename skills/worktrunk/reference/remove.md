@@ -96,8 +96,8 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Force worktree removal
 
-          Remove worktrees even if they contain untracked files (like build
-          artifacts). Without this flag, removal fails if untracked files exist.
+          Remove worktrees even if they contain untracked files (like build artifacts). Without this
+          flag, removal fails if untracked files exist.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
