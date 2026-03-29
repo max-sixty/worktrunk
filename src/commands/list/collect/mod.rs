@@ -893,13 +893,14 @@ pub fn collect(
             items_with_missing,
         } = drain_outcome
     {
-        // Warning: what happened + gutter showing which results are missing
+        // Warning: what happened + gutter showing which tasks blocked
         let mut diag = format!(
             "wt list timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
 
         if !items_with_missing.is_empty() {
+            diag.push_str("\nBlocked tasks:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .map(|result| {
@@ -919,7 +920,7 @@ pub fn collect(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "A git command likely hung; run with <underline>-v</> for details, <underline>-vv</> to create a diagnostic file"
+                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
             ))
         );
     }
