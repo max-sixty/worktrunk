@@ -442,14 +442,12 @@ pub fn build_remove_command(
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
 
-    // TODO: This delay is a timing-based workaround, not a principled fix.
-    // The race: after wt exits, the shell wrapper reads the directive file and
-    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
-    // completes (e.g., for prompt updates), and if the background removal has
-    // already deleted the directory, we get "shell-init: error retrieving current
-    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
-    // deterministic solutions (shell-spawned background, marker file sync) add
-    // significant complexity for marginal benefit.
+    // Delay before deleting the worktree directory. After wt exits, the shell
+    // wrapper reads the directive file and runs `cd`. The 1s delay ensures the
+    // shell has finished cd'ing before the directory is removed. The primary fix
+    // for the "shell-init: error retrieving current directory" race is in the
+    // fish wrapper (using builtins instead of subprocesses to read the directive),
+    // but this delay provides defense in depth for other shells and edge cases.
     let delay = "sleep 1";
 
     // Stop fsmonitor daemon first (best effort - ignore errors)

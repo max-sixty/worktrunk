@@ -588,7 +588,7 @@ Default branch detection and override.
 Useful in scripts to avoid hardcoding `main` or `master`:
 
 ```bash
-git rebase $(wt config state default-branch)
+$ git rebase $(wt config state default-branch)
 ```
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
