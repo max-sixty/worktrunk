@@ -624,7 +624,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // KV data
     repo.git_command()
         .args(["config", "worktrunk.state.main.kv.env", "staging"])
-        .status()
+        .run()
         .unwrap();
 
     // Logs
@@ -659,7 +659,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.state.main.kv.env"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
@@ -786,11 +786,11 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up KV data
     repo.git_command()
         .args(["config", "worktrunk.state.main.kv.env", "staging"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.state.feature.kv.port", "3000"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -854,7 +854,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up KV data
     repo.git_command()
         .args(["config", "worktrunk.state.main.kv.env", "staging"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -1631,11 +1631,11 @@ fn test_kv_in_json_output(repo: TestRepo) {
     // Set kv data
     repo.git_command()
         .args(["config", "worktrunk.state.main.kv.env", "staging"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.state.main.kv.port", "3000"])
-        .status()
+        .run()
         .unwrap();
 
     let output = repo
@@ -1704,7 +1704,7 @@ fn test_kv_list_with_branch_flag(repo: TestRepo) {
     repo.run_git(&["branch", "feature"]);
     repo.git_command()
         .args(["config", "worktrunk.state.feature.kv.env", "production"])
-        .status()
+        .run()
         .unwrap();
 
     // List kv for specific branch
@@ -1725,7 +1725,7 @@ fn test_kv_clear_with_branch_flag(repo: TestRepo) {
     repo.run_git(&["branch", "feature"]);
     repo.git_command()
         .args(["config", "worktrunk.state.feature.kv.env", "production"])
-        .status()
+        .run()
         .unwrap();
 
     // Clear kv for specific branch

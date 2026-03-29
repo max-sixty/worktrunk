@@ -751,7 +751,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-## wt config state kv [experimental]
+## wt config state kv
+
+[experimental]
 
 Arbitrary key-value data per branch.
 
