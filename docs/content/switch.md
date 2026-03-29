@@ -153,7 +153,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Useful for launching editors, AI agents, or other interactive tools.
 
           Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
-          base }} and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
+<b>          base }}</b> and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
 
           Especially useful with shell aliases:
 
@@ -165,7 +165,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           starting Claude with a prompt.
 
           Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
-          new -s {{ branch | sanitize }}&#39; starts a tmux session named after the branch.
+<b>          new -s {{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target

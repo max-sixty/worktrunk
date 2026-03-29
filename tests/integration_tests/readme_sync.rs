@@ -497,19 +497,57 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
 /// the ansi-to-html library will carry styles across lines (e.g., `<b>text\nmore</b>`).
 /// By adding a reset at the end of each line, we ensure proper HTML tag closure.
 fn ensure_line_resets(ansi: &str) -> String {
-    const RESET: &str = "\x1b[0m";
+    ensure_line_resets_impl(ansi, false)
+}
 
-    ansi.lines()
-        .map(|line| {
-            // Add reset at end of line if it doesn't already end with one
-            if line.ends_with(RESET) {
-                line.to_string()
+/// Like `ensure_line_resets`, but also carries active styles to the next line
+///
+/// Clap resets styles at line breaks when wrapping, so a bold span that wraps across
+/// lines loses its bold on the continuation. This variant tracks active SGR styles
+/// and re-opens them at the start of each continuation line, producing clean per-line
+/// HTML like `<b>first part</b>\n<b>second part</b>` instead of `<b>first part</b>\nsecond part`.
+fn ensure_line_resets_with_carry(ansi: &str) -> String {
+    ensure_line_resets_impl(ansi, true)
+}
+
+fn ensure_line_resets_impl(ansi: &str, carry_styles: bool) -> String {
+    const RESET: &str = "\x1b[0m";
+    // Match SGR sequences: ESC [ <params> m
+    static SGR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
+
+    let lines: Vec<&str> = ansi.lines().collect();
+    let mut result = Vec::with_capacity(lines.len());
+    let mut active_styles: Vec<String> = Vec::new();
+
+    for line in lines {
+        // Prepend active styles from previous line (only when carrying)
+        let line = if !carry_styles || active_styles.is_empty() {
+            line.to_string()
+        } else {
+            let prefix: String = active_styles.iter().map(|s| s.as_str()).collect();
+            format!("{prefix}{line}")
+        };
+
+        // Track which styles are active at end of this line
+        active_styles.clear();
+        for cap in SGR_RE.captures_iter(&line) {
+            let params = &cap[1];
+            if params.is_empty() || params == "0" {
+                active_styles.clear();
             } else {
-                format!("{}{}", line, RESET)
+                active_styles.push(format!("\x1b[{params}m"));
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        }
+
+        // Ensure line ends with reset
+        if line.ends_with(RESET) {
+            result.push(line);
+        } else {
+            result.push(format!("{line}{RESET}"));
+        }
+    }
+
+    result.join("\n")
 }
 
 /// Clean up HTML output from ansi-to-html conversion
@@ -559,7 +597,7 @@ fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
 
     for (start, end, header, code_content) in matches.into_iter().rev() {
         // Convert ANSI to HTML
-        let with_resets = ensure_line_resets(code_content);
+        let with_resets = ensure_line_resets_with_carry(code_content);
         let html =
             ansi_to_html(&with_resets).map_err(|e| format!("ANSI conversion failed: {e}"))?;
         let clean_html = clean_ansi_html(&html);
