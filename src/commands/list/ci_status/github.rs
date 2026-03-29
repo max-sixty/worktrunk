@@ -15,7 +15,8 @@ use super::{
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
 /// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
 ///
-/// Uses [`Repository::find_forge_remote`] to handle `url.insteadOf` aliases.
+/// Uses [`Repository::find_forge_remote`] with effective URLs to handle
+/// `url.insteadOf` aliases.
 fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
     let (_, url) = repo.find_forge_remote(|parsed| parsed.is_github())?;
     let parsed = GitRemoteUrl::parse(&url)?;
@@ -49,10 +50,10 @@ pub(super) fn detect_github(
 
     // Get the owner of the branch's push remote for filtering PRs by source repository.
     // For local branches: uses @{push} which resolves through pushRemote → remote.pushDefault → tracking remote.
-    // For remote branches: use the remote's URL directly (the branch IS on that remote).
+    // For remote branches: use the remote's effective URL (handles insteadOf aliases).
     let branch_owner = if let Some(remote_name) = &branch.remote {
-        // Remote branch - get owner from the remote's URL
-        repo.remote_url(remote_name)
+        // Remote branch - get owner from the remote's effective URL
+        repo.effective_remote_url(remote_name)
             .and_then(|url| parse_remote_owner(&url))
     } else {
         // Local branch - use existing push remote resolution

@@ -141,9 +141,9 @@ pub fn platform_for_repo(
     }
 
     // If we have a specific remote hint (e.g., from a remote branch), use that first.
-    // Uses forge-aware URL to handle url.insteadOf aliases.
+    // Uses effective URL to handle url.insteadOf aliases.
     if let Some(remote_name) = remote_hint
-        && let Some(url) = repo.forge_remote_url(remote_name)
+        && let Some(url) = repo.effective_remote_url(remote_name)
         && let Some(platform) = detect_platform_from_url(&url)
     {
         log::debug!(
@@ -155,7 +155,7 @@ pub fn platform_for_repo(
     }
 
     // Search all remotes for a supported platform.
-    // Uses find_forge_remote which handles url.insteadOf fallback automatically.
+    // Uses find_forge_remote which checks effective URLs (with insteadOf applied).
     if let Some((remote_name, url)) =
         repo.find_forge_remote(|parsed| parsed.is_github() || parsed.is_gitlab())
     {

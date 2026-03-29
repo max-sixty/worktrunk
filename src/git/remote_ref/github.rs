@@ -80,11 +80,11 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let repo_root = repo.repo_path()?;
 
     // Best-effort hostname extraction for GitHub Enterprise support.
-    // Uses forge-aware URL resolution to handle url.insteadOf aliases
-    // (e.g., github-work → github.com for multi-key SSH setups).
+    // Uses effective URL (with url.insteadOf applied) to handle custom SSH
+    // hostnames (e.g., github-work → github.com for multi-key SSH setups).
     // Falls back to gh's default (github.com) if the remote URL can't be parsed.
     let hostname = repo
-        .primary_forge_remote_url()
+        .primary_effective_remote_url()
         .and_then(|url| git::GitRemoteUrl::parse(&url))
         .map(|parsed| parsed.host().to_string())
         .unwrap_or_else(|| "github.com".to_string());
