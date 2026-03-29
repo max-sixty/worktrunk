@@ -84,7 +84,9 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     // hostnames (e.g., github-work → github.com for multi-key SSH setups).
     // Falls back to gh's default (github.com) if the remote URL can't be parsed.
     let hostname = repo
-        .primary_effective_remote_url()
+        .primary_remote()
+        .ok()
+        .and_then(|remote| repo.effective_remote_url(&remote))
         .and_then(|url| git::GitRemoteUrl::parse(&url))
         .map(|parsed| parsed.host().to_string())
         .unwrap_or_else(|| "github.com".to_string());

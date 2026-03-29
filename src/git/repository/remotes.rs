@@ -24,7 +24,6 @@
 //! - `effective_remote_url` — `git remote get-url`, with `insteadOf` applied
 //!   (cached; use for all forge detection)
 //! - `find_forge_remote(pred)` — search all remotes using effective URLs
-//! - `primary_effective_remote_url` — convenience for the primary remote
 
 use anyhow::Context;
 
@@ -228,16 +227,6 @@ impl Repository {
             }
         }
         None
-    }
-
-    /// Get the effective URL for the primary remote.
-    ///
-    /// Convenience for `primary_remote()` + `effective_remote_url()`. Applies
-    /// `url.insteadOf` rewrites, so custom SSH hostnames resolve to real forge
-    /// hostnames.
-    pub fn primary_effective_remote_url(&self) -> Option<String> {
-        let remote = self.primary_remote().ok()?;
-        self.effective_remote_url(&remote)
     }
 
     /// Get a project identifier for approval tracking.

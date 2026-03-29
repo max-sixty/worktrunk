@@ -394,23 +394,6 @@ fn test_effective_remote_url_is_cached(repo: TestRepo) {
     assert_eq!(first, second);
 }
 
-/// Test primary_effective_remote_url resolves through insteadOf.
-#[rstest]
-fn test_primary_effective_remote_url_with_insteadof(repo: TestRepo) {
-    setup_insteadof(
-        &repo,
-        "origin",
-        "git@work-ssh:org/repo.git",
-        "git@github.com:org",
-    );
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    let url = git_repo.primary_effective_remote_url().unwrap();
-    let parsed = GitRemoteUrl::parse(&url).unwrap();
-    assert!(parsed.is_github());
-    assert_eq!(parsed.host(), "github.com");
-}
-
 /// Test find_forge_remote: finds forge via effective URL with insteadOf.
 #[rstest]
 fn test_find_forge_remote_insteadof(repo: TestRepo) {
