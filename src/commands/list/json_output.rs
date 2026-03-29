@@ -230,10 +230,10 @@ impl JsonItem {
     /// Convert a ListItem to the new JSON structure
     ///
     /// `all_kv` is pre-fetched kv data for all branches (from `repo.all_kv_entries()`),
-    /// avoiding N+1 git process spawns.
+    /// avoiding N+1 git process spawns. Entries are moved out via `.remove()` to avoid cloning.
     pub fn from_list_item(
         item: &ListItem,
-        all_kv: &HashMap<String, BTreeMap<String, String>>,
+        all_kv: &mut HashMap<String, BTreeMap<String, String>>,
     ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
@@ -340,11 +340,11 @@ impl JsonItem {
             .map(format_raw_symbols)
             .filter(|s| !s.is_empty());
 
-        // Per-branch kv data (pre-fetched)
+        // Per-branch kv data (pre-fetched, moved out to avoid cloning)
         let kv = item
             .branch
             .as_deref()
-            .and_then(|b| all_kv.get(b).cloned())
+            .and_then(|b| all_kv.remove(b))
             .unwrap_or_default();
 
         // Summary: flatten Option<Option<String>> → Option<String>
@@ -478,10 +478,10 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 ///
 /// Fetches all kv data in a single git call, then distributes per-branch.
 pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
-    let all_kv = repo.all_kv_entries();
+    let mut all_kv = repo.all_kv_entries();
     items
         .iter()
-        .map(|item| JsonItem::from_list_item(item, &all_kv))
+        .map(|item| JsonItem::from_list_item(item, &mut all_kv))
         .collect()
 }
 
@@ -887,25 +887,33 @@ mod tests {
     #[test]
     fn test_json_item_summary_present() {
         let (_tmp, repo) = test_repo();
-        let all_kv = repo.all_kv_entries();
+        let mut all_kv = repo.all_kv_entries();
 
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         item.summary = Some(Some("Add login page".to_string()));
-        let json_item = JsonItem::from_list_item(&item, &all_kv);
+        let json_item = JsonItem::from_list_item(&item, &mut all_kv);
         assert_eq!(json_item.summary, Some("Add login page".to_string()));
     }
 
     #[test]
     fn test_json_item_summary_absent() {
         let (_tmp, repo) = test_repo();
-        let all_kv = repo.all_kv_entries();
+        let mut all_kv = repo.all_kv_entries();
 
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         // Both "not collected" and "no summary" should be absent in JSON
-        assert!(JsonItem::from_list_item(&item, &all_kv).summary.is_none());
+        assert!(
+            JsonItem::from_list_item(&item, &mut all_kv)
+                .summary
+                .is_none()
+        );
 
         item.summary = Some(None);
-        assert!(JsonItem::from_list_item(&item, &all_kv).summary.is_none());
+        assert!(
+            JsonItem::from_list_item(&item, &mut all_kv)
+                .summary
+                .is_none()
+        );
     }
 
     #[test]

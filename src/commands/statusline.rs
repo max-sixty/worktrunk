@@ -6,6 +6,7 @@
 //! This command reuses the data collection infrastructure from `wt list`,
 //! avoiding duplication of git operations.
 
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path};
@@ -302,9 +303,15 @@ fn run_json() -> Result<()> {
     // Populate computed fields (parallel git operations)
     list::populate_item(&repo, &mut item, options)?;
 
-    // Convert to JSON format
-    let all_kv = repo.all_kv_entries();
-    let json_item = json_output::JsonItem::from_list_item(&item, &all_kv);
+    // Convert to JSON format — single-branch lookup (not all_kv_entries)
+    let mut all_kv = HashMap::new();
+    if let Some(branch) = &item.branch {
+        let entries = repo.kv_entries(branch);
+        if !entries.is_empty() {
+            all_kv.insert(branch.clone(), entries);
+        }
+    }
+    let json_item = json_output::JsonItem::from_list_item(&item, &mut all_kv);
 
     // Output as JSON array (consistent with wt list --format=json)
     let output = serde_json::to_string_pretty(&[json_item])?;

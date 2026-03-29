@@ -719,15 +719,17 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
             (vec![], vec![])
         };
 
-    // Get kv data (all branches)
-    let kv_output = raw_kv_output(repo);
-    let kv_data: Vec<serde_json::Value> = parse_all_kv(&kv_output)
+    // Get kv data (all branches) — collect into BTreeMap for sorted output
+    let all_kv: std::collections::BTreeMap<_, _> = repo.all_kv_entries().into_iter().collect();
+    let kv_data: Vec<serde_json::Value> = all_kv
         .into_iter()
-        .map(|(branch, key, value)| {
-            serde_json::json!({
-                "branch": branch,
-                "key": key,
-                "value": value
+        .flat_map(|(branch, entries)| {
+            entries.into_iter().map(move |(key, value)| {
+                serde_json::json!({
+                    "branch": branch,
+                    "key": key,
+                    "value": value
+                })
             })
         })
         .collect();
@@ -793,22 +795,23 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show kv data
     writeln!(out, "{}", format_heading("KV DATA", None))?;
-    let kv_output = raw_kv_output(repo);
-    let kv_entries = parse_all_kv(&kv_output);
+    let all_kv: std::collections::BTreeMap<_, _> = repo.all_kv_entries().into_iter().collect();
 
-    if kv_entries.is_empty() {
+    if all_kv.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         let mut table = String::from("| Branch | Key | Value |\n");
         table.push_str("|--------|-----|-------|\n");
-        for (branch, key, value) in &kv_entries {
-            // Truncate long values for display
-            let display_value = if value.len() > 40 {
-                format!("{}...", &value[..37])
-            } else {
-                value.to_string()
-            };
-            table.push_str(&format!("| {branch} | {key} | {display_value} |\n"));
+        for (branch, entries) in &all_kv {
+            for (key, value) in entries {
+                // Truncate long values for display
+                let display_value = if value.len() > 40 {
+                    format!("{}...", &value[..37])
+                } else {
+                    value.to_string()
+                };
+                table.push_str(&format!("| {branch} | {key} | {display_value} |\n"));
+            }
         }
         let rendered = crate::md_help::render_markdown_table(&table);
         writeln!(out, "{}", rendered.trim_end())?;
@@ -879,27 +882,6 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 }
 
 // ==================== KV Operations ====================
-
-/// Raw output of all kv entries from git config (all branches).
-fn raw_kv_output(repo: &Repository) -> String {
-    repo.run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.kv\."])
-        .unwrap_or_default()
-}
-
-/// Parse raw kv output into (branch, key, value) triples, sorted by branch then key.
-fn parse_all_kv(raw: &str) -> Vec<(&str, &str, &str)> {
-    let mut entries: Vec<_> = raw
-        .lines()
-        .filter_map(|line| {
-            let (config_key, value) = line.split_once(' ')?;
-            let rest = config_key.strip_prefix("worktrunk.state.")?;
-            let (branch, key) = rest.split_once(".kv.")?;
-            Some((branch, key, value))
-        })
-        .collect();
-    entries.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
-    entries
-}
 
 /// Validate a kv key name: letters, digits, hyphens, underscores only.
 fn validate_kv_key(key: &str) -> anyhow::Result<()> {
@@ -1035,12 +1017,12 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
 
 /// Clear all kv entries across all branches (used by handle_state_clear_all).
 fn clear_all_kv(repo: &Repository) -> anyhow::Result<usize> {
-    let output = raw_kv_output(repo);
-
+    let all_kv = repo.all_kv_entries();
     let mut cleared = 0;
-    for line in output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            repo.run_command(&["config", "--unset", config_key])?;
+    for (branch, entries) in &all_kv {
+        for key in entries.keys() {
+            let config_key = format!("worktrunk.state.{branch}.kv.{key}");
+            repo.run_command(&["config", "--unset", &config_key])?;
             cleared += 1;
         }
     }
