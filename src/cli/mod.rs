@@ -1815,7 +1815,7 @@ Default template:
 ```toml
 [commit.generation]
 template = """
-Write a commit message for the staged changes below.
+<task>Write a commit message for the staged changes below.</task>
 
 <format>
 - Subject line under 50 chars
@@ -1861,7 +1861,7 @@ Default template:
 ```toml
 [commit.generation]
 squash-template = """
-Combine these commits into a single commit message.
+<task>Write a commit message for the combined effect of these commits.</task>
 
 <format>
 - Subject line under 50 chars
