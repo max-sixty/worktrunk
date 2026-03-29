@@ -10,24 +10,20 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-```bash
 # Plain git worktree workflow
-git worktree add -b feature-branch ../myapp-feature main
-cd ../myapp-feature
+<span class="cmd">git worktree add -b feature-branch ../myapp-feature main</span>
+<span class="cmd">cd ../myapp-feature</span>
 # ...work, commit, push...
-cd ../myapp
-git merge feature-branch
-git worktree remove ../myapp-feature
-git branch -d feature-branch
-```
+<span class="cmd">cd ../myapp</span>
+<span class="cmd">git merge feature-branch</span>
+<span class="cmd">git worktree remove ../myapp-feature</span>
+<span class="cmd">git branch -d feature-branch</span>
 
 Worktrunk automates the full lifecycle:
 
-```bash
-wt switch --create feature-branch  # Creates worktree, runs setup hooks
+<span class="cmd">wt switch --create feature-branch  # Creates worktree, runs setup hooks</span>
 # ...work...
-wt merge                            # Merges into default branch, cleans up
-```
+<span class="cmd">wt merge                            # Merges into default branch, cleans up</span>
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
@@ -132,9 +128,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-```bash
-git worktree lock ../myproject.feature --reason "Contains local database"
-```
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -166,17 +160,16 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 ### Example approval prompt
 
-```
-▲ repo needs approval to execute 3 commands:
+<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
-❯ Allow and remember? [y/N]
-```
+<span class="d">○</span> pre-start <b>install</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
+<span class="d">○</span> pre-start <b>build</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
+<span class="d">○</span> pre-start <b>env</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+
+<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -186,13 +179,11 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-```bash
 # Recent commands
-tail -5 .git/wt/logs/commands.jsonl | jq .
+<span class="cmd">tail -5 .git/wt/logs/commands.jsonl | jq .</span>
 
 # Failed commands
-jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
-```
+<span class="cmd">jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl</span>
 
 Clear with `wt config state logs clear`.
 

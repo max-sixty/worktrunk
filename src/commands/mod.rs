@@ -15,12 +15,12 @@ pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
 pub(crate) mod merge;
+#[cfg(unix)]
+pub(crate) mod picker;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
 pub(crate) mod repository_ext;
-#[cfg(unix)]
-pub(crate) mod select;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
@@ -43,14 +43,14 @@ pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]
-pub(crate) use select::handle_select;
+pub(crate) use picker::handle_picker;
+pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, handle_remove, handle_remove_current, is_worktree_at_expected_path,
-    resolve_worktree_arg, worktree_display_name,
+    OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

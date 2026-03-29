@@ -31,7 +31,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt merge - Merge current branch into target
+wt merge - Merge current branch into the target branch
 
 Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 

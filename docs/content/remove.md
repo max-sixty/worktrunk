@@ -15,32 +15,23 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
-```bash
-wt remove
-```
+{{ terminal(cmd="wt remove") }}
 
 Remove specific worktrees / branches:
 
-```bash
-wt remove feature-branch
-wt remove old-feature another-branch
-```
+{{ terminal(cmd="wt remove feature-branch|||wt remove old-feature another-branch") }}
 
 Keep the branch:
 
-```bash
-wt remove --no-delete-branch feature-branch
-```
+{{ terminal(cmd="wt remove --no-delete-branch feature-branch") }}
 
 Force-delete an unmerged branch:
 
-```bash
-wt remove -D experimental
-```
+{{ terminal(cmd="wt remove -D experimental") }}
 
 ## Branch cleanup
 
-By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
+By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
 Worktrunk checks five conditions (in order of cost):
 
@@ -52,7 +43,7 @@ Worktrunk checks five conditions (in order of cost):
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
-Branches showing `_` or `⊂` are dimmed as safe to delete.
+Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
 ## Force flags
 
@@ -60,24 +51,24 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has untracked files (build artifacts, IDE config) |
+| `--force` (`-f`) | Worktree | Worktree has untracked files |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
-```bash
-wt remove feature --force       # Remove worktree with untracked files
-wt remove feature -D            # Delete unmerged branch
-wt remove feature --force -D    # Both
-```
+{{ terminal(cmd="wt remove feature --force       # Remove worktree with untracked files|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both") }}
 
-Without `--force`, removal fails if the worktree contains untracked files. Without `-D`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default — the command returns immediately. Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
+
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name. Pass the worktree path instead: `wt remove /path/to/worktree`.
 
 ## See also
 
@@ -110,8 +101,8 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Force worktree removal
 
-          Remove worktrees even if they contain untracked files (like build
-          artifacts). Without this flag, removal fails if untracked files exist.
+          Remove worktrees even if they contain untracked files (like build artifacts). Without this
+          flag, removal fails if untracked files exist.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

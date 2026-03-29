@@ -1,0 +1,352 @@
+//! Preview mode and layout management.
+//!
+//! Handles preview state persistence and layout auto-detection for the interactive selector.
+
+use std::fs;
+use std::path::PathBuf;
+
+/// Preview modes for the interactive selector
+///
+/// Each mode shows a different aspect of the worktree:
+/// 1. WorkingTree: Uncommitted changes (git diff HEAD --stat)
+/// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
+/// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
+/// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
+/// 5. Summary: LLM-generated branch summary (requires [commit.generation] config)
+///
+/// Loosely aligned with `wt list` columns, though not a perfect match:
+/// - Tab 1 corresponds to "HEAD±" column
+/// - Tab 2 shows commits (related to "main↕" counts)
+/// - Tab 3 corresponds to "main…± (--full)" column
+/// - Tab 4 corresponds to "Remote⇅" column
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum PreviewMode {
+    WorkingTree = 1,
+    Log = 2,
+    BranchDiff = 3,
+    UpstreamDiff = 4,
+    Summary = 5,
+}
+
+impl PreviewMode {
+    pub(super) fn from_u8(n: u8) -> Self {
+        match n {
+            2 => Self::Log,
+            3 => Self::BranchDiff,
+            4 => Self::UpstreamDiff,
+            5 => Self::Summary,
+            _ => Self::WorkingTree,
+        }
+    }
+}
+
+/// Typical terminal character aspect ratio (width/height).
+///
+/// Terminal characters are taller than wide - typically around 0.5 (twice as tall as wide).
+/// This varies by font, but 0.5 is a reasonable default for monospace fonts.
+const CHAR_ASPECT_RATIO: f64 = 0.5;
+
+/// Skim uses this percentage of terminal height.
+pub(super) const SKIM_HEIGHT_PERCENT: usize = 90;
+
+/// Maximum number of list items visible in down layout before scrolling.
+pub(super) const MAX_VISIBLE_ITEMS: usize = 12;
+
+/// Lines reserved for skim chrome (header + prompt/margins).
+pub(super) const LIST_CHROME_LINES: usize = 4;
+
+/// Minimum preview lines to keep usable even with many items.
+pub(super) const MIN_PREVIEW_LINES: usize = 5;
+
+/// Preview width as percentage of terminal width (for Right layout).
+const PREVIEW_WIDTH_PERCENT: usize = 50;
+
+/// Minimum terminal columns for side-by-side (Right) layout.
+///
+/// Below this width, the list panel in Right layout is too narrow
+/// for branch names to be readable. Fall back to Down layout instead.
+const MIN_COLS_FOR_RIGHT_LAYOUT: f64 = 80.0;
+
+/// Preview layout orientation for the interactive selector
+///
+/// Preview window position (auto-detected at startup based on terminal dimensions)
+///
+/// - Right: Preview on the right side (50% width) - better for wide terminals
+/// - Down: Preview below the list - better for tall/vertical monitors
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum PreviewLayout {
+    #[default]
+    Right,
+    Down,
+}
+
+impl PreviewLayout {
+    /// Auto-detect layout based on terminal dimensions.
+    ///
+    /// Terminal dimensions are in characters, not pixels. Since characters are
+    /// typically twice as tall as wide (~0.5 aspect ratio), we correct for this
+    /// when calculating the effective aspect ratio.
+    ///
+    /// Example: 180 cols × 136 rows
+    /// - Raw ratio: 180/136 = 1.32 (appears landscape)
+    /// - Effective: 1.32 × 0.5 = 0.66 (actually portrait!)
+    ///
+    /// Returns Down for portrait (effective ratio < 1.0), Right for landscape.
+    /// Also returns Down when the terminal is too narrow for side-by-side layout,
+    /// even if the aspect ratio suggests landscape (e.g. 60×24 on a phone).
+    pub(super) fn auto_detect() -> Self {
+        let (cols, rows) = terminal_size::terminal_size()
+            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as f64, h as f64))
+            .unwrap_or((80.0, 24.0));
+
+        Self::for_dimensions(cols, rows)
+    }
+
+    /// Determine layout for given terminal dimensions (cols × rows).
+    fn for_dimensions(cols: f64, rows: f64) -> Self {
+        // Too narrow for side-by-side — branch names won't fit in half the width
+        if cols < MIN_COLS_FOR_RIGHT_LAYOUT {
+            return Self::Down;
+        }
+
+        // Effective aspect ratio accounting for character shape
+        let effective_ratio = (cols / rows) * CHAR_ASPECT_RATIO;
+
+        if effective_ratio < 1.0 {
+            Self::Down
+        } else {
+            Self::Right
+        }
+    }
+
+    /// Calculate the preview window spec for skim.
+    /// Derives dimensions from `preview_dimensions` to ensure consistency.
+    pub(super) fn to_preview_window_spec(self, num_items: usize) -> String {
+        let (width, height) = self.preview_dimensions(num_items);
+        match self {
+            Self::Right => format!("right:{}", width),
+            Self::Down => format!("down:{}", height),
+        }
+    }
+
+    /// Calculate preview dimensions (width, height) in characters.
+    /// Single source of truth for preview sizing — used by both skim config
+    /// and background pre-computation.
+    pub(super) fn preview_dimensions(self, num_items: usize) -> (usize, usize) {
+        let (term_width, term_height) = terminal_size::terminal_size()
+            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as usize, h as usize))
+            .unwrap_or((80, 24));
+
+        match self {
+            Self::Right => {
+                let width = term_width * PREVIEW_WIDTH_PERCENT / 100;
+                let height = term_height * SKIM_HEIGHT_PERCENT / 100;
+                (width, height)
+            }
+            Self::Down => {
+                let width = term_width;
+                let available = term_height * SKIM_HEIGHT_PERCENT / 100;
+                let list_lines = LIST_CHROME_LINES + num_items.min(MAX_VISIBLE_ITEMS);
+                let remaining = available.saturating_sub(list_lines);
+                let height = remaining.max(MIN_PREVIEW_LINES).min(available);
+                (width, height)
+            }
+        }
+    }
+}
+
+/// Preview state persistence (mode only, layout auto-detected)
+///
+/// State file format: Single digit representing preview mode (1-5)
+pub(super) struct PreviewStateData;
+
+impl PreviewStateData {
+    pub(super) fn state_path() -> PathBuf {
+        // Use per-process temp file to avoid race conditions when running multiple instances
+        std::env::temp_dir().join(format!("wt-picker-state-{}", std::process::id()))
+    }
+
+    /// Read current preview mode from state file
+    pub(super) fn read_mode() -> PreviewMode {
+        let state_path = Self::state_path();
+        fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree)
+    }
+
+    pub(super) fn write_mode(mode: PreviewMode) {
+        let state_path = Self::state_path();
+        let _ = fs::write(&state_path, format!("{}", mode as u8));
+    }
+}
+
+/// RAII wrapper for preview state file lifecycle management
+pub(super) struct PreviewState {
+    pub(super) path: PathBuf,
+    pub(super) initial_layout: PreviewLayout,
+}
+
+impl PreviewState {
+    pub(super) fn new() -> Self {
+        let path = PreviewStateData::state_path();
+        PreviewStateData::write_mode(PreviewMode::WorkingTree);
+        Self {
+            path,
+            initial_layout: PreviewLayout::auto_detect(),
+        }
+    }
+}
+
+impl Drop for PreviewState {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        // Clean up the removal signal file used by alt-r (see PickerCollector)
+        let _ = fs::remove_file(self.path.with_extension("remove"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preview_mode_from_u8() {
+        assert_eq!(PreviewMode::from_u8(1), PreviewMode::WorkingTree);
+        assert_eq!(PreviewMode::from_u8(2), PreviewMode::Log);
+        assert_eq!(PreviewMode::from_u8(3), PreviewMode::BranchDiff);
+        assert_eq!(PreviewMode::from_u8(4), PreviewMode::UpstreamDiff);
+        assert_eq!(PreviewMode::from_u8(5), PreviewMode::Summary);
+        // Invalid values default to WorkingTree
+        assert_eq!(PreviewMode::from_u8(0), PreviewMode::WorkingTree);
+        assert_eq!(PreviewMode::from_u8(99), PreviewMode::WorkingTree);
+    }
+
+    #[test]
+    fn test_preview_layout_to_preview_window_spec() {
+        // Right uses absolute width derived from terminal size
+        let spec = PreviewLayout::Right.to_preview_window_spec(10);
+        assert!(spec.starts_with("right:"));
+
+        // Down calculates based on item count
+        let spec = PreviewLayout::Down.to_preview_window_spec(5);
+        assert!(spec.starts_with("down:"));
+    }
+
+    #[test]
+    fn test_preview_state_data_read_default() {
+        // Use unique path to avoid interference from parallel tests
+        let state_path = std::env::temp_dir().join("wt-test-read-default");
+        let _ = fs::remove_file(&state_path);
+
+        // When state file doesn't exist, read returns default
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::WorkingTree);
+    }
+
+    #[test]
+    fn test_preview_state_data_roundtrip() {
+        // Use unique path to avoid interference from parallel tests
+        let state_path = std::env::temp_dir().join("wt-test-roundtrip");
+
+        // Write and read back various modes
+        let _ = fs::write(&state_path, "1");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::WorkingTree);
+
+        let _ = fs::write(&state_path, "2");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::Log);
+
+        let _ = fs::write(&state_path, "3");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::BranchDiff);
+
+        let _ = fs::write(&state_path, "4");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::UpstreamDiff);
+
+        let _ = fs::write(&state_path, "5");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::Summary);
+
+        // Cleanup
+        let _ = fs::remove_file(&state_path);
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_wide_terminal() {
+        // Standard wide terminal: landscape aspect ratio → Right
+        assert_eq!(
+            PreviewLayout::for_dimensions(120.0, 40.0),
+            PreviewLayout::Right
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_portrait_terminal() {
+        // Tall terminal: portrait aspect ratio → Down
+        // 180/136 * 0.5 = 0.66 < 1.0
+        assert_eq!(
+            PreviewLayout::for_dimensions(180.0, 136.0),
+            PreviewLayout::Down
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_narrow_terminal_forces_down() {
+        // Narrow terminal (e.g. phone): landscape ratio but too few columns for
+        // side-by-side layout — branch names would be hidden in half-width list.
+        // 60/24 * 0.5 = 1.25 (landscape ratio), but 60 cols < 80 minimum → Down
+        assert_eq!(
+            PreviewLayout::for_dimensions(60.0, 24.0),
+            PreviewLayout::Down
+        );
+
+        // Even narrower
+        assert_eq!(
+            PreviewLayout::for_dimensions(40.0, 20.0),
+            PreviewLayout::Down
+        );
+    }
+
+    #[test]
+    fn test_layout_for_dimensions_boundary() {
+        // Exactly at the minimum → Right (if aspect ratio allows)
+        assert_eq!(
+            PreviewLayout::for_dimensions(80.0, 24.0),
+            PreviewLayout::Right
+        );
+
+        // Just below → Down
+        assert_eq!(
+            PreviewLayout::for_dimensions(79.0, 24.0),
+            PreviewLayout::Down
+        );
+    }
+}

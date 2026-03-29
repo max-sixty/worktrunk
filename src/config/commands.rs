@@ -1,17 +1,19 @@
-//! Command configuration types for project hooks
+//! Command configuration types for hook pipelines.
 //!
-//! Handles parsing and representation of commands that run during various phases
-//! of worktree and merge operations.
+//! See `wt hook --help` → "Pipeline Ordering" for user-facing docs.
+//! See [`HookStep`] and [`CommandConfig`] for the internal model.
+
+use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 
-/// Represents a command with its template and optionally expanded form
+/// Represents a command with its template and optionally expanded form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
-    /// Optional name for the command (e.g., "build", "test", or auto-numbered "1", "2")
+    /// Optional name for the command (e.g., "build", "test")
     pub name: Option<String>,
     /// Template string that may contain variables like {{ branch }}, {{ worktree }}
     pub template: String,
@@ -39,91 +41,204 @@ impl Command {
     }
 }
 
-/// Configuration for commands - canonical representation
+/// A step in a hook pipeline.
 ///
-/// Internally stores commands as `Vec<Command>` for uniform processing.
-/// Deserializes from two TOML formats:
-/// - Single string: `post-create = "npm install"`
-/// - Named table: `[post-create]` followed by `install = "npm install"`
+/// The execution model depends on the hook type:
+/// - **Post-* hooks**: `Single` steps run serially, `Concurrent` steps spawn in parallel.
+///   The entire pipeline runs in the background as one detached process.
+/// - **Pre-* hooks**: All commands run serially regardless of step type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HookStep {
+    /// A single command (from a string in a list, or a single-entry map).
+    Single(Command),
+    /// Multiple commands that run concurrently (from a multi-entry map).
+    Concurrent(Vec<Command>),
+}
+
+/// Configuration for commands — canonical representation.
 ///
-/// **Order preservation:** Named commands preserve TOML insertion order (requires
-/// `preserve_order` feature on toml crate and IndexMap for deserialization). This
-/// allows users to control execution order explicitly.
+/// Internally stores a pipeline of `HookStep`s. Deserializes from three TOML forms:
+/// - Single string: `post-start = "npm install"`
+/// - Named table: `[post-start]` with `name = "command"` entries → one Concurrent step
+/// - Pipeline: `post-start = ["cmd", { a = "cmd1", b = "cmd2" }]` → serial steps
 ///
-/// This canonical form eliminates branching at call sites - code just iterates over commands.
+/// **Order preservation:** Named commands preserve TOML insertion order (IndexMap).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandConfig {
-    commands: Vec<Command>,
+    steps: Vec<HookStep>,
 }
 
 impl CommandConfig {
-    /// Returns the commands as a slice
-    pub fn commands(&self) -> &[Command] {
-        &self.commands
+    /// Create a config with a single unnamed command.
+    pub fn single(template: impl Into<String>) -> Self {
+        Self {
+            steps: vec![HookStep::Single(Command::new(None, template.into()))],
+        }
     }
 
-    /// Merge two configs by appending commands (base commands first, then overlay).
+    /// Returns a flat iterator over all commands (for approval, completion, display).
+    pub fn commands(&self) -> impl Iterator<Item = &Command> {
+        self.steps.iter().flat_map(|step| match step {
+            HookStep::Single(cmd) => std::slice::from_ref(cmd).iter(),
+            HookStep::Concurrent(cmds) => cmds.iter(),
+        })
+    }
+
+    /// Returns true if this config uses a pipeline (list form with multiple steps).
+    /// Single-step configs (string or map) return false.
+    pub fn is_pipeline(&self) -> bool {
+        self.steps.len() > 1
+    }
+
+    /// Returns the pipeline steps for execution.
+    pub fn steps(&self) -> &[HookStep] {
+        &self.steps
+    }
+
+    /// Merge two configs by appending steps (base steps first, then overlay).
     ///
     /// Used for per-project hook overrides where both global and project hooks run.
     pub fn merge_append(&self, other: &Self) -> Self {
-        let mut commands = self.commands.clone();
-        commands.extend(other.commands.iter().cloned());
-        Self { commands }
+        let mut steps = self.steps.clone();
+        steps.extend(other.steps.iter().cloned());
+        Self { steps }
     }
 }
 
-// Custom deserialization to handle 2 TOML formats
+/// Validate that no command names contain colons (would break log spec parsing).
+fn validate_no_colons<E: serde::de::Error>(map: &IndexMap<String, String>) -> Result<(), E> {
+    for name in map.keys() {
+        if name.contains(':') {
+            return Err(serde::de::Error::custom(format!(
+                "hook name '{}' cannot contain colons",
+                name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Convert an IndexMap of named commands to a HookStep.
+/// Single-entry maps become `Single` (named serial step),
+/// multi-entry maps become `Concurrent`.
+fn map_to_step(map: IndexMap<String, String>) -> HookStep {
+    if map.len() == 1 {
+        let (name, template) = map.into_iter().next().unwrap();
+        HookStep::Single(Command::new(Some(name), template))
+    } else {
+        HookStep::Concurrent(
+            map.into_iter()
+                .map(|(name, template)| Command::new(Some(name), template))
+                .collect(),
+        )
+    }
+}
+
+/// Append alias commands from `additions` into `base`.
+///
+/// On name collision, commands are appended (base first, then additions),
+/// matching how hooks merge across config layers.
+pub fn append_aliases(
+    base: &mut BTreeMap<String, CommandConfig>,
+    additions: &BTreeMap<String, CommandConfig>,
+) {
+    for (k, v) in additions {
+        base.entry(k.clone())
+            .and_modify(|existing| *existing = existing.merge_append(v))
+            .or_insert_with(|| v.clone());
+    }
+}
+
+// Custom deserialization to handle 3 TOML formats
 impl<'de> Deserialize<'de> for CommandConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
+        /// An entry in a pipeline list: either a string or a map of named commands.
+        ///
+        /// Anonymous strings work but are intentionally undocumented — they
+        /// complicate the explanation without adding much over single-entry maps.
         #[derive(Deserialize)]
         #[serde(untagged)]
-        enum CommandConfigToml {
-            Single(String),
+        enum PipelineEntry {
+            Anonymous(String),
             Named(IndexMap<String, String>),
         }
 
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CommandConfigToml {
+            // post-start = "npm install"
+            Single(String),
+            // post-start = ["cmd1", { a = "cmd2", b = "cmd3" }]
+            Pipeline(Vec<PipelineEntry>),
+            // [hooks.post-start] with name = "command" entries
+            Concurrent(IndexMap<String, String>),
+        }
+
         let toml = CommandConfigToml::deserialize(deserializer)?;
-        let commands = match toml {
+        let steps = match toml {
             CommandConfigToml::Single(cmd) => {
-                // Phase will be set later when commands are collected
-                vec![Command::new(None, cmd)]
+                vec![HookStep::Single(Command::new(None, cmd))]
             }
-            CommandConfigToml::Named(map) => {
-                // IndexMap preserves insertion order from TOML
-                // Validate hook names don't contain colons (would break log spec parsing)
-                for name in map.keys() {
-                    if name.contains(':') {
-                        return Err(serde::de::Error::custom(format!(
-                            "hook name '{}' cannot contain colons",
-                            name
-                        )));
+            CommandConfigToml::Pipeline(entries) => {
+                let mut steps = Vec::new();
+                for entry in entries {
+                    match entry {
+                        PipelineEntry::Anonymous(cmd) => {
+                            steps.push(HookStep::Single(Command::new(None, cmd)));
+                        }
+                        PipelineEntry::Named(map) => {
+                            if map.is_empty() {
+                                continue;
+                            }
+                            validate_no_colons(&map)?;
+                            steps.push(map_to_step(map));
+                        }
                     }
                 }
-                map.into_iter()
+                steps
+            }
+            CommandConfigToml::Concurrent(map) => {
+                validate_no_colons(&map)?;
+                let commands: Vec<Command> = map
+                    .into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
-                    .collect()
+                    .collect();
+                vec![HookStep::Concurrent(commands)]
             }
         };
-        Ok(CommandConfig { commands })
+        Ok(CommandConfig { steps })
     }
 }
 
-// JsonSchema for CommandConfig - describes the two TOML formats
+// JsonSchema for CommandConfig
 impl JsonSchema for CommandConfig {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "CommandConfig".into()
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        // CommandConfig accepts either a string or an object with string values
-        // We just need this for schema generation, not validation
         schemars::json_schema!({
             "oneOf": [
                 { "type": "string" },
-                { "type": "object", "additionalProperties": { "type": "string" } }
+                {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            { "type": "string" },
+                            {
+                                "type": "object",
+                                "additionalProperties": { "type": "string" }
+                            }
+                        ]
+                    }
+                }
             ]
         })
     }
@@ -135,28 +250,73 @@ impl Serialize for CommandConfig {
     where
         S: serde::Serializer,
     {
-        // If single unnamed command, serialize as string
-        if self.commands.len() == 1 && self.commands[0].name.is_none() {
-            return self.commands[0].template.serialize(serializer);
+        // Single unnamed command → string
+        if self.steps.len() == 1
+            && let HookStep::Single(cmd) = &self.steps[0]
+            && cmd.name.is_none()
+        {
+            return cmd.template.serialize(serializer);
         }
 
-        // Serialize as named map. Generate keys for unnamed commands (can happen
-        // when merging unnamed global hooks with named project hooks, though
-        // merged configs are only used for execution, never serialized in production).
-        let mut map = serializer.serialize_map(Some(self.commands.len()))?;
-        let mut unnamed_counter = 0u32;
-        for cmd in &self.commands {
-            let key = match &cmd.name {
-                Some(name) => name.clone(),
-                None => {
-                    unnamed_counter += 1;
-                    format!("_{unnamed_counter}")
-                }
-            };
-            map.serialize_entry(&key, &cmd.template)?;
+        // Single concurrent step (all named) → named table
+        if self.steps.len() == 1
+            && let HookStep::Concurrent(cmds) = &self.steps[0]
+        {
+            return serialize_commands_as_map(cmds, serializer);
         }
-        map.end()
+
+        // Pipeline → array of mixed strings and tables
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.steps.len()))?;
+        for step in &self.steps {
+            match step {
+                HookStep::Single(cmd) => {
+                    if let Some(name) = &cmd.name {
+                        let mut map = IndexMap::new();
+                        map.insert(name.as_str(), cmd.template.as_str());
+                        seq.serialize_element(&map)?;
+                    } else {
+                        seq.serialize_element(&cmd.template)?;
+                    }
+                }
+                HookStep::Concurrent(cmds) => {
+                    let mut map = IndexMap::new();
+                    let mut unnamed_counter = 0u32;
+                    for c in cmds {
+                        let key = match &c.name {
+                            Some(name) => name.as_str().to_string(),
+                            None => {
+                                unnamed_counter += 1;
+                                format!("_{unnamed_counter}")
+                            }
+                        };
+                        map.insert(key, c.template.as_str());
+                    }
+                    seq.serialize_element(&map)?;
+                }
+            }
+        }
+        seq.end()
     }
+}
+
+fn serialize_commands_as_map<S>(cmds: &[Command], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut map = serializer.serialize_map(Some(cmds.len()))?;
+    let mut unnamed_counter = 0u32;
+    for cmd in cmds {
+        let key = match &cmd.name {
+            Some(name) => name.clone(),
+            None => {
+                unnamed_counter += 1;
+                format!("_{unnamed_counter}")
+            }
+        };
+        map.serialize_entry(&key, &cmd.template)?;
+    }
+    map.end()
 }
 
 #[cfg(test)]
@@ -166,7 +326,7 @@ mod tests {
     use super::*;
 
     // ============================================================================
-    // Command Tests
+    // Deserialization Tests
     // ============================================================================
 
     #[test]
@@ -179,10 +339,14 @@ mod tests {
         }
 
         let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
-        let commands = wrapper.command.commands();
+        let commands: Vec<_> = wrapper.command.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, None);
         assert_eq!(commands[0].template, "npm install");
+
+        // Single string → one Single step
+        assert_eq!(wrapper.command.steps().len(), 1);
+        assert!(matches!(&wrapper.command.steps()[0], HookStep::Single(_)));
     }
 
     #[test]
@@ -199,15 +363,21 @@ test = "cargo test"
         }
 
         let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
-        let commands = wrapper.command.commands();
+        let commands: Vec<_> = wrapper.command.commands().collect();
         assert_eq!(commands.len(), 2);
         assert!(commands.iter().any(|c| c.name == Some("build".to_string())));
         assert!(commands.iter().any(|c| c.name == Some("test".to_string())));
+
+        // Named table → one Concurrent step
+        assert_eq!(wrapper.command.steps().len(), 1);
+        assert!(matches!(
+            &wrapper.command.steps()[0],
+            HookStep::Concurrent(cmds) if cmds.len() == 2
+        ));
     }
 
     #[test]
     fn test_deserialize_preserves_order() {
-        // Order should match TOML insertion order
         let toml_str = r#"
 [command]
 first = "echo 1"
@@ -221,9 +391,8 @@ third = "echo 3"
         }
 
         let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
-        let commands = wrapper.command.commands();
+        let commands: Vec<_> = wrapper.command.commands().collect();
         assert_eq!(commands.len(), 3);
-        // IndexMap preserves insertion order
         assert_eq!(commands[0].name, Some("first".to_string()));
         assert_eq!(commands[1].name, Some("second".to_string()));
         assert_eq!(commands[2].name, Some("third".to_string()));
@@ -231,7 +400,6 @@ third = "echo 3"
 
     #[test]
     fn test_deserialize_rejects_colons_in_name() {
-        // Hook names cannot contain colons (would break log spec parsing)
         let toml_str = r#"
 [command]
 "my:server" = "npm start"
@@ -254,12 +422,103 @@ third = "echo 3"
     }
 
     // ============================================================================
-    // CommandConfig Serialization Tests
+    // Pipeline Deserialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_pipeline_strings() {
+        let toml_str = r#"command = ["npm install", "npm run build"]"#;
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            command: CommandConfig,
+        }
+
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(wrapper.command.steps().len(), 2);
+        assert!(
+            matches!(&wrapper.command.steps()[0], HookStep::Single(c) if c.template == "npm install")
+        );
+        assert!(
+            matches!(&wrapper.command.steps()[1], HookStep::Single(c) if c.template == "npm run build")
+        );
+    }
+
+    #[test]
+    fn test_deserialize_pipeline_mixed() {
+        let toml_str = r#"command = [
+    "npm install",
+    { build = "npm run build", lint = "npm run lint" }
+]"#;
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            command: CommandConfig,
+        }
+
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(wrapper.command.steps().len(), 2);
+        assert!(matches!(&wrapper.command.steps()[0], HookStep::Single(c) if c.name.is_none()));
+        assert!(matches!(
+            &wrapper.command.steps()[1],
+            HookStep::Concurrent(cmds) if cmds.len() == 2
+        ));
+
+        let commands: Vec<_> = wrapper.command.commands().collect();
+        assert_eq!(commands.len(), 3);
+    }
+
+    #[test]
+    fn test_deserialize_pipeline_named_single() {
+        // Single-entry map in list → named serial step
+        let toml_str = r#"command = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" }
+]"#;
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            command: CommandConfig,
+        }
+
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(wrapper.command.steps().len(), 2);
+
+        // First step: named single
+        if let HookStep::Single(cmd) = &wrapper.command.steps()[0] {
+            assert_eq!(cmd.name.as_deref(), Some("install"));
+            assert_eq!(cmd.template, "npm install");
+        } else {
+            panic!("Expected Single step");
+        }
+
+        // Second step: concurrent group
+        assert!(matches!(
+            &wrapper.command.steps()[1],
+            HookStep::Concurrent(cmds) if cmds.len() == 2
+        ));
+    }
+
+    #[test]
+    fn test_deserialize_pipeline_rejects_colons() {
+        let toml_str = r#"command = [{ "my:hook" = "npm start" }]"#;
+
+        #[derive(Debug, Deserialize)]
+        struct Wrapper {
+            #[serde(rename = "command")]
+            _command: CommandConfig,
+        }
+
+        let result: Result<Wrapper, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Serialization Tests
     // ============================================================================
 
     #[test]
     fn test_serialize_single_unnamed() {
-        // A single unnamed command should serialize as a string (when wrapped in a struct)
         #[derive(Serialize)]
         struct Wrapper {
             cmd: CommandConfig,
@@ -267,7 +526,10 @@ third = "echo 3"
 
         let wrapper = Wrapper {
             cmd: CommandConfig {
-                commands: vec![Command::new(None, "npm install".to_string())],
+                steps: vec![HookStep::Single(Command::new(
+                    None,
+                    "npm install".to_string(),
+                ))],
             },
         };
 
@@ -275,8 +537,7 @@ third = "echo 3"
     }
 
     #[test]
-    fn test_serialize_named_commands() {
-        // Multiple named commands should serialize as a table
+    fn test_serialize_concurrent() {
         #[derive(Serialize)]
         struct Wrapper {
             cmd: CommandConfig,
@@ -284,10 +545,10 @@ third = "echo 3"
 
         let wrapper = Wrapper {
             cmd: CommandConfig {
-                commands: vec![
+                steps: vec![HookStep::Concurrent(vec![
                     Command::new(Some("build".to_string()), "cargo build".to_string()),
                     Command::new(Some("test".to_string()), "cargo test".to_string()),
-                ],
+                ])],
             },
         };
 
@@ -299,9 +560,34 @@ third = "echo 3"
     }
 
     #[test]
+    fn test_serialize_pipeline() {
+        #[derive(Serialize)]
+        struct Wrapper {
+            cmd: CommandConfig,
+        }
+
+        let wrapper = Wrapper {
+            cmd: CommandConfig {
+                steps: vec![
+                    HookStep::Single(Command::new(None, "npm install".to_string())),
+                    HookStep::Concurrent(vec![
+                        Command::new(Some("build".to_string()), "npm run build".to_string()),
+                        Command::new(Some("lint".to_string()), "npm run lint".to_string()),
+                    ]),
+                ],
+            },
+        };
+
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"cmd = ["npm install", { build = "npm run build", lint = "npm run lint" }]"#);
+    }
+
+    #[test]
     fn test_serialize_deserialize_roundtrip_single() {
         let config = CommandConfig {
-            commands: vec![Command::new(None, "echo hello".to_string())],
+            steps: vec![HookStep::Single(Command::new(
+                None,
+                "echo hello".to_string(),
+            ))],
         };
 
         #[derive(Serialize, Deserialize)]
@@ -313,17 +599,20 @@ third = "echo 3"
         let serialized = toml::to_string(&wrapper).unwrap();
         let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
 
-        assert_eq!(deserialized.cmd.commands().len(), 1);
-        assert_eq!(deserialized.cmd.commands()[0].template, "echo hello");
+        assert_eq!(deserialized.cmd.commands().count(), 1);
+        assert_eq!(
+            deserialized.cmd.commands().next().unwrap().template,
+            "echo hello"
+        );
     }
 
     #[test]
     fn test_serialize_deserialize_roundtrip_named() {
         let config = CommandConfig {
-            commands: vec![
+            steps: vec![HookStep::Concurrent(vec![
                 Command::new(Some("a".to_string()), "echo a".to_string()),
                 Command::new(Some("b".to_string()), "echo b".to_string()),
-            ],
+            ])],
         };
 
         #[derive(Serialize, Deserialize)]
@@ -335,91 +624,60 @@ third = "echo 3"
         let serialized = toml::to_string(&wrapper).unwrap();
         let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
 
-        assert_eq!(deserialized.cmd.commands().len(), 2);
+        assert_eq!(deserialized.cmd.commands().count(), 2);
     }
 
     // ============================================================================
-    // CommandConfig Methods Tests
+    // Commands() Flattening Tests
     // ============================================================================
 
     #[test]
-    fn test_commands_returns_slice() {
+    fn test_commands_flattens_pipeline() {
         let config = CommandConfig {
-            commands: vec![
-                Command::new(None, "cmd1".to_string()),
-                Command::new(None, "cmd2".to_string()),
+            steps: vec![
+                HookStep::Single(Command::new(None, "cmd1".to_string())),
+                HookStep::Concurrent(vec![
+                    Command::new(Some("a".to_string()), "cmd2".to_string()),
+                    Command::new(Some("b".to_string()), "cmd3".to_string()),
+                ]),
+                HookStep::Single(Command::new(None, "cmd4".to_string())),
             ],
         };
 
-        let cmds = config.commands();
-        assert_eq!(cmds.len(), 2);
+        let cmds: Vec<_> = config.commands().collect();
+        assert_eq!(cmds.len(), 4);
         assert_eq!(cmds[0].template, "cmd1");
         assert_eq!(cmds[1].template, "cmd2");
-    }
-
-    #[test]
-    fn test_command_config_equality() {
-        let config1 = CommandConfig {
-            commands: vec![Command::new(None, "test".to_string())],
-        };
-        let config2 = CommandConfig {
-            commands: vec![Command::new(None, "test".to_string())],
-        };
-        assert_eq!(config1, config2);
-    }
-
-    #[test]
-    fn test_command_config_merge_append() {
-        let base = CommandConfig {
-            commands: vec![
-                Command::new(None, "echo base1".to_string()),
-                Command::new(Some("named".to_string()), "echo base2".to_string()),
-            ],
-        };
-        let overlay = CommandConfig {
-            commands: vec![Command::new(None, "echo overlay".to_string())],
-        };
-
-        let merged = base.merge_append(&overlay);
-        assert_eq!(merged.commands.len(), 3);
-        assert_eq!(merged.commands[0].template, "echo base1");
-        assert_eq!(merged.commands[1].template, "echo base2");
-        assert_eq!(merged.commands[2].template, "echo overlay");
-    }
-
-    #[test]
-    fn test_command_config_merge_append_empty_base() {
-        let base = CommandConfig { commands: vec![] };
-        let overlay = CommandConfig {
-            commands: vec![Command::new(None, "echo overlay".to_string())],
-        };
-
-        let merged = base.merge_append(&overlay);
-        assert_eq!(merged.commands.len(), 1);
-        assert_eq!(merged.commands[0].template, "echo overlay");
-    }
-
-    #[test]
-    fn test_command_config_merge_append_empty_overlay() {
-        let base = CommandConfig {
-            commands: vec![Command::new(None, "echo base".to_string())],
-        };
-        let overlay = CommandConfig { commands: vec![] };
-
-        let merged = base.merge_append(&overlay);
-        assert_eq!(merged.commands.len(), 1);
-        assert_eq!(merged.commands[0].template, "echo base");
+        assert_eq!(cmds[2].template, "cmd3");
+        assert_eq!(cmds[3].template, "cmd4");
     }
 
     // ============================================================================
-    // Serialization Edge Cases (merged configs)
+    // Merge Tests
     // ============================================================================
-    //
-    // Note: Merged configs (from merge_append) are only used for execution,
-    // never serialized in production. These tests verify serialization doesn't
-    // panic, but round-trip fidelity isn't required.
 
-    /// Serializing a merged config with mixed named/unnamed commands doesn't panic.
+    #[test]
+    fn test_merge_append_steps() {
+        let base = CommandConfig {
+            steps: vec![HookStep::Single(Command::new(None, "step1".to_string()))],
+        };
+        let overlay = CommandConfig {
+            steps: vec![HookStep::Concurrent(vec![
+                Command::new(Some("a".to_string()), "step2a".to_string()),
+                Command::new(Some("b".to_string()), "step2b".to_string()),
+            ])],
+        };
+
+        let merged = base.merge_append(&overlay);
+        assert_eq!(merged.steps.len(), 2);
+        assert!(matches!(&merged.steps[0], HookStep::Single(_)));
+        assert!(matches!(&merged.steps[1], HookStep::Concurrent(_)));
+    }
+
+    // ============================================================================
+    // Backward Compatibility
+    // ============================================================================
+
     #[test]
     fn test_serialize_mixed_named_unnamed_succeeds() {
         #[derive(Serialize)]
@@ -429,24 +687,23 @@ third = "echo 3"
 
         // Simulate merge of unnamed global + named project hooks
         let global = CommandConfig {
-            commands: vec![Command::new(None, "npm install".to_string())],
+            steps: vec![HookStep::Single(Command::new(
+                None,
+                "npm install".to_string(),
+            ))],
         };
         let per_project = CommandConfig {
-            commands: vec![Command::new(
+            steps: vec![HookStep::Concurrent(vec![Command::new(
                 Some("setup".to_string()),
                 "echo setup".to_string(),
-            )],
+            )])],
         };
 
         let merged = global.merge_append(&per_project);
-        assert_eq!(merged.commands.len(), 2);
+        assert_eq!(merged.steps.len(), 2);
 
-        // Should not panic - generates "_1" for unnamed command
+        // Pipeline serialization
         let wrapper = Wrapper { cmd: merged };
-        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"
-        [cmd]
-        _1 = "npm install"
-        setup = "echo setup"
-        "#);
+        assert_snapshot!(toml::to_string(&wrapper).unwrap(), @r#"cmd = ["npm install", { setup = "echo setup" }]"#);
     }
 }

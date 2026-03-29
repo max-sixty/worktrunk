@@ -2,7 +2,7 @@ use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings,
+    repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -117,6 +117,15 @@ fn test_merge_already_on_target(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
+    // Create a feature branch with a commit, then merge from main worktree into it.
+    // Main worktree can't be removed, so should show "primary worktree" preservation.
+    let feature_wt = repo.add_feature();
+    drop(feature_wt); // we don't need the path; we'll run from main
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["feature"], None));
+}
+
+#[rstest]
 fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     // Create a feature worktree with uncommitted changes
     let feature_wt = repo.add_worktree("feature");
@@ -161,7 +170,7 @@ fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -217,7 +226,7 @@ fn test_merge_rebase_conflict(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -659,12 +668,10 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 
-    // Verify the command ran in the main worktree (not the feature worktree)
+    // Verify the command ran in the main worktree (not the feature worktree).
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should have created marker file in main worktree"
-    );
+    wait_for_file(&marker_file);
     let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
         content.contains("merged feature to main"),
@@ -842,12 +849,10 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
         Some(&feature_wt)
     ));
 
-    // Verify the post-merge command ran in the main worktree
+    // Verify the post-merge command ran in the main worktree.
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should run even when nothing to merge"
-    );
+    wait_for_file(&marker_file);
 }
 
 #[rstest]
@@ -868,12 +873,10 @@ fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     // Run merge from main branch (repo root) - nothing to merge
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["--yes"], None));
 
-    // Verify the post-merge command ran
+    // Verify the post-merge command ran.
+    // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    assert!(
-        marker_file.exists(),
-        "Post-merge command should run even when on main branch"
-    );
+    wait_for_file(&marker_file);
 }
 
 #[rstest]
@@ -1179,7 +1182,7 @@ command = "{llm_path_str}"
     );
 }
 
-// NOTE: test_readme_example_hooks_post_create and test_readme_example_hooks_pre_merge
+// NOTE: test_readme_example_hooks_pre_start and test_readme_example_hooks_pre_merge
 // were removed - they're covered by PTY-based tests in shell_wrapper.rs that capture
 // combined stdout/stderr for README examples.
 
@@ -1392,7 +1395,7 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1452,7 +1455,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "-d", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     // Verify the deletion failed (non-zero exit code)
@@ -1473,7 +1476,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "--list", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1496,7 +1499,7 @@ fn test_merge_to_non_default_target(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1582,7 +1585,7 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     let output = repo
         .git_command()
         .args(["reflog", "show", "refs/wt-backup/feature"])
-        .output()
+        .run()
         .unwrap();
 
     let reflog = String::from_utf8_lossy(&output.stdout);
@@ -1624,7 +1627,7 @@ fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, 
     let after = repo
         .git_command()
         .args(["config", "receive.denyCurrentBranch"])
-        .output()
+        .run()
         .unwrap();
     let after_value = String::from_utf8_lossy(&after.stdout).trim().to_string();
 
@@ -1979,7 +1982,7 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
         .git_command()
         .current_dir(&feature_wt)
         .args(["merge", "main", "-m", "Merge main into feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -2356,7 +2359,7 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&main_wt)
-        .output()
+        .run()
         .unwrap();
     let wt_head = String::from_utf8_lossy(&wt_head_output.stdout)
         .trim()
@@ -2398,7 +2401,7 @@ fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo
     );
 
     // Verify autostash cleaned up (no leftover stash entries)
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -2447,7 +2450,7 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 
     // Verify no stash was created
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()

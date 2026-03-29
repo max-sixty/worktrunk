@@ -8,9 +8,14 @@ use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, execute_hook};
+use super::hooks::{
+    HookCommandSpec, HookFailureStrategy, execute_hook, prepare_hook_commands,
+    spawn_background_hooks,
+};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
-use super::repository_ext::RepositoryCliExt;
+use super::repository_ext::{
+    RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
+};
 use super::worktree::{
     BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
     path_mismatch,
@@ -61,6 +66,7 @@ fn collect_merge_commands(
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
     if commit && verify && will_create_commit {
         hooks.push(HookType::PreCommit);
+        hooks.push(HookType::PostCommit);
     }
 
     if verify {
@@ -138,21 +144,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target or we're in the primary worktree, disable remove (can't remove it).
-    // In normal repos, the primary worktree is the non-linked main worktree.
-    // In bare repos, all worktrees are linked — protect the default branch worktree.
-    let in_primary = !current_wt.is_linked().unwrap_or(false)
-        || (repo.is_bare()?
-            && repo
-                .default_branch()
-                .as_deref()
-                .is_some_and(|db| db == current_branch));
+    // Quick check for command approval: will removal be attempted?
+    // The authoritative guard is prepare_merge_removal (shared with wt remove),
+    // but we need a lightweight answer here to decide whether to include
+    // pre-remove/post-remove hooks in the batch approval prompt.
     let on_target = current_branch == target_branch;
-    let remove_effective = remove && !on_target && !in_primary;
+    let remove_requested = remove && !on_target;
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_effective, squash_enabled)?;
+        collect_merge_commands(repo, commit, verify, remove_requested, squash_enabled)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -217,14 +218,24 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false // Already rebased, no rebase occurred
     };
 
+    // Target worktree path for template variables (pre-merge and post-merge hooks).
+    // Computed once here so both hook sites can reference it.
+    let target_wt_path_str = target_worktree_path
+        .as_deref()
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
+        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
+        if let Some(ref p) = target_wt_path_str {
+            extra.push(("target_worktree_path", p));
+        }
         execute_hook(
             &ctx,
             HookType::PreMerge,
-            &[("target", target_branch.as_str())],
+            &extra,
             HookFailureStrategy::FailFast,
             None,
             crate::output::pre_hook_display_path(ctx.worktree_path),
@@ -251,73 +262,119 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         None => repo.home_path()?,
     };
 
-    // Finish worktree unless --no-remove was specified
-    if remove_effective {
-        // STEP 1: Check for uncommitted changes before attempting cleanup
-        // This prevents showing "Cleaning up worktree..." before failing
+    // Capture feature worktree identity BEFORE removal for post-merge template vars.
+    // After removal the feature worktree is gone, but post-merge hooks need to
+    // reference it as the Active identity (branch, worktree_path, commit).
+    let feature_path_str = worktrunk::path::to_posix_path(&env.worktree_path.to_string_lossy());
+    let feature_name = env
+        .worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let feature_commit = repo
+        .current_worktree()
+        .run_command(&["rev-parse", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string());
+    let feature_short_commit = feature_commit
+        .as_ref()
+        .filter(|c| c.len() >= 7)
+        .map(|c| c[..7].to_string());
+
+    // Finish worktree unless removal is disabled or blocked.
+    // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
+    // check_not_default_branch (Phase 3) are the same helpers both paths use.
+    let removed = if !remove {
+        eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
+        false
+    } else if on_target {
+        eprintln!(
+            "{}",
+            info_message("Worktree preserved (already on target branch)")
+        );
+        false
+    } else if is_primary_worktree(repo)? {
+        eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
+        false
+    } else {
+        // Phase 3: reject removing default branch (merge always uses SafeDelete).
+        check_not_default_branch(repo, &current_branch, &BranchDeletionMode::SafeDelete)?;
+
+        let current_wt = repo.current_worktree();
         current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
-        // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
         let worktree_root = current_wt.root()?;
-        // After a successful merge, get integration reason
-        let (_, integration_reason) = repo.integration_reason(&current_branch, &target_branch)?;
-        // Compute expected_path for path mismatch detection
+        let integration_reason = compute_integration_reason(
+            repo,
+            Some(&current_branch),
+            Some(&target_branch),
+            BranchDeletionMode::SafeDelete,
+        );
         let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
-        // Capture commit SHA before removal for post-remove hook template variables
-        let removed_commit = current_wt
-            .run_command(&["rev-parse", "HEAD"])
-            .ok()
-            .map(|s| s.trim().to_string());
+
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
-            branch_name: Some(current_branch.clone()),
+            branch_name: Some(current_branch.to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.clone()),
+            target_branch: Some(target_branch.to_string()),
             integration_reason,
-            // Don't force removal - if worktree has untracked files added after
-            // commit, removal will fail and user can run `wt remove --force`
             force_worktree: false,
             expected_path,
-            removed_commit,
+            removed_commit: feature_commit.clone(),
         };
-        // Run hooks during merge removal (pass through verify flag)
-        // Approval was handled at the gate (collect_merge_commands)
         crate::output::handle_remove_output(&remove_result, false, verify, false)?;
-    } else {
-        // Worktree preserved - show reason (priority: primary worktree > on target > --no-remove flag)
-        let message = if in_primary {
-            "Worktree preserved (primary worktree)"
-        } else if on_target {
-            "Worktree preserved (already on target branch)"
-        } else {
-            "Worktree preserved (--no-remove)"
-        };
-        eprintln!("{}", info_message(message));
-    }
+        true
+    };
 
     if verify {
-        // Execute post-merge commands in the destination worktree
-        // This runs after cleanup so the context is clear to the user
+        // Post-merge hooks run in the destination worktree (target), but bare vars
+        // point to the Active (feature branch) per the template variable model.
+        // The destination worktree is the execution context (cwd).
         let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
-        // Show path when user's shell won't be in the destination directory where hooks run.
-        let display_path = if remove_effective && !in_primary && !on_target {
-            // Worktree removed, user will cd to destination
+        let display_path = if removed {
             crate::output::post_hook_display_path(&destination_path)
         } else {
-            // No cd happens — user stays at cwd (either already at destination,
-            // or worktree preserved so they stay in feature)
             crate::output::pre_hook_display_path(&destination_path)
         };
-        execute_hook(
-            &ctx,
+
+        // Override bare vars to Active (feature branch identity)
+        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
+        if let Some(ref p) = target_wt_path_str {
+            extra.push(("target_worktree_path", p));
+        }
+        // Active = feature: override worktree_path and friends
+        extra.push(("worktree_path", &feature_path_str));
+        extra.push(("worktree", &feature_path_str)); // deprecated alias
+        extra.push(("worktree_name", &feature_name));
+        if let Some(ref c) = feature_commit {
+            extra.push(("commit", c));
+        }
+        if let Some(ref sc) = feature_short_commit {
+            extra.push(("short_commit", sc));
+        }
+
+        let project_config = ctx.repo.load_project_config()?;
+        let user_hooks_cfg = ctx.config.hooks(ctx.project_id().as_deref());
+        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
+            &user_hooks_cfg,
+            project_config.as_ref(),
             HookType::PostMerge,
-            &[("target", target_branch.as_str())],
-            HookFailureStrategy::Warn,
-            None,
-            display_path,
+        );
+        let commands = prepare_hook_commands(
+            &ctx,
+            HookCommandSpec {
+                user_config: user_cfg,
+                project_config: proj_cfg,
+                hook_type: HookType::PostMerge,
+                extra_vars: &extra,
+                name_filter: None,
+                display_path,
+            },
         )?;
+        spawn_background_hooks(&ctx, commands)?;
     }
 
     Ok(())

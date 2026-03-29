@@ -202,7 +202,7 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
 #[cfg_attr(not(unix), allow(dead_code))]
 pub enum ShowConfig {
-    /// Flags already resolved by the caller (used by `wt select`).
+    /// Flags already resolved by the caller (used by the picker).
     Resolved {
         show_branches: bool,
         show_remotes: bool,
@@ -433,7 +433,6 @@ pub fn collect(
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree
-    // TODO: show ellipsis or indicator when default_branch is None and columns are empty
     let primary_path = repo.primary_worktree()?;
     let main_worktree = primary_path
         .as_ref()
@@ -894,13 +893,14 @@ pub fn collect(
             items_with_missing,
         } = drain_outcome
     {
-        // Warning: what happened + gutter showing which results are missing
+        // Warning: what happened + gutter showing which tasks blocked
         let mut diag = format!(
             "wt list timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
 
         if !items_with_missing.is_empty() {
+            diag.push_str("\nBlocked tasks:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .map(|result| {
@@ -920,7 +920,7 @@ pub fn collect(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "A git command likely hung; run with <underline>-v</> for details, <underline>-vv</> to create a diagnostic file"
+                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
             ))
         );
     }

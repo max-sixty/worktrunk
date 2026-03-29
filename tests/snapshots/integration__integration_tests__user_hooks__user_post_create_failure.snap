@@ -38,15 +38,13 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create [1muser:failing[22m @ [1m_REPO_.feature[22m[39m
+[33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
+[36m◎[39m [36mRunning pre-start [1muser:failing[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
-[0m[31m✗[39m [31mCommand [1mfailing[22m failed: exit status: 1[39m
-[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
+[0m[31m✗[39m [31mpre-start command failed: [1mfailing[22m: exit status: 1[39m
+[2m↳[22m [2mTo skip pre-start hooks, re-run with [4m--no-verify[24m[22m

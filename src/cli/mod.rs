@@ -255,35 +255,32 @@ pub(crate) enum Commands {
 ## Examples
 
 ```console
-wt switch feature-auth           # Switch to worktree
-wt switch -                      # Previous worktree (like cd -)
-wt switch --create new-feature   # Create new branch and worktree
-wt switch --create hotfix --base production
-wt switch pr:123                 # Switch to PR #123's branch
+$ wt switch feature-auth           # Switch to worktree
+$ wt switch -                      # Previous worktree (like cd -)
+$ wt switch --create new-feature   # Create new branch and worktree
+$ wt switch --create hotfix --base production
+$ wt switch pr:123                 # Switch to PR #123's branch
 ```
 
 ## Creating a branch
 
-The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
+The `--create` flag creates a new branch from `--base` — the default branch unless specified. Without `--create`, the branch must already exist. Switching to a remote branch (e.g., `wt switch feature` when only `origin/feature` exists) creates a local tracking branch.
 
 ## Creating worktrees
 
-If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](@/hook.md).
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
-When creating a worktree, worktrunk:
-
-1. Runs [pre-switch hooks](@/hook.md#pre-switch) (blocking, fail-fast)
+1. Runs [pre-switch hooks](@/hook.md#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [post-create hooks](@/hook.md#post-create) (blocking)
-5. Spawns [post-start hooks](@/hook.md#post-start) (background)
-6. Spawns [post-switch hooks](@/hook.md#post-switch) (background)
+4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
+5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
 ```console
-wt switch feature                        # Existing branch → creates worktree
-wt switch --create feature               # New branch and worktree
-wt switch --create fix --base release    # New branch from release
-wt switch --create temp --no-verify      # Skip hooks
+$ wt switch feature                        # Existing branch → creates worktree
+$ wt switch --create feature               # New branch and worktree
+$ wt switch --create fix --base release    # New branch from release
+$ wt switch --create temp --no-verify      # Skip hooks
 ```
 
 ## Shortcuts
@@ -297,16 +294,16 @@ wt switch --create temp --no-verify      # Skip hooks
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```console
-wt switch -                      # Back to previous
-wt switch ^                      # Default branch worktree
-wt switch --create fix --base=@  # Branch from current HEAD
-wt switch pr:123                 # PR #123's branch
-wt switch mr:101                 # MR !101's branch
+$ wt switch -                      # Back to previous
+$ wt switch ^                      # Default branch worktree
+$ wt switch --create fix --base=@  # Branch from current HEAD
+$ wt switch pr:123                 # PR #123's branch
+$ wt switch mr:101                 # MR !101's branch
 ```
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
 
 <!-- demo: wt-switch-picker.gif 1600x800 -->
 **Keybindings:**
@@ -316,20 +313,19 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `↑`/`↓` | Navigate worktree list |
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
-| `Alt-c` | Create new worktree from query |
-| `Alt-r` | Remove selected worktree |
+| `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-**Preview tabs** (toggle with number keys):
+**Preview tabs** — toggle with number keys:
 
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
-4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
-5. **summary** — LLM-generated branch summary (requires `[list] summary = true` and `[commit.generation]`)
+4. **remote⇅** — Ahead/behind diff vs upstream tracking branch
+5. **summary** — LLM-generated branch summary; requires `[list] summary = true` and `[commit.generation]`
 
 **Pager configuration:** The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -345,8 +341,8 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```console
-wt switch pr:101                 # GitHub PR #101
-wt switch mr:101                 # GitLab MR !101
+$ wt switch pr:101                 # GitHub PR #101
+$ wt switch mr:101                 # GitLab MR !101
 ```
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
@@ -504,17 +500,17 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](@/config.md#commit)) [experimental] |
+| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status (`--full`) |
+| CI | Pipeline status; `--full` only |
 | Path | Worktree directory |
-| URL | Dev server URL from project config (dimmed if port not listening) |
+| URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch (header label stays `main` for compactness). `main…±` uses a merge-base (three-dot) diff.
+Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
 
 ### CI status
 
@@ -530,7 +526,7 @@ The CI column shows GitHub/GitLab pipeline status:
 | `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ### LLM summaries [experimental]
 
@@ -554,7 +550,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
 | | `∅` | Orphan branch (no common ancestor with the default branch) |
-| | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
+| | `✗` | Would conflict if merged to the default branch; with `--full`, includes uncommitted changes |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
 | | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
@@ -585,28 +581,28 @@ Query structured data with `--format=json`:
 
 ```console
 # Current worktree path (for scripts)
-wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+$ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
 
 # Branches with uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+$ wt list --format=json | jq '.[] | select(.working_tree.modified)'
 
 # Worktrees with merge conflicts
-wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
+$ wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
 # Branches ahead of main (needs merging)
-wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
+$ wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
 # Integrated branches (safe to remove)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
+$ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
 # Branches without worktrees
-wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
+$ wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
 # Worktrees ahead of remote (needs pushing)
-wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+$ wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
 
 # Stale CI (local changes not reflected in CI)
-wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+$ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -620,17 +616,17 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `working_tree` | object | Working tree state (see below) |
 | `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
-| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
-| `main` | object | Relationship to the default branch (see below, absent when is_main) |
-| `remote` | object | Tracking branch info (see below, absent when no tracking) |
+| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"`; absent when clean |
+| `main` | object | Relationship to the default branch (see below); absent when is_main |
+| `remote` | object | Tracking branch info (see below); absent when no tracking |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
-| `ci` | object | CI status (see below, absent when no CI) |
-| `url` | string | Dev server URL from project config (absent when not configured) |
-| `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
-| `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
+| `ci` | object | CI status (see below); absent when no CI |
+| `url` | string | Dev server URL from project config; absent when not configured |
+| `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
+| `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `kv` | object | Per-branch key-value data from `wt config state kv` (absent when empty) |
@@ -756,31 +752,31 @@ Missing a field that would be generally useful? Open an issue at https://github.
 Remove current worktree:
 
 ```console
-wt remove
+$ wt remove
 ```
 
 Remove specific worktrees / branches:
 
 ```console
-wt remove feature-branch
-wt remove old-feature another-branch
+$ wt remove feature-branch
+$ wt remove old-feature another-branch
 ```
 
 Keep the branch:
 
 ```console
-wt remove --no-delete-branch feature-branch
+$ wt remove --no-delete-branch feature-branch
 ```
 
 Force-delete an unmerged branch:
 
 ```console
-wt remove -D experimental
+$ wt remove -D experimental
 ```
 
 ## Branch cleanup
 
-By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
+By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
 Worktrunk checks five conditions (in order of cost):
 
@@ -792,7 +788,7 @@ Worktrunk checks five conditions (in order of cost):
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
-Branches showing `_` or `⊂` are dimmed as safe to delete.
+Branches matching these conditions and with empty working trees are dimmed in `wt list` as safe to delete.
 
 ## Force flags
 
@@ -800,24 +796,28 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has untracked files (build artifacts, IDE config) |
+| `--force` (`-f`) | Worktree | Worktree has untracked files |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
 ```console
-wt remove feature --force       # Remove worktree with untracked files
-wt remove feature -D            # Delete unmerged branch
-wt remove feature --force -D    # Both
+$ wt remove feature --force       # Remove worktree with untracked files
+$ wt remove feature -D            # Delete unmerged branch
+$ wt remove feature --force -D    # Both
 ```
 
-Without `--force`, removal fails if the worktree contains untracked files. Without `-D`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default — the command returns immediately. Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 
 `pre-remove` hooks run before the worktree is deleted (with access to worktree files). `post-remove` hooks run after removal. See [`wt hook`](@/hook.md) for configuration.
+
+## Detached HEAD worktrees
+
+Detached worktrees have no branch name. Pass the worktree path instead: `wt remove /path/to/worktree`.
 
 ## See also
 
@@ -857,11 +857,11 @@ Removal runs in the background by default (returns immediately). Logs are writte
         force: bool,
     },
 
-    /// Merge current branch into target
+    /// Merge current branch into the target branch
     ///
-    /// Squash & rebase, fast-forward target, remove the worktree.
+    /// Squash & rebase, fast-forward the target branch, remove the worktree.
     #[command(
-        after_long_help = r#"Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
+        after_long_help = r#"Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
 <!-- demo: wt-merge.gif 1600x900 -->
 ## Examples
@@ -869,52 +869,53 @@ Removal runs in the background by default (returns immediately). Logs are writte
 Merge to the default branch:
 
 ```console
-wt merge
+$ wt merge
 ```
 
 Merge to a different branch:
 
 ```console
-wt merge develop
+$ wt merge develop
 ```
 
 Keep the worktree after merging:
 
 ```console
-wt merge --no-remove
+$ wt merge --no-remove
 ```
 
 Preserve commit history (no squash):
 
 ```console
-wt merge --no-squash
+$ wt merge --no-squash
 ```
 
-Create a merge commit (semi-linear history):
+Create a merge commit — semi-linear history:
 
 ```console
-wt merge --no-ff
+$ wt merge --no-ff
 ```
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
-wt merge --no-commit
+$ wt merge --no-commit
 ```
 
 ## Pipeline
 
 `wt merge` runs these steps:
 
-1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
-2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
-3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
-4. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
-5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
-7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
+1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
+2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
+3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
+4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
+5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history with rebased commits plus a merge commit. Non-fast-forward merges are rejected.
+6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
+7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
+8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
 
 ## Local CI
 
@@ -1028,16 +1029,16 @@ lint = "cargo clippy"
 Commit with LLM-generated message:
 
 ```console
-wt step commit
+$ wt step commit
 ```
 
 Manual merge workflow with review between steps:
 
 ```console
-wt step commit
-wt step squash
-wt step rebase
-wt step push
+$ wt step commit
+$ wt step squash
+$ wt step rebase
+$ wt step push
 ```
 
 ## Operations
@@ -1069,9 +1070,9 @@ wt step push
 <!-- subdoc: promote -->
 <!-- subdoc: prune -->
 <!-- subdoc: relocate -->
-## Aliases
+## Aliases [experimental]
 
-[experimental] Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
+Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
 
 ```toml
 # .config/wt.toml
@@ -1081,13 +1082,13 @@ port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
 ```console
-wt step deploy                            # run the alias
-wt step deploy --dry-run                  # show expanded command
-wt step deploy --var env=staging          # pass extra template variables
-wt step deploy --yes                      # skip approval prompt
+$ wt step deploy                            # run the alias
+$ wt step deploy --dry-run                  # show expanded command
+$ wt step deploy --var env=staging          # pass extra template variables
+$ wt step deploy --yes                      # skip approval prompt
 ```
 
-When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
+When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 
 Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run."#
     )]
@@ -1099,121 +1100,36 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
     /// Run configured hooks
     #[command(
         name = "hook",
-        after_long_help = r#"Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user (`~/.config/worktrunk/config.toml`) and project (`.config/wt.toml`) hooks are supported.
+        after_long_help = r#"Hooks are shell commands that run at key points in the worktree lifecycle — automatically during `wt switch`, `wt merge`, & `wt remove`, or on demand via `wt hook <type>`. Both user and project hooks are supported.
 
 # Hook Types
 
-| Hook | When | Blocking | Fail-fast |
-|------|------|----------|-----------|
-| `pre-switch` | Before every switch | Yes | Yes |
-| `post-create` | After worktree created | Yes | No |
-| `post-start` | After worktree created | No | No |
-| `post-switch` | After every switch | No | No |
-| `pre-commit` | Before commit during merge | Yes | Yes |
-| `pre-merge` | Before merging to target | Yes | Yes |
-| `post-merge` | After successful merge | Yes | No |
-| `pre-remove` | Before worktree removed | Yes | Yes |
-| `post-remove` | After worktree removed | No | No |
+| Event | `pre-` — blocking | `post-` — background |
+|-------|-------------------|---------------------|
+| **switch** | `pre-switch` | `post-switch` |
+| **start** | `pre-start` | `post-start` |
+| **commit** | `pre-commit` | `post-commit` |
+| **merge** | `pre-merge` | `post-merge` |
+| **remove** | `pre-remove` | `post-remove` |
 
-**Blocking**: Command waits for hook to complete before continuing.
-**Fail-fast**: First failure aborts the operation.
-
-Background hooks show a single-line summary by default. Use `-v` to see expanded command details.
+`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](@/config.md#wt-config-state-logs) to find and manage log files). Use `-v` to see expanded command details for background hooks.
 
 The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
 
-## pre-switch
+| Hook | Purpose |
+|------|---------|
+| `pre-switch` | Runs before branch resolution or worktree creation. `{{ branch }}` is the destination as typed (before resolution) |
+| `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
+| `pre-start` | Tasks that must complete before `post-start`/`--execute`: dependency install, env file generation |
+| `post-start` | Dev servers, long builds, file watchers, copying caches |
+| `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
+| `post-commit` | CI triggers, notifications, background linting |
+| `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
+| `post-merge` | Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the primary worktree |
+| `pre-remove` | Cleanup before worktree deletion: saving test artifacts, backing up state. Runs in the worktree being removed |
+| `post-remove` | Stopping dev servers, removing containers, notifying external systems. Template variables reference the removed worktree |
 
-Runs before every `wt switch` — before branch resolution or worktree creation. `{{ branch }}` is the destination branch argument as the user typed it (before resolution). Failure aborts the switch.
-
-```toml
-[pre-switch]
-# Pull if last fetch was more than 6 hours ago
-pull = """
-FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
-if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
-    git pull
-fi
-"""
-```
-
-## post-create
-
-Tasks that must complete before `post-start` hooks or `--execute` run: dependency installation, environment file generation.
-
-```toml
-[post-create]
-install = "npm ci"
-env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
-```
-
-## post-start
-
-Dev servers, long builds, file watchers, copying caches. Output logged to `.git/wt/logs/{branch}-{source}-post-start-{name}.log`.
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-```
-
-## post-switch
-
-Triggers on all switch results: creating new worktrees, switching to existing ones, or staying on current. Output logged to `.git/wt/logs/{branch}-{source}-post-switch-{name}.log`.
-
-```toml
-[post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
-```
-
-## pre-commit
-
-Formatters, linters, type checking — runs during `wt merge` before the squash commit.
-
-```toml
-[pre-commit]
-format = "cargo fmt -- --check"
-lint = "cargo clippy -- -D warnings"
-```
-
-## pre-merge
-
-Tests, security scans, build verification — runs after rebase, before merge to target.
-
-```toml
-[pre-merge]
-test = "cargo test"
-build = "cargo build --release"
-```
-
-## post-merge
-
-Deployment, notifications, installing updated binaries. Runs in the target branch worktree if it exists, otherwise the main worktree.
-
-```toml
-post-merge = "cargo install --path ."
-```
-
-## pre-remove
-
-Cleanup tasks before worktree is deleted, saving test artifacts, backing up state. Runs in the worktree being removed, with access to worktree files.
-
-```toml
-[pre-remove]
-archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
-```
-
-## post-remove
-
-Cleanup tasks after worktree removal: stopping dev servers, removing containers, notifying external systems. All template variables reference the removed worktree, so cleanup scripts can identify resources to clean up. Output logged to `.git/wt/logs/{branch}-{source}-post-remove-{name}.log`.
-
-```toml
-[post-remove]
-kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
-remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
-```
-
-During `wt merge`, hooks run in this order: pre-commit → pre-merge → pre-remove → post-remove → post-merge. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
+During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-merge → pre-remove → post-remove + post-merge. As usual, post-* hooks run in the background. See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 # Security
 
@@ -1222,67 +1138,49 @@ Project commands require approval on first run:
 ```
 ▲ repo needs approval to execute 3 commands:
 
-○ post-create install:
-   echo 'Installing dependencies...'
+○ pre-start install:
+   npm ci
+○ pre-start build:
+   cargo build --release
+○ pre-start env:
+   echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]
 ```
 
-- Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
+- Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
-- Use `--yes` to bypass prompts (useful for CI/automation)
+- Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-verify` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
 # Configuration
 
-Hooks can be defined in two places: project config (`.config/wt.toml`) for repository-specific automation, or user config (`~/.config/worktrunk/config.toml`) for personal automation across all repositories.
-
-## Project hooks
-
-Project hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format — a single command or multiple named commands:
 
 ```toml
 # Single command (string)
-post-create = "npm install"
+pre-start = "npm install"
 
-# Multiple commands (table) — run sequentially in declaration order
+# Multiple commands (table)
 [pre-merge]
 test = "cargo test"
 build = "cargo build --release"
 ```
 
-## User hooks
+For pre-* hooks, commands in a table run sequentially. For post-* hooks, they run concurrently in the background. Post-* hooks that need ordering guarantees can use [pipeline ordering](#pipeline-ordering).
 
-Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval. For repository-specific user hooks, see [setting overrides](@/config.md#setting-overrides).
-
-```toml
-# ~/.config/worktrunk/config.toml
-[post-create]
-setup = "echo 'Setting up worktree...'"
-
-[pre-merge]
-notify = "notify-send 'Merging {{ branch }}'"
-```
-
-User hooks support the same hook types and template variables as project hooks.
-
-**Key differences from project hooks:**
+## Project vs user hooks
 
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories (or per-project) |
+| Scope | Single repository | All repositories (or [per-project](@/config.md#setting-overrides)) |
 | Approval | Required | Not required |
-| Execution order | After user hooks | Global first, then per-project |
+| Execution order | After user hooks | First |
 
-Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
-
-**Use cases:**
-- Personal notifications or logging
-- Editor/IDE integration
-- Repository-agnostic setup tasks
+Skip all hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 
@@ -1290,29 +1188,41 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Description |
 |----------|-------------|
+| `{{ branch }}` | Active branch name |
+| `{{ worktree_path }}` | Active worktree path |
+| `{{ worktree_name }}` | Active worktree directory name |
+| `{{ commit }}` | Active branch HEAD SHA |
+| `{{ short_commit }}` | Active branch HEAD SHA (7 chars) |
+| `{{ upstream }}` | Active branch upstream (if tracking a remote) |
+| `{{ base }}` | Base branch name |
+| `{{ base_worktree_path }}` | Base worktree path |
+| `{{ target }}` | Target branch name |
+| `{{ target_worktree_path }}` | Target worktree path |
+| `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
-| `{{ branch }}` | Branch name |
-| `{{ worktree_name }}` | Worktree directory name |
-| `{{ worktree_path }}` | Absolute worktree path |
-| `{{ primary_worktree_path }}` | Primary worktree path (main worktree for normal repos; default branch worktree for bare repos) |
+| `{{ primary_worktree_path }}` | Primary worktree path |
 | `{{ default_branch }}` | Default branch name |
-| `{{ commit }}` | Full HEAD commit SHA |
-| `{{ short_commit }}` | Short HEAD commit SHA (7 chars) |
 | `{{ remote }}` | Primary remote name |
 | `{{ remote_url }}` | Remote URL |
-| `{{ upstream }}` | Upstream tracking branch (if set) |
-| `{{ hook_type }}` | Hook type being run (e.g. `post-create`, `pre-merge`) |
+| `{{ hook_type }}` | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ target }}` | Target branch (merge hooks only) |
-| `{{ base }}` | Base branch (creation hooks only) |
-| `{{ base_worktree_path }}` | Base branch worktree (creation hooks only) |
 | `{{ kv.<key> }}` | Per-branch kv data from `wt config state kv` |
 
-Some variables may not be defined: `upstream` is only set when the branch tracks a remote; `hook_name` is only set for named commands; `target`, `base`, and `base_worktree_path` are hook-specific; `kv` keys may not exist. Using an undefined variable directly errors — use conditionals or defaults for optional behavior:
+Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
+
+| Operation | Bare vars | `base` | `target` |
+|-----------|-----------|--------|----------|
+| switch/create | destination | where you came from | = bare vars |
+| merge | feature being merged | = bare vars | merge target |
+| remove | branch being removed | = bare vars | where you end up |
+
+Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
+
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `kv` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
-[post-create]
+[pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
@@ -1334,7 +1244,7 @@ Templates support Jinja2 filters for transforming values:
 | `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 63 chars) |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers (lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words). The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
 [post-start]
@@ -1361,7 +1271,7 @@ Templates also support functions for dynamic lookups:
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
 ```toml
-[post-create]
+[pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
@@ -1371,8 +1281,8 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
 
 ```toml
-[post-create]
-setup = "python3 scripts/post-create-setup.py"
+[pre-start]
+setup = "python3 scripts/pre-start-setup.py"
 ```
 
 ```python
@@ -1387,34 +1297,92 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
 ```console
-wt hook pre-merge              # Run all pre-merge hooks
-wt hook pre-merge test         # Run hooks named "test" from both sources
-wt hook pre-merge user:        # Run all user hooks
-wt hook pre-merge project:     # Run all project hooks
-wt hook pre-merge user:test    # Run only user's "test" hook
-wt hook pre-merge project:test # Run only project's "test" hook
-wt hook pre-merge --yes        # Skip approval prompts (for CI)
-wt hook post-create --var branch=feature/test  # Override template variable
+$ wt hook pre-merge              # Run all pre-merge hooks
+$ wt hook pre-merge test         # Run hooks named "test" from both sources
+$ wt hook pre-merge user:        # Run all user hooks
+$ wt hook pre-merge project:     # Run all project hooks
+$ wt hook pre-merge user:test    # Run only user's "test" hook
+$ wt hook pre-merge project:test # Run only project's "test" hook
+$ wt hook pre-merge --yes        # Skip approval prompts (for CI)
+$ wt hook pre-start --var branch=feature/test     # Override template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
+# Pipeline Ordering [experimental]
+
+By default, all commands in a `post-*` hook run concurrently in the background. The TOML type determines execution order. In the simplest case, a string runs one command:
+
+```toml
+post-start = "npm install"
+```
+
+Most hooks are a map of named commands, which run concurrently:
+
+```toml
+[post-start]
+install = "npm install"
+build = "npm run build"
+lint = "npm run lint"
+```
+
+When one command depends on another — `npm run build` needs `npm install` to finish first — use a list to run steps in order:
+
+```toml
+# A list of two maps, run in order.
+# Each map runs its entries concurrently.
+post-start = [
+    # install runs first
+    { install = "npm install" },
+    # ...then build and lint run concurrently
+    { build = "npm run build", lint = "npm run lint" }
+]
+```
+
+In summary:
+
+- **String** — one command
+- **Map** of `name = "command"` pairs — run concurrently
+- **List** of maps — run in order
+
+## How it works
+
+Steps are chained with `&&` in a compound shell command, so a failing step skips all later steps. A multi-entry map spawns its commands as background processes and waits for all to complete before the next step.
+
+For the example above, the generated command is:
+
+```
+{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }
+```
+
+Pre-* hooks ignore pipeline structure — all commands run serially regardless, since pre-* hooks are blocking by nature.
+
+## When to use pipelines
+
+Most hooks don't need pipelines. A table of concurrent post-start commands is fine when they're independent:
+
+```toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+copy = "wt step copy-ignored"
+```
+
+Pipelines matter when there's a dependency chain — typically setup steps that must complete before other tasks can start. Common pattern: install dependencies, then run build + dev server concurrently.
+
 # Designing Effective Hooks
 
-## post-start vs post-create
+## pre-start vs post-start
 
 Both run when creating a worktree. The difference:
 
 | Hook | Execution | Best for |
 |------|-----------|----------|
+| `pre-start` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 | `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
-| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
 
-Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
-
-Background processes spawned by `post-start` outlive the worktree — pair them with `post-remove` hooks to clean up. See [Dev servers](#dev-servers) and [Databases](#databases) for examples.
+Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation. For finer control over execution order within `post-start`, see [Pipeline ordering](#pipeline-ordering).
 
 ## Copying untracked files
 
@@ -1425,10 +1393,10 @@ Git worktrees share the repository but not untracked files. [`wt step copy-ignor
 copy = "wt step copy-ignored"
 ```
 
-Use `post-create` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
+Use `pre-start` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
 
 ```toml
-[post-create]
+[pre-start]
 copy = "wt step copy-ignored"
 install = "pnpm install"
 ```
@@ -1484,7 +1452,7 @@ Jinja2's operator precedence has pipe `|` with higher precedence than concatenat
 Generate `.env.local` with the connection string:
 
 ```toml
-[post-create]
+[pre-start]
 env = """
 cat > .env.local << EOF
 DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
@@ -1523,19 +1491,64 @@ fi
 
 ## Python virtual environments
 
-Use `uv sync` to recreate virtual environments (or `python -m venv .venv && .venv/bin/pip install -r requirements.txt` for pip-based projects):
+Use `uv sync` to recreate virtual environments, or `python -m venv .venv && .venv/bin/pip install -r requirements.txt` for pip-based projects:
 
 ```toml
-[post-create]
+[pre-start]
 install = "uv sync"
 ```
 
 For copying dependencies and caches between worktrees, see [`wt step copy-ignored`](@/step.md#language-specific-notes).
 
+## Hook type examples
+
+```toml
+# Single command (string) — top-level, before any table headers
+post-merge = "cargo install --path ."
+
+[pre-switch]
+# Pull if last fetch was more than 6 hours ago
+pull = """
+FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    git pull
+fi
+"""
+
+[post-switch]
+tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
+
+[pre-start]
+install = "npm ci"
+env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
+
+[post-start]
+copy = "wt step copy-ignored"
+server = "npm run dev -- --port {{ branch | hash_port }}"
+
+[pre-commit]
+format = "cargo fmt -- --check"
+lint = "cargo clippy -- -D warnings"
+
+[post-commit]
+notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
+
+[pre-merge]
+test = "cargo test"
+build = "cargo build --release"
+
+[pre-remove]
+archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
+
+[post-remove]
+kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
+remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
-- [`wt switch`](@/switch.md) — Runs post-create/post-start hooks on `--create`
+- [`wt switch`](@/switch.md) — Runs pre-start/post-start hooks on `--create`
 - [`wt config`](@/config.md) — Manage hook approvals
 - [`wt config state logs`](@/config.md#wt-config-state-logs) — Access background hook logs
 
@@ -1556,25 +1569,25 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 Install shell integration (required for directory switching):
 
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 Create user config file with documented examples:
 
 ```console
-wt config create
+$ wt config create
 ```
 
 Create project config file (`.config/wt.toml`) for hooks:
 
 ```console
-wt config create --project
+$ wt config create --project
 ```
 
 Show current configuration and file locations:
 
 ```console
-wt config show
+$ wt config show
 ```
 
 ## Configuration files
@@ -1600,7 +1613,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 
 ```toml
 # .config/wt.toml
-[post-create]
+[pre-start]
 deps = "npm ci"
 
 [pre-merge]
@@ -1623,7 +1636,7 @@ Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
@@ -1643,9 +1656,13 @@ worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 # Centralized worktrees directory
 # Creates: ~/worktrees/myproject/feature-auth
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+
+# Bare repository (git clone --bare <url> myproject/.git)
+# Creates: ~/code/myproject/feature-auth
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-`~` expands to the home directory. Relative paths are relative to the repository root.
+`~` expands to the home directory. Relative paths resolve from `repo_path`.
 
 ## LLM commit messages
 
@@ -1744,6 +1761,15 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 # timeout-ms = 500
 ```
 
+### Step
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+```
+
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+
 ### Aliases
 
 Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
@@ -1768,14 +1794,15 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
 #### Setting overrides [experimental]
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
-post-create.env = "cp .env.example .env"
+pre-start.env = "cp .env.example .env"
+step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
@@ -1893,6 +1920,10 @@ url = "http://localhost:{{ branch | hash_port }}"
 [ci]
 platform = "github"  # or "gitlab"
 
+# Add more gitignored excludes for wt step copy-ignored
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
+
 # Command aliases (run with wt step <name>)
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
@@ -1904,7 +1935,7 @@ test = "cargo test"
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 For manual setup, see `wt config shell init --help`.
@@ -1940,14 +1971,14 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 Override the LLM command in CI to use a mock:
 
 ```console
-WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
+$ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
+| `WORKTRUNK_BIN` | Override binary path for shell wrappers; useful for testing dev builds |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |

@@ -48,8 +48,8 @@ impl SwitchResult {
 /// Branch state for a switch operation.
 #[derive(Debug, Clone)]
 pub struct SwitchBranchInfo {
-    /// The branch being switched to
-    pub branch: String,
+    /// The branch being switched to. `None` for detached HEAD worktrees.
+    pub branch: Option<String>,
     /// Expected path when there's a branch-worktree mismatch (None = path matches template)
     pub expected_path: Option<PathBuf>,
 }
@@ -96,7 +96,8 @@ pub enum SwitchPlan {
     /// Branch already has a worktree - just switch to it (no git commands needed)
     Existing {
         path: PathBuf,
-        branch: String,
+        /// The branch at this worktree. `None` for detached HEAD.
+        branch: Option<String>,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
     },
@@ -122,10 +123,11 @@ impl SwitchPlan {
         }
     }
 
-    /// Get the branch name for this plan.
-    pub fn branch(&self) -> &str {
+    /// Get the branch name for this plan. `None` for detached HEAD worktrees.
+    pub fn branch(&self) -> Option<&str> {
         match self {
-            SwitchPlan::Existing { branch, .. } | SwitchPlan::Create { branch, .. } => branch,
+            SwitchPlan::Existing { branch, .. } => branch.as_deref(),
+            SwitchPlan::Create { branch, .. } => Some(branch),
         }
     }
 
@@ -176,8 +178,13 @@ impl BranchDeletionMode {
 
 /// Result of a worktree remove operation
 pub enum RemoveResult {
-    /// Removed worktree and returned to main (if needed)
+    /// Removed worktree and changed directory (if needed)
     RemovedWorktree {
+        /// Stable working directory for post-removal execution: hooks run here,
+        /// background removal spawns from here, and `cd` directs the shell here.
+        /// Usually the primary worktree; falls back to cwd when removing the
+        /// primary worktree itself (bare repo edge case), or the target branch's
+        /// worktree in `wt merge`.
         main_path: PathBuf,
         worktree_path: PathBuf,
         changed_directory: bool,

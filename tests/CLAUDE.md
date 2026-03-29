@@ -49,11 +49,11 @@ let output = wt_command()
 
 ### Method reference
 
-| Method | Use when |
-|--------|----------|
-| `repo.wt_command()` | Running wt commands with a TestRepo |
-| `wt_command()` | Running wt without a TestRepo (free function) |
-| `repo.git_command()` | Running git commands |
+| Method | Returns | Use when |
+|--------|---------|----------|
+| `repo.wt_command()` | `Command` | Running wt commands with a TestRepo |
+| `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
+| `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
 ## Timing Tests: Long Timeouts with Fast Polling
 
@@ -218,7 +218,7 @@ assert_snapshot!("readme_example_name", combined_output);
 **README examples using standard snapshots (working, but require manual editing):**
 - `test_readme_example_simple()` - Quick start merge example
 - `test_readme_example_complex()` - LLM commit example
-- `test_readme_example_hooks_post_create()` - Post-create hooks
+- `test_readme_example_hooks_pre_start()` - Pre-start hooks
 - `test_readme_example_hooks_pre_merge()` - Pre-merge hooks
 
 **Current workflow:** These tests work correctly and generate accurate snapshots. However, the snapshots separate stdout and stderr into different sections, which means they cannot be directly copied into README.md. Instead, the README examples are manually edited versions that merge stdout/stderr in the correct temporal order and remove ANSI codes.
@@ -380,7 +380,7 @@ Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is
 ```rust
 use crate::common::TEST_EPOCH;
 
-repo.git_command(&[
+repo.run_git(&[
     "config", "worktrunk.state.feature.ci-status",
     &format!(r#"{{"checked_at":{TEST_EPOCH},"head":"abc123"}}"#),
 ]);

@@ -14,7 +14,7 @@ Add one line to the shell config:
 
 Bash (~/.bashrc):
 ```console
-eval "$(wt config shell init bash)"
+$ eval "$(wt config shell init bash)"
 ```
 
 Fish (~/.config/fish/config.fish):
@@ -29,7 +29,7 @@ eval "$(wt config shell init zsh)"
 
 Nushell [experimental] — save to vendor autoload directory:
 ```console
-wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+$ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```"#
     )]
     Init {
@@ -54,12 +54,12 @@ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/aut
 
 Install for all detected shells:
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 Install for specific shell only:
 ```console
-wt config shell install zsh
+$ wt config shell install zsh
 ```
 
 Shows proposed changes and waits for confirmation before modifying any files.
@@ -95,17 +95,17 @@ Use --yes to skip confirmation."#
 
 Uninstall from all shells:
 ```console
-wt config shell uninstall
+$ wt config shell uninstall
 ```
 
 Uninstall from specific shell only:
 ```console
-wt config shell uninstall zsh
+$ wt config shell uninstall zsh
 ```
 
 Skip confirmation prompt:
 ```console
-wt config shell uninstall --yes
+$ wt config shell uninstall --yes
 ```
 
 ## Version tolerance
@@ -223,7 +223,7 @@ If a config file doesn't exist, shows defaults that would be used.
 Use `--full` to run diagnostic checks:
 
 ```console
-wt config show --full
+$ wt config show --full
 ```
 
 This tests:
@@ -246,12 +246,12 @@ to their current equivalents. Shows a diff and asks for confirmation.
 
 Preview and apply updates:
 ```console
-wt config update
+$ wt config update
 ```
 
 Apply without confirmation:
 ```console
-wt config update --yes
+$ wt config update --yes
 ```"#
     )]
     Update {
@@ -278,17 +278,17 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```console
-wt config state default-branch
+$ wt config state default-branch
 ```
 
 Set the default branch manually:
 ```console
-wt config state default-branch set main
+$ wt config state default-branch set main
 ```
 
 Set a marker for current branch:
 ```console
-wt config state marker set "🚧 WIP"
+$ wt config state marker set "🚧 WIP"
 ```
 
 Store arbitrary data:
@@ -298,17 +298,17 @@ wt config state kv set env staging
 
 Clear all CI status cache:
 ```console
-wt config state ci-status clear --all
+$ wt config state ci-status clear --all
 ```
 
 Show all stored state:
 ```console
-wt config state get
+$ wt config state get
 ```
 
 Clear all stored state:
 ```console
-wt config state clear
+$ wt config state clear
 ```
 <!-- subdoc: default-branch -->
 <!-- subdoc: ci-status -->
@@ -329,8 +329,8 @@ pub enum StateCommand {
         name = "default-branch",
         after_long_help = r#"Useful in scripts to avoid hardcoding `main` or `master`:
 
-```bash
-git rebase $(wt config state default-branch)
+```console
+$ git rebase $(wt config state default-branch)
 ```
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
@@ -430,7 +430,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
 ```console
-git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
+$ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#
@@ -474,22 +474,22 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 List all log files:
 ```console
-wt config state logs get
+$ wt config state logs get
 ```
 
 Query the command log:
 ```console
-tail -5 .git/wt/logs/commands.jsonl | jq .
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```console
-cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
+$ cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:
 ```console
-wt config state logs clear
+$ wt config state logs clear
 ```"#)]
     Logs {
         #[command(subcommand)]
@@ -510,9 +510,9 @@ as `worktrunk.hints.<name> = true`.
 ## Examples
 
 ```console
-wt config state hints              # list shown hints
-wt config state hints clear        # re-show all hints
-wt config state hints clear NAME   # re-show specific hint
+$ wt config state hints              # list shown hints
+$ wt config state hints clear        # re-show all hints
+$ wt config state hints clear NAME   # re-show specific hint
 ```"#
     )]
     Hints {
@@ -621,12 +621,12 @@ pub enum DefaultBranchAction {
 
 Get the default branch:
 ```console
-wt config state default-branch
+$ wt config state default-branch
 ```
 
 Clear cache and re-detect:
 ```console
-wt config state default-branch clear && wt config state default-branch get
+$ wt config state default-branch clear && wt config state default-branch get
 ```"#)]
     Get,
 
@@ -635,7 +635,7 @@ wt config state default-branch clear && wt config state default-branch get
 
 Set the default branch:
 ```console
-wt config state default-branch set main
+$ wt config state default-branch set main
 ```"#)]
     Set {
         /// Branch name to set as default
@@ -654,7 +654,7 @@ pub enum PreviousBranchAction {
 
 Get the previous branch (used by `wt switch -`):
 ```console
-wt config state previous-branch
+$ wt config state previous-branch
 ```"#)]
     Get,
 
@@ -663,7 +663,7 @@ wt config state previous-branch
 
 Set the previous branch:
 ```console
-wt config state previous-branch set feature
+$ wt config state previous-branch set feature
 ```"#)]
     Set {
         /// Branch name to set as previous
@@ -685,17 +685,17 @@ pub enum CiStatusAction {
 
 Get CI status for current branch:
 ```console
-wt config state ci-status
+$ wt config state ci-status
 ```
 
 Get CI status for a specific branch:
 ```console
-wt config state ci-status get --branch=feature
+$ wt config state ci-status get --branch=feature
 ```
 
 Clear cache and re-fetch:
 ```console
-wt config state ci-status clear && wt config state ci-status get
+$ wt config state ci-status clear && wt config state ci-status get
 ```"#
     )]
     Get {
@@ -709,17 +709,17 @@ wt config state ci-status clear && wt config state ci-status get
 
 Clear CI status for current branch:
 ```console
-wt config state ci-status clear
+$ wt config state ci-status clear
 ```
 
 Clear CI status for a specific branch:
 ```console
-wt config state ci-status clear --branch=feature
+$ wt config state ci-status clear --branch=feature
 ```
 
 Clear all CI status cache:
 ```console
-wt config state ci-status clear --all
+$ wt config state ci-status clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
@@ -739,12 +739,12 @@ pub enum MarkerAction {
 
 Get marker for current branch:
 ```console
-wt config state marker
+$ wt config state marker
 ```
 
 Get marker for a specific branch:
 ```console
-wt config state marker get --branch=feature
+$ wt config state marker get --branch=feature
 ```"#)]
     Get {
         /// Target branch (defaults to current)
@@ -757,12 +757,12 @@ wt config state marker get --branch=feature
 
 Set marker for current branch:
 ```console
-wt config state marker set "🚧 WIP"
+$ wt config state marker set "🚧 WIP"
 ```
 
 Set marker for a specific branch:
 ```console
-wt config state marker set "✅ ready" --branch=feature
+$ wt config state marker set "✅ ready" --branch=feature
 ```"#)]
     Set {
         /// Marker text (shown in `wt list` output)
@@ -778,17 +778,17 @@ wt config state marker set "✅ ready" --branch=feature
 
 Clear marker for current branch:
 ```console
-wt config state marker clear
+$ wt config state marker clear
 ```
 
 Clear marker for a specific branch:
 ```console
-wt config state marker clear --branch=feature
+$ wt config state marker clear --branch=feature
 ```
 
 Clear all markers:
 ```console
-wt config state marker clear --all
+$ wt config state marker clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
@@ -811,27 +811,27 @@ pub enum LogsAction {
 
 List all log files:
 ```console
-wt config state logs
+$ wt config state logs
 ```
 
 Get path to a specific hook log:
 ```console
-wt config state logs get --hook=user:post-start:server
+$ wt config state logs get --hook=user:post-start:server
 ```
 
 Stream a hook's log output:
 ```console
-tail -f "$(wt config state logs get --hook=user:post-start:server)"
+$ tail -f "$(wt config state logs get --hook=user:post-start:server)"
 ```
 
 Get log for background worktree removal:
 ```console
-wt config state logs get --hook=internal:remove
+$ wt config state logs get --hook=internal:remove
 ```
 
 Get log for a different branch:
 ```console
-wt config state logs get --hook=user:post-start:server --branch=feature
+$ wt config state logs get --hook=user:post-start:server --branch=feature
 ```"#
     )]
     Get {
@@ -862,7 +862,7 @@ pub enum HintsAction {
 
 List shown hints:
 ```console
-wt config state hints
+$ wt config state hints
 ```"#
     )]
     Get,
@@ -875,12 +875,12 @@ wt config state hints
 
 Clear all hints:
 ```console
-wt config state hints clear
+$ wt config state hints clear
 ```
 
 Clear a specific hint:
 ```console
-wt config state hints clear worktree-path
+$ wt config state hints clear worktree-path
 ```"#
     )]
     Clear {

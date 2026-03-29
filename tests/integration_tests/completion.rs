@@ -523,7 +523,7 @@ fn test_complete_excludes_remote_branches(repo: TestRepo) {
     let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
     repo.git_command()
         .args(["init", "--bare", remote_dir.to_str().unwrap()])
-        .output()
+        .run()
         .unwrap();
 
     // Update origin URL to point to our bare repo
@@ -796,11 +796,12 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     let subcommands = value_suggestions(&stdout);
     // Hook types and commands
     assert!(subcommands.contains(&"show"), "Missing show");
-    assert!(subcommands.contains(&"post-create"), "Missing post-create");
+    assert!(subcommands.contains(&"pre-start"), "Missing pre-start");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
     assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
     assert!(subcommands.contains(&"pre-switch"), "Missing pre-switch");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
+    assert!(subcommands.contains(&"post-commit"), "Missing post-commit");
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
     assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
@@ -808,8 +809,8 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"approvals"), "Missing approvals");
     assert_eq!(
         subcommands.len(),
-        11,
-        "Should have exactly 11 hook subcommands"
+        12,
+        "Should have exactly 12 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
@@ -817,9 +818,9 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
-    assert!(subcommands.contains(&"post-create"));
     assert!(subcommands.contains(&"post-start"));
     assert!(subcommands.contains(&"post-switch"));
+    assert!(subcommands.contains(&"post-commit"));
     assert!(subcommands.contains(&"post-merge"));
     assert!(subcommands.contains(&"post-remove"));
     assert!(!subcommands.contains(&"pre-commit"));
@@ -1581,4 +1582,107 @@ fn test_complete_switch_includes_remote_branches_when_under_threshold(mut repo: 
         stdout.contains("remote/branch-0"),
         "Remote branches should appear when total <= 100: {stdout}"
     );
+}
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_project_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+lint = "cargo clippy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // Built-in commands still present
+    assert!(subcommands.contains(&"commit"), "Missing commit");
+    assert!(subcommands.contains(&"push"), "Missing push");
+    // Aliases appear
+    assert!(
+        subcommands.contains(&"deploy"),
+        "Missing alias 'deploy': {stdout}"
+    );
+    assert!(
+        subcommands.contains(&"lint"),
+        "Missing alias 'lint': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_shows_aliases_from_user_config(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_test_config(
+        r#"
+[aliases]
+update = "git pull --rebase"
+"#,
+    );
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    assert!(
+        subcommands.contains(&"update"),
+        "Missing user alias 'update': {stdout}"
+    );
+}
+
+#[rstest]
+fn test_complete_step_alias_does_not_shadow_builtins(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+commit = "echo 'shadowed'"
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
+
+    // 'commit' should appear exactly once (the built-in), not duplicated
+    let commit_count = subcommands.iter().filter(|&&s| s == "commit").count();
+    assert_eq!(commit_count, 1, "Built-in 'commit' should appear once");
+    // 'deploy' alias should appear
+    assert!(subcommands.contains(&"deploy"));
+}
+
+#[rstest]
+fn test_complete_step_alias_shows_flags(repo: TestRepo) {
+    repo.commit("initial");
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("add config");
+
+    // Complete flags for the alias subcommand
+    let output = repo
+        .completion_cmd(&["wt", "step", "deploy", "--"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--dry-run"),
+        "Missing --dry-run flag: {stdout}"
+    );
+    assert!(stdout.contains("--yes"), "Missing --yes flag: {stdout}");
+    assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
 }

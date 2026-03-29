@@ -15,15 +15,19 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 use ignore::gitignore::GitignoreBuilder;
+use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{CopyIgnoredConfig, UserConfig};
+use worktrunk::copy::{copy_dir_recursive, create_symlink, remove_if_exists};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     verbosity, warning_message,
@@ -32,11 +36,13 @@ use worktrunk::styling::{
 use super::command_approval::approve_hooks;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{HookCommandSpec, HookFailureStrategy, run_hook_with_filter};
+use super::hooks::{
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
+    spawn_prepared_hooks,
+};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
 use crate::output::handle_remove_output;
-use worktrunk::shell_exec::Cmd;
 
 /// Handle `wt step commit` command
 ///
@@ -69,10 +75,10 @@ pub fn step_commit(
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
-    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
     // Shadow verify: if user declines approval, skip hooks but continue commit
     let verify = if verify {
-        let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
+        let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
         if !approved {
             eprintln!(
                 "{}",
@@ -146,10 +152,10 @@ pub fn handle_squash(
     );
     let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
-    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
     // Shadow verify: if user declines approval, skip hooks but continue squash
     let verify = if verify {
-        let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
+        let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
         if !approved {
             eprintln!(
                 "{}",
@@ -352,6 +358,13 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
+    // Spawn post-commit hooks in background (respects --no-verify)
+    if verify {
+        let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
+        let hooks = prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
+        spawn_prepared_hooks(&ctx, hooks)?;
+    }
+
     Ok(SquashResult::Squashed)
 }
 
@@ -542,25 +555,64 @@ pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<
     Ok(())
 }
 
-/// VCS metadata directories that should never be copied between worktrees.
+/// Built-in excludes for `wt step copy-ignored`: VCS metadata + tool-state directories.
 ///
-/// These directories contain internal state tied to a specific working directory.
+/// VCS directories contain internal state tied to a specific working directory.
 /// Git's own `.git` is implicitly excluded (git ls-files never reports it), but
-/// other VCS tools colocated with git need explicit exclusion.
-const VCS_METADATA_DIRS: &[&str] = &[".jj", ".hg", ".svn", ".sl", ".bzr", ".pijul"];
+/// other VCS tools colocated with git need explicit exclusion. Tool-state
+/// directories (`.conductor/`, `.worktrees/`, etc.) are project-local state that
+/// shouldn't be shared between worktrees.
+const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
+    ".bzr/",
+    ".conductor/",
+    ".entire/",
+    ".hg/",
+    ".jj/",
+    ".pi/",
+    ".pijul/",
+    ".sl/",
+    ".svn/",
+    ".worktrees/",
+];
+
+fn default_copy_ignored_excludes() -> Vec<String> {
+    BUILTIN_COPY_IGNORED_EXCLUDES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+/// Resolve the full copy-ignored config by merging built-in defaults, project
+/// config (`.config/wt.toml`), and user config (global + per-project overrides).
+fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredConfig> {
+    let mut config = CopyIgnoredConfig {
+        exclude: default_copy_ignored_excludes(),
+    };
+    if let Some(project_config) = repo.load_project_config()?
+        && let Some(project_copy_ignored) = project_config.copy_ignored()
+    {
+        config = config.merged_with(project_copy_ignored);
+    }
+    let user_config = UserConfig::load().context("Failed to load config")?;
+    let project_id = repo.project_identifier().ok();
+    config = config.merged_with(&user_config.copy_ignored(project_id.as_deref()));
+    Ok(config)
+}
 
 /// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// VCS metadata directories and entries that contain nested worktrees.
+/// configured patterns, VCS metadata directories, and entries that contain nested worktrees.
 ///
-/// Combines four steps:
+/// Combines five steps:
 /// 1. `list_ignored_entries()` — git ls-files for ignored entries
 /// 2. `.worktreeinclude` filtering — only matching entries if the file exists
-/// 3. VCS metadata filtering — exclude directories like `.jj`, `.hg`
-/// 4. Nested worktree filtering — exclude entries containing other worktrees
+/// 3. `[step.copy-ignored].exclude` filtering — skip entries matching configured patterns
+/// 4. Built-in exclude filtering — always skip VCS metadata and tool-state directories
+/// 5. Nested worktree filtering — exclude entries containing other worktrees
 fn list_and_filter_ignored_entries(
     worktree_path: &Path,
     context: &str,
     worktree_paths: &[PathBuf],
+    exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
     let ignored_entries = list_ignored_entries(worktree_path, context)?;
 
@@ -585,26 +637,55 @@ fn list_and_filter_ignored_entries(
         ignored_entries
     };
 
-    // Filter out VCS metadata directories and entries that contain other worktrees
+    // Build exclude matcher for configured patterns (if any)
+    let exclude_matcher = if exclude_patterns.is_empty() {
+        None
+    } else {
+        let mut builder = GitignoreBuilder::new(worktree_path);
+        for pattern in exclude_patterns {
+            builder.add_line(None, pattern).map_err(|error| {
+                anyhow::anyhow!(
+                    "Invalid [step.copy-ignored].exclude pattern {:?}: {}",
+                    pattern,
+                    error
+                )
+            })?;
+        }
+        Some(
+            builder
+                .build()
+                .context("Failed to build copy-ignored exclude matcher")?,
+        )
+    };
+
+    // Filter out excluded patterns, VCS metadata directories, and nested worktrees
     Ok(filtered
         .into_iter()
-        .filter(|(entry_path, is_dir)| {
-            // Skip VCS metadata directories (.jj, .hg, etc.) — these contain
-            // internal state tied to a specific working directory
+        .filter(|(path, is_dir)| {
+            // Skip entries matching configured exclude patterns
+            if let Some(ref matcher) = exclude_matcher {
+                let relative = path.strip_prefix(worktree_path).unwrap_or(path.as_path());
+                if matcher.matched(relative, *is_dir).is_ignore() {
+                    return false;
+                }
+            }
+            // Skip built-in excluded directories (.jj, .hg, .worktrees, etc.)
             if *is_dir
-                && entry_path
+                && path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|name| VCS_METADATA_DIRS.contains(&name))
+                    .is_some_and(|name| {
+                        BUILTIN_COPY_IGNORED_EXCLUDES
+                            .iter()
+                            .any(|pat| pat.trim_end_matches('/') == name)
+                    })
             {
                 return false;
             }
-            true
-        })
-        .filter(|(entry_path, _)| {
+            // Skip entries that contain other worktrees
             !worktree_paths
                 .iter()
-                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(entry_path))
+                .any(|wt_path| wt_path != worktree_path && wt_path.starts_with(path))
         })
         .collect())
 }
@@ -623,6 +704,7 @@ pub fn step_copy_ignored(
     force: bool,
 ) -> anyhow::Result<()> {
     let repo = Repository::current()?;
+    let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
@@ -672,8 +754,12 @@ pub fn step_copy_ignored(
         .into_iter()
         .map(|wt| wt.path)
         .collect();
-    let entries_to_copy =
-        list_and_filter_ignored_entries(&source_path, &source_context, &worktree_paths)?;
+    let entries_to_copy = list_and_filter_ignored_entries(
+        &source_path,
+        &source_context,
+        &worktree_paths,
+        &copy_ignored_config.exclude,
+    )?;
 
     if entries_to_copy.is_empty() {
         eprintln!("{}", info_message("No matching files to copy"));
@@ -681,7 +767,7 @@ pub fn step_copy_ignored(
     }
 
     let verbose = verbosity();
-    let mut copied_count = 0;
+    let copied_count = AtomicUsize::new(0);
 
     // Show entries in verbose or dry-run mode
     if verbose >= 1 || dry_run {
@@ -711,66 +797,71 @@ pub fn step_copy_ignored(
         }
     }
 
-    // Copy entries
-    for (src_entry, is_dir) in &entries_to_copy {
-        // Paths from git ls-files are always under source_path
-        let relative = src_entry
-            .strip_prefix(&source_path)
-            .expect("git ls-files path under worktree");
-        let dest_entry = dest_path.join(relative);
+    // Copy entries in parallel — each entry has a distinct destination path
+    entries_to_copy
+        .par_iter()
+        .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
+            // Paths from git ls-files are always under source_path
+            let relative = src_entry
+                .strip_prefix(&source_path)
+                .expect("git ls-files path under worktree");
+            let dest_entry = dest_path.join(relative);
 
-        if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
-                format!("copying directory {}", format_path_for_display(relative))
-            })?;
-            copied_count += 1;
-        } else {
-            if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "creating directory for {}",
-                        format_path_for_display(relative)
-                    )
+            if *is_dir {
+                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                    format!("copying directory {}", format_path_for_display(relative))
                 })?;
-            }
-            if force {
-                remove_if_exists(&dest_entry)?;
-            }
-            // Check if source is a symlink — preserve it instead of following it
-            let display_path = format_path_for_display(relative);
-            let source_is_symlink = fs::symlink_metadata(src_entry)
-                .context(format!("reading metadata for {display_path}"))?
-                .file_type()
-                .is_symlink();
-            if source_is_symlink {
-                // Skip existing symlinks for idempotent hook usage
-                if dest_entry.symlink_metadata().is_err() {
-                    let target = fs::read_link(src_entry)
-                        .context(format!("reading symlink {display_path}"))?;
-                    create_symlink(&target, src_entry, &dest_entry)?;
-                    copied_count += 1;
-                }
+                copied_count.fetch_add(1, Ordering::Relaxed);
             } else {
-                // Skip existing entries (files or symlinks) for idempotent hook usage.
-                // Check symlink_metadata (not exists()) because exists() follows symlinks
-                // and returns false for broken ones, which would cause reflink_or_copy to
-                // fail with ENOENT on some platforms when copying through the broken symlink.
-                if dest_entry.symlink_metadata().is_err() {
-                    match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                        Ok(_) => copied_count += 1,
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                        Err(e) => {
-                            return Err(
-                                anyhow::Error::from(e).context(format!("copying {display_path}"))
-                            );
+                if let Some(parent) = dest_entry.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!(
+                            "creating directory for {}",
+                            format_path_for_display(relative)
+                        )
+                    })?;
+                }
+                if force {
+                    remove_if_exists(&dest_entry)?;
+                }
+                // Check if source is a symlink — preserve it instead of following it
+                let display_path = format_path_for_display(relative);
+                let source_is_symlink = fs::symlink_metadata(src_entry)
+                    .context(format!("reading metadata for {display_path}"))?
+                    .file_type()
+                    .is_symlink();
+                if source_is_symlink {
+                    // Skip existing symlinks for idempotent hook usage
+                    if dest_entry.symlink_metadata().is_err() {
+                        let target = fs::read_link(src_entry)
+                            .context(format!("reading symlink {display_path}"))?;
+                        create_symlink(&target, src_entry, &dest_entry)?;
+                        copied_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    // Skip existing entries (files or symlinks) for idempotent hook usage.
+                    // Check symlink_metadata (not exists()) because exists() follows symlinks
+                    // and returns false for broken ones, which would cause reflink_or_copy to
+                    // fail with ENOENT on some platforms when copying through the broken symlink.
+                    if dest_entry.symlink_metadata().is_err() {
+                        match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                            Ok(_) => {
+                                copied_count.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                            Err(e) => {
+                                return Err(anyhow::Error::from(e)
+                                    .context(format!("copying {display_path}")));
+                            }
                         }
                     }
                 }
             }
-        }
-    }
+            Ok(())
+        })?;
 
     // Show summary
+    let copied_count = copied_count.load(Ordering::Relaxed);
     let entry_word = if copied_count == 1 {
         "entry"
     } else {
@@ -781,14 +872,6 @@ pub fn step_copy_ignored(
         success_message(format!("Copied {copied_count} {entry_word}"))
     );
 
-    Ok(())
-}
-
-/// Remove a file, ignoring "not found" errors.
-fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
-    if let Err(e) = fs::remove_file(path) {
-        anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
-    }
     Ok(())
 }
 
@@ -830,96 +913,6 @@ fn list_ignored_entries(
         .collect();
 
     Ok(entries)
-}
-
-/// Copy a directory recursively using reflink (COW).
-///
-/// Uses file-by-file copying with per-file reflink on all platforms. This spreads
-/// I/O operations over time rather than issuing them in a single burst.
-///
-/// ## Why not use atomic directory cloning on macOS?
-///
-/// macOS/APFS supports `clonefile()` on directories, which clones an entire tree
-/// atomically. However, Apple explicitly discourages this in the man page:
-///
-/// > "Cloning directories with these functions is strongly discouraged.
-/// > Use copyfile(3) to clone directories instead."
-/// > — clonefile(2) man page
-///
-/// In practice, atomic `clonefile()` on a Rust `target/` directory (~236K files)
-/// saturates disk I/O at ~45K ops/sec, blocking interactive processes like shell
-/// startup for several seconds. The per-file approach spreads operations over
-/// time, keeping the system responsive even though total copy time is longer.
-///
-/// Apple recommends `copyfile()` with `COPYFILE_CLONE` for directories, which
-/// internally walks the tree and clones per-file — equivalent to what we do here.
-fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
-    copy_dir_recursive_fallback(src, dest, force)
-}
-
-/// File-by-file recursive copy with reflink per file.
-///
-/// Used as fallback when atomic directory clone isn't available or fails.
-fn copy_dir_recursive_fallback(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
-    fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let src_path = entry.path();
-        let dest_path = dest.join(entry.file_name());
-
-        if file_type.is_symlink() {
-            // Copy symlink (preserves the link, doesn't follow it)
-            if force {
-                remove_if_exists(&dest_path)?;
-            }
-            // Use symlink_metadata to detect broken symlinks (exists() follows symlinks
-            // and returns false for broken ones, causing EEXIST on the next symlink call)
-            if dest_path.symlink_metadata().is_err() {
-                let target = fs::read_link(&src_path)
-                    .with_context(|| format!("reading symlink {}", src_path.display()))?;
-                create_symlink(&target, &src_path, &dest_path)?;
-            }
-        } else if file_type.is_dir() {
-            copy_dir_recursive_fallback(&src_path, &dest_path, force)?;
-        } else if !file_type.is_file() {
-            // Skip non-regular files (sockets, FIFOs, etc.)
-            log::debug!("skipping non-regular file: {}", src_path.display());
-        } else {
-            if force {
-                remove_if_exists(&dest_path)?;
-            }
-            // Skip existing entries (files or symlinks) for idempotent hook usage.
-            // Check symlink_metadata (not exists()) because exists() follows symlinks
-            // and returns false for broken ones, which would cause reflink_or_copy to
-            // fail with ENOENT on some platforms when copying through the broken symlink.
-            if dest_path.symlink_metadata().is_err() {
-                match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                    Err(e) => {
-                        return Err(anyhow::Error::from(e)
-                            .context(format!("copying {}", src_path.display())));
-                    }
-                }
-            }
-        }
-    }
-
-    // Preserve source directory permissions AFTER copying contents.
-    // Must be done after the loop — if the source lacks write permission (e.g., 0o555),
-    // setting it before copying would make the destination read-only and fail the copies.
-    #[cfg(unix)]
-    {
-        let src_perms = fs::metadata(src)
-            .with_context(|| format!("reading permissions for {}", src.display()))?
-            .permissions();
-        fs::set_permissions(dest, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest.display()))?;
-    }
-
-    Ok(())
 }
 
 /// Move a file or directory, falling back to copy+delete on cross-device errors.
@@ -1226,9 +1219,11 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Discover gitignored entries BEFORE branch exchange — .gitignore rules belong
     // to the current branch and will change after `git switch`.
     let worktree_paths: Vec<PathBuf> = worktrees.iter().map(|wt| wt.path.clone()).collect();
-    let main_entries = list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths)?;
+    let no_excludes: &[String] = &[];
+    let main_entries =
+        list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths, no_excludes)?;
     let target_entries =
-        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths)?;
+        list_and_filter_ignored_entries(target_path, &target_branch, &worktree_paths, no_excludes)?;
 
     // Move gitignored files to staging BEFORE branch exchange.
     // `git switch` silently overwrites ignored files that collide with tracked
@@ -1294,37 +1289,6 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     }
 
     Ok(PromoteResult::Promoted)
-}
-
-/// Create a symlink, handling platform differences.
-///
-/// On Windows, distinguishes between file and directory symlinks by checking the
-/// source path's metadata (the target may be relative or broken, so we use the
-/// source to determine the type).
-fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        let _ = src_path; // Used on Windows to determine symlink type
-        std::os::unix::fs::symlink(target, dest_path)
-            .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-    }
-    #[cfg(windows)]
-    {
-        let is_dir = src_path.metadata().map(|m| m.is_dir()).unwrap_or(false);
-        if is_dir {
-            std::os::windows::fs::symlink_dir(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-        } else {
-            std::os::windows::fs::symlink_file(target, dest_path)
-                .with_context(|| format!("creating symlink {}", dest_path.display()))?;
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (target, src_path, dest_path);
-        anyhow::bail!("symlink creation not supported on this platform");
-    }
-    Ok(())
 }
 
 /// Remove worktrees and branches integrated into the default branch.
@@ -1479,6 +1443,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             BranchDeletionMode::SafeDelete,
             false,
             config,
+            None,
         ) {
             Ok(plan) => plan,
             Err(_) => {

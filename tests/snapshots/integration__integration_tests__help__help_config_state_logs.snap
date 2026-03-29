@@ -87,13 +87,13 @@ All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directo
 [1m[32mExamples[0m
 
 List all log files:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs get[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state logs get[0m
 
 Query the command log:
-[107m [0m [2m[0m[2m[34mtail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m tail[0m[2m [0m[2m[36m-5[0m[2m .git/wt/logs/commands.jsonl [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m .[0m
 
 View a specific hook log:
-[107m [0m [2m[0m[2m[34mcat[0m[2m [0m[2m[32m"$([0m[2m[34mgit[0m[2m rev-parse [0m[2m[36m--git-dir[0m[2m)/wt/logs/feature-project-post-start-build.log"[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m cat[0m[2m [0m[2m[32m"$([0m[2m[34mgit[0m[2m rev-parse [0m[2m[36m--git-dir[0m[2m)/wt/logs/feature-project-post-start-build.log"[0m[2m[0m
 
 Clear all logs:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state logs clear[0m

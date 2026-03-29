@@ -527,26 +527,34 @@ impl Repository {
             .unwrap_or(false)
     }
 
-    /// Start the fsmonitor daemon for this worktree.
+    /// Start the fsmonitor daemon at a worktree path.
     ///
-    /// This is idempotent - if the daemon is already running, this is a no-op.
+    /// Idempotent — if the daemon is already running, this is a no-op.
     /// Used to avoid auto-start races when running many parallel git commands.
-    pub fn start_fsmonitor_daemon(&self) {
-        // Best effort - log errors at debug level for troubleshooting
-        if let Err(e) = self.run_command(&["fsmonitor--daemon", "start"]) {
-            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
-        }
-    }
-
-    /// Start fsmonitor daemon at a specific worktree path.
     ///
-    /// Like `start_fsmonitor_daemon` but runs the command in the specified worktree.
+    /// Uses `Command::status()` with null stdio instead of `Cmd::run()` to avoid
+    /// pipe inheritance: the daemon process (`git fsmonitor--daemon run --detach`)
+    /// inherits pipe file descriptors from its parent, keeping them open
+    /// indefinitely. `read_to_end()` in `Command::output()` then blocks forever
+    /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
-        if let Err(e) = self
-            .worktree_at(path)
-            .run_command(&["fsmonitor--daemon", "start"])
-        {
-            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+        log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
+        let result = std::process::Command::new("git")
+            .args(["fsmonitor--daemon", "start"])
+            .current_dir(path)
+            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match result {
+            Ok(status) if !status.success() => {
+                log::debug!("fsmonitor daemon start exited {status} (usually fine)");
+            }
+            Err(e) => {
+                log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+            }
+            _ => {}
         }
     }
 

@@ -88,7 +88,7 @@ The permission tests (`test_permission_error_prevents_save`, `test_approval_prom
 
 ### Shell/PTY Integration Tests
 
-PTY-based tests (approval prompts, TUI select, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
+PTY-based tests (approval prompts, TUI picker, progressive rendering, shell wrappers) are behind the `shell-integration-tests` feature.
 
 **IMPORTANT:** Tests that spawn interactive shells (`zsh -ic`, `bash -ic`) cause nextest's InputHandler to receive SIGTTOU when restoring terminal settings. This suspends the test process mid-run with `zsh: suspended (tty output)` or similar. See [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878) for details.
 
@@ -139,6 +139,16 @@ Documentation has three categories:
 
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
+
+### Help text authoring
+
+Help text renders in three contexts — check all three when editing:
+
+1. **Terminal** (`wt step X --help`): `about` and `subtitle` appear at the top, `after_long_help` appears below the Options block — separated by distance.
+2. **Web docs** (`docs/content/`): `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` — they appear as consecutive paragraphs.
+3. **Skill reference** (`skills/worktrunk/reference/`): mirrors web docs.
+
+Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
 
 After any doc changes, run tests to sync:
 
@@ -276,6 +286,8 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
+**Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
+
 ## Benchmarks
 
 Benchmarks measure `wt list` performance across worktree counts and repository sizes.
@@ -308,6 +320,7 @@ Never hand-roll utilities that already exist as crate dependencies. Check `Cargo
 | Path normalization | `path_slash::PathExt::to_slash_lossy()` | `.to_string_lossy().replace('\\', "/")` |
 | Shell escaping | `shell_escape::unix::escape()` | Manual quoting |
 | ANSI colors | `color_print::cformat!()` | Raw escape codes |
+| Template variable detection | `minijinja::undeclared_variables(false)` | Regex or substring matching for `{{ var }}` |
 
 ### Don't Suppress Warnings
 

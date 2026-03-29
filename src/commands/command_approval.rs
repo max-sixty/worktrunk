@@ -149,23 +149,26 @@ fn prompt_for_batch_approval(
 /// Approve a project-config alias before execution.
 ///
 /// Returns `Ok(true)` if approved (or already approved), `Ok(false)` if declined.
-pub fn approve_alias(
-    template: &str,
+pub fn approve_alias_commands(
+    commands: &worktrunk::config::CommandConfig,
     alias_name: &str,
     project_id: &str,
     yes: bool,
 ) -> anyhow::Result<bool> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
 
-    let cmd = ApprovableCommand {
-        phase: Phase::Alias,
-        command: worktrunk::config::Command::new(
-            Some(alias_name.to_string()),
-            template.to_string(),
-        ),
-    };
+    let cmds: Vec<_> = commands
+        .commands()
+        .map(|cmd| ApprovableCommand {
+            phase: Phase::Alias,
+            command: worktrunk::config::Command::new(
+                Some(cmd.name.clone().unwrap_or_else(|| alias_name.to_string())),
+                cmd.template.clone(),
+            ),
+        })
+        .collect();
 
-    approve_command_batch(&[cmd], project_id, &approvals, yes, false)
+    approve_command_batch(&cmds, project_id, &approvals, yes, false)
 }
 
 /// Collect project commands for hooks and request batch approval.
@@ -183,7 +186,7 @@ pub fn approve_alias(
 ///
 /// ```ignore
 /// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, yes);
-/// let approved = approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?;
+/// let approved = approve_hooks(&ctx, &[HookType::PreStart, HookType::PostStart])?;
 /// ```
 pub fn approve_hooks(
     ctx: &super::command_executor::CommandContext<'_>,

@@ -8,6 +8,7 @@
 //! On Windows, Git for Windows must be installed — this is nearly universal among
 //! Windows developers since git itself is required.
 
+use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -380,8 +381,8 @@ pub struct Cmd {
     context: Option<String>,
     stdin_data: Option<Vec<u8>>,
     timeout: Option<std::time::Duration>,
-    envs: Vec<(String, String)>,
-    env_removes: Vec<String>,
+    envs: Vec<(OsString, OsString)>,
+    env_removes: Vec<OsString>,
     /// If true, wrap command through ShellConfig (for stream())
     shell_wrap: bool,
     /// Stdout configuration for stream() (defaults to inherit)
@@ -489,14 +490,18 @@ impl Cmd {
     }
 
     /// Set an environment variable.
-    pub fn env(mut self, key: impl Into<String>, val: impl Into<String>) -> Self {
-        self.envs.push((key.into(), val.into()));
+    ///
+    /// Accepts the same types as [`Command::env`]: string literals, `String`,
+    /// `&Path`, `PathBuf`, `OsString`, etc.
+    pub fn env(mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> Self {
+        self.envs
+            .push((key.as_ref().to_os_string(), val.as_ref().to_os_string()));
         self
     }
 
     /// Remove an environment variable.
-    pub fn env_remove(mut self, key: impl Into<String>) -> Self {
-        self.env_removes.push(key.into());
+    pub fn env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
+        self.env_removes.push(key.as_ref().to_os_string());
         self
     }
 

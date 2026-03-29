@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
@@ -348,8 +349,9 @@ def record_demo(
     vhs_binary: str,
     text_mode: bool = False,
     snapshot_mode: bool = False,
-):
-    """Record a single demo (runs in subprocess for parallel execution)."""
+) -> float:
+    """Record a single demo. Returns elapsed seconds."""
+    t0 = time.monotonic()
     tape_path = TAPES_DIR / tape_file
     if not tape_path.exists():
         raise FileNotFoundError(f"{tape_file} not found")
@@ -365,43 +367,51 @@ def record_demo(
     if snapshot_mode:
         output_snap = SNAPSHOTS_DIR / f"{output_name}.snap"
         record_snapshot(env, tape_path, output_snap, REPO_ROOT)
-        print(f"✓ {output_name}: Snapshot saved to {output_snap}")
-    elif text_mode:
+        elapsed = time.monotonic() - t0
+        print(f"✓ {output_name}: Snapshot saved ({elapsed:.0f}s)")
+        return elapsed
+
+    if text_mode:
         output_txt = mode_out_dir / f"{output_name}.txt"
         record_text(env, tape_path, output_txt, replacements, REPO_ROOT)
-        print(f"✓ {output_name}: Text saved to {output_txt}")
-    else:
-        output_gifs = {}
-        for theme in themes:
-            theme_dir = mode_out_dir / theme
-            theme_dir.mkdir(parents=True, exist_ok=True)
-            output_gifs[theme] = theme_dir / f"{output_name}.gif"
+        elapsed = time.monotonic() - t0
+        print(f"✓ {output_name}: Text saved ({elapsed:.0f}s)")
+        return elapsed
 
-        record_all_themes(
-            env,
-            tape_path,
-            output_gifs,
-            REPO_ROOT,
-            vhs_binary=vhs_binary,
-            size=demo_size,
-        )
+    output_gifs = {}
+    for theme in themes:
+        theme_dir = mode_out_dir / theme
+        theme_dir.mkdir(parents=True, exist_ok=True)
+        output_gifs[theme] = theme_dir / f"{output_name}.gif"
 
-        # Validate TUI demos with OCR after recording
-        if output_name in TUI_CHECKPOINTS:
-            # Use the light theme GIF for validation
-            gif_path = output_gifs.get("light", list(output_gifs.values())[0])
-            success, output = validate_tui_demo_verbose(output_name, gif_path)
-            if success:
-                print(f"✓ {output_name}: GIFs saved + validation passed")
-            else:
-                print(f"✓ {output_name}: GIFs saved")
-                print(f"✗ {output_name}: Validation failed")
-                for line in output.split("\n"):
-                    if line.startswith("  "):
-                        print(line)
-                raise RuntimeError(f"TUI validation failed for {output_name}")
+    record_all_themes(
+        env,
+        tape_path,
+        output_gifs,
+        REPO_ROOT,
+        vhs_binary=vhs_binary,
+        size=demo_size,
+    )
+
+    elapsed = time.monotonic() - t0
+
+    # Validate TUI demos with OCR after recording
+    if output_name in TUI_CHECKPOINTS:
+        gif_path = output_gifs.get("light", list(output_gifs.values())[0])
+        success, output = validate_tui_demo_verbose(output_name, gif_path)
+        if success:
+            print(f"✓ {output_name}: GIFs saved + validation passed ({elapsed:.0f}s)")
         else:
-            print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
+            print(f"✓ {output_name}: GIFs saved ({elapsed:.0f}s)")
+            print(f"✗ {output_name}: Validation failed")
+            for line in output.split("\n"):
+                if line.startswith("  "):
+                    print(line)
+            raise RuntimeError(f"TUI validation failed for {output_name}")
+    else:
+        print(f"✓ {output_name}: GIFs saved: {', '.join(themes)} ({elapsed:.0f}s)")
+
+    return elapsed
 
 
 # =============================================================================
@@ -438,6 +448,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  ./build docs social             Build all demos for both targets
   ./build docs                    Build all doc site demos (light + dark)
   ./build social                  Build all social media demos (light only)
   ./build docs --only wt-merge    Build specific demo for docs
@@ -446,7 +457,10 @@ Examples:
 """,
     )
     parser.add_argument(
-        "target", choices=["docs", "social"], help="Target to build demos for"
+        "target",
+        nargs="+",
+        choices=["docs", "social"],
+        help="Target(s) to build demos for",
     )
     parser.add_argument("--only", help="Only record specific demo (e.g., wt-switch)")
     parser.add_argument(
@@ -485,24 +499,57 @@ Examples:
         print("--text and --snapshot are mutually exclusive")
         return
 
+    if args.only and len(args.target) > 1:
+        print("--only cannot be used with multiple targets")
+        return
+
     # Check dependencies (VHS is built from source, not required in PATH)
     deps = ["wt", "starship", "zellij"]
     check_dependencies(deps)
     if not args.text and not args.snapshot:
+        check_dependencies(["delta"])
         check_ffmpeg_libass()
+
+    # Kill stale Zellij processes from previous demo runs (they interfere
+    # with new recordings by holding locks or sockets)
+    subprocess.run(["pkill", "-f", "zellij.*wt-demos"], capture_output=True)
 
     # Ensure VHS is built (requires Go)
     vhs_binary = str(ensure_vhs_binary())
 
-    # Output goes to mode/theme subdirectories
-    mode_out_dir = OUT_DIR / args.target
+    # Build each target sequentially (parallel targets cause Zellij conflicts)
+    t0 = time.monotonic()
+    all_failed = []
+    for target in dict.fromkeys(args.target):  # deduplicate, preserve order
+        failed = build_target(
+            target, args, vhs_binary,
+        )
+        all_failed.extend(f"{target}/{name}" for name in failed)
+
+    # Overall summary for multi-target builds
+    if len(args.target) > 1:
+        elapsed = time.monotonic() - t0
+        mins, secs = divmod(int(elapsed), 60)
+        print(f"\n{'=' * 60}")
+        print(f"Total: {mins}m{secs:02d}s")
+
+    if all_failed:
+        if len(args.target) <= 1:
+            print(f"\n{'=' * 60}")
+        print(f"Failed: {', '.join(all_failed)}")
+        sys.exit(1)
+
+
+def build_target(target: str, args, vhs_binary: str) -> list[str]:
+    """Build all demos for a single target. Returns list of failed demo names."""
+    t0 = time.monotonic()
+    mode_out_dir = OUT_DIR / target
     mode_out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy starship config to docs/ only
-    if args.target == "docs":
+    if target == "docs":
         shutil.copy(FIXTURES_DIR / "starship.toml", mode_out_dir / "starship.toml")
 
-    target_config = TARGETS[args.target]
+    target_config = TARGETS[target]
     demos = target_config["demos"]
     demo_size = target_config["size"]
     themes = target_config["themes"]
@@ -513,8 +560,8 @@ Examples:
         if not demos:
             all_names = [n for _, n, _ in target_config["demos"]]
             print(f"Unknown demo: {args.only}")
-            print(f"Available for {args.target}: {', '.join(all_names)}")
-            return
+            print(f"Available for {target}: {', '.join(all_names)}")
+            return []
 
     # In snapshot mode, skip TUI demos (they validate via checkpoints during GIF recording)
     if args.snapshot:
@@ -525,7 +572,7 @@ Examples:
             print(f"Skipping {skipped} TUI demo(s) (validate during GIF recording instead)")
         if not demos:
             print("No snapshotable demos found")
-            return
+            return []
 
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
@@ -536,62 +583,86 @@ Examples:
         setup_func(env)
         print(f"Demo repo: {env.repo}")
         spawn_debug_shell(env, FIXTURES_DIR / "starship.toml")
-        return
+        return []
 
-    # Record demos
-    if args.sequential or len(demos) == 1:
-        print(f"\nRecording {len(demos)} demo(s) sequentially...")
-        failed = []
-        for tape_file, output_name, setup_func in demos:
-            try:
-                record_demo(
-                    tape_file,
-                    output_name,
-                    setup_func,
-                    mode_out_dir,
-                    themes,
-                    demo_size,
-                    vhs_binary,
-                    args.text,
-                    args.snapshot,
-                )
-            except Exception as e:
-                print(f"✗ {output_name}: {e}")
-                failed.append(output_name)
-    else:
-        print(f"\nRecording {len(demos)} demo(s) in parallel...")
-        max_workers = min(len(demos), os.cpu_count() or 4)
+    # TUI demos run sequentially (they use Zellij which conflicts when parallel)
+    tui_demos = [(t, n, s) for t, n, s in demos if n in TUI_DEMOS]
+    non_tui_demos = [(t, n, s) for t, n, s in demos if n not in TUI_DEMOS]
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    record_demo,
-                    tape_file,
-                    output_name,
-                    setup_func,
-                    mode_out_dir,
-                    themes,
-                    demo_size,
-                    vhs_binary,
-                    args.text,
-                    args.snapshot,
-                ): output_name
-                for tape_file, output_name, setup_func in demos
-            }
+    failed = []
+    succeeded = []
 
-            failed = []
-            for future in as_completed(futures):
-                output_name = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"✗ {output_name}: {e}")
-                    failed.append(output_name)
+    def _record_one(tape_file, output_name, setup_func):
+        try:
+            elapsed = record_demo(
+                tape_file,
+                output_name,
+                setup_func,
+                mode_out_dir,
+                themes,
+                demo_size,
+                vhs_binary,
+                args.text,
+                args.snapshot,
+            )
+            succeeded.append((output_name, elapsed))
+        except Exception as e:
+            print(f"✗ {output_name}: {e}")
+            failed.append(output_name)
 
+    # Record non-TUI demos (parallel unless --sequential)
+    if non_tui_demos:
+        if args.sequential or len(non_tui_demos) == 1:
+            print(f"\n[{target}] Recording {len(non_tui_demos)} demo(s) sequentially...")
+            for tape_file, output_name, setup_func in non_tui_demos:
+                _record_one(tape_file, output_name, setup_func)
+        else:
+            print(f"\n[{target}] Recording {len(non_tui_demos)} demo(s) in parallel...")
+            max_workers = min(len(non_tui_demos), os.cpu_count() or 4)
+
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        record_demo,
+                        tape_file,
+                        output_name,
+                        setup_func,
+                        mode_out_dir,
+                        themes,
+                        demo_size,
+                        vhs_binary,
+                        args.text,
+                        args.snapshot,
+                    ): output_name
+                    for tape_file, output_name, setup_func in non_tui_demos
+                }
+
+                for future in as_completed(futures):
+                    output_name = futures[future]
+                    try:
+                        elapsed = future.result()
+                        succeeded.append((output_name, elapsed))
+                    except Exception as e:
+                        print(f"✗ {output_name}: {e}")
+                        failed.append(output_name)
+
+    # Record TUI demos sequentially (Zellij conflicts when parallel)
+    if tui_demos:
+        print(f"\n[{target}] Recording {len(tui_demos)} TUI demo(s) sequentially...")
+        for tape_file, output_name, setup_func in tui_demos:
+            _record_one(tape_file, output_name, setup_func)
+
+    # Summary
+    elapsed_total = time.monotonic() - t0
+    mins, secs = divmod(int(elapsed_total), 60)
+    passed_str = ", ".join(f"{n} ({e:.0f}s)" for n, e in succeeded)
+    print(f"\n[{target}] {len(succeeded)} passed, {len(failed)} failed ({mins}m{secs:02d}s)")
+    if succeeded:
+        print(f"  Passed: {passed_str}")
     if failed:
-        print(f"\n{'=' * 60}")
-        print(f"Failed: {', '.join(failed)}")
-        sys.exit(1)
+        print(f"  Failed: {', '.join(failed)}")
+
+    return failed
 
 
 if __name__ == "__main__":

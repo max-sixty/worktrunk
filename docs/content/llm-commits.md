@@ -63,33 +63,30 @@ These examples assume a feature worktree with changes to commit.
 
 Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
-```bash
-$ wt merge
-◎ Squashing 3 commits into a single commit (5 files, +48)...
-◎ Generating squash commit message...
-   feat(auth): Implement JWT authentication system
-   ...
-```
+{% terminal(cmd="wt merge") %}
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span> ...
+{% end %}
 
 ### wt step commit
 
 Stages and commits with LLM-generated message:
 
-```bash
-$ wt step commit
-```
+{{ terminal(cmd="wt step commit") }}
 
 ### wt step squash
 
 Squashes branch commits into one with LLM-generated message:
 
-```bash
-$ wt step squash
-```
+{{ terminal(cmd="wt step squash") }}
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 
-## Branch summaries <span class="badge-experimental"></span>
+## Branch summaries
+
+<span class="badge-experimental"></span>
 
 With `summary = true` and a `[commit.generation] command` configured, Worktrunk generates LLM branch summaries — one-line descriptions of each branch's changes since the default branch.
 
@@ -105,7 +102,7 @@ Enable in user config:
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+Summaries are cached and regenerated only when the diff changes.
 
 ## Prompt templates
 

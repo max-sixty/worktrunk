@@ -14,38 +14,24 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-{% terminal(cmd="wt list") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
-
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+<!-- wt list -->
+```bash
+$ wt list
+```
 
 Include CI status, line diffs, and LLM summaries:
 
-{% terminal(cmd="wt list --full") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+<!-- wt list --full -->
+```bash
+$ wt list --full
+```
 
 Include branches that don't have worktrees:
 
-{% terminal(cmd="wt list --branches --full") %}
-  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>96379229</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
-  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>b40716dc</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
-
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
-{% end %}
+<!-- wt list --branches --full -->
+```bash
+$ wt list --branches --full
+```
 
 Output as JSON for scripting:
 
@@ -61,17 +47,17 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch (`--full`) |
-| Summary | LLM-generated branch summary (`--full` + `summary = true`, requires [`commit.generation`](https://worktrunk.dev/config/#commit)) [experimental] |
+| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | Pipeline status (`--full`) |
+| CI | Pipeline status; `--full` only |
 | Path | Worktree directory |
-| URL | Dev server URL from project config (dimmed if port not listening) |
+| URL | Dev server URL from project config; dimmed if port is not listening |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch (header label stays `main` for compactness). `main…±` uses a merge-base (three-dot) diff.
+Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
 
 ### CI status
 
@@ -87,9 +73,11 @@ The CI column shows GitHub/GitLab pipeline status:
 | <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with `--remotes`) get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries [experimental]
+### LLM summaries
+
+[experimental]
 
 Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
@@ -111,7 +99,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
 | | `∅` | Orphan branch (no common ancestor with the default branch) |
-| | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
+| | `✗` | Would conflict if merged to the default branch; with `--full`, includes uncommitted changes |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
 | | `⊂` | Content [integrated](https://worktrunk.dev/remove/#branch-cleanup) into the default branch or target |
@@ -141,29 +129,7 @@ These appear across all columns while the table is loading:
 Query structured data with `--format=json`:
 
 ```bash
-# Current worktree path (for scripts)
-wt list --format=json | jq -r '.[] | select(.is_current) | .path'
-
-# Branches with uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
-
-# Worktrees with merge conflicts
-wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
-
-# Branches ahead of main (needs merging)
-wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
-
-# Integrated branches (safe to remove)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
-
-# Branches without worktrees
-wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
-
-# Worktrees ahead of remote (needs pushing)
-wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
-
-# Stale CI (local changes not reflected in CI)
-wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+$ # Current worktree path (for scripts)|||wt list --format=json | jq -r '.[] | select(.is_current) | .path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.[] | select(.working_tree.modified)'||||||# Worktrees with merge conflicts|||wt list --format=json | jq '.[] | select(.operation_state == &quot;conflicts&quot;)'||||||# Branches ahead of main (needs merging)|||wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.[] | select(.main_state == &quot;integrated&quot; or .main_state == &quot;empty&quot;) | .branch'||||||# Branches without worktrees|||wt list --format=json --branches | jq '.[] | select(.kind == &quot;branch&quot;) | .branch'||||||# Worktrees ahead of remote (needs pushing)|||wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'||||||# Stale CI (local changes not reflected in CI)|||wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -177,17 +143,17 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `working_tree` | object | Working tree state (see below) |
 | `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
-| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
-| `main` | object | Relationship to the default branch (see below, absent when is_main) |
-| `remote` | object | Tracking branch info (see below, absent when no tracking) |
+| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"`; absent when clean |
+| `main` | object | Relationship to the default branch (see below); absent when is_main |
+| `remote` | object | Tracking branch info (see below); absent when no tracking |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
-| `ci` | object | CI status (see below, absent when no CI) |
-| `url` | string | Dev server URL from project config (absent when not configured) |
-| `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
-| `summary` | string | LLM-generated branch summary (absent when not configured or no summary) |
+| `ci` | object | CI status (see below); absent when no CI |
+| `url` | string | Dev server URL from project config; absent when not configured |
+| `url_active` | boolean | Whether the URL's port is listening; absent when not configured |
+| `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 | `kv` | object | Per-branch key-value data from `wt config state kv` (absent when empty) |
@@ -290,9 +256,9 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info
 
-          Displays local data (branches, paths, status) first, then updates with
-          remote data (CI, upstream) as it arrives. Use --no-progressive to
-          force buffered rendering. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with remote data (CI,
+          upstream) as it arrives. Use --no-progressive to force buffered rendering. Auto-enabled
+          for TTY.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

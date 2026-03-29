@@ -278,10 +278,10 @@ fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
         // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 
     // Create a branch without a worktree

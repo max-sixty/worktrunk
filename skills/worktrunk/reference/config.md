@@ -7,25 +7,25 @@ Manage user & project configs. Includes shell integration, hooks, and saved stat
 Install shell integration (required for directory switching):
 
 ```bash
-wt config shell install
+$ wt config shell install
 ```
 
 Create user config file with documented examples:
 
 ```bash
-wt config create
+$ wt config create
 ```
 
 Create project config file (`.config/wt.toml`) for hooks:
 
 ```bash
-wt config create --project
+$ wt config create --project
 ```
 
 Show current configuration and file locations:
 
 ```bash
-wt config show
+$ wt config show
 ```
 
 ## Configuration files
@@ -51,7 +51,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 
 ```toml
 # .config/wt.toml
-[post-create]
+[pre-start]
 deps = "npm ci"
 
 [pre-merge]
@@ -74,7 +74,7 @@ Controls where new worktrees are created.
 
 **Variables:**
 
-- `{{ repo_path }}` — absolute path to the repository (e.g., `/Users/me/code/myproject`)
+- `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
@@ -94,9 +94,13 @@ worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 # Centralized worktrees directory
 # Creates: ~/worktrees/myproject/feature-auth
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+
+# Bare repository (git clone --bare <url> myproject/.git)
+# Creates: ~/code/myproject/feature-auth
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
-`~` expands to the home directory. Relative paths are relative to the repository root.
+`~` expands to the home directory. Relative paths resolve from `repo_path`.
 
 ## LLM commit messages
 
@@ -195,6 +199,15 @@ no-cd = true       # Skip directory change after switching (--cd to override)
 # timeout-ms = 500
 ```
 
+### Step
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+```
+
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+
 ### Aliases
 
 Command templates that run with `wt step <name>`. See [`wt step` aliases](https://worktrunk.dev/step/#aliases) for usage and flags.
@@ -217,16 +230,19 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides [experimental]
+#### Setting overrides
 
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+[experimental]
+
+Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
-post-create.env = "cp .env.example .env"
+pre-start.env = "cp .env.example .env"
+step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
 ```
 
@@ -344,6 +360,10 @@ url = "http://localhost:{{ branch | hash_port }}"
 [ci]
 platform = "github"  # or "gitlab"
 
+# Add more gitignored excludes for wt step copy-ignored
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
+
 # Command aliases (run with wt step <name>)
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
@@ -355,7 +375,7 @@ test = "cargo test"
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
 ```bash
-wt config shell install
+$ wt config shell install
 ```
 
 For manual setup, see `wt config shell init --help`.
@@ -391,14 +411,14 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 Override the LLM command in CI to use a mock:
 
 ```bash
-WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
+$ WORKTRUNK_COMMIT__GENERATION__COMMAND=&quot;echo 'test: automated commit'&quot; wt merge
 ```
 
 ### Other environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
+| `WORKTRUNK_BIN` | Override binary path for shell wrappers; useful for testing dev builds |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
@@ -453,7 +473,7 @@ If a config file doesn't exist, shows defaults that would be used.
 Use `--full` to run diagnostic checks:
 
 ```bash
-wt config show --full
+$ wt config show --full
 ```
 
 This tests:
@@ -504,17 +524,17 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```bash
-wt config state default-branch
+$ wt config state default-branch
 ```
 
 Set the default branch manually:
 ```bash
-wt config state default-branch set main
+$ wt config state default-branch set main
 ```
 
 Set a marker for current branch:
 ```bash
-wt config state marker set "🚧 WIP"
+$ wt config state marker set &quot;🚧 WIP&quot;
 ```
 
 Store arbitrary data:
@@ -524,17 +544,17 @@ wt config state kv set env staging
 
 Clear all CI status cache:
 ```bash
-wt config state ci-status clear --all
+$ wt config state ci-status clear --all
 ```
 
 Show all stored state:
 ```bash
-wt config state get
+$ wt config state get
 ```
 
 Clear all stored state:
 ```bash
-wt config state clear
+$ wt config state clear
 ```
 
 ### Command reference
@@ -575,7 +595,7 @@ Default branch detection and override.
 Useful in scripts to avoid hardcoding `main` or `master`:
 
 ```bash
-git rebase $(wt config state default-branch)
+$ git rebase $(wt config state default-branch)
 ```
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
@@ -701,7 +721,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
 ```bash
-git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
+$ git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;🚧&quot;,&quot;set_at&quot;:0}'
 ```
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`.
@@ -850,22 +870,22 @@ All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
 
 List all log files:
 ```bash
-wt config state logs get
+$ wt config state logs get
 ```
 
 Query the command log:
 ```bash
-tail -5 .git/wt/logs/commands.jsonl | jq .
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
 View a specific hook log:
 ```bash
-cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
+$ cat &quot;$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log&quot;
 ```
 
 Clear all logs:
 ```bash
-wt config state logs clear
+$ wt config state logs clear
 ```
 
 ### Command reference

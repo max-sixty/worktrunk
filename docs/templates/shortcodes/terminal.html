@@ -1,12 +1,24 @@
 {% if cmd %}
 {% set fence = "```" %}
-{% set md = fence ~ "bash
-" ~ cmd ~ "
-" ~ fence %}
-{% set raw = md | markdown %}
-{% set hl = raw | regex_replace(pattern="(?s)<pre[^>]*><code[^>]*>(.*)</code>\s*</pre>", rep="$1") | trim %}
+{% set cmd_lines = cmd | split(pat="|||") %}
+{% if body is defined %}
 {% set clean_body = body | regex_replace(pattern='<span class="cmd">[^<]*</span>\n?', rep="") %}
-<pre class="terminal"><code><span class="cmd">{{ hl | safe }}</span>
+{% else %}
+{% set clean_body = "" %}
+{% endif %}
+<pre class="terminal"><code>
+{%- for cmd_line in cmd_lines -%}
+{%- set md = fence ~ "bash
+" ~ cmd_line ~ "
+" ~ fence -%}
+{%- set raw = md | markdown -%}
+{%- set hl = raw | regex_replace(pattern="(?s)<pre[^>]*><code[^>]*>(.*)</code>\s*</pre>", rep="$1") | trim -%}
+{%- if cmd_line is starting_with("#") -%}
+{{ hl | safe }}
+{% else -%}
+<span class="cmd">{{ hl | safe }}</span>
+{% endif -%}
+{%- endfor -%}
 {{ clean_body | safe }}</code></pre>
 {% else %}
 <pre class="terminal"><code>{{ body | safe }}</code></pre>

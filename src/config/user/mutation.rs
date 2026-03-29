@@ -10,8 +10,7 @@ use crate::path::format_path_for_display;
 
 use super::UserConfig;
 use super::path;
-use super::sections::CommitConfig;
-use super::sections::CommitGenerationConfig;
+use super::sections::{CommitConfig, CommitGenerationConfig};
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
@@ -145,6 +144,26 @@ impl UserConfig {
                 return false;
             }
             config.skip_commit_generation_prompt = true;
+            true
+        })
+    }
+
+    /// Set worktree-path for a specific project and save.
+    ///
+    /// Creates the project entry if it doesn't exist.
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn set_project_worktree_path(
+        &mut self,
+        project: &str,
+        worktree_path: String,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
+        self.with_locked_mutation(config_path, |config| {
+            let entry = config.projects.entry(project.to_string()).or_default();
+            if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
+                return false;
+            }
+            entry.overrides.worktree_path = Some(worktree_path);
             true
         })
     }

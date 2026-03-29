@@ -1,0 +1,53 @@
+---
+source: tests/integration_tests/spacing_edge_cases.rs
+info:
+  program: wt
+  args:
+    - list
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "40"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
+    PATH: "[PATH]"
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+  [1mBranch[0m                 [1mStatus[0m    [1mAge
+@ main                       [2m^[22m[2m|[22m    [2m16h
++ [2mchore/update-deps[0m          [2m_[22m     [2m16h
++ feature-a                  [2m↑[22m     [2m16h
++ feature/auth-redesign    [36m?[39m [2m–[22m     [2m16h
++ feature-b                  [2m↑[22m     [2m16h
++ feature-c                  [2m↑[22m     [2m16h
++ [2mfix/login-timeout[0m          [2m_[22m     [2m16h
+
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 6 columns hidden
+
+----- stderr -----

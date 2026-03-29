@@ -484,6 +484,20 @@ fn wait_for_stable_with_content(
     );
 }
 
+/// Disable the picker's 500ms data collection timeout so all task results
+/// arrive before rendering. Without this, slow CI runners (especially macOS)
+/// can show `·` stale placeholders for columns whose data didn't arrive in
+/// time, causing non-deterministic snapshots.
+fn disable_picker_timeout(repo: &TestRepo) {
+    let existing = std::fs::read_to_string(repo.test_config_path()).unwrap_or_default();
+    let config = if existing.is_empty() {
+        "skip-commit-generation-prompt = true\n\n[switch-picker]\ntimeout-ms = 0\n".to_string()
+    } else {
+        format!("{existing}\n[switch-picker]\ntimeout-ms = 0\n")
+    };
+    std::fs::write(repo.test_config_path(), config).unwrap();
+}
+
 /// Create insta settings with filters for switch picker snapshot stability.
 ///
 /// Replaces the manual `normalize_output()` approach with declarative insta filters.
@@ -522,6 +536,7 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
@@ -547,6 +562,7 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
@@ -576,13 +592,14 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -613,6 +630,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -621,7 +639,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -633,7 +651,7 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
             "-m",
             "Add tracked file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -673,6 +691,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -686,7 +705,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         let output = repo
             .git_command()
             .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to add files");
         let output = repo
@@ -698,7 +717,7 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
                 "-m",
                 &format!("Add file {i} with content"),
             ])
-            .output()
+            .run()
             .unwrap();
         assert!(output.status.success(), "Failed to commit");
     }
@@ -732,6 +751,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -750,7 +770,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -762,7 +782,7 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
             "-m",
             "Add new feature implementation",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -779,7 +799,7 @@ fn test_new_feature() {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
@@ -791,7 +811,7 @@ fn test_new_feature() {
             "-m",
             "Add tests for new feature",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -824,6 +844,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
+    disable_picker_timeout(&repo);
 
     let feature_path = repo.add_worktree("feature");
 
@@ -832,7 +853,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["-C", feature_path.to_str().unwrap(), "add", "."])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
@@ -844,7 +865,7 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
             "-m",
             "Add new file",
         ])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to commit");
 
@@ -885,7 +906,7 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
 
@@ -895,6 +916,9 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
         r#"
 [list]
 branches = true
+
+[switch-picker]
+timeout-ms = 0
 "#,
     );
 
@@ -958,7 +982,7 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
     let branch_output = repo
         .git_command()
         .args(["branch", "--list", "new-feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),

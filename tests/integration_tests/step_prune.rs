@@ -455,7 +455,7 @@ fn test_prune_during_rebase(mut repo: TestRepo) {
         .args(["rebase", "-i", "--exec", "false", "main"])
         .current_dir(&feature_path)
         .env("GIT_SEQUENCE_EDITOR", "true")
-        .output()
+        .run()
         .unwrap();
     // The rebase should pause (exec false fails), leaving us in rebase state
     assert!(!git_status.status.success(), "rebase should be paused");
@@ -511,7 +511,7 @@ fn test_prune_skips_default_branch_orphan() {
     std::fs::remove_dir_all(&main_wt).unwrap();
     test.git_command(test.bare_repo_path())
         .args(["worktree", "prune"])
-        .output()
+        .run()
         .unwrap();
 
     // Create a feature branch (integrated, at same commit as main)
@@ -532,7 +532,7 @@ fn test_prune_skips_default_branch_orphan() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["branch", "--list", "main"])
-        .output()
+        .run()
         .unwrap();
     let branches = String::from_utf8_lossy(&output.stdout);
     assert!(

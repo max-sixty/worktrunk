@@ -422,7 +422,7 @@ fn test_relocate_main_worktree(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["branch", "--show-current"])
-        .output()
+        .run()
         .unwrap();
     let current_branch = String::from_utf8_lossy(&output.stdout);
     assert_eq!(

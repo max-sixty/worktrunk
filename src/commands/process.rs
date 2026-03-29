@@ -442,14 +442,12 @@ pub fn build_remove_command(
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
 
-    // TODO: This delay is a timing-based workaround, not a principled fix.
-    // The race: after wt exits, the shell wrapper reads the directive file and
-    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
-    // completes (e.g., for prompt updates), and if the background removal has
-    // already deleted the directory, we get "shell-init: error retrieving current
-    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
-    // deterministic solutions (shell-spawned background, marker file sync) add
-    // significant complexity for marginal benefit.
+    // Delay before deleting the worktree directory. After wt exits, the shell
+    // wrapper reads the directive file and runs `cd`. The 1s delay ensures the
+    // shell has finished cd'ing before the directory is removed. The primary fix
+    // for the "shell-init: error retrieving current directory" race is in the
+    // fish wrapper (using builtins instead of subprocesses to read the directive),
+    // but this delay provides defense in depth for other shells and edge cases.
     let delay = "sleep 1";
 
     // Stop fsmonitor daemon first (best effort - ignore errors)
@@ -626,10 +624,10 @@ mod tests {
         // Suffix includes sanitized name with hash for collision avoidance
         // Constructor and parse produce identical suffixes
         assert_snapshot!(HookLog::hook(HookSource::User, HookType::PostStart, "server").suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PostCreate, "build").suffix(), @"project-post-create-build-seq");
+        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PreStart, "build").suffix(), @"project-pre-start-build-seq");
         assert_snapshot!(HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup").suffix(), @"user-pre-remove-cleanup-non");
         assert_snapshot!(HookLog::parse("user:post-start:server").unwrap().suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::parse("project:post-create:build").unwrap().suffix(), @"project-post-create-build-seq");
+        assert_snapshot!(HookLog::parse("project:pre-start:build").unwrap().suffix(), @"project-pre-start-build-seq");
 
         // Internal operation suffix
         assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
@@ -660,7 +658,7 @@ mod tests {
         assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
         // Unknown hook type
-        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-create, post-start, post-switch, pre-commit, pre-merge, post-merge, pre-remove, post-remove");
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
         // Unknown internal operation
         assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");

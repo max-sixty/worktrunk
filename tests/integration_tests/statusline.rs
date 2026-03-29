@@ -77,24 +77,24 @@ fn add_commits_ahead(repo: &mut TestRepo) {
     repo.git_command()
         .args(["add", "."])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Feature commit 1"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     std::fs::write(feature_path.join("feature2.txt"), "more content").unwrap();
     repo.git_command()
         .args(["add", "."])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Feature commit 2"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 }
 
@@ -306,15 +306,12 @@ fn test_statusline_reflects_checked_out_branch(mut repo: TestRepo) {
     );
 
     // Create and checkout a different branch "other" in the feature worktree
-    repo.git_command()
-        .args(["branch", "other"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["branch", "other"]).run().unwrap();
     let checkout_output = repo
         .git_command()
         .args(["checkout", "other"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     assert!(
         checkout_output.status.success(),
@@ -343,7 +340,7 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
     repo.git_command()
         .args(["checkout", "--detach"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     // Verify statusline shows HEAD (not "feature")
@@ -448,12 +445,12 @@ fn test_statusline_json_feature_branch(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "."])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Feature commit"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     let output = run_statusline_from_dir(&repo, &["--format=json"], None, &feature_path);

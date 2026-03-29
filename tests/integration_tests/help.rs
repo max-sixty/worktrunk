@@ -150,7 +150,10 @@ fn test_help_list_narrow_terminal() {
 /// Tests --help-description outputs the meta description for docs frontmatter.
 #[rstest]
 #[case("switch", "Switch to a worktree; create if needed.")]
-#[case("merge", "Merge current branch into target. Squash & rebase")]
+#[case(
+    "merge",
+    "Merge current branch into the target branch. Squash & rebase"
+)]
 #[case("hook", "Run configured hooks.")]
 fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
     let output = wt_command()
@@ -203,11 +206,7 @@ fn test_help_description_unknown_command() {
 #[case("nested_subcommand_step_squash", "squash", "wt step squash")]
 #[case("nested_subcommand_step_commit", "commit", "wt step commit")]
 #[case("nested_subcommand_hook_pre_merge", "pre-merge", "wt hook pre-merge")]
-#[case(
-    "nested_subcommand_hook_post_create",
-    "post-create",
-    "wt hook post-create"
-)]
+#[case("nested_subcommand_hook_pre_start", "pre-start", "wt hook pre-start")]
 fn test_nested_subcommand_suggestion(
     #[case] test_name: &str,
     #[case] subcommand: &str,

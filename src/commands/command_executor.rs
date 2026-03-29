@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{Command, CommandConfig, UserConfig, expand_template};
+use worktrunk::config::{Command, CommandConfig, HookStep, UserConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -13,6 +13,13 @@ pub struct PreparedCommand {
     pub name: Option<String>,
     pub expanded: String,
     pub context_json: String,
+}
+
+/// A step in a prepared pipeline, mirroring `HookStep`.
+#[derive(Debug)]
+pub enum PreparedStep {
+    Single(PreparedCommand),
+    Concurrent(Vec<PreparedCommand>),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -113,7 +120,11 @@ pub fn build_hook_context(
         map.insert("main_worktree_path".into(), path_str);
     }
 
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
+    // Resolve commit from the Active branch, not HEAD at discovery path.
+    // This ensures {{ commit }} follows the Active branch even when the
+    // CommandContext points to a different worktree than where we're running.
+    let commit_ref = ctx.branch.unwrap_or("HEAD");
+    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", commit_ref]) {
         let commit = commit.trim();
         map.insert("commit".into(), commit.into());
         if commit.len() >= 7 {
@@ -134,7 +145,14 @@ pub fn build_hook_context(
         }
     }
 
-    // Add extra vars (e.g., target branch for merge)
+    // Execution directory — always where the hook command runs, even when
+    // worktree_path points to an Active identity that doesn't exist on disk.
+    map.insert(
+        "cwd".into(),
+        to_posix_path(&ctx.worktree_path.to_string_lossy()),
+    );
+
+    // Add extra vars (e.g., target branch for merge, base for switch)
     for (k, v) in extra_vars {
         map.insert((*k).into(), (*v).into());
     }
@@ -209,12 +227,12 @@ pub fn prepare_commands(
     hook_type: HookType,
     source: HookSource,
 ) -> anyhow::Result<Vec<PreparedCommand>> {
-    let commands = command_config.commands();
+    let commands: Vec<Command> = command_config.commands().cloned().collect();
     if commands.is_empty() {
         return Ok(Vec::new());
     }
 
-    let expanded_with_json = expand_commands(commands, ctx, extra_vars, hook_type, source)?;
+    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source)?;
 
     Ok(expanded_with_json
         .into_iter()
@@ -224,4 +242,64 @@ pub fn prepare_commands(
             context_json,
         })
         .collect())
+}
+
+/// Prepare pipeline steps for execution, preserving serial/concurrent structure.
+///
+/// Like `prepare_commands`, but returns `Vec<PreparedStep>` that preserves
+/// the pipeline structure from the config. Used by post-* hooks that need
+/// to distinguish serial steps from concurrent groups.
+pub fn prepare_steps(
+    command_config: &CommandConfig,
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+    hook_type: HookType,
+    source: HookSource,
+) -> anyhow::Result<Vec<PreparedStep>> {
+    let steps = command_config.steps();
+    if steps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Collect step sizes so we can re-partition after a single expand_commands call.
+    // This avoids calling build_hook_context (which spawns git subprocesses) per step.
+    let step_sizes: Vec<usize> = steps
+        .iter()
+        .map(|s| match s {
+            HookStep::Single(_) => 1,
+            HookStep::Concurrent(cmds) => cmds.len(),
+        })
+        .collect();
+
+    let all_commands: Vec<Command> = command_config.commands().cloned().collect();
+    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source)?;
+    let mut expanded_iter = all_expanded.into_iter();
+
+    let mut result = Vec::new();
+    for (step, &size) in steps.iter().zip(&step_sizes) {
+        let chunk: Vec<_> = expanded_iter.by_ref().take(size).collect();
+        match step {
+            HookStep::Single(_) => {
+                let (cmd, json) = chunk.into_iter().next().unwrap();
+                result.push(PreparedStep::Single(PreparedCommand {
+                    name: cmd.name,
+                    expanded: cmd.expanded,
+                    context_json: json,
+                }));
+            }
+            HookStep::Concurrent(_) => {
+                let prepared = chunk
+                    .into_iter()
+                    .map(|(cmd, json)| PreparedCommand {
+                        name: cmd.name,
+                        expanded: cmd.expanded,
+                        context_json: json,
+                    })
+                    .collect();
+                result.push(PreparedStep::Concurrent(prepared));
+            }
+        }
+    }
+
+    Ok(result)
 }

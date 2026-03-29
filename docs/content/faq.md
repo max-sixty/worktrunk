@@ -17,24 +17,24 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
-```bash
+{% terminal() %}
 # Plain git worktree workflow
-git worktree add -b feature-branch ../myapp-feature main
-cd ../myapp-feature
+<span class="cmd">git worktree add -b feature-branch ../myapp-feature main</span>
+<span class="cmd">cd ../myapp-feature</span>
 # ...work, commit, push...
-cd ../myapp
-git merge feature-branch
-git worktree remove ../myapp-feature
-git branch -d feature-branch
-```
+<span class="cmd">cd ../myapp</span>
+<span class="cmd">git merge feature-branch</span>
+<span class="cmd">git worktree remove ../myapp-feature</span>
+<span class="cmd">git branch -d feature-branch</span>
+{% end %}
 
 Worktrunk automates the full lifecycle:
 
-```bash
-wt switch --create feature-branch  # Creates worktree, runs setup hooks
+{% terminal() %}
+<span class="cmd">wt switch --create feature-branch  # Creates worktree, runs setup hooks</span>
 # ...work...
-wt merge                            # Merges into default branch, cleans up
-```
+<span class="cmd">wt merge                            # Merges into default branch, cleans up</span>
+{% end %}
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
@@ -98,7 +98,7 @@ Created by `wt config shell install`:
 - **Bash**: adds line to `~/.bashrc`
 - **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
 - **Fish**: creates `~/.config/fish/functions/wt.fish` and `~/.config/fish/completions/wt.fish`
-- **Nushell** {{ experimental() }}: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
+- **Nushell** <span class="badge-experimental"></span>: creates `$nu.default-config-dir/vendor/autoload/wt.nu` (typically `~/.config/nushell` on Linux, `~/Library/Application Support/nushell` on macOS)
 - **PowerShell** (Windows): creates both profile files if they don't exist:
   - `Documents/PowerShell/Microsoft.PowerShell_profile.ps1` (PowerShell 7+)
   - `Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1` (Windows PowerShell 5.1)
@@ -139,9 +139,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-```bash
-git worktree lock ../myproject.feature --reason "Contains local database"
-```
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -173,21 +171,18 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 ### Example approval prompt
 
-<!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_approval_prompt.snap — edit source to update -->
+{% terminal() %}
+<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
 
-```
-▲ repo needs approval to execute 3 commands:
+<span class="d">○</span> pre-start <b>install</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
+<span class="d">○</span> pre-start <b>build</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
+<span class="d">○</span> pre-start <b>env</b>:
+<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
-❯ Allow and remember? [y/N]
-```
-
-<!-- END AUTO-GENERATED -->
+<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
+{% end %}
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -197,13 +192,13 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
-```bash
+{% terminal() %}
 # Recent commands
-tail -5 .git/wt/logs/commands.jsonl | jq .
+<span class="cmd">tail -5 .git/wt/logs/commands.jsonl | jq .</span>
 
 # Failed commands
-jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
-```
+<span class="cmd">jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl</span>
+{% end %}
 
 Clear with `wt config state logs clear`.
 
@@ -227,9 +222,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
-```bash
-$ cargo install worktrunk --no-default-features
-```
+{{ terminal(cmd="cargo install worktrunk --no-default-features") }}
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
@@ -237,17 +230,13 @@ This disables bash syntax highlighting in command output but keeps all core func
 
 ### Quick tests
 
-```bash
-$ cargo test
-```
+{{ terminal(cmd="cargo test") }}
 
 ### Full integration tests
 
 Shell integration tests require bash, zsh, fish, and nushell:
 
-```bash
-$ cargo test --test integration --features shell-integration-tests
-```
+{{ terminal(cmd="cargo test --test integration --features shell-integration-tests") }}
 
 ## How can I contribute?
 

@@ -1,5 +1,7 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
+use std::path::PathBuf;
+
 use anyhow::Context;
 use color_print::cformat;
 
@@ -456,6 +458,39 @@ impl Repository {
     // =========================================================================
     // Project config
     // =========================================================================
+
+    /// Return the path for the project config file.
+    ///
+    /// Uses the current worktree when inside one (both normal and bare repos).
+    /// For bare repos at the bare root (outside any worktree), falls back to
+    /// the primary worktree. Returns `None` when no worktree can be determined
+    /// (bare repo with no linked worktrees).
+    pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        let in_worktree = self
+            .current_worktree()
+            .run_command(&["rev-parse", "--is-inside-work-tree"])
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false);
+
+        if in_worktree {
+            // Inside a worktree — use it (normal repo or linked worktree in bare repo)
+            return Ok(Some(
+                self.current_worktree()
+                    .root()?
+                    .join(".config")
+                    .join("wt.toml"),
+            ));
+        }
+
+        if self.is_bare().unwrap_or(false) {
+            // At bare repo root — use primary worktree
+            return Ok(self
+                .primary_worktree()?
+                .map(|p| p.join(".config").join("wt.toml")));
+        }
+
+        Ok(None)
+    }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///
