@@ -459,6 +459,113 @@ fn test_find_forge_remote_no_remotes(repo: TestRepo) {
     assert!(git_repo.find_forge_remote(|p| p.is_github()).is_none());
 }
 
+/// Test find_remote_for_repo: resolves through insteadOf to match owner/repo.
+#[rstest]
+fn test_find_remote_for_repo_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Raw URL has custom hostname — find_remote_for_repo should match via the
+    // effective URL (github.com), which reveals the real forge after insteadOf
+    let found = git_repo.find_remote_for_repo(Some("github.com"), "org", "repo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: case-insensitive matching works with insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_case_insensitive(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:MyOrg/MyRepo.git",
+        "git@github.com:MyOrg",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let found = git_repo.find_remote_for_repo(Some("github.com"), "myorg", "myrepo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: matches without host constraint via insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_no_host(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    // host=None should match any forge host
+    let found = git_repo.find_remote_for_repo(None, "org", "repo");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
+/// Test find_remote_for_repo: picks the correct remote among multiple with insteadOf.
+#[rstest]
+fn test_find_remote_for_repo_insteadof_multiple_remotes(repo: TestRepo) {
+    // origin → github.com:org/repo via insteadOf
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+    // upstream → github.com:upstream-org/repo via insteadOf
+    repo.run_git(&[
+        "config",
+        "remote.upstream.url",
+        "git@work-ssh-2:upstream-org/repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "url.git@github.com:upstream-org.insteadOf",
+        "git@work-ssh-2:upstream-org",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    assert_eq!(
+        git_repo
+            .find_remote_for_repo(Some("github.com"), "upstream-org", "repo")
+            .as_deref(),
+        Some("upstream")
+    );
+    assert_eq!(
+        git_repo
+            .find_remote_for_repo(Some("github.com"), "org", "repo")
+            .as_deref(),
+        Some("origin")
+    );
+}
+
+/// Test find_remote_by_url: resolves through insteadOf.
+#[rstest]
+fn test_find_remote_by_url_insteadof(repo: TestRepo) {
+    setup_insteadof(
+        &repo,
+        "origin",
+        "git@work-ssh:org/repo.git",
+        "git@github.com:org",
+    );
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // target_url uses the real forge hostname (as API responses would)
+    let found = git_repo.find_remote_by_url("git@github.com:org/repo.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+
+    // HTTPS variant should also match
+    let found = git_repo.find_remote_by_url("https://github.com/org/repo.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
 /// Test github_push_url: resolves through insteadOf on push remote.
 #[rstest]
 fn test_github_push_url_insteadof_fallback(repo: TestRepo) {

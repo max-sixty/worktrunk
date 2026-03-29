@@ -119,7 +119,11 @@ impl Repository {
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
-    /// whose URL matches the given owner and repo (case-insensitive).
+    /// whose URL matches the given owner and repo (case-insensitive). Checks
+    /// both the raw config URL and the effective URL (with `url.insteadOf`
+    /// rewrites applied), so matches work in both directions: when the raw URL
+    /// contains a real forge hostname, and when `insteadOf` rewrites a custom
+    /// hostname to a real forge.
     ///
     /// When `host` is `Some`, the remote must also match the host. This is
     /// important for multi-host setups (e.g., both github.com and
@@ -132,23 +136,24 @@ impl Repository {
         owner: &str,
         repo: &str,
     ) -> Option<String> {
-        // Get all remotes with URLs
-        let output = self
-            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
-            .ok()?;
-
-        for line in output.lines() {
-            // Parse "remote.<name>.url <value>" format
-            if let Some(rest) = line.strip_prefix("remote.")
-                && let Some((name, url)) = rest.split_once(".url ")
-                && let Some(parsed) = GitRemoteUrl::parse(url)
-                // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
-                && parsed.owner().eq_ignore_ascii_case(owner)
+        let matches = |url: &str| -> bool {
+            let Some(parsed) = GitRemoteUrl::parse(url) else {
+                return false;
+            };
+            parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
-                // If host is specified, it must also match (case-insensitive)
                 && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
+        };
+
+        for (remote_name, raw_url) in self.all_remote_urls() {
+            if matches(&raw_url) {
+                return Some(remote_name);
+            }
+            if let Some(effective_url) = self.effective_remote_url(&remote_name)
+                && effective_url != raw_url
+                && matches(&effective_url)
             {
-                return Some(name.to_string());
+                return Some(remote_name);
             }
         }
 
