@@ -258,7 +258,7 @@ $ wt step diff | delta
 Equivalent to:
 
 ```bash
-$ cp &quot;$(git rev-parse --git-dir)/index&quot; /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+$ cp "$(git rev-parse --git-dir)/index" /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
@@ -435,26 +435,26 @@ All [hook template variables and filters](https://worktrunk.dev/hook/#template-v
 
 Get the port for the current branch:
 
-<span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
 16066
 
 Use in shell substitution:
 
-<span class="cmd">curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health</span>
+```bash
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
 
 Combine multiple values:
 
-<span class="cmd">wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'</span>
+{% terminal(cmd="wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'") %}
 16066,16739
+{% end %}
 
 Use conditionals and filters:
 
-<span class="cmd">wt step eval '{{ branch | sanitize_db }}'</span>
 feature_auth_oauth2_a1b
 
 Show available template variables:
 
-<span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
@@ -519,12 +519,14 @@ $ wt step for-each -- npm install
 
 Use branch name in command:
 
-<span class="cmd">wt step for-each -- "echo Branch: {{ branch }}"</span>
+```bash
+$ wt step for-each -- "echo Branch: {{ branch }}"
+```
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```bash
-$ git fetch --prune && wt step for-each -- '[ &quot;$(git rev-parse @{u} 2>/dev/null)&quot; ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
