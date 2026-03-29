@@ -1679,6 +1679,15 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
 
+/// Regex to strip `<span class="cmd">...</span>` lines from shortcode bodies.
+/// These duplicate the cmd parameter content (the template uses `clean_body` for this).
+static SPAN_CMD_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">[^<]*</span>\n?"#).unwrap());
+
+/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd body shortcodes.
+static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
+
 /// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
 /// Each cmd line gets `$ ` prefix; comment lines (`#`) and blank lines pass through.
 fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
@@ -1695,9 +1704,11 @@ fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
             result.push('\n');
         }
     }
-    if !body.is_empty() {
-        result.push_str(body);
-        if !body.ends_with('\n') {
+    // Strip <span class="cmd"> lines that duplicate the cmd parameter
+    let clean_body = SPAN_CMD_PATTERN.replace_all(body, "");
+    if !clean_body.is_empty() {
+        result.push_str(&clean_body);
+        if !clean_body.ends_with('\n') {
             result.push('\n');
         }
     }
@@ -1733,7 +1744,12 @@ fn transform_docs_for_skill(content: &str) -> String {
         let body = caps.get(2).map_or("", |m| m.as_str());
         match caps.get(1) {
             Some(cmd) => cmd_to_bash_block(cmd.as_str(), body),
-            None => body.to_string(), // no cmd parameter — keep body as-is
+            None if body.contains(r#"<span class="cmd">"#) => {
+                // Old-style body shortcode with <span class="cmd"> — convert to $ lines
+                let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
+                format!("```bash\n{converted}```")
+            }
+            None => body.to_string(),
         }
     });
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN

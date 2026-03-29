@@ -122,7 +122,6 @@ Create a worktree for a new feature:
 
 ```bash
 $ wt switch --create feature-auth
-<span class="cmd">wt switch --create feature-auth</span>
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
 ```
 
@@ -130,7 +129,6 @@ This creates a new branch and worktree, then switches to it. Do your work, then 
 
 ```bash
 $ wt list
-<span class="cmd">wt list</span>
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>               <span class=d>4bc72dc9</span>  <span class=d>2h</span>    <span class=d>Add authentication module</span>
 ^ main              <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
@@ -154,7 +152,6 @@ $ wt remove                         # after PR is merged
 
 ```bash
 $ wt merge main
-<span class="cmd">wt merge main</span>
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
