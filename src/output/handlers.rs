@@ -1050,68 +1050,56 @@ struct RemovedWorktreeOutputContext<'a> {
     verify: bool,
 }
 
-/// Handle output for RemovedWorktree removal
-fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
-    let RemovedWorktreeOutputContext {
-        main_path,
-        worktree_path,
-        changed_directory,
-        branch_name,
-        deletion_mode,
-        target_branch,
-        pre_computed_integration,
-        force_worktree,
-        expected_path,
-        removed_commit,
-        foreground,
-        verify,
-    } = ctx;
-
-    // Use main_path for discovery - the worktree being removed might be cwd,
-    // and git operations after removal need a valid working directory.
-    let repo = worktrunk::git::Repository::at(main_path)?;
-
-    // Execute pre-remove hooks in the worktree being removed BEFORE writing cd directive.
-    // Non-zero exit aborts removal (FailFast strategy).
-    // If hooks fail, we don't want the shell to cd to main_path.
-    // For detached HEAD, {{ branch }} expands to "HEAD" in templates
-    if verify && let Ok(config) = UserConfig::load() {
-        let ctx = CommandContext::new(
-            &repo,
-            &config,
-            branch_name,
-            worktree_path,
-            false, // yes=false for CommandContext (not approval-related)
-        );
-        // Show path when removing a different worktree (user is elsewhere)
-        let display_path = if changed_directory {
-            None // User was already here
-        } else {
-            Some(worktree_path) // Show path when user is elsewhere
-        };
-        // Target vars: where the user will end up after removal
-        let target_branch = repo
-            .worktree_at(main_path)
-            .branch()
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
-        let extra_vars: Vec<(&str, &str)> = vec![
-            ("target", &target_branch),
-            ("target_worktree_path", &target_path_str),
-        ];
-        execute_hook(
-            &ctx,
-            worktrunk::HookType::PreRemove,
-            &extra_vars,
-            HookFailureStrategy::FailFast,
-            None,
-            display_path,
-        )?;
+fn execute_pre_remove_hooks_if_needed(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+) -> anyhow::Result<()> {
+    if !ctx.verify {
+        return Ok(());
     }
 
-    // Emit cd directive only after pre-remove hooks succeed
+    let Ok(config) = UserConfig::load() else {
+        return Ok(());
+    };
+
+    let command_ctx = CommandContext::new(
+        repo,
+        &config,
+        ctx.branch_name,
+        ctx.worktree_path,
+        false, // yes=false for CommandContext (not approval-related)
+    );
+    let display_path = if ctx.changed_directory {
+        None
+    } else {
+        Some(ctx.worktree_path)
+    };
+    let target_branch = repo
+        .worktree_at(ctx.main_path)
+        .branch()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let target_path_str = worktrunk::path::to_posix_path(&ctx.main_path.to_string_lossy());
+    let extra_vars: Vec<(&str, &str)> = vec![
+        ("target", &target_branch),
+        ("target_worktree_path", &target_path_str),
+    ];
+
+    execute_hook(
+        &command_ctx,
+        worktrunk::HookType::PreRemove,
+        &extra_vars,
+        HookFailureStrategy::FailFast,
+        None,
+        display_path,
+    )
+}
+
+fn prepare_remove_directory_change(
+    main_path: &Path,
+    changed_directory: bool,
+) -> anyhow::Result<()> {
     if changed_directory {
         super::change_directory(main_path)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
@@ -1120,173 +1108,201 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         super::mark_cwd_removed();
     }
 
-    // Handle detached HEAD case (no branch known)
-    let Some(branch_name) = branch_name else {
-        // No branch associated - just remove the worktree
-        if foreground {
-            // Progress message after pre-remove hooks, before actual removal
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Removing worktree @ <bold>{}</>... (detached HEAD, no branch to delete)",
-                    format_path_for_display(worktree_path)
-                ))
-            );
-            let output = execute_removal(
-                &repo,
-                worktree_path,
-                None,
-                deletion_mode,
-                target_branch,
-                force_worktree,
-            )
-            .map_err(|err| GitError::WorktreeRemovalFailed {
-                branch: path_dir_name(worktree_path).to_string(),
-                path: worktree_path.to_path_buf(),
-                remaining_entries: list_remaining_entries(worktree_path),
-                error: err.to_string(),
-            })?;
-            if let Some(staged) = output.staged_path {
-                let _ = std::fs::remove_dir_all(&staged);
-            }
-            eprintln!(
-                "{}",
-                success_message(cformat!(
-                    "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
-                    format_path_for_display(worktree_path)
-                ))
-            );
-        } else {
-            let path_display = format_path_for_display(worktree_path);
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Removing worktree @ <bold>{path_display}</> in background (detached HEAD, no branch to delete)"
-                ))
-            );
+    Ok(())
+}
 
-            spawn_background_removal(
-                &repo,
-                main_path,
-                worktree_path,
-                None,
-                force_worktree,
-                "detached",
-            )?;
-        }
-        // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            "HEAD",
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        return Ok(());
-    };
-
-    if foreground {
-        // Foreground mode: remove immediately and report actual results
-
-        // Progress message after pre-remove hooks, before actual removal
+fn handle_detached_removed_worktree_output(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+) -> anyhow::Result<()> {
+    if ctx.foreground {
         eprintln!(
             "{}",
-            progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
+            progress_message(cformat!(
+                "Removing worktree @ <bold>{}</>... (detached HEAD, no branch to delete)",
+                format_path_for_display(ctx.worktree_path)
+            ))
         );
-
-        // Foreground mode: show warning after progress (contextual info during operation)
-        if let Some(expected) = expected_path {
-            eprintln!(
-                "{}",
-                format_path_mismatch_warning(branch_name, worktree_path, expected)
-            );
-        }
-
         let output = execute_removal(
-            &repo,
-            worktree_path,
-            Some(branch_name),
-            deletion_mode,
-            target_branch,
-            force_worktree,
+            repo,
+            ctx.worktree_path,
+            None,
+            ctx.deletion_mode,
+            ctx.target_branch,
+            ctx.force_worktree,
         )
         .map_err(|err| GitError::WorktreeRemovalFailed {
-            branch: branch_name.into(),
-            path: worktree_path.to_path_buf(),
-            remaining_entries: list_remaining_entries(worktree_path),
+            branch: path_dir_name(ctx.worktree_path).to_string(),
+            path: ctx.worktree_path.to_path_buf(),
+            remaining_entries: list_remaining_entries(ctx.worktree_path),
             error: err.to_string(),
         })?;
         if let Some(staged) = output.staged_path {
             let _ = std::fs::remove_dir_all(&staged);
         }
-
-        let display_info = RemovalDisplayInfo::from_branch_result(
-            output.branch_result,
-            branch_name,
-            pre_computed_integration,
-            target_branch,
-            force_worktree,
-        )?;
-
-        display_info.print_message(branch_name, true)?;
-        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
-        print_switch_message_if_changed(changed_directory, main_path)?;
-
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            branch_name,
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        Ok(())
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
+                format_path_for_display(ctx.worktree_path)
+            ))
+        );
     } else {
-        // Background mode: show warning before decision announcement
-        if let Some(expected) = expected_path {
-            eprintln!(
-                "{}",
-                format_path_mismatch_warning(branch_name, worktree_path, expected)
-            );
-        }
-
-        // Background mode: spawn detached process
-        let display_info = RemovalDisplayInfo::from_precomputed(
-            deletion_mode,
-            pre_computed_integration,
-            target_branch,
-            force_worktree,
+        let path_display = format_path_for_display(ctx.worktree_path);
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Removing worktree @ <bold>{path_display}</> in background (detached HEAD, no branch to delete)"
+            ))
         );
 
-        display_info.print_message(branch_name, false)?;
-        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
-        print_switch_message_if_changed(changed_directory, main_path)?;
-
         spawn_background_removal(
-            &repo,
-            main_path,
-            worktree_path,
-            display_info.branch_deleted().then_some(branch_name),
-            force_worktree,
-            branch_name,
+            repo,
+            ctx.main_path,
+            ctx.worktree_path,
+            None,
+            ctx.force_worktree,
+            "detached",
         )?;
+    }
 
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            branch_name,
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        Ok(())
+    // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
+    spawn_hooks_after_remove(
+        repo,
+        ctx.main_path,
+        ctx.worktree_path,
+        "HEAD",
+        ctx.removed_commit,
+        ctx.verify,
+        ctx.changed_directory,
+    )?;
+    stderr().flush()?;
+    Ok(())
+}
+
+fn handle_named_removed_worktree_foreground(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
+    );
+
+    if let Some(expected) = ctx.expected_path {
+        eprintln!(
+            "{}",
+            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
+        );
+    }
+
+    let output = execute_removal(
+        repo,
+        ctx.worktree_path,
+        Some(branch_name),
+        ctx.deletion_mode,
+        ctx.target_branch,
+        ctx.force_worktree,
+    )
+    .map_err(|err| GitError::WorktreeRemovalFailed {
+        branch: branch_name.into(),
+        path: ctx.worktree_path.to_path_buf(),
+        remaining_entries: list_remaining_entries(ctx.worktree_path),
+        error: err.to_string(),
+    })?;
+    if let Some(staged) = output.staged_path {
+        let _ = std::fs::remove_dir_all(&staged);
+    }
+
+    let display_info = RemovalDisplayInfo::from_branch_result(
+        output.branch_result,
+        branch_name,
+        ctx.pre_computed_integration,
+        ctx.target_branch,
+        ctx.force_worktree,
+    )?;
+
+    display_info.print_message(branch_name, true)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
+
+    spawn_hooks_after_remove(
+        repo,
+        ctx.main_path,
+        ctx.worktree_path,
+        branch_name,
+        ctx.removed_commit,
+        ctx.verify,
+        ctx.changed_directory,
+    )?;
+    stderr().flush()?;
+    Ok(())
+}
+
+fn handle_named_removed_worktree_background(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    if let Some(expected) = ctx.expected_path {
+        eprintln!(
+            "{}",
+            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
+        );
+    }
+
+    let display_info = RemovalDisplayInfo::from_precomputed(
+        ctx.deletion_mode,
+        ctx.pre_computed_integration,
+        ctx.target_branch,
+        ctx.force_worktree,
+    );
+
+    display_info.print_message(branch_name, false)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
+
+    spawn_background_removal(
+        repo,
+        ctx.main_path,
+        ctx.worktree_path,
+        display_info.branch_deleted().then_some(branch_name),
+        ctx.force_worktree,
+        branch_name,
+    )?;
+
+    spawn_hooks_after_remove(
+        repo,
+        ctx.main_path,
+        ctx.worktree_path,
+        branch_name,
+        ctx.removed_commit,
+        ctx.verify,
+        ctx.changed_directory,
+    )?;
+    stderr().flush()?;
+    Ok(())
+}
+
+/// Handle output for RemovedWorktree removal
+fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
+    // Use main_path for discovery - the worktree being removed might be cwd,
+    // and git operations after removal need a valid working directory.
+    let repo = worktrunk::git::Repository::at(ctx.main_path)?;
+
+    execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
+    prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
+
+    // Handle detached HEAD case (no branch known)
+    let Some(branch_name) = ctx.branch_name else {
+        return handle_detached_removed_worktree_output(&repo, &ctx);
+    };
+
+    if ctx.foreground {
+        handle_named_removed_worktree_foreground(&repo, &ctx, branch_name)
+    } else {
+        handle_named_removed_worktree_background(&repo, &ctx, branch_name)
     }
 }
 
