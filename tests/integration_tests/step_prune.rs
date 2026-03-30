@@ -497,6 +497,41 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     ));
 }
 
+/// Prune detects squash-merged branches when target later modified the same files (#1818).
+///
+/// When `git merge-tree --write-tree` conflicts because the branch and target both
+/// changed the same files, the patch-id fallback detects the squash merge.
+#[rstest]
+fn test_prune_squash_merged_same_files_modified(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree, make changes to a file
+    let wt_path = repo.add_worktree("feature-squash");
+    std::fs::write(wt_path.join("shared.txt"), "feature content").unwrap();
+    repo.run_git_in(&wt_path, &["add", "shared.txt"]);
+    repo.run_git_in(&wt_path, &["commit", "-m", "Add feature"]);
+
+    // Back on main: simulate squash merge (same content), then advance the same file
+    std::fs::write(repo.root_path().join("shared.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Squash merge feature"]);
+
+    std::fs::write(
+        repo.root_path().join("shared.txt"),
+        "feature content\nmore main changes",
+    )
+    .unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Advance same file on main"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run", "--min-age=0s"],
+        None
+    ));
+}
+
 /// Default branch without a worktree should not be pruned despite being
 /// trivially "integrated" into itself (tautological SameCommit).
 #[test]

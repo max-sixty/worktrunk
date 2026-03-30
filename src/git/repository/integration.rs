@@ -7,6 +7,7 @@ use anyhow::Context;
 
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
+use crate::shell_exec::Cmd;
 
 impl Repository {
     /// Resolve a ref, preferring branches over tags when names collide.
@@ -136,10 +137,13 @@ impl Repository {
     /// - Squash-merged branches where main has advanced with additional commits
     /// - Rebased branches where the base has moved forward
     ///
+    /// When `merge-tree` reports conflicts (e.g., branch and target both modified the
+    /// same files), falls back to patch-id matching to detect squash merges where the
+    /// target later advanced the same files (#1818).
+    ///
     /// Returns:
     /// - `Ok(true)` if merging would change the target (branch has unintegrated changes)
     /// - `Ok(false)` if merging would NOT change target (branch is already integrated)
-    /// - `Ok(true)` if merge would have conflicts (conservative: treat as not integrated)
     /// - `Err` if git commands fail
     pub fn would_merge_add_to_target(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let branch = self.resolve_preferring_branch(branch);
@@ -149,8 +153,11 @@ impl Repository {
         let merge_result = self.run_command(&["merge-tree", "--write-tree", &target, &branch]);
 
         let Ok(merge_tree) = merge_result else {
-            // merge-tree failed (likely conflicts) - conservatively treat as having changes
-            return Ok(true);
+            // merge-tree failed (likely conflicts) — fall back to patch-id matching
+            // to detect squash merges where target later modified the same files
+            return self
+                .is_squash_merged_via_patch_id(&branch, &target)
+                .map(|integrated| !integrated);
         };
 
         let merge_tree = merge_tree.trim();
@@ -164,6 +171,65 @@ impl Repository {
 
         // If merge result differs from target's tree, merging would add something
         Ok(merge_tree != target_tree)
+    }
+
+    /// Detect squash merges via patch-id matching.
+    ///
+    /// Computes the squashed patch-id of the entire branch diff (merge-base..branch)
+    /// and checks if any commit on the target has a matching patch-id. This detects
+    /// squash-merged branches even when the target has since modified the same files.
+    ///
+    /// Returns `Ok(true)` if a matching squash-merge commit is found on the target.
+    fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+        let Some(merge_base) = self.merge_base(target, branch)? else {
+            return Ok(false);
+        };
+
+        // Compute the branch's squashed diff and its patch-id
+        let branch_diff = self.run_command(&["diff-tree", "-p", &merge_base, branch])?;
+        if branch_diff.trim().is_empty() {
+            return Ok(false);
+        }
+
+        let branch_pid_output = Cmd::new("git")
+            .args(["patch-id", "--stable"])
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .stdin_bytes(branch_diff)
+            .run()
+            .context("Failed to compute branch patch-id")?;
+        if !branch_pid_output.status.success() {
+            return Ok(false);
+        }
+        let branch_pid_stdout = String::from_utf8_lossy(&branch_pid_output.stdout);
+        let Some(branch_pid) = branch_pid_stdout.split_whitespace().next() else {
+            return Ok(false);
+        };
+
+        // Get all target commits' patch-ids in one pass.
+        // `git log -p` pipes all patches through `git patch-id --stable`.
+        let target_log =
+            self.run_command(&["log", "-p", "--reverse", &format!("{merge_base}..{target}")])?;
+        if target_log.trim().is_empty() {
+            return Ok(false);
+        }
+
+        let target_pid_output = Cmd::new("git")
+            .args(["patch-id", "--stable"])
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context())
+            .stdin_bytes(target_log)
+            .run()
+            .context("Failed to compute target patch-ids")?;
+        if !target_pid_output.status.success() {
+            return Ok(false);
+        }
+        let target_pid_stdout = String::from_utf8_lossy(&target_pid_output.stdout);
+
+        // Check if any target commit's patch-id matches the branch's squashed patch-id
+        Ok(target_pid_stdout
+            .lines()
+            .any(|line| line.split_whitespace().next() == Some(branch_pid)))
     }
 
     /// Determine the effective target for integration checks.

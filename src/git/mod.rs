@@ -101,8 +101,10 @@ pub enum IntegrationReason {
     /// Symbol in `wt list`: `⊂`
     TreesMatch,
 
-    /// Simulated merge (`git merge-tree`) produces the same tree as target.
     /// The branch has changes, but they're already in target via a different path.
+    ///
+    /// Detected via `git merge-tree` (produces same tree as target) or, when
+    /// merge-tree conflicts, via patch-id matching (squash-merge commit found on target).
     ///
     /// Symbol in `wt list`: `⊂`
     MergeAddsNothing,

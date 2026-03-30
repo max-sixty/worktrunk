@@ -1168,6 +1168,91 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
     ));
 }
 
+/// Squash merge where target later modifies the SAME files (#1818).
+///
+/// This is the scenario from issue #1818:
+///   1. Branch modifies file A
+///   2. Squash-merge lands on main (file A matches branch content)
+///   3. Main later modifies file A again (advancing past the squash merge)
+///   4. `wt remove` should still detect integration
+///
+/// Previous behavior: `git merge-tree --write-tree` conflicts on file A because
+/// both sides changed it, and the code conservatively treats conflicts as
+/// "not integrated". The fix uses patch-id matching as a fallback.
+#[rstest]
+fn test_remove_squash_merged_then_same_files_modified(repo: TestRepo) {
+    // Create feature branch
+    repo.git_command()
+        .args(["checkout", "-b", "feature-squash-conflict"])
+        .run()
+        .unwrap();
+
+    // Make changes on feature branch (file A)
+    std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
+    repo.git_command()
+        .args(["add", "feature-a.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature A"])
+        .run()
+        .unwrap();
+
+    // Go back to main
+    repo.git_command().args(["checkout", "main"]).run().unwrap();
+
+    // Squash merge feature into main (simulating GitHub squash merge)
+    std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
+    repo.git_command()
+        .args(["add", "feature-a.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature A (squash merged)"])
+        .run()
+        .unwrap();
+
+    // Main advances by modifying the SAME file (the key difference from the previous test)
+    std::fs::write(
+        repo.root_path().join("feature-a.txt"),
+        "feature content\nplus more changes on main",
+    )
+    .unwrap();
+    repo.git_command()
+        .args(["add", "feature-a.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Main advances same file"])
+        .run()
+        .unwrap();
+
+    // Verify setup: merge-tree would conflict (this is the scenario from #1818)
+    let merge_tree_result = repo
+        .git_command()
+        .args([
+            "merge-tree",
+            "--write-tree",
+            "main",
+            "feature-squash-conflict",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        !merge_tree_result.status.success(),
+        "merge-tree should report conflicts (both sides modified feature-a.txt)"
+    );
+
+    // Remove the feature branch - should succeed because content is integrated
+    // (detected via patch-id fallback when merge-tree conflicts)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-squash-conflict"],
+        None
+    ));
+}
+
 /// Simulate a GitHub squash merge: push feature to origin, squash-merge on
 /// the remote side (via a temporary clone), fetch locally, then `wt remove`.
 ///
