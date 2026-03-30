@@ -22,6 +22,25 @@ fn default_worktree_path() -> String {
 }
 
 impl UserConfig {
+    fn project_overrides(
+        &self,
+        project: Option<&str>,
+    ) -> Option<&super::sections::UserProjectOverrides> {
+        project.and_then(|p| self.projects.get(p))
+    }
+
+    fn merged_project_config<T: Merge + Clone>(
+        &self,
+        project: Option<&str>,
+        global: Option<&T>,
+        project_config: impl FnOnce(&super::sections::UserProjectOverrides) -> Option<&T>,
+    ) -> Option<T> {
+        merge_optional(
+            global,
+            self.project_overrides(project).and_then(project_config),
+        )
+    }
+
     /// Returns the worktree path template, falling back to the default if not set.
     pub fn worktree_path(&self) -> String {
         self.configs
@@ -49,36 +68,25 @@ impl UserConfig {
     /// Returns the commit generation config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
-    /// settings take precedence for fields that are set.
-    ///
-    /// Checks locations in order of precedence:
-    /// 1. `[commit.generation]` (new format)
-    /// 2. `[commit-generation]` (deprecated format)
-    /// 3. Per-project overrides
+    /// settings take precedence for fields that are set. Deprecated
+    /// `[commit-generation]` sections are normalized into `[commit.generation]`
+    /// during config loading.
     pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
-        // Get global config: prefer new location, fall back to deprecated
-        let global = self
-            .configs
-            .commit
-            .as_ref()
-            .and_then(|c| c.generation.as_ref())
-            .or(self.commit_generation.as_ref())
-            .cloned()
-            .unwrap_or_default();
-
-        // Get project override (also checks both locations)
-        let project_config = project.and_then(|p| self.projects.get(p)).and_then(|c| {
-            c.overrides
+        self.merged_project_config(
+            project,
+            self.configs
                 .commit
                 .as_ref()
-                .and_then(|cc| cc.generation.as_ref())
-                .or(c.commit_generation.as_ref())
-        });
-
-        match project_config {
-            Some(pc) => global.merge_with(pc),
-            None => global,
-        }
+                .and_then(|commit| commit.generation.as_ref()),
+            |config| {
+                config
+                    .overrides
+                    .commit
+                    .as_ref()
+                    .and_then(|commit| commit.generation.as_ref())
+            },
+        )
+        .unwrap_or_default()
     }
 
     /// Returns the list config for a specific project.
@@ -86,10 +94,9 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn list(&self, project: Option<&str>) -> Option<ListConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.list.as_ref());
-        merge_optional(self.configs.list.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.list.as_ref(), |config| {
+            config.overrides.list.as_ref()
+        })
     }
 
     /// Returns the commit config for a specific project.
@@ -97,10 +104,9 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn commit(&self, project: Option<&str>) -> Option<CommitConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.commit.as_ref());
-        merge_optional(self.configs.commit.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.commit.as_ref(), |config| {
+            config.overrides.commit.as_ref()
+        })
     }
 
     /// Returns the merge config for a specific project.
@@ -108,10 +114,9 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn merge(&self, project: Option<&str>) -> Option<MergeConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.merge.as_ref());
-        merge_optional(self.configs.merge.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.merge.as_ref(), |config| {
+            config.overrides.merge.as_ref()
+        })
     }
 
     /// Returns the switch config for a specific project.
@@ -119,18 +124,16 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn switch(&self, project: Option<&str>) -> Option<SwitchConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.switch.as_ref());
-        merge_optional(self.configs.switch.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.switch.as_ref(), |config| {
+            config.overrides.switch.as_ref()
+        })
     }
 
     /// Returns the `wt step` config for a specific project.
     pub fn step(&self, project: Option<&str>) -> Option<StepConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.step.as_ref());
-        merge_optional(self.configs.step.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.step.as_ref(), |config| {
+            config.overrides.step.as_ref()
+        })
     }
 
     /// Returns the `wt step copy-ignored` config for a specific project.
@@ -145,55 +148,36 @@ impl UserConfig {
     /// Merges project-specific settings with global settings, where project
     /// settings take precedence for fields that are set.
     pub fn select(&self, project: Option<&str>) -> Option<SelectConfig> {
-        let project_config = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|c| c.overrides.select.as_ref());
-        merge_optional(self.configs.select.as_ref(), project_config)
+        self.merged_project_config(project, self.configs.select.as_ref(), |config| {
+            config.overrides.select.as_ref()
+        })
     }
 
     /// Returns the switch picker config for a specific project.
     ///
-    /// Prefers `[switch.picker]` (new format), falls back to `[select]` (deprecated).
     /// Merges project-specific settings with global settings, where project
-    /// settings take precedence for fields that are set.
+    /// settings take precedence for fields that are set. Deprecated `[select]`
+    /// sections are normalized into `[switch.picker]` during config loading.
     pub fn switch_picker(&self, project: Option<&str>) -> SwitchPickerConfig {
-        // Get global config: prefer switch.picker, fall back to select
         let global = self
             .configs
             .switch
             .as_ref()
-            .and_then(|s| s.picker.as_ref())
+            .and_then(|switch| switch.picker.as_ref())
             .cloned()
-            .unwrap_or_else(|| {
-                self.configs
-                    .select
+            .unwrap_or_default();
+
+        self.project_overrides(project)
+            .and_then(|config| {
+                config
+                    .overrides
+                    .switch
                     .as_ref()
-                    .map(|sel| SwitchPickerConfig {
-                        pager: sel.pager.clone(),
-                        timeout_ms: None,
-                    })
-                    .unwrap_or_default()
-            });
-
-        // Get project override (also checks both locations)
-        let project_config = project.and_then(|p| self.projects.get(p)).and_then(|c| {
-            c.overrides
-                .switch
-                .as_ref()
-                .and_then(|s| s.picker.as_ref())
-                .cloned()
-                .or_else(|| {
-                    c.overrides.select.as_ref().map(|sel| SwitchPickerConfig {
-                        pager: sel.pager.clone(),
-                        timeout_ms: None,
-                    })
-                })
-        });
-
-        match project_config {
-            Some(pc) => global.merge_with(&pc),
-            None => global,
-        }
+                    .and_then(|switch| switch.picker.as_ref())
+                    .cloned()
+            })
+            .map(|project_config| global.merge_with(&project_config))
+            .unwrap_or(global)
     }
 
     /// Returns effective hooks for a specific project.
@@ -202,9 +186,9 @@ impl UserConfig {
     /// Both global and per-project hooks run (global first, then per-project).
     pub fn hooks(&self, project: Option<&str>) -> HooksConfig {
         let global = &self.configs.hooks;
-        let project_hooks = project
-            .and_then(|p| self.projects.get(p))
-            .map(|c| &c.overrides.hooks);
+        let project_hooks = self
+            .project_overrides(project)
+            .map(|config| &config.overrides.hooks);
 
         match project_hooks {
             Some(ph) => global.merge_with(ph),

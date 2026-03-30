@@ -30,9 +30,9 @@ pub struct ResolvedConfig {
     pub list: ListConfig,
     pub merge: MergeConfig,
     pub commit: CommitConfig,
-    /// Resolved commit generation config (handles deprecated `[commit-generation]` fallback)
+    /// Resolved commit generation config
     pub commit_generation: CommitGenerationConfig,
-    /// Resolved switch picker config (handles deprecated `[select]` fallback)
+    /// Resolved switch picker config
     pub switch_picker: SwitchPickerConfig,
     /// Resolved switch config
     pub switch: SwitchConfig,

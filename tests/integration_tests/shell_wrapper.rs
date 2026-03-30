@@ -34,13 +34,14 @@
 use crate::common::{TestRepo, shell::shell_binary, wt_bin};
 use std::process::Command;
 
+use worktrunk::shell;
+
 // Unix-only imports
 #[cfg(unix)]
 use {
     crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
-    worktrunk::shell,
 };
 
 /// Output from executing a command through a shell wrapper
@@ -182,102 +183,72 @@ fn powershell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Build a shell script that sources the wrapper and runs a command
-fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
-    let wt_bin = wt_bin();
-    let wrapper_script = generate_wrapper(repo, shell);
-    let mut script = String::new();
+fn wrapper_shell(shell_name: &str) -> shell::Shell {
+    match shell_name {
+        "bash" => shell::Shell::Bash,
+        "fish" => shell::Shell::Fish,
+        "nu" | "nushell" => shell::Shell::Nushell,
+        "zsh" => shell::Shell::Zsh,
+        "powershell" | "pwsh" => shell::Shell::PowerShell,
+        other => panic!("Unsupported shell wrapper test shell: {other}"),
+    }
+}
 
-    // Set environment variables - syntax varies by shell
-    // Don't use 'set -e' in bash/zsh - we want to capture failures and their exit codes.
-    // This is tested by test_wrapper_handles_command_failure which verifies
-    // that command failures return proper exit codes rather than aborting the script.
-    // Properly quote paths to handle special characters like single quotes
-    let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-    let config_path_quoted = shell_quote(&repo.test_config_path().display().to_string());
-    let approvals_path_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+fn wrapper_env_vars(shell: shell::Shell, repo: &TestRepo) -> Vec<(&'static str, String)> {
+    let quote = |value: &str| match shell {
+        shell::Shell::PowerShell => powershell_quote(value),
+        _ => shell_quote(value),
+    };
 
-    match shell {
-        "fish" => {
-            script.push_str(&format!("set -x WORKTRUNK_BIN {}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "set -x WORKTRUNK_CONFIG_PATH {}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "set -x WORKTRUNK_APPROVALS_PATH {}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("set -x CLICOLOR_FORCE 1\n");
-        }
-        "nu" => {
-            // Nushell uses $env.VAR syntax for environment variables
-            script.push_str(&format!("$env.WORKTRUNK_BIN = {}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "$env.WORKTRUNK_CONFIG_PATH = {}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "$env.WORKTRUNK_APPROVALS_PATH = {}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("$env.CLICOLOR_FORCE = '1'\n");
-        }
-        "zsh" => {
-            // For zsh, initialize the completion system first
-            // This allows static completions (which call compdef) to work in isolated mode
-            // We run with --no-rcs to prevent user rc files from touching /dev/tty,
-            // but compinit is safe since it only sets up completion functions
-            script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
+    vec![
+        ("WORKTRUNK_BIN", quote(&wt_bin().display().to_string())),
+        (
+            "WORKTRUNK_CONFIG_PATH",
+            quote(&repo.test_config_path().display().to_string()),
+        ),
+        (
+            "WORKTRUNK_APPROVALS_PATH",
+            quote(&repo.test_approvals_path().display().to_string()),
+        ),
+        (
+            "CLICOLOR_FORCE",
+            match shell {
+                shell::Shell::Nushell | shell::Shell::PowerShell => "'1'".to_string(),
+                _ => "1".to_string(),
+            },
+        ),
+    ]
+}
 
-            script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "export WORKTRUNK_CONFIG_PATH={}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "export WORKTRUNK_APPROVALS_PATH={}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("export CLICOLOR_FORCE=1\n");
-        }
-        "powershell" | "pwsh" => {
-            // PowerShell uses $env: for environment variables
-            let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
-            let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
-            let approvals_path_ps =
-                powershell_quote(&repo.test_approvals_path().display().to_string());
-            script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
-            script.push_str(&format!(
-                "$env:WORKTRUNK_CONFIG_PATH = {}\n",
-                config_path_ps
-            ));
-            script.push_str(&format!(
-                "$env:WORKTRUNK_APPROVALS_PATH = {}\n",
-                approvals_path_ps
-            ));
-            script.push_str("$env:CLICOLOR_FORCE = '1'\n");
-        }
-        _ => {
-            // bash
-            script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "export WORKTRUNK_CONFIG_PATH={}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "export WORKTRUNK_APPROVALS_PATH={}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("export CLICOLOR_FORCE=1\n");
-        }
+fn append_shell_env_exports(script: &mut String, shell: shell::Shell, vars: &[(&str, String)]) {
+    if matches!(shell, shell::Shell::Zsh) {
+        script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
     }
 
-    // Include the shell wrapper code
-    // For PowerShell: The wrapper_script is PowerShell code included inline
-    // For bash/zsh/fish: The wrapper is shell code sourced via eval
-    script.push_str(&wrapper_script);
+    for (key, value) in vars {
+        match shell {
+            shell::Shell::Fish => script.push_str(&format!("set -x {key} {value}\n")),
+            shell::Shell::Nushell => script.push_str(&format!("$env.{key} = {value}\n")),
+            shell::Shell::PowerShell => script.push_str(&format!("$env:{key} = {value}\n")),
+            shell::Shell::Bash | shell::Shell::Zsh => {
+                script.push_str(&format!("export {key}={value}\n"))
+            }
+        }
+    }
+}
+
+fn append_wrapper_setup(script: &mut String, shell_name: &str, repo: &TestRepo) {
+    let shell = wrapper_shell(shell_name);
+    let env_vars = wrapper_env_vars(shell, repo);
+    append_shell_env_exports(script, shell, &env_vars);
+    script.push_str(&generate_wrapper(repo, shell_name));
     script.push('\n');
+}
+
+/// Build a shell script that sources the wrapper and runs a command
+fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
+    let mut script = String::new();
+    append_wrapper_setup(&mut script, shell, repo);
 
     // Build the command
     script.push_str("wt ");
@@ -1590,49 +1561,8 @@ approved-commands = ["echo 'fish background task'"]
         let worktrunk_source = canonicalize(&env::current_dir().unwrap()).unwrap();
 
         // Build a shell script that runs from the worktrunk source directory
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, shell);
         let mut script = String::new();
-
-        // Set environment variables (use shell_quote to handle paths with special chars)
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
-        match shell {
-            "fish" => {
-                script.push_str(&format!("set -x WORKTRUNK_BIN {}\n", wt_bin_quoted));
-                script.push_str(&format!("set -x WORKTRUNK_CONFIG_PATH {}\n", config_quoted));
-                script.push_str(&format!(
-                    "set -x WORKTRUNK_APPROVALS_PATH {}\n",
-                    approvals_quoted
-                ));
-                script.push_str("set -x CLICOLOR_FORCE 1\n");
-            }
-            "zsh" => {
-                script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
-                script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-                script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
-                script.push_str(&format!(
-                    "export WORKTRUNK_APPROVALS_PATH={}\n",
-                    approvals_quoted
-                ));
-                script.push_str("export CLICOLOR_FORCE=1\n");
-            }
-            _ => {
-                // bash
-                script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-                script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
-                script.push_str(&format!(
-                    "export WORKTRUNK_APPROVALS_PATH={}\n",
-                    approvals_quoted
-                ));
-                script.push_str("export CLICOLOR_FORCE=1\n");
-            }
-        }
-
-        // Source the wrapper
-        script.push_str(&wrapper_script);
-        script.push('\n');
+        append_wrapper_setup(&mut script, shell, &repo);
 
         // Try to run wt --source with an invalid subcommand
         // The --source flag triggers cargo build (which succeeds)
@@ -1776,19 +1706,8 @@ approved-commands = ["echo 'bash background'"]
         );
 
         // Build the setup script that defines the wt function
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "bash");
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
-        let setup_script = format!(
-            "export WORKTRUNK_BIN={}\n\
-             export WORKTRUNK_CONFIG_PATH={}\n\
-             export WORKTRUNK_APPROVALS_PATH={}\n\
-             export CLICOLOR_FORCE=1\n\
-             {}",
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
-        );
+        let mut setup_script = String::new();
+        append_wrapper_setup(&mut setup_script, "bash", &repo);
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
@@ -1839,9 +1758,6 @@ approved-commands = ["echo 'bash background'"]
     /// Note: Completions are inline in the wrapper script (lazy loading)
     #[rstest]
     fn test_bash_completions_registered(repo: TestRepo) {
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "bash");
-
         // Use a marker file to avoid PTY output race conditions.
         // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
         let marker_file = repo.root_path().join(".completions_test_marker");
@@ -1849,16 +1765,11 @@ approved-commands = ["echo 'bash background'"]
 
         // Script that sources wrapper and checks if completion is registered
         // (completions are inline in the wrapper via lazy loading)
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let marker_quoted = shell_quote(&marker_path);
-        let script = format!(
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "bash", &repo);
+        script.push_str(&format!(
             r#"
-            export WORKTRUNK_BIN={}
-            export WORKTRUNK_CONFIG_PATH={}
-            export WORKTRUNK_APPROVALS_PATH={}
-            {}
             # Check if wt completion is registered and write result to marker file
             if complete -p wt 2>/dev/null; then
                 echo "__COMPLETION_REGISTERED__" > {}
@@ -1866,13 +1777,8 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__" > {}
             fi
             "#,
-            wt_bin_quoted,
-            config_quoted,
-            approvals_quoted,
-            wrapper_script,
-            marker_quoted,
-            marker_quoted,
-        );
+            marker_quoted, marker_quoted,
+        ));
 
         let final_script = format!("( {} ) 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
@@ -1901,8 +1807,6 @@ approved-commands = ["echo 'bash background'"]
     /// Test that fish completions are properly registered
     #[rstest]
     fn test_fish_completions_registered(repo: TestRepo) {
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "fish");
         let completions_script = generate_completions(&repo, "fish");
 
         // Use a marker file to avoid PTY output race conditions.
@@ -1911,17 +1815,12 @@ approved-commands = ["echo 'bash background'"]
         let marker_path = marker_file.to_string_lossy().to_string();
 
         // Script that sources wrapper, completions, and checks if completion is registered
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let marker_quoted = shell_quote(&marker_path);
-        let script = format!(
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "fish", &repo);
+        script.push_str(&completions_script);
+        script.push_str(&format!(
             r#"
-            set -x WORKTRUNK_BIN {}
-            set -x WORKTRUNK_CONFIG_PATH {}
-            set -x WORKTRUNK_APPROVALS_PATH {}
-            {}
-            {}
             # Check if wt completions are registered and write result to marker file
             if complete -c wt 2>/dev/null | grep -q .
                 echo "__COMPLETION_REGISTERED__" > {}
@@ -1929,14 +1828,8 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__" > {}
             end
             "#,
-            wt_bin_quoted,
-            config_quoted,
-            approvals_quoted,
-            wrapper_script,
-            completions_script,
-            marker_quoted,
-            marker_quoted,
-        );
+            marker_quoted, marker_quoted,
+        ));
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();

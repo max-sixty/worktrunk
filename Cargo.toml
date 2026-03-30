@@ -136,7 +136,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.47.1", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.27"
@@ -148,7 +148,7 @@ vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "2.7.0"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [[bench]]
 name = "completion"

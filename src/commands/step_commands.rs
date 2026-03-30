@@ -48,6 +48,7 @@ use crate::output::handle_remove_output;
 ///
 /// `stage` is the CLI-provided stage mode. If None, uses the effective config default.
 pub fn step_commit(
+    branch: Option<String>,
     yes: bool,
     verify: bool,
     stage: Option<StageMode>,
@@ -69,7 +70,10 @@ pub fn step_commit(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action("commit", config)?;
+    let env = match branch {
+        Some(ref b) => CommandEnv::for_branch("commit", config, b)?,
+        None => CommandEnv::for_action("commit", config)?,
+    };
     let ctx = env.context(yes);
 
     // CLI flag overrides config value

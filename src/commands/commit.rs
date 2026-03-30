@@ -10,7 +10,7 @@ use super::command_executor::CommandContext;
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
 };
-use super::repository_ext::RepositoryCliExt;
+use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
@@ -197,24 +197,27 @@ impl CommitOptions<'_> {
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }
 
+        // Use the worktree path from context — this is the target worktree when
+        // --branch is specified, or the current worktree otherwise.
+        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
+
         if self.warn_about_untracked && self.stage_mode == StageMode::All {
-            self.ctx.repo.warn_if_auto_staging_untracked()?;
+            let status = wt
+                .run_command(&["status", "--porcelain", "-z"])
+                .context("Failed to get status")?;
+            warn_about_untracked_files(&status)?;
         }
 
         // Stage changes based on mode
         match self.stage_mode {
             StageMode::All => {
                 // Stage everything: tracked modifications + untracked files
-                self.ctx
-                    .repo
-                    .run_command(&["add", "-A"])
+                wt.run_command(&["add", "-A"])
                     .context("Failed to stage changes")?;
             }
             StageMode::Tracked => {
                 // Stage tracked modifications only (no untracked files)
-                self.ctx
-                    .repo
-                    .run_command(&["add", "-u"])
+                wt.run_command(&["add", "-u"])
                     .context("Failed to stage tracked changes")?;
             }
             StageMode::None => {
@@ -223,7 +226,6 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        let wt = self.ctx.repo.current_worktree();
         CommitGenerator::new(&effective_config).commit_staged_changes(
             &wt,
             true, // show_progress

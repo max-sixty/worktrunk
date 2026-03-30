@@ -1849,6 +1849,90 @@ fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     });
 }
 
+#[rstest]
+fn test_step_commit_branch_flag(mut repo: TestRepo) {
+    // Create a feature worktree and add a dirty file there
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature_file.txt"), "feature content")
+        .expect("Failed to write file");
+
+    // Run step commit from the main worktree, targeting the feature branch
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None); // cwd = main worktree
+        cmd.arg("commit")
+            .args(["--branch", "feature", "--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add feature file'",
+        );
+        cmd
+    });
+
+    // Verify the commit happened in the feature worktree
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("feat: add feature file"),
+        "Commit should appear in feature worktree, got: {log_output}"
+    );
+}
+
+#[rstest]
+fn test_step_commit_branch_flag_nonexistent(repo: TestRepo) {
+    // Try to commit on a branch that has no worktree
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--branch", "nonexistent"]);
+        cmd
+    });
+}
+
+#[rstest]
+fn test_step_commit_detached_head(mut repo: TestRepo) {
+    // Detach HEAD in a worktree, then commit — should work since commit
+    // only needs a worktree path, not a branch name.
+    let feature_wt = repo.add_worktree("feature");
+
+    // Detach HEAD in the feature worktree
+    repo.detach_head_in_worktree("feature");
+
+    // Create a file to commit
+    fs::write(feature_wt.join("detached_file.txt"), "detached content")
+        .expect("Failed to write file");
+
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("commit").args(["--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'chore: commit in detached state'",
+        );
+        cmd
+    });
+
+    // Verify the commit actually landed
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("chore: commit in detached state"),
+        "Commit should appear in detached worktree, got: {log_output}"
+    );
+}
+
 // =============================================================================
 // Error message snapshot tests
 // =============================================================================

@@ -108,11 +108,25 @@ fn resolve_fork_ref(
     let ref_type = provider.ref_type();
     let repo_root = repo.repo_path()?;
     let local_branch = remote_ref::local_branch_name(info);
+    let expected_remote = match ref_type {
+        RefType::Pr => match find_github_remote(repo, info) {
+            Ok(remote) => Some(remote),
+            Err(e) => {
+                log::debug!("Could not resolve GitHub remote for PR: {e:#}");
+                None
+            }
+        },
+        RefType::Mr => None,
+    };
 
     // Check if branch already exists and is tracking this ref
-    if let Some(tracks_this) =
-        remote_ref::branch_tracks_ref(repo_root, &local_branch, provider, number)
-    {
+    if let Some(tracks_this) = remote_ref::branch_tracks_ref(
+        repo_root,
+        &local_branch,
+        provider,
+        number,
+        expected_remote.as_deref(),
+    ) {
         if tracks_this {
             eprintln!(
                 "{}",
@@ -132,9 +146,13 @@ fn resolve_fork_ref(
 
         // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
-            if let Some(prefixed_tracks) =
-                remote_ref::branch_tracks_ref(repo_root, &prefixed, provider, number)
-            {
+            if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
+                repo_root,
+                &prefixed,
+                provider,
+                number,
+                expected_remote.as_deref(),
+            ) {
                 if prefixed_tracks {
                     eprintln!(
                         "{}",
@@ -189,7 +207,7 @@ fn resolve_fork_ref(
     // Resolve remote and URLs based on platform.
     let (fork_push_url, remote) = match ref_type {
         RefType::Pr => {
-            // GitHub: URLs already in info, just find remote
+            // GitHub: URLs already in info, just find remote.
             let remote = find_github_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }

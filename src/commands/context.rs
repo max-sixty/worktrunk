@@ -25,18 +25,40 @@ pub struct CommandEnv {
 }
 
 impl CommandEnv {
-    /// Load the command environment for a specific action.
+    /// Load the command environment for the current worktree.
     ///
-    /// `action` describes what command is running (e.g., "merge", "squash").
-    /// Used in error messages when the environment can't be loaded.
-    pub fn for_action(action: &str, config: UserConfig) -> anyhow::Result<Self> {
+    /// Resolves the worktree path from the current directory. The branch is
+    /// populated when available but not required — commands that need a branch
+    /// should call `require_branch()` after construction.
+    pub fn for_action(_action: &str, config: UserConfig) -> anyhow::Result<Self> {
         let repo = Repository::current()?;
-        let worktree_path = repo.current_worktree().root()?;
-        let branch = repo.require_current_branch(action)?;
+        let current_wt = repo.current_worktree();
+        let worktree_path = current_wt.root()?;
+        let branch = current_wt
+            .branch()
+            .context("Failed to determine current branch")?;
 
         Ok(Self {
             repo,
-            branch: Some(branch),
+            branch,
+            config,
+            worktree_path,
+        })
+    }
+
+    /// Load the command environment for a named worktree (by branch name).
+    ///
+    /// Resolves the worktree path from the branch name rather than using
+    /// the current working directory.
+    pub fn for_branch(_action: &str, config: UserConfig, branch: &str) -> anyhow::Result<Self> {
+        let repo = Repository::current()?;
+        let worktree_path = repo
+            .worktree_for_branch(branch)?
+            .ok_or_else(|| anyhow::anyhow!("no worktree for branch '{branch}'"))?;
+
+        Ok(Self {
+            repo,
+            branch: Some(branch.to_string()),
             config,
             worktree_path,
         })

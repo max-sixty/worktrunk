@@ -432,7 +432,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current()?;
+    let repo = Repository::current().context("Failed to show hooks")?;
     let config = UserConfig::load().context("Failed to load user config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_config = repo.load_project_config()?;

@@ -11,6 +11,54 @@ use super::path;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
+    fn update_bool_flag(doc: &mut toml_edit::DocumentMut, key: &str, enabled: bool) {
+        if enabled {
+            doc[key] = toml_edit::value(true);
+        } else {
+            doc.remove(key);
+        }
+    }
+
+    fn sync_string_field(table: &mut toml_edit::Table, key: &str, new_value: Option<&String>) {
+        match new_value {
+            Some(v) => {
+                let current = table.get(key).and_then(|i| i.as_str());
+                if current != Some(v.as_str()) {
+                    table[key] = toml_edit::value(v.as_str());
+                }
+            }
+            None => {
+                table.remove(key);
+            }
+        }
+    }
+
+    fn sync_serialized_section(
+        table: &mut toml_edit::Table,
+        section_name: &str,
+        config: Option<&impl Serialize>,
+    ) {
+        match Self::serialize_section_item(config) {
+            Some(item) => {
+                table[section_name] = item;
+            }
+            None => {
+                table.remove(section_name);
+            }
+        }
+    }
+
+    fn serialize_section_item(config: Option<&impl Serialize>) -> Option<toml_edit::Item> {
+        let cfg = config?;
+        let toml_value = toml::to_string(cfg).ok()?;
+        let parsed = toml_value.parse::<toml_edit::DocumentMut>().ok()?;
+        let mut table = toml_edit::Table::new();
+        for (k, v) in parsed.iter() {
+            table[k] = v.clone();
+        }
+        Some(toml_edit::Item::Table(table))
+    }
+
     /// Save the current configuration to the default config file location
     pub fn save(&self) -> Result<(), ConfigError> {
         self.save_impl(None)
@@ -36,26 +84,6 @@ impl UserConfig {
 
     /// Update the [commit.generation] section in the document.
     fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
-        // Helper to update a string field only if changed, preserving comments
-        fn update_string_field(
-            table: &mut toml_edit::Table,
-            key: &str,
-            new_value: Option<&String>,
-        ) {
-            match new_value {
-                Some(v) => {
-                    // Only update if value changed (preserves comments if unchanged)
-                    let current = table.get(key).and_then(|i| i.as_str());
-                    if current != Some(v.as_str()) {
-                        table[key] = toml_edit::value(v.as_str());
-                    }
-                }
-                None => {
-                    table.remove(key);
-                }
-            }
-        }
-
         if let Some(ref commit_cfg) = self.configs.commit
             && let Some(ref gen_cfg) = commit_cfg.generation
         {
@@ -69,19 +97,18 @@ impl UserConfig {
                     commit_table["generation"] = toml_edit::Item::Table(toml_edit::Table::new());
                 }
                 if let Some(gen_table) = commit_table["generation"].as_table_mut() {
-                    update_string_field(gen_table, "command", gen_cfg.command.as_ref());
-                    update_string_field(gen_table, "template", gen_cfg.template.as_ref());
-                    update_string_field(gen_table, "template-file", gen_cfg.template_file.as_ref());
-                    update_string_field(
-                        gen_table,
-                        "squash-template",
-                        gen_cfg.squash_template.as_ref(),
-                    );
-                    update_string_field(
-                        gen_table,
-                        "squash-template-file",
-                        gen_cfg.squash_template_file.as_ref(),
-                    );
+                    for (key, value) in [
+                        ("command", gen_cfg.command.as_ref()),
+                        ("template", gen_cfg.template.as_ref()),
+                        ("template-file", gen_cfg.template_file.as_ref()),
+                        ("squash-template", gen_cfg.squash_template.as_ref()),
+                        (
+                            "squash-template-file",
+                            gen_cfg.squash_template_file.as_ref(),
+                        ),
+                    ] {
+                        Self::sync_string_field(gen_table, key, value);
+                    }
                 }
             }
         }
@@ -111,77 +138,47 @@ impl UserConfig {
                     projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
                 }
 
-                // worktree-path (only if set)
-                if let Some(ref path) = project_config.overrides.worktree_path {
-                    projects[project_id]["worktree-path"] = toml_edit::value(path);
-                } else if let Some(table) = projects[project_id].as_table_mut() {
-                    table.remove("worktree-path");
-                }
+                let Some(project_table) = projects[project_id].as_table_mut() else {
+                    continue;
+                };
 
-                // Per-project nested config sections
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_string_field(
+                    project_table,
+                    "worktree-path",
+                    project_config.overrides.worktree_path.as_ref(),
+                );
+
+                Self::sync_serialized_section(
+                    project_table,
                     "commit-generation",
                     project_config.commit_generation.as_ref(),
                 );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_serialized_section(
+                    project_table,
                     "list",
                     project_config.overrides.list.as_ref(),
                 );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_serialized_section(
+                    project_table,
                     "commit",
                     project_config.overrides.commit.as_ref(),
                 );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_serialized_section(
+                    project_table,
                     "merge",
                     project_config.overrides.merge.as_ref(),
                 );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_serialized_section(
+                    project_table,
                     "switch",
                     project_config.overrides.switch.as_ref(),
                 );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
+                Self::sync_serialized_section(
+                    project_table,
                     "select",
                     project_config.overrides.select.as_ref(),
                 );
             }
-        }
-    }
-
-    /// Serialize a per-project config section (commit-generation, list, commit, merge).
-    ///
-    /// If the config is Some, serializes it as a nested table. If None, removes the section.
-    /// Used when updating an existing file.
-    fn serialize_project_config_section<T: Serialize>(
-        projects: &mut toml_edit::Table,
-        project_id: &str,
-        section_name: &str,
-        config: Option<&T>,
-    ) {
-        if let Some(cfg) = config {
-            // Serialize to TOML value, then convert to toml_edit Item
-            if let Ok(toml_value) = toml::to_string(cfg)
-                && let Ok(parsed) = toml_value.parse::<toml_edit::DocumentMut>()
-            {
-                let mut table = toml_edit::Table::new();
-                for (k, v) in parsed.iter() {
-                    table[k] = v.clone();
-                }
-                projects[project_id][section_name] = toml_edit::Item::Table(table);
-            }
-        } else if let Some(project_table) = projects[project_id].as_table_mut() {
-            project_table.remove(section_name);
         }
     }
 
@@ -243,17 +240,16 @@ impl UserConfig {
 
             // Update all programmatically-modifiable sections
             // NOTE: If you add a new setter that modifies config, add the update here too!
-            if self.skip_shell_integration_prompt {
-                doc["skip-shell-integration-prompt"] = toml_edit::value(true);
-            } else {
-                doc.remove("skip-shell-integration-prompt");
-            }
-
-            if self.skip_commit_generation_prompt {
-                doc["skip-commit-generation-prompt"] = toml_edit::value(true);
-            } else {
-                doc.remove("skip-commit-generation-prompt");
-            }
+            Self::update_bool_flag(
+                &mut doc,
+                "skip-shell-integration-prompt",
+                self.skip_shell_integration_prompt,
+            );
+            Self::update_bool_flag(
+                &mut doc,
+                "skip-commit-generation-prompt",
+                self.skip_commit_generation_prompt,
+            );
 
             self.update_commit_generation_section(&mut doc);
             self.update_projects_section(&mut doc);
@@ -309,12 +305,6 @@ impl UserConfig {
                 )));
             }
 
-            // Validate commit generation config (check both old and new locations)
-            // Old: [projects."...".commit-generation] (deprecated)
-            if let Some(ref cg) = project_config.commit_generation {
-                Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
-            }
-            // New: [projects."...".commit.generation]
             if let Some(ref commit) = project_config.overrides.commit
                 && let Some(ref cg) = commit.generation
             {
@@ -322,18 +312,20 @@ impl UserConfig {
             }
         }
 
-        // Validate commit generation config (check both old and new locations)
-        let commit_gen = self.commit_generation(None);
-        if commit_gen.template.is_some() && commit_gen.template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
-            ));
-        }
+        if let Some(ref commit) = self.configs.commit
+            && let Some(ref cg) = commit.generation
+        {
+            if cg.template.is_some() && cg.template_file.is_some() {
+                return Err(ConfigError::Message(
+                    "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
+                ));
+            }
 
-        if commit_gen.squash_template.is_some() && commit_gen.squash_template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
-            ));
+            if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
+                return Err(ConfigError::Message(
+                    "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
+                ));
+            }
         }
 
         Ok(())

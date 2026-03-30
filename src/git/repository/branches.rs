@@ -230,7 +230,7 @@ impl Repository {
                 (name, remotes, timestamp)
             })
             .collect();
-        remote_branches.sort_by(|a, b| b.2.cmp(&a.2));
+        remote_branches.sort_by_key(|b| std::cmp::Reverse(b.2));
 
         // Build result: worktrees first, then local, then remote
         let mut result = Vec::new();

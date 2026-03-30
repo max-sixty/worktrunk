@@ -119,6 +119,9 @@ wt step commit - Stage and commit with LLM-generated message
 Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
+          Branch to operate on (defaults to current worktree)
+
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 

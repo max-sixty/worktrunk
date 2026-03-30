@@ -110,6 +110,64 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
+    fn normalize_deprecated_sections(&mut self) {
+        Self::normalize_commit_generation_section(
+            &mut self.commit_generation,
+            &mut self.configs.commit,
+        );
+        Self::normalize_select_section(&mut self.configs.select, &mut self.configs.switch);
+
+        for project in self.projects.values_mut() {
+            Self::normalize_commit_generation_section(
+                &mut project.commit_generation,
+                &mut project.overrides.commit,
+            );
+            Self::normalize_select_section(
+                &mut project.overrides.select,
+                &mut project.overrides.switch,
+            );
+        }
+    }
+
+    fn normalize_commit_generation_section(
+        deprecated: &mut Option<CommitGenerationConfig>,
+        commit: &mut Option<CommitConfig>,
+    ) {
+        let Some(deprecated_config) = deprecated.take() else {
+            return;
+        };
+
+        if deprecated_config == CommitGenerationConfig::default() {
+            return;
+        }
+
+        let commit_config = commit.get_or_insert_with(CommitConfig::default);
+        if commit_config.generation.is_none() {
+            commit_config.generation = Some(deprecated_config);
+        }
+    }
+
+    fn normalize_select_section(
+        deprecated: &mut Option<SelectConfig>,
+        switch: &mut Option<SwitchConfig>,
+    ) {
+        let Some(select_config) = deprecated.take() else {
+            return;
+        };
+
+        if select_config == SelectConfig::default() {
+            return;
+        }
+
+        let switch_config = switch.get_or_insert_with(SwitchConfig::default);
+        if switch_config.picker.is_none() {
+            switch_config.picker = Some(SwitchPickerConfig {
+                pager: select_config.pager,
+                timeout_ms: None,
+            });
+        }
+    }
+
     /// Load configuration from system config, user config, and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
@@ -206,7 +264,8 @@ impl UserConfig {
         // The config crate's `preserve_order` feature ensures TOML insertion order
         // is preserved (uses IndexMap instead of HashMap internally).
         // See: https://github.com/max-sixty/worktrunk/issues/737
-        let config: Self = builder.build()?.try_deserialize()?;
+        let mut config: Self = builder.build()?.try_deserialize()?;
+        config.normalize_deprecated_sections();
         config.validate()?;
 
         Ok(config)
@@ -215,8 +274,9 @@ impl UserConfig {
     /// Load configuration from a TOML string for testing.
     #[cfg(test)]
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
-        let config: Self =
+        let mut config: Self =
             toml::from_str(content).map_err(|e| ConfigError::Message(e.to_string()))?;
+        config.normalize_deprecated_sections();
         config.validate()?;
         Ok(config)
     }
