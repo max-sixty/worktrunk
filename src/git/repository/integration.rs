@@ -186,8 +186,10 @@ impl Repository {
             return Ok(false);
         };
 
-        let branch_pid = self.squashed_patch_id(&merge_base, branch)?;
-        let Some(branch_pid) = branch_pid else {
+        // Compute the squashed patch-id (combined diff of all branch changes).
+        let branch_diff = self.run_command(&["diff-tree", "-p", &merge_base, branch])?;
+        let branch_output = self.compute_patch_ids(&branch_diff)?;
+        let Some(branch_pid) = branch_output.split_whitespace().next() else {
             return Ok(false);
         };
 
@@ -200,19 +202,7 @@ impl Repository {
 
         Ok(target_pids
             .lines()
-            .any(|line| line.split_whitespace().next() == Some(&branch_pid)))
-    }
-
-    /// Compute the patch-id for the squashed diff between two refs.
-    ///
-    /// Returns the hex patch-id string, or None if the diff is empty.
-    fn squashed_patch_id(&self, base: &str, head: &str) -> anyhow::Result<Option<String>> {
-        let diff = self.run_command(&["diff-tree", "-p", base, head])?;
-        if diff.trim().is_empty() {
-            return Ok(None);
-        }
-        let output = self.compute_patch_ids(&diff)?;
-        Ok(output.split_whitespace().next().map(String::from))
+            .any(|line| line.split_whitespace().next() == Some(branch_pid)))
     }
 
     /// Pipe diff content through `git patch-id --stable` and return the output.
