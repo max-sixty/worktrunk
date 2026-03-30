@@ -586,6 +586,12 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
+    // Clear all vars data
+    let vars_cleared = clear_all_vars(&repo)?;
+    if vars_cleared > 0 {
+        cleared_any = true;
+    }
+
     // Clear all logs
     let logs_cleared = clear_logs(&repo)?;
     if logs_cleared > 0 {
@@ -713,6 +719,21 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
             (vec![], vec![])
         };
 
+    // Get vars data (all branches) — collect into BTreeMap for sorted output
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
+    let vars_data: Vec<serde_json::Value> = all_vars
+        .into_iter()
+        .flat_map(|(branch, entries)| {
+            entries.into_iter().map(move |(key, value)| {
+                serde_json::json!({
+                    "branch": branch,
+                    "key": key,
+                    "value": value
+                })
+            })
+        })
+        .collect();
+
     // Get hints
     let hints = repo.list_shown_hints();
 
@@ -721,6 +742,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
+        "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
         "hints": hints
@@ -765,6 +787,31 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                 "| {} | {} | {} |\n",
                 entry.branch, entry.marker, age
             ));
+        }
+        let rendered = crate::md_help::render_markdown_table(&table);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show vars data
+    writeln!(out, "{}", format_heading("VARS", None))?;
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
+
+    if all_vars.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let mut table = String::from("| Branch | Key | Value |\n");
+        table.push_str("|--------|-----|-------|\n");
+        for (branch, entries) in &all_vars {
+            for (key, value) in entries {
+                // Truncate long values for display
+                let display_value = if value.len() > 40 {
+                    format!("{}...", &value[..37])
+                } else {
+                    value.to_string()
+                };
+                table.push_str(&format!("| {branch} | {key} | {display_value} |\n"));
+            }
         }
         let rendered = crate::md_help::render_markdown_table(&table);
         writeln!(out, "{}", rendered.trim_end())?;
@@ -832,6 +879,158 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+// ==================== Vars Operations ====================
+
+/// Validate a vars key name: letters, digits, hyphens, underscores only.
+fn validate_vars_key(key: &str) -> anyhow::Result<()> {
+    if key.is_empty() {
+        anyhow::bail!("Key cannot be empty");
+    }
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!(
+            "Invalid key {key:?}: keys must contain only letters, digits, hyphens, and underscores"
+        );
+    }
+    Ok(())
+}
+
+/// Handle vars get
+pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("get variable for current branch")?,
+    };
+
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    if let Some(value) = repo.config_value(&config_key)? {
+        println!("{value}");
+    }
+    Ok(())
+}
+
+/// Handle vars set
+pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("set variable for current branch")?,
+    };
+
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    repo.run_command(&["config", &config_key, value])?;
+
+    eprintln!(
+        "{}",
+        success_message(cformat!("Set <bold>{key}</> for <bold>{branch_name}</>"))
+    );
+    Ok(())
+}
+
+/// Handle vars list
+pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("list variables for current branch")?,
+    };
+
+    let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
+    if entries.is_empty() {
+        eprintln!(
+            "{}",
+            info_message(cformat!("No variables for <bold>{branch_name}</>"))
+        );
+    } else {
+        for (key, value) in &entries {
+            println!("{key}\t{value}");
+        }
+    }
+    Ok(())
+}
+
+/// Handle vars clear
+pub fn handle_vars_clear(
+    key: Option<&str>,
+    all: bool,
+    branch: Option<String>,
+) -> anyhow::Result<()> {
+    let repo = Repository::current()?;
+    let branch_name = match branch {
+        Some(b) => b,
+        None => repo.require_current_branch("clear variable for current branch")?,
+    };
+
+    if !all && key.is_none() {
+        anyhow::bail!("Specify a key to clear, or use --all to clear all keys");
+    }
+
+    if all {
+        let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
+        if entries.is_empty() {
+            eprintln!(
+                "{}",
+                info_message(cformat!("No variables for <bold>{branch_name}</>"))
+            );
+        } else {
+            let count = entries.len();
+            for (key, _) in entries {
+                let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+                let _ = repo.run_command(&["config", "--unset", &config_key]);
+            }
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Cleared <bold>{count}</> variable{} for <bold>{branch_name}</>",
+                    if count == 1 { "" } else { "s" }
+                ))
+            );
+        }
+    } else {
+        let key = key.expect("key required when --all not set");
+        validate_vars_key(key)?;
+        let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+        if repo
+            .run_command(&["config", "--unset", &config_key])
+            .is_ok()
+        {
+            eprintln!(
+                "{}",
+                success_message(cformat!(
+                    "Cleared <bold>{key}</> for <bold>{branch_name}</>"
+                ))
+            );
+        } else {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "No variable <bold>{key}</> for <bold>{branch_name}</>"
+                ))
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Clear all vars entries across all branches (used by handle_state_clear_all).
+fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
+    let all_vars = repo.all_vars_entries();
+    let mut cleared = 0;
+    for (branch, entries) in &all_vars {
+        for key in entries.keys() {
+            let config_key = format!("worktrunk.state.{branch}.vars.{key}");
+            let _ = repo.run_command(&["config", "--unset", &config_key]);
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
 }
 
 // ==================== Marker Helpers ====================
