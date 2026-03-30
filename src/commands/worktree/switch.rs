@@ -116,7 +116,13 @@ fn resolve_fork_ref(
                 None
             }
         },
-        RefType::Mr => None,
+        RefType::Mr => match find_gitlab_remote(repo, info) {
+            Ok(remote) => Some(remote),
+            Err(e) => {
+                log::debug!("Could not resolve GitLab remote for MR: {e:#}");
+                None
+            }
+        },
     };
 
     // Check if branch already exists and is tracking this ref
@@ -279,6 +285,31 @@ fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result
                 owner: base_owner.clone(),
                 repo: base_repo.clone(),
                 suggested_url,
+            }
+            .into()
+        })
+}
+
+/// Find the remote for a GitLab MR (where MR refs live).
+fn find_gitlab_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+    use worktrunk::git::remote_ref::PlatformData;
+
+    let PlatformData::GitLab {
+        host,
+        base_owner,
+        base_repo,
+        ..
+    } = &info.platform_data
+    else {
+        anyhow::bail!("find_gitlab_remote called on non-GitLab ref");
+    };
+
+    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+        .ok_or_else(|| {
+            GitError::NoRemoteForRepo {
+                owner: base_owner.clone(),
+                repo: base_repo.clone(),
+                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
             }
             .into()
         })
