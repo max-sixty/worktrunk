@@ -34,13 +34,14 @@
 use crate::common::{TestRepo, shell::shell_binary, wt_bin};
 use std::process::Command;
 
+use worktrunk::shell;
+
 // Unix-only imports
 #[cfg(unix)]
 use {
     crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
-    worktrunk::shell,
 };
 
 /// Output from executing a command through a shell wrapper
@@ -182,7 +183,6 @@ fn powershell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-#[cfg(unix)]
 fn wrapper_shell(shell_name: &str) -> shell::Shell {
     match shell_name {
         "bash" => shell::Shell::Bash,
@@ -194,7 +194,6 @@ fn wrapper_shell(shell_name: &str) -> shell::Shell {
     }
 }
 
-#[cfg(unix)]
 fn wrapper_env_vars(shell: shell::Shell, repo: &TestRepo) -> Vec<(&'static str, String)> {
     let quote = |value: &str| match shell {
         shell::Shell::PowerShell => powershell_quote(value),
@@ -221,7 +220,6 @@ fn wrapper_env_vars(shell: shell::Shell, repo: &TestRepo) -> Vec<(&'static str, 
     ]
 }
 
-#[cfg(unix)]
 fn append_shell_env_exports(script: &mut String, shell: shell::Shell, vars: &[(&str, String)]) {
     if matches!(shell, shell::Shell::Zsh) {
         script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
@@ -239,7 +237,6 @@ fn append_shell_env_exports(script: &mut String, shell: shell::Shell, vars: &[(&
     }
 }
 
-#[cfg(unix)]
 fn append_wrapper_setup(script: &mut String, shell_name: &str, repo: &TestRepo) {
     let shell = wrapper_shell(shell_name);
     let env_vars = wrapper_env_vars(shell, repo);
