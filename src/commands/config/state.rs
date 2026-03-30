@@ -802,20 +802,22 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     if all_vars.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
-        let mut table = String::from("| Branch | Key | Value |\n");
-        table.push_str("|--------|-----|-------|\n");
-        for (branch, entries) in &all_vars {
-            for (key, value) in entries {
-                // Truncate long values for display
-                let display_value = if value.len() > 40 {
-                    format!("{}...", &value[..37])
-                } else {
-                    value.to_string()
-                };
-                table.push_str(&format!("| {branch} | {key} | {display_value} |\n"));
-            }
-        }
-        let rendered = crate::md_help::render_markdown_table(&table);
+        let rows: Vec<Vec<String>> = all_vars
+            .iter()
+            .flat_map(|(branch, entries)| {
+                entries.iter().map(move |(key, value)| {
+                    // Truncate long values for display
+                    let display_value = if value.len() > 40 {
+                        format!("{}...", &value[..37])
+                    } else {
+                        value.to_string()
+                    };
+                    vec![branch.clone(), key.clone(), display_value]
+                })
+            })
+            .collect();
+        let rendered =
+            crate::md_help::render_data_table(&["Branch", "Key", "Value"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
     writeln!(out)?;
