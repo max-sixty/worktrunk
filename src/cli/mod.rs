@@ -5,7 +5,7 @@ mod step;
 
 pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
+    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
@@ -35,6 +35,20 @@ pub(super) fn parse_key_val(s: &str) -> Result<(String, String), String> {
             TEMPLATE_VARS.join(", "),
             DEPRECATED_TEMPLATE_VARS.join(", ")
         ));
+    }
+    Ok((key.to_string(), value.to_string()))
+}
+
+/// Parse KEY=VALUE string for `wt config state vars set`.
+///
+/// Like `parse_key_val`, but without template variable name validation.
+/// Key validation is deferred to `validate_vars_key` in the command handler.
+pub(super) fn parse_vars_assignment(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
+    if key.is_empty() {
+        return Err("invalid KEY=VALUE: key cannot be empty".to_string());
     }
     Ok((key.to_string(), value.to_string()))
 }
@@ -629,6 +643,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
+| `vars` | object | Per-branch variables from `wt config state vars` (absent when empty) |
 
 ### Commit object
 
@@ -1206,6 +1221,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | Remote URL |
 | `{{ hook_type }}` | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
+| `{{ vars.<key> }}` | Per-branch variables from `wt config state vars` |
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
@@ -1217,12 +1233,19 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 
 Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
-Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks. Undefined variables error — use conditionals:
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
 [pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
+```
+
+Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
+
+```toml
+[post-start]
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
 ## Worktrunk filters
@@ -1420,7 +1443,7 @@ server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ bran
 
 ## Databases
 
-Each worktree can have its own database. Docker containers get unique names and ports:
+Each worktree can have its own database. Docker containers get unique names and ports, and the connection string is stored in `vars` for use outside hooks:
 
 ```toml
 [post-start]
@@ -1432,24 +1455,18 @@ docker run -d --rm \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
+db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
 
 [post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
-Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
 
-Generate `.env.local` with the connection string:
+The connection string is now accessible anywhere — not just in hooks:
 
-```toml
-[pre-start]
-env = """
-cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
-DEV_PORT={{ branch | hash_port }}
-EOF
-"""
+```console
+$ DATABASE_URL=$(wt config state vars get db-url) npm start
 ```
 
 ## Progressive validation

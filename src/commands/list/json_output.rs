@@ -15,11 +15,12 @@
 //! - `remote`: relationship to tracking branch
 //! - `worktree`: worktree-specific state (locked, prunable, etc.)
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use worktrunk::git::LineDiff;
+use worktrunk::git::{LineDiff, Repository};
 
 use super::ci_status::{CiSource, PrStatus};
 use super::model::{ItemKind, ListItem, UpstreamStatus};
@@ -102,6 +103,10 @@ pub struct JsonItem {
     /// Raw status symbols without ANSI colors (e.g., "+! ✖ ↑")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbols: Option<String>,
+
+    /// Custom variables stored via `wt config state vars`
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub vars: BTreeMap<String, String>,
 }
 
 /// Commit information
@@ -223,7 +228,13 @@ pub struct JsonCi {
 
 impl JsonItem {
     /// Convert a ListItem to the new JSON structure
-    pub fn from_list_item(item: &ListItem) -> Self {
+    ///
+    /// `all_vars` is pre-fetched vars data for all branches (from `repo.all_vars_entries()`),
+    /// avoiding N+1 git process spawns. Entries are moved out via `.remove()` to avoid cloning.
+    pub fn from_list_item(
+        item: &ListItem,
+        all_vars: &mut HashMap<String, BTreeMap<String, String>>,
+    ) -> Self {
         let (kind_str, worktree_data) = match &item.kind {
             ItemKind::Worktree(data) => ("worktree", Some(data.as_ref())),
             ItemKind::Branch => ("branch", None),
@@ -329,6 +340,13 @@ impl JsonItem {
             .map(format_raw_symbols)
             .filter(|s| !s.is_empty());
 
+        // Per-branch vars data (pre-fetched, moved out to avoid cloning)
+        let vars = item
+            .branch
+            .as_deref()
+            .and_then(|b| all_vars.remove(b))
+            .unwrap_or_default();
+
         // Summary: flatten Option<Option<String>> → Option<String>
         let summary = item.summary.as_ref().and_then(|s| s.clone());
 
@@ -353,6 +371,7 @@ impl JsonItem {
             summary,
             statusline,
             symbols,
+            vars,
         }
     }
 }
@@ -456,8 +475,14 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 }
 
 /// Convert a list of ListItems to JSON output
-pub fn to_json_items(items: &[ListItem]) -> Vec<JsonItem> {
-    items.iter().map(JsonItem::from_list_item).collect()
+///
+/// Fetches all vars data in a single git call, then distributes per-branch.
+pub fn to_json_items(items: &[ListItem], repo: &Repository) -> Vec<JsonItem> {
+    let mut all_vars = repo.all_vars_entries();
+    items
+        .iter()
+        .map(|item| JsonItem::from_list_item(item, &mut all_vars))
+        .collect()
 }
 
 #[cfg(test)]
@@ -848,22 +873,47 @@ mod tests {
         "#);
     }
 
+    fn test_repo() -> (tempfile::TempDir, Repository) {
+        let tmp = tempfile::tempdir().unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(tmp.path())
+            .run()
+            .unwrap();
+        let repo = Repository::at(tmp.path()).unwrap();
+        (tmp, repo)
+    }
+
     #[test]
     fn test_json_item_summary_present() {
+        let (_tmp, repo) = test_repo();
+        let mut all_vars = repo.all_vars_entries();
+
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         item.summary = Some(Some("Add login page".to_string()));
-        let json_item = JsonItem::from_list_item(&item);
+        let json_item = JsonItem::from_list_item(&item, &mut all_vars);
         assert_eq!(json_item.summary, Some("Add login page".to_string()));
     }
 
     #[test]
     fn test_json_item_summary_absent() {
+        let (_tmp, repo) = test_repo();
+        let mut all_vars = repo.all_vars_entries();
+
         let mut item = ListItem::new_branch("abc1234".into(), "feature".into());
         // Both "not collected" and "no summary" should be absent in JSON
-        assert!(JsonItem::from_list_item(&item).summary.is_none());
+        assert!(
+            JsonItem::from_list_item(&item, &mut all_vars)
+                .summary
+                .is_none()
+        );
 
         item.summary = Some(None);
-        assert!(JsonItem::from_list_item(&item).summary.is_none());
+        assert!(
+            JsonItem::from_list_item(&item, &mut all_vars)
+                .summary
+                .is_none()
+        );
     }
 
     #[test]

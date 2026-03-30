@@ -517,6 +517,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
+- **vars**: [experimental] Custom variables per branch
 - **logs**: Background operation logs
 
 ### Examples
@@ -534,6 +535,11 @@ $ wt config state default-branch set main
 Set a marker for current branch:
 ```bash
 $ wt config state marker set "🚧 WIP"
+```
+
+Store arbitrary data:
+```bash
+$ wt config state vars set env=staging
 ```
 
 Clear all CI status cache:
@@ -564,6 +570,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>marker</span></b>           Branch markers
   <b><span class=c>logs</span></b>             Background operation logs
   <b><span class=c>hints</span></b>            One-time hints shown in this repo
+  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
   <b><span class=c>get</span></b>              Get all stored state
   <b><span class=c>clear</span></b>            Clear all stored state
 
@@ -729,6 +736,86 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>get</span></b>    Get marker for a branch
   <b><span class=c>set</span></b>    Set marker for a branch
   <b><span class=c>clear</span></b>  Clear marker for a branch
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: hooks, templates; -vv: debug report)
+
+## wt config state vars
+
+[experimental]
+
+Custom variables per branch.
+
+Store custom variables per branch. Values are stored as-is — plain strings or JSON.
+
+### Examples
+
+Set and get values:
+```bash
+$ wt config state vars set env=staging
+$ wt config state vars get env
+```
+
+Store JSON:
+```bash
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+
+List all keys:
+```bash
+$ wt config state vars list
+```
+
+Operate on a different branch:
+```bash
+$ wt config state vars set env=production --branch=main
+```
+
+### Template access
+
+Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+
+```toml
+[post-start]
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
+```
+
+JSON object and array values support dot access:
+
+```bash
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+```toml
+[post-start]
+dev = "npm start -- --port {{ vars.config.port }}"
+```
+
+### Storage format
+
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
+
+### Command reference
+
+wt config state vars - [experimental] Custom variables per branch
+
+Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>get</span></b>    Get a value
+  <b><span class=c>set</span></b>    Set a value
+  <b><span class=c>list</span></b>   List all keys
+  <b><span class=c>clear</span></b>  Clear a key or all keys
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
