@@ -779,13 +779,9 @@ JSON object and array values support dot access:
 dev = "npm start -- --port {{ vars.config.port }}"
 ```
 
-### Storage
+### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`.
-
-### Key names
-
-Keys must contain only letters, digits, hyphens, and underscores. Dots are not allowed (they conflict with git config's section separator).
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
 
 ### Command reference
 
