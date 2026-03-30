@@ -128,6 +128,51 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Find the local remote that points to the base (target) project for a PR/MR.
+///
+/// Dispatches on `PlatformData` to extract host/owner/repo, then searches
+/// configured remotes. The suggested URL in the error respects each platform's
+/// configured git protocol (SSH vs HTTPS).
+pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
+    let (host, owner, repo_name) = match &info.platform_data {
+        PlatformData::GitHub {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        }
+        | PlatformData::GitLab {
+            host,
+            base_owner,
+            base_repo,
+            ..
+        } => (host.as_str(), base_owner.as_str(), base_repo.as_str()),
+    };
+
+    repo.find_remote_for_repo(Some(host), owner, repo_name)
+        .ok_or_else(|| {
+            let suggested_url = match &info.platform_data {
+                PlatformData::GitHub {
+                    host,
+                    base_owner,
+                    base_repo,
+                    ..
+                } => github::fork_remote_url(host, base_owner, base_repo),
+                PlatformData::GitLab {
+                    host,
+                    base_owner,
+                    base_repo,
+                    ..
+                } => gitlab::fork_remote_url(host, base_owner, base_repo),
+            };
+            GitError::NoRemoteForRepo {
+                owner: owner.to_string(),
+                repo: repo_name.to_string(),
+                suggested_url,
+            }
+        })
+}
+
 /// Check if a local branch is tracking a specific remote ref.
 ///
 /// Returns `Some(true)` if the branch is configured to track the given ref.

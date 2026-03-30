@@ -273,6 +273,15 @@ pub fn git_protocol() -> String {
         .unwrap_or_else(|| "https".to_string())
 }
 
+/// Construct the remote URL for a GitLab project, respecting protocol preference.
+pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
+    if git_protocol() == "ssh" {
+        format!("git@{host}:{owner}/{repo}.git")
+    } else {
+        format!("https://{host}/{owner}/{repo}.git")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +298,24 @@ mod tests {
     fn test_ref_type() {
         let provider = GitLabProvider;
         assert_eq!(provider.ref_type(), RefType::Mr);
+    }
+
+    #[test]
+    fn test_fork_remote_url_formats() {
+        // Protocol depends on `glab config get git_protocol`, so just check format
+        let url = fork_remote_url("gitlab.com", "contributor", "repo");
+        let valid_urls = [
+            "git@gitlab.com:contributor/repo.git",
+            "https://gitlab.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
+
+        let url = fork_remote_url("gitlab.example.com", "org", "project");
+        let valid_urls = [
+            "git@gitlab.example.com:org/project.git",
+            "https://gitlab.example.com/org/project.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
     }
 
     #[test]
