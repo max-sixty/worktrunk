@@ -90,7 +90,6 @@
 //!   like template variables and project identifiers)
 //! - `effective_remote_url` — `git remote get-url`, with `insteadOf`
 //!   applied (cached; used for platform detection)
-//! - `find_forge_remote(pred)` — search all remotes using effective URLs
 //! - `find_remote_for_repo(host, owner, repo)` — match owner/repo across
 //!   remotes, host used only as disambiguator
 
@@ -275,27 +274,6 @@ impl Repository {
                     .and_then(|remote| self.remote_url(&remote))
             })
             .clone()
-    }
-
-    /// Search all remotes for a URL matching a predicate.
-    ///
-    /// Uses effective URLs (with `url.insteadOf` rewrites applied) so that
-    /// custom SSH hostnames resolve to real forge hostnames.
-    ///
-    /// Returns the first matching `(remote_name, url)` pair, or `None`.
-    pub fn find_forge_remote<F>(&self, predicate: F) -> Option<(String, String)>
-    where
-        F: Fn(&GitRemoteUrl) -> bool,
-    {
-        for (remote_name, _) in self.all_remote_urls() {
-            if let Some(url) = self.effective_remote_url(&remote_name)
-                && let Some(parsed) = GitRemoteUrl::parse(&url)
-                && predicate(&parsed)
-            {
-                return Some((remote_name, url));
-            }
-        }
-        None
     }
 
     /// Get a project identifier for approval tracking.
