@@ -148,7 +148,7 @@ vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "2.7.0"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [[bench]]
 name = "completion"
