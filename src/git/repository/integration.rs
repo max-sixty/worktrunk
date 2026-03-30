@@ -206,11 +206,7 @@ impl Repository {
     /// Compute the patch-id for the squashed diff between two refs.
     ///
     /// Returns the hex patch-id string, or None if the diff is empty.
-    fn squashed_patch_id(
-        &self,
-        base: &str,
-        head: &str,
-    ) -> anyhow::Result<Option<String>> {
+    fn squashed_patch_id(&self, base: &str, head: &str) -> anyhow::Result<Option<String>> {
         let diff = self.run_command(&["diff-tree", "-p", base, head])?;
         if diff.trim().is_empty() {
             return Ok(None);
