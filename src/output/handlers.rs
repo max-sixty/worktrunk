@@ -212,42 +212,41 @@ fn format_path_mismatch_warning(
     ))
 }
 
+struct BranchDeletionDisplay {
+    deletion: BranchDeletionResult,
+    show_unmerged_hint: bool,
+}
+
+fn print_retained_unmerged_branch(branch_name: &str) {
+    eprintln!(
+        "{}",
+        info_message(cformat!(
+            "Branch <bold>{branch_name}</> retained; has unmerged changes"
+        ))
+    );
+    let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To delete the unmerged branch, run <underline>{cmd}</>"
+        ))
+    );
+}
+
 /// Handle the result of a branch deletion attempt.
 ///
-/// Shows appropriate messages for non-deleted branches:
-/// - `NotDeleted`: We checked and chose not to delete (not integrated) - show info
+/// Converts a deletion attempt into structured display data:
+/// - `NotDeleted`: We checked and chose not to delete (not integrated)
 /// - `Err(e)`: Git command failed - show warning with actual error
-///
-/// Returns (result, needs_hint) where needs_hint indicates the caller should print
-/// the unmerged branch hint after any success message.
-///
-/// When `defer_output` is true, info and hint are suppressed (caller will handle).
 fn handle_branch_deletion_result(
     result: anyhow::Result<BranchDeletionResult>,
     branch_name: &str,
-    defer_output: bool,
-) -> anyhow::Result<(BranchDeletionResult, bool)> {
+) -> anyhow::Result<BranchDeletionDisplay> {
     match result {
-        Ok(r) if !matches!(r.outcome, BranchDeletionOutcome::NotDeleted) => Ok((r, false)),
-        Ok(r) => {
-            // Branch not integrated - we chose not to delete (not a failure)
-            if !defer_output {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "Branch <bold>{branch_name}</> retained; has unmerged changes"
-                    ))
-                );
-                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To delete the unmerged branch, run <underline>{cmd}</>"
-                    ))
-                );
-            }
-            Ok((r, defer_output))
-        }
+        Ok(deletion) => Ok(BranchDeletionDisplay {
+            show_unmerged_hint: matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted),
+            deletion,
+        }),
         Err(e) => {
             // Git command failed - this is an error (we decided to delete but couldn't)
             eprintln!(
@@ -744,32 +743,18 @@ fn handle_branch_only_output(
     let check_target = default_branch.as_deref().unwrap_or("HEAD");
 
     let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
-    // Defer "retained" output so we control message ordering (info before retained)
-    let (deletion, deferred) = handle_branch_deletion_result(result, branch_name, true)?;
+    let deletion = handle_branch_deletion_result(result, branch_name)?;
 
-    if matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted) {
-        // Print info first, then deferred "retained" + hint
+    if matches!(deletion.deletion.outcome, BranchDeletionOutcome::NotDeleted) {
         eprintln!("{}", info_message(&branch_info));
-        if deferred {
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "Branch <bold>{branch_name}</> retained; has unmerged changes"
-                ))
-            );
-            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "To delete the unmerged branch, run <underline>{cmd}</>"
-                ))
-            );
+        if deletion.show_unmerged_hint {
+            print_retained_unmerged_branch(branch_name);
         }
     } else {
         let flag_note = flag_note(
             deletion_mode,
-            &deletion.outcome,
-            Some(&deletion.integration_target),
+            &deletion.deletion.outcome,
+            Some(&deletion.deletion.integration_target),
         );
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_green();
@@ -942,11 +927,15 @@ impl RemovalDisplayInfo {
 
         let (outcome, integration_target, show_unmerged_hint) = match branch_deletion {
             Some(result) => {
-                let (deletion, needs_hint) =
-                    handle_branch_deletion_result(result, branch_name, true)?;
+                let deletion = handle_branch_deletion_result(result, branch_name)?;
                 // Only use integration_target for display if we had a real target (not "HEAD" fallback)
-                let display_target = target_branch.map(|_| deletion.integration_target);
-                (deletion.outcome, display_target, needs_hint)
+                let display_target =
+                    target_branch.map(|_| deletion.deletion.integration_target.clone());
+                (
+                    deletion.deletion.outcome,
+                    display_target,
+                    deletion.show_unmerged_hint,
+                )
             }
             None => (
                 BranchDeletionOutcome::NotDeleted,
