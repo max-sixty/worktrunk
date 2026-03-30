@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use anstyle::AnsiColor;
 use color_print::cformat;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
@@ -259,17 +260,6 @@ fn handle_branch_deletion_result(
     }
 }
 
-// ============================================================================
-// FlagNote: Workaround for cformat! being compile-time only
-// ============================================================================
-//
-// We want to parameterize the color (cyan/green) but can't because cformat!
-// parses color tags at compile time before generic substitution. So we have
-// duplicate methods (after_cyan, after_green) instead of after(color).
-//
-// This is ugly but unavoidable. Keep it encapsulated here.
-// ============================================================================
-
 struct FlagNote {
     text: String,
     symbol: Option<String>,
@@ -305,22 +295,17 @@ impl FlagNote {
         }
     }
 
-    fn after_cyan(&self) -> String {
+    fn after(&self, color: AnsiColor) -> String {
         match &self.symbol {
-            Some(s) => cformat!("{}<cyan>{}</>", s, self.suffix),
-            None => String::new(),
-        }
-    }
-
-    fn after_green(&self) -> String {
-        match &self.symbol {
-            Some(s) => cformat!("{}<green>{}</>", s, self.suffix),
+            Some(s) => match color {
+                AnsiColor::Cyan => cformat!("{}<cyan>{}</>", s, self.suffix),
+                AnsiColor::Green => cformat!("{}<green>{}</>", s, self.suffix),
+                _ => format!("{s}{}", self.suffix),
+            },
             None => String::new(),
         }
     }
 }
-
-// ============================================================================
 
 /// Get flag acknowledgment note for remove messages
 ///
@@ -757,7 +742,7 @@ fn handle_branch_only_output(
             Some(&deletion.deletion.integration_target),
         );
         let flag_text = &flag_note.text;
-        let flag_after = flag_note.after_green();
+        let flag_after = flag_note.after(AnsiColor::Green);
 
         if pruned {
             // Combined: pruned stale metadata & deleted branch in one line
@@ -984,7 +969,7 @@ impl RemovalDisplayInfo {
                 success_message(cformat!(
                     "Removed <bold>{branch_name}</> worktree{force_text} & branch{flag_text}"
                 ))
-                .append(&flag_note.after_green())
+                .append(&flag_note.after(AnsiColor::Green))
             } else {
                 success_message(cformat!(
                     "Removed <bold>{branch_name}</> worktree{force_text}"
@@ -995,7 +980,7 @@ impl RemovalDisplayInfo {
             progress_message(cformat!(
                 "Removing <bold>{branch_name}</> worktree{force_text} & branch in background{flag_text}"
             ))
-            .append(&flag_note.after_cyan())
+            .append(&flag_note.after(AnsiColor::Cyan))
         } else {
             progress_message(cformat!(
                 "Removing <bold>{branch_name}</> worktree{force_text} in background"
