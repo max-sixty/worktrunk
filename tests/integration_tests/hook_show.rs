@@ -299,6 +299,8 @@ lint = "pre-commit run"
     let canonical_home = crate::common::canonicalize(temp_home.path())
         .unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(&regex::escape(&canonical_home.to_string_lossy()), "~");
+    // Normalize thread IDs in panic messages (e.g., "thread 'main' (1234567)")
+    settings.add_filter(r"thread '([^']+)' \(\d+\)", "thread '$1' ([THREAD_ID])");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg("hook").arg("show").current_dir(temp_dir.path());
