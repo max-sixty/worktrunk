@@ -140,9 +140,10 @@ pub fn platform_for_repo(
         );
     }
 
-    // If we have a specific remote hint (e.g., from a remote branch), use that first
+    // If we have a specific remote hint (e.g., from a remote branch), use that first.
+    // Uses effective URL to handle url.insteadOf aliases.
     if let Some(remote_name) = remote_hint
-        && let Some(url) = repo.remote_url(remote_name)
+        && let Some(url) = repo.effective_remote_url(remote_name)
         && let Some(platform) = detect_platform_from_url(&url)
     {
         log::debug!(
@@ -153,16 +154,18 @@ pub fn platform_for_repo(
         return Some(platform);
     }
 
-    // Search all remotes for a supported platform
-    for (remote_name, url) in repo.all_remote_urls() {
-        if let Some(platform) = detect_platform_from_url(&url) {
-            log::debug!(
-                "Detected CI platform {} from remote '{}'",
-                platform,
-                remote_name
-            );
-            return Some(platform);
-        }
+    // Search all remotes for a supported platform.
+    // Uses find_forge_remote which checks effective URLs (with insteadOf applied).
+    if let Some((remote_name, url)) =
+        repo.find_forge_remote(|parsed| parsed.is_github() || parsed.is_gitlab())
+    {
+        let platform = detect_platform_from_url(&url)?;
+        log::debug!(
+            "Detected CI platform {} from remote '{}'",
+            platform,
+            remote_name
+        );
+        return Some(platform);
     }
 
     None

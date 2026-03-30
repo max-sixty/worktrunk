@@ -258,7 +258,7 @@ mod tests {
         // With diff content and stat
         let prompt = render_prompt("diff content", "1 file changed").unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a summary of this branch's changes as a commit message.
+        <task>Write a summary of this branch's changes as a commit message.</task>
 
         <format>
         - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
@@ -278,7 +278,7 @@ mod tests {
         // Empty inputs still include format instructions
         let empty_prompt = render_prompt("", "").unwrap();
         assert_snapshot!(empty_prompt, @r#"
-        Write a summary of this branch's changes as a commit message.
+        <task>Write a summary of this branch's changes as a commit message.</task>
 
         <format>
         - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")

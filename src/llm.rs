@@ -222,7 +222,7 @@ struct TemplateContext<'a> {
 /// Default template for commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
-const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes below.
+const DEFAULT_TEMPLATE: &str = r#"<task>Write a commit message for the staged changes below.</task>
 
 <format>
 - Subject line under 50 chars
@@ -255,7 +255,7 @@ Branch: {{ branch }}
 /// Default template for squash commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
-const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single commit message.
+const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the combined effect of these commits.</task>
 
 <format>
 - Subject line under 50 chars
@@ -766,7 +766,7 @@ mod tests {
         let context = commit_context("diff content", "main", None, "myrepo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -799,7 +799,7 @@ mod tests {
         let context = commit_context("diff", "main", Some(&commits), "repo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -835,7 +835,7 @@ mod tests {
         let context = commit_context("diff", "main", Some(&commits), "repo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -937,7 +937,7 @@ mod tests {
         let context = squash_context("diff content", "feature", None, "repo", &commits, "main");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Combine these commits into a single commit message.
+        <task>Write a commit message for the combined effect of these commits.</task>
 
         <format>
         - Subject line under 50 chars

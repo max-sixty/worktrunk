@@ -226,11 +226,12 @@ All shell commands use `$ ` prefix in `` ```console `` blocks. `convert_dollar_c
 
 | Detected pattern | Web output | Highlighting |
 |------------------|------------|--------------|
-| Any `$ ` commands, no `{{ }}` | `cmd` parameter with `\|\|\|` delimiter | Full Syntect |
-| `{{ }}` in command | `{% terminal() %}` with `<span class="cmd">` body | Accent color only |
+| `$ ` commands | `cmd` parameter with `\|\|\|` delimiter | Full Syntect |
 | No `$ ` | `console` → `bash` conversion | Syntect (no `$ ` prompt) |
 
-The `cmd` parameter supports multiple commands joined by `|||`. The template splits, highlights each through Syntect individually, and wraps commands in `<span class="cmd">` (CSS `::before` adds `$ `). Comment lines (`#`) are highlighted but not wrapped (no prompt).
+All `$ ` commands go through the `cmd` parameter path for consistent Syntect highlighting. Multiple commands are joined by `|||`; the template splits and highlights each individually. Commands are wrapped in `<span class="cmd">` (CSS `::before` adds `$ `). Comment lines (`#`) are highlighted but not wrapped (no prompt).
+
+**Placeholders in cmd values:** Tera (Zola's template engine) would interpret `{{ }}` in the `cmd` parameter as template expressions, and `"` would close the parameter string. Since Tera has no backslash-escape mechanism for string literals, these characters are replaced with text placeholders (`__WT_OPEN2__`, `__WT_CLOSE2__`, `__WT_QUOT__`) in the Rust conversion function. The terminal shortcode template replaces them back before Syntect highlighting. The sync test also strips them when generating skill reference files.
 
 Hand-written docs can use either `console` fences with `$ ` (auto-converted by the sync test) or shortcodes directly.
 
@@ -249,7 +250,7 @@ The `--help-page` generator in `src/main.rs` applies post-processing to transfor
 
 | CLI Source | Web Output |
 |------------|------------|
-| `` ```console `` with `$ ` | `{% terminal() %}` with `<span class="cmd">` |
+| `` ```console `` with `$ ` | `terminal` shortcode with `cmd` parameter |
 | `` ```console `` (no `$ `) | `` ```bash `` |
 | `` `●` green `` | `<span style='color:#0a0'>●</span> green` |
 | `` `●` blue `` | `<span style='color:#00a'>●</span> blue` |

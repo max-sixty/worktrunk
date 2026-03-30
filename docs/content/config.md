@@ -265,7 +265,7 @@ Default template:
 ```toml
 [commit.generation]
 template = """
-Write a commit message for the staged changes below.
+<task>Write a commit message for the staged changes below.</task>
 
 <format>
 - Subject line under 50 chars
@@ -311,7 +311,7 @@ Default template:
 ```toml
 [commit.generation]
 squash-template = """
-Combine these commits into a single commit message.
+<task>Write a commit message for the combined effect of these commits.</task>
 
 <format>
 - Subject line under 50 chars
@@ -409,7 +409,7 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 
 Override the LLM command in CI to use a mock:
 
-{{ terminal(cmd="WORKTRUNK_COMMIT__GENERATION__COMMAND=&quot;echo 'test: automated commit'&quot; wt merge") }}
+{{ terminal(cmd="WORKTRUNK_COMMIT__GENERATION__COMMAND=__WT_QUOT__echo 'test: automated commit'__WT_QUOT__ wt merge") }}
 
 ### Other environment variables
 
@@ -528,7 +528,7 @@ Set the default branch manually:
 {{ terminal(cmd="wt config state default-branch set main") }}
 
 Set a marker for current branch:
-{{ terminal(cmd="wt config state marker set &quot;🚧 WIP&quot;") }}
+{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧 WIP__WT_QUOT__") }}
 
 Store arbitrary data:
 ```bash
@@ -711,7 +711,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
-{{ terminal(cmd="git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;🚧&quot;,&quot;set_at&quot;:0}'") }}
+{{ terminal(cmd="git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__🚧__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'") }}
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`.
 
@@ -870,7 +870,7 @@ Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 View a specific hook log:
-{{ terminal(cmd="cat &quot;$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log&quot;") }}
+{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log__WT_QUOT__") }}
 
 Clear all logs:
 {{ terminal(cmd="wt config state logs clear") }}

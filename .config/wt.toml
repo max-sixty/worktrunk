@@ -5,7 +5,8 @@ assets = "task fetch-assets"
 docs = "cd docs && zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
-build = "cargo build --all-targets"
+clippy = "pre-commit run clippy --all-files || true"
+build = "cargo test --no-run --all-targets"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 

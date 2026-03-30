@@ -102,7 +102,8 @@ $ cargo install worktrunk && wt config shell install
 On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 ```bash
-$ winget install max-sixty.worktrunk|||git-wt config shell install
+$ winget install max-sixty.worktrunk
+$ git-wt config shell install
 ```
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
@@ -119,17 +120,21 @@ $ paru worktrunk-bin && wt config shell install
 
 Create a worktree for a new feature:
 
-<span class="cmd">wt switch --create feature-auth</span>
+```bash
+$ wt switch --create feature-auth
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
+```
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
-<span class="cmd">wt list</span>
+```bash
+$ wt list
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>               <span class=d>4bc72dc9</span>  <span class=d>2h</span>    <span class=d>Add authentication module</span>
 ^ main              <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden</span>
+```
 
 The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.
 
@@ -138,12 +143,15 @@ When done, either:
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
 ```bash
-$ wt step commit                    # commit staged changes|||gh pr create                      # or glab mr create|||wt remove                         # after PR is merged
+$ wt step commit                    # commit staged changes
+$ gh pr create                      # or glab mr create
+$ wt remove                         # after PR is merged
 ```
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-<span class="cmd">wt merge main</span>
+```bash
+$ wt merge main
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
@@ -155,11 +163,14 @@ $ wt step commit                    # commit staged changes|||gh pr create      
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+```
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
 ```bash
-$ wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'
+$ wt switch -x claude -c feature-a -- 'Add user authentication'
+$ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
+$ wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).

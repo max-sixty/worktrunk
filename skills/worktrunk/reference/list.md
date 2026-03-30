@@ -129,7 +129,29 @@ These appear across all columns while the table is loading:
 Query structured data with `--format=json`:
 
 ```bash
-$ # Current worktree path (for scripts)|||wt list --format=json | jq -r '.[] | select(.is_current) | .path'||||||# Branches with uncommitted changes|||wt list --format=json | jq '.[] | select(.working_tree.modified)'||||||# Worktrees with merge conflicts|||wt list --format=json | jq '.[] | select(.operation_state == &quot;conflicts&quot;)'||||||# Branches ahead of main (needs merging)|||wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'||||||# Integrated branches (safe to remove)|||wt list --format=json | jq '.[] | select(.main_state == &quot;integrated&quot; or .main_state == &quot;empty&quot;) | .branch'||||||# Branches without worktrees|||wt list --format=json --branches | jq '.[] | select(.kind == &quot;branch&quot;) | .branch'||||||# Worktrees ahead of remote (needs pushing)|||wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'||||||# Stale CI (local changes not reflected in CI)|||wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+# Current worktree path (for scripts)
+$ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+
+# Branches with uncommitted changes
+$ wt list --format=json | jq '.[] | select(.working_tree.modified)'
+
+# Worktrees with merge conflicts
+$ wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
+
+# Branches ahead of main (needs merging)
+$ wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
+
+# Integrated branches (safe to remove)
+$ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
+
+# Branches without worktrees
+$ wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
+
+# Worktrees ahead of remote (needs pushing)
+$ wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+
+# Stale CI (local changes not reflected in CI)
+$ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**

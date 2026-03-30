@@ -10,20 +10,24 @@ Branch switching uses one directory: uncommitted changes from one agent get mixe
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
+```bash
 # Plain git worktree workflow
-<span class="cmd">git worktree add -b feature-branch ../myapp-feature main</span>
-<span class="cmd">cd ../myapp-feature</span>
+$ git worktree add -b feature-branch ../myapp-feature main
+$ cd ../myapp-feature
 # ...work, commit, push...
-<span class="cmd">cd ../myapp</span>
-<span class="cmd">git merge feature-branch</span>
-<span class="cmd">git worktree remove ../myapp-feature</span>
-<span class="cmd">git branch -d feature-branch</span>
+$ cd ../myapp
+$ git merge feature-branch
+$ git worktree remove ../myapp-feature
+$ git branch -d feature-branch
+```
 
 Worktrunk automates the full lifecycle:
 
-<span class="cmd">wt switch --create feature-branch  # Creates worktree, runs setup hooks</span>
+```bash
+$ wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
-<span class="cmd">wt merge                            # Merges into default branch, cleans up</span>
+$ wt merge                            # Merges into default branch, cleans up
+```
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
@@ -179,11 +183,13 @@ All hook executions and LLM commands are recorded in `.git/wt/logs/commands.json
 
 View the log with `wt config state logs get`, or query directly:
 
+```bash
 # Recent commands
-<span class="cmd">tail -5 .git/wt/logs/commands.jsonl | jq .</span>
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 # Failed commands
-<span class="cmd">jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl</span>
+$ jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
+```
 
 Clear with `wt config state logs clear`.
 

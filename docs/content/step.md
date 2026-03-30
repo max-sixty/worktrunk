@@ -258,7 +258,7 @@ The diff is pipeable to tools like `delta`:
 
 Equivalent to:
 
-{{ terminal(cmd="cp &quot;$(git rev-parse --git-dir)/index&quot; /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))") }}
+{{ terminal(cmd="cp __WT_QUOT__$(git rev-parse --git-dir)/index__WT_QUOT__ /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))") }}
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
@@ -438,35 +438,29 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-{% terminal() %}
-<span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
 16066
 {% end %}
 
 Use in shell substitution:
 
-{% terminal() %}
-<span class="cmd">curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health</span>
-{% end %}
+{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__')/health") }}
 
 Combine multiple values:
 
-{% terminal() %}
-<span class="cmd">wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'</span>
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__,__WT_OPEN2__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE2__'") %}
 16066,16739
 {% end %}
 
 Use conditionals and filters:
 
-{% terminal() %}
-<span class="cmd">wt step eval '{{ branch | sanitize_db }}'</span>
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | sanitize_db __WT_CLOSE2__'") %}
 feature_auth_oauth2_a1b
 {% end %}
 
 Show available template variables:
 
-{% terminal() %}
-<span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
+{% terminal(cmd="wt step eval --dry-run '__WT_OPEN2__ branch __WT_CLOSE2__'") %}
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
@@ -530,13 +524,11 @@ Run npm install in all worktrees:
 
 Use branch name in command:
 
-{% terminal() %}
-<span class="cmd">wt step for-each -- "echo Branch: {{ branch }}"</span>
-{% end %}
+{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN2__ branch __WT_CLOSE2____WT_QUOT__") }}
 
 Pull updates in worktrees with upstreams (skips others):
 
-{{ terminal(cmd="git fetch --prune && wt step for-each -- '[ &quot;$(git rev-parse @{u} 2>/dev/null)&quot; ] || exit 0; git pull --autostash'") }}
+{{ terminal(cmd="git fetch --prune && wt step for-each -- '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
 
 Note: This command is experimental and may change in future versions.
 

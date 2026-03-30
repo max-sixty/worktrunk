@@ -264,7 +264,7 @@ Default template:
 ```toml
 [commit.generation]
 template = """
-Write a commit message for the staged changes below.
+<task>Write a commit message for the staged changes below.</task>
 
 <format>
 - Subject line under 50 chars
@@ -310,7 +310,7 @@ Default template:
 ```toml
 [commit.generation]
 squash-template = """
-Combine these commits into a single commit message.
+<task>Write a commit message for the combined effect of these commits.</task>
 
 <format>
 - Subject line under 50 chars
@@ -411,7 +411,7 @@ Note the single underscore after `WORKTRUNK` and double underscores between nest
 Override the LLM command in CI to use a mock:
 
 ```bash
-$ WORKTRUNK_COMMIT__GENERATION__COMMAND=&quot;echo 'test: automated commit'&quot; wt merge
+$ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 ```
 
 ### Other environment variables
@@ -534,7 +534,7 @@ $ wt config state default-branch set main
 
 Set a marker for current branch:
 ```bash
-$ wt config state marker set &quot;🚧 WIP&quot;
+$ wt config state marker set "🚧 WIP"
 ```
 
 Store arbitrary data:
@@ -721,7 +721,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
 ```bash
-$ git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;🚧&quot;,&quot;set_at&quot;:0}'
+$ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`.
@@ -882,7 +882,7 @@ $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 View a specific hook log:
 ```bash
-$ cat &quot;$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log&quot;
+$ cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
 ```
 
 Clear all logs:

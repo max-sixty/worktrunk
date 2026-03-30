@@ -1,4 +1,29 @@
 //! Remote and URL operations for Repository.
+//!
+//! # Forge resolution and `url.insteadOf`
+//!
+//! Worktrunk needs to identify the forge (GitHub, GitLab) behind a remote URL
+//! for PR status, API calls, and push-remote detection. This is straightforward
+//! when the raw URL contains a recognized hostname (`github.com`, `gitlab.com`,
+//! etc.), but breaks when users configure `url.insteadOf` for multi-key SSH
+//! setups — the raw URL may contain a custom hostname like `github-work`.
+//!
+//! All forge-aware lookups use [`effective_remote_url`](Repository::effective_remote_url),
+//! which runs `git remote get-url <name>` to get the URL with `url.insteadOf`
+//! rewrites applied. This is a local operation (no network I/O). Results are
+//! cached per-remote in [`RepoCache`](super::RepoCache), so repeated lookups
+//! for the same remote cost nothing after the first call.
+//!
+//! When no `insteadOf` rules are configured, the effective URL equals the raw
+//! config URL — there is no behavioral difference.
+//!
+//! ## URL methods
+//!
+//! - `remote_url` — raw config value, no rewriting (for non-forge uses like
+//!   template variables and project identifiers)
+//! - `effective_remote_url` — `git remote get-url`, with `insteadOf` applied
+//!   (cached; use for all forge detection)
+//! - `find_forge_remote(pred)` — search all remotes using effective URLs
 
 use anyhow::Context;
 
@@ -58,6 +83,10 @@ impl Repository {
     }
 
     /// Get the URL for a remote, if configured.
+    ///
+    /// Returns the raw value from `.git/config` without applying `url.insteadOf`
+    /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
+    /// need forge detection to work with `insteadOf` aliases.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
         self.run_command(&["config", &format!("remote.{}.url", remote)])
             .ok()
@@ -65,10 +94,35 @@ impl Repository {
             .filter(|url| !url.is_empty())
     }
 
+    /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.
+    ///
+    /// Uses `git remote get-url` which applies `url.insteadOf` rewrites. When no
+    /// rewrite rules are configured, returns the same value as [`remote_url`](Self::remote_url).
+    ///
+    /// Results are cached per-remote in the shared repo cache.
+    ///
+    /// Returns `None` if the remote doesn't exist or has no URL.
+    pub fn effective_remote_url(&self, remote: &str) -> Option<String> {
+        self.cache
+            .effective_remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                self.run_command(&["remote", "get-url", remote])
+                    .ok()
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+            })
+            .clone()
+    }
+
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
-    /// whose URL matches the given owner and repo (case-insensitive).
+    /// whose URL matches the given owner and repo (case-insensitive). Checks
+    /// both the raw config URL and the effective URL (with `url.insteadOf`
+    /// rewrites applied), so matches work in both directions: when the raw URL
+    /// contains a real forge hostname, and when `insteadOf` rewrites a custom
+    /// hostname to a real forge.
     ///
     /// When `host` is `Some`, the remote must also match the host. This is
     /// important for multi-host setups (e.g., both github.com and
@@ -81,23 +135,24 @@ impl Repository {
         owner: &str,
         repo: &str,
     ) -> Option<String> {
-        // Get all remotes with URLs
-        let output = self
-            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
-            .ok()?;
-
-        for line in output.lines() {
-            // Parse "remote.<name>.url <value>" format
-            if let Some(rest) = line.strip_prefix("remote.")
-                && let Some((name, url)) = rest.split_once(".url ")
-                && let Some(parsed) = GitRemoteUrl::parse(url)
-                // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
-                && parsed.owner().eq_ignore_ascii_case(owner)
+        let matches = |url: &str| -> bool {
+            let Some(parsed) = GitRemoteUrl::parse(url) else {
+                return false;
+            };
+            parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
-                // If host is specified, it must also match (case-insensitive)
                 && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
+        };
+
+        for (remote_name, raw_url) in self.all_remote_urls() {
+            if matches(&raw_url) {
+                return Some(remote_name);
+            }
+            if let Some(effective_url) = self.effective_remote_url(&remote_name)
+                && effective_url != raw_url
+                && matches(&effective_url)
             {
-                return Some(name.to_string());
+                return Some(remote_name);
             }
         }
 
@@ -141,7 +196,7 @@ impl Repository {
 
     /// Get the URL for the primary remote, if configured.
     ///
-    /// Result is cached in the repository's shared cache (same for all clones).
+    /// Returns the raw config value. Result is cached in the shared repo cache.
     pub fn primary_remote_url(&self) -> Option<String> {
         self.cache
             .primary_remote_url
@@ -151,6 +206,27 @@ impl Repository {
                     .and_then(|remote| self.remote_url(&remote))
             })
             .clone()
+    }
+
+    /// Search all remotes for a URL matching a predicate.
+    ///
+    /// Uses effective URLs (with `url.insteadOf` rewrites applied) so that
+    /// custom SSH hostnames resolve to real forge hostnames.
+    ///
+    /// Returns the first matching `(remote_name, url)` pair, or `None`.
+    pub fn find_forge_remote<F>(&self, predicate: F) -> Option<(String, String)>
+    where
+        F: Fn(&GitRemoteUrl) -> bool,
+    {
+        for (remote_name, _) in self.all_remote_urls() {
+            if let Some(url) = self.effective_remote_url(&remote_name)
+                && let Some(parsed) = GitRemoteUrl::parse(&url)
+                && predicate(&parsed)
+            {
+                return Some((remote_name, url));
+            }
+        }
+        None
     }
 
     /// Get a project identifier for approval tracking.

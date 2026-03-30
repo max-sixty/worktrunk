@@ -127,6 +127,9 @@ pub(super) struct RepoCache {
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
+    /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
+    /// Cached because forge detection may query the same remote multiple times.
+    pub(super) effective_remote_urls: DashMap<String, Option<String>>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Worktree root paths: worktree_path -> canonicalized root

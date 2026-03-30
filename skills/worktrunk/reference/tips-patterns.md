@@ -7,7 +7,9 @@ Practical recipes for common Worktrunk workflows.
 Create a worktree and launch Claude in one command:
 
 ```bash
-$ alias wsc='wt switch --create --execute=claude'|||wsc new-feature                       # Creates worktree, runs hooks, launches Claude|||wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
+$ alias wsc='wt switch --create --execute=claude'
+$ wsc new-feature                       # Creates worktree, runs hooks, launches Claude
+$ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 ```
 
 ## Eliminate cold starts
@@ -41,7 +43,8 @@ server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/nu
 
 The URL column in `wt list` shows each worktree's dev server:
 
-<span class="cmd">wt list</span>
+```bash
+$ wt list
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
 @ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
 + feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>6814f02a</span>  <span class=d>30m</span>
@@ -49,6 +52,7 @@ The URL column in `wt list` shows each worktree's dev server:
 + <span class=d>fix-typos</span>        <span class=d>_</span><span class=d>|</span>                           <span class=d>|</span>     <span class=d>http://localhost:14301</span>  <span class=d>41ee0834</span>  <span class=d>4d</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
+```
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
@@ -137,7 +141,9 @@ Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets 
 Set status manually for any workflow:
 
 ```bash
-$ wt config state marker set &quot;🚧&quot;                   # Current branch|||wt config state marker set &quot;✅&quot; --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;💬&quot;,&quot;set_at&quot;:0}'  # Direct
+$ wt config state marker set &quot;🚧&quot;                   # Current branch
+$ wt config state marker set &quot;✅&quot; --branch feature  # Specific branch
+$ git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;💬&quot;,&quot;set_at&quot;:0}'  # Direct
 ```
 
 See [Claude Code Integration](https://worktrunk.dev/claude-code/#installation) for plugin installation.
@@ -195,7 +201,9 @@ Reference Taskfile/Justfile/Makefile in hooks:
 Special arguments work across all commands—see [`wt switch`](https://worktrunk.dev/switch/#shortcuts) for the full list.
 
 ```bash
-$ wt switch --create hotfix --base=@       # Branch from current HEAD|||wt switch -                              # Switch to previous worktree|||wt remove @                              # Remove current worktree
+$ wt switch --create hotfix --base=@       # Branch from current HEAD
+$ wt switch -                              # Switch to previous worktree
+$ wt remove @                              # Remove current worktree
 ```
 
 ## Stacked branches
@@ -214,12 +222,14 @@ Spawn a worktree with Claude running in the background:
 
 **tmux** (new detached session):
 ```bash
-$ tmux new-session -d -s fix-auth-bug &quot;wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'&quot;
+$ tmux new-session -d -s fix-auth-bug &quot;wt switch --create fix-auth-bug -x claude -- \
+$   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'&quot;
 ```
 
 **Zellij** (new pane in current session):
 ```bash
-$ zellij run -- wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
+$ zellij run -- wt switch --create fix-auth-bug -x claude -- \
+$   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
 
 This lets one Claude session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
@@ -265,7 +275,9 @@ tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 
 To create a worktree and immediately attach:
 
-<span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
+```bash
+$ wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'
+```
 
 ## Xcode DerivedData cleanup
 
@@ -345,7 +357,8 @@ A [bare repository](https://git-scm.com/docs/gitrepository-layout) has no workin
 Cloning a bare repo into `<project>/.git` puts all worktrees under one directory:
 
 ```bash
-$ git clone --bare <url> myproject/.git|||cd myproject
+$ git clone --bare <url> myproject/.git
+$ cd myproject
 ```
 
 With `worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"`, worktrees become subdirectories of `myproject/`:

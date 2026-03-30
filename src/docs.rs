@@ -9,9 +9,15 @@
 /// All shell commands in `console` blocks use `$ ` prefix. This function detects
 /// them and emits the appropriate shortcode form:
 ///
-/// - Single command, no `{{ }}`: `{{ terminal(cmd="...") }}` (Syntect highlighting)
-/// - Single command + output, no `{{ }}`: `{% terminal(cmd="...") %}output{% end %}`
-/// - Multiple commands or `{{ }}`: `{% terminal() %}` with `<span class="cmd">` body
+/// - Commands without output: `{{ terminal(cmd="...") }}` (Syntect highlighting)
+/// - Commands with output: `{% terminal(cmd="...") %}output{% end %}`
+/// - Multiple commands/comments: `|||`‐delimited in `cmd` parameter
+///
+/// `{{ }}` in commands (e.g., Jinja2 template expressions) are replaced with
+/// placeholders so Tera doesn't interpret them. The terminal shortcode template
+/// replaces them back before Syntect highlighting. Double quotes are also
+/// replaced with a placeholder since they'd close the `cmd="..."` parameter
+/// (Tera has no backslash-escape mechanism for string literals).
 ///
 /// Blocks without `$ ` are left unchanged for the `console` → `bash` replacement.
 pub fn convert_dollar_console_to_terminal(text: &str) -> String {
@@ -50,62 +56,43 @@ pub fn convert_dollar_console_to_terminal(text: &str) -> String {
                 continue;
             }
 
-            let has_template_syntax = commands.iter().any(|c| c.contains("{{"));
-
-            if has_template_syntax {
-                // {{ }} in commands — must use body approach (Tera would interpret
-                // template syntax in cmd parameter). Accent color only.
-                result.push_str("{% terminal() %}\n");
-                for bl in &block_lines {
-                    if let Some(cmd) = bl.strip_prefix("$ ") {
-                        result.push_str("<span class=\"cmd\">");
-                        for ch in cmd.chars() {
-                            match ch {
-                                '<' => result.push_str("&lt;"),
-                                '>' => result.push_str("&gt;"),
-                                '&' => result.push_str("&amp;"),
-                                _ => result.push(ch),
-                            }
-                        }
-                        result.push_str("</span>\n");
+            // Use cmd parameter for Syntect highlighting on all blocks.
+            // {{ and }} are replaced with placeholders so Tera doesn't interpret
+            // them as template expressions. The terminal shortcode template
+            // replaces them back before Syntect highlighting.
+            // Multiple commands/comments joined with ||| delimiter;
+            // the template splits and highlights each individually.
+            let cmd_value: Vec<_> = block_lines
+                .iter()
+                .filter_map(|l| {
+                    if let Some(cmd) = l.strip_prefix("$ ") {
+                        Some(
+                            cmd.replace('"', "__WT_QUOT__")
+                                .replace("{{", "__WT_OPEN2__")
+                                .replace("}}", "__WT_CLOSE2__"),
+                        )
+                    } else if l.starts_with('#') || l.is_empty() {
+                        Some(l.to_string())
                     } else {
-                        result.push_str(bl);
-                        result.push('\n');
+                        None // output lines go in body
                     }
+                })
+                .collect();
+            let body_lines: Vec<_> = block_lines
+                .iter()
+                .filter(|l| !l.starts_with("$ ") && !l.starts_with('#') && !l.is_empty())
+                .collect();
+
+            let cmd_str = cmd_value.join("|||");
+            if body_lines.is_empty() {
+                result.push_str(&format!("{{{{ terminal(cmd=\"{cmd_str}\") }}}}\n"));
+            } else {
+                result.push_str(&format!("{{% terminal(cmd=\"{cmd_str}\") %}}\n"));
+                for bl in &body_lines {
+                    result.push_str(bl);
+                    result.push('\n');
                 }
                 result.push_str("{% end %}\n");
-            } else {
-                // No {{ }} — use cmd parameter for Syntect highlighting.
-                // Multiple commands/comments joined with ||| delimiter;
-                // the template splits and highlights each line individually.
-                let cmd_value: Vec<_> = block_lines
-                    .iter()
-                    .filter_map(|l| {
-                        if let Some(cmd) = l.strip_prefix("$ ") {
-                            Some(cmd.replace('"', "&quot;"))
-                        } else if l.starts_with('#') || l.is_empty() {
-                            Some(l.to_string())
-                        } else {
-                            None // output lines go in body
-                        }
-                    })
-                    .collect();
-                let body_lines: Vec<_> = block_lines
-                    .iter()
-                    .filter(|l| !l.starts_with("$ ") && !l.starts_with('#') && !l.is_empty())
-                    .collect();
-
-                let cmd_str = cmd_value.join("|||");
-                if body_lines.is_empty() {
-                    result.push_str(&format!("{{{{ terminal(cmd=\"{cmd_str}\") }}}}\n"));
-                } else {
-                    result.push_str(&format!("{{% terminal(cmd=\"{cmd_str}\") %}}\n"));
-                    for bl in &body_lines {
-                        result.push_str(bl);
-                        result.push('\n');
-                    }
-                    result.push_str("{% end %}\n");
-                }
             }
             continue;
         }
@@ -127,12 +114,11 @@ mod tests {
 
     #[test]
     fn test_convert_dollar_console_to_terminal() {
-        // Command+output with {{ }} → body approach
+        // Command+output with {{ }} → cmd parameter with placeholders
         assert_snapshot!(convert_dollar_console_to_terminal(
             "```console\n$ wt step eval '{{ branch | hash_port }}'\n16066\n```"
         ), @r#"
-        {% terminal() %}
-        <span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
+        {% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
         16066
         {% end %}
         "#);

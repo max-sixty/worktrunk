@@ -1693,11 +1693,14 @@ static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
 static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
 
-/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %})
-static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?s)\{% terminal\([^)]*\) %\}\n?(.*?)\{% end %\}"#).unwrap());
+/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %}).
+/// Optionally captures the cmd parameter value (group 1) and body (group 2).
+static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)\{%\s*terminal\((?:cmd="([^"]*)"\s*)?\)\s*%\}\n?(.*?)\{%\s*end\s*%\}"#)
+        .unwrap()
+});
 
-/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }})
+/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }}).
 static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\{\{ terminal\(cmd="([^"]*)"\) \}\}"#).unwrap());
 
@@ -1713,6 +1716,43 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex to strip HTML figure/picture elements (demo GIFs)
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
+
+/// Regex to strip `<span class="cmd">...</span>` lines from shortcode bodies.
+/// These duplicate the cmd parameter content (the template uses `clean_body` for this).
+static SPAN_CMD_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">[^<]*</span>\n?"#).unwrap());
+
+/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd body shortcodes.
+static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
+
+/// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
+/// Each cmd line gets `$ ` prefix; comment lines (`#`) and blank lines pass through.
+fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
+    let mut result = String::from("```bash\n");
+    for line in cmd.split("|||") {
+        if line.is_empty() {
+            result.push('\n');
+        } else if line.starts_with('#') {
+            result.push_str(line);
+            result.push('\n');
+        } else {
+            result.push_str("$ ");
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    // Strip <span class="cmd"> lines that duplicate the cmd parameter
+    let clean_body = SPAN_CMD_PATTERN.replace_all(body, "");
+    if !clean_body.is_empty() {
+        result.push_str(&clean_body);
+        if !clean_body.ends_with('\n') {
+            result.push('\n');
+        }
+    }
+    result.push_str("```");
+    result
+}
 
 /// Transform docs content for skill file consumption
 ///
@@ -1736,11 +1776,30 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes:
-    // - Body form: keep inner content
-    // - Self-closing: convert to `$ command` (plain text with prompt)
-    let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, "$1");
-    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN.replace_all(&content, "```bash\n$$ $1\n```");
+    // Strip terminal shortcodes, converting cmd parameters back to `$ command` blocks.
+    // Commands joined by `|||` are split into separate lines.
+    let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
+        let body = caps.get(2).map_or("", |m| m.as_str());
+        match caps.get(1) {
+            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body),
+            None if body.contains(r#"<span class="cmd">"#) => {
+                // Old-style body shortcode with <span class="cmd"> — convert to $ lines
+                let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
+                format!("```bash\n{converted}```")
+            }
+            None => body.to_string(),
+        }
+    });
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+        });
+
+    // Replace placeholders used to escape Tera template syntax in cmd parameters
+    let content = content
+        .replace("__WT_OPEN2__", "{{")
+        .replace("__WT_CLOSE2__", "}}")
+        .replace("__WT_QUOT__", "\"");
 
     // Strip AUTO-GENERATED marker comments (keep content)
     let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");

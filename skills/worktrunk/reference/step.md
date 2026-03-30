@@ -13,7 +13,10 @@ $ wt step commit
 Manual merge workflow with review between steps:
 
 ```bash
-$ wt step commit|||wt step squash|||wt step rebase|||wt step push
+$ wt step commit
+$ wt step squash
+$ wt step rebase
+$ wt step push
 ```
 
 ## Operations
@@ -102,7 +105,11 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```bash
-$ # Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano
+# Inspect the rendered prompt
+$ wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+$ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 
 ### Command reference
@@ -241,7 +248,9 @@ This is what `wt merge` would include — a single diff against the merge base.
 Arguments after `--` are forwarded to `git diff`:
 
 ```bash
-$ wt step diff -- --stat|||wt step diff -- --name-only|||wt step diff -- -- '*.rs'
+$ wt step diff -- --stat
+$ wt step diff -- --name-only
+$ wt step diff -- -- '*.rs'
 ```
 
 The diff is pipeable to tools like `delta`:
@@ -255,7 +264,9 @@ $ wt step diff | delta
 Equivalent to:
 
 ```bash
-$ cp &quot;$(git rev-parse --git-dir)/index&quot; /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+$ cp "$(git rev-parse --git-dir)/index" /tmp/idx
+$ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+$ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
@@ -432,30 +443,40 @@ All [hook template variables and filters](https://worktrunk.dev/hook/#template-v
 
 Get the port for the current branch:
 
-<span class="cmd">wt step eval '{{ branch | hash_port }}'</span>
+```bash
+$ wt step eval '{{ branch | hash_port }}'
 16066
+```
 
 Use in shell substitution:
 
-<span class="cmd">curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health</span>
+```bash
+$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
+```
 
 Combine multiple values:
 
-<span class="cmd">wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'</span>
+```bash
+$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
 16066,16739
+```
 
 Use conditionals and filters:
 
-<span class="cmd">wt step eval '{{ branch | sanitize_db }}'</span>
+```bash
+$ wt step eval '{{ branch | sanitize_db }}'
 feature_auth_oauth2_a1b
+```
 
 Show available template variables:
 
-<span class="cmd">wt step eval --dry-run '{{ branch }}'</span>
+```bash
+$ wt step eval --dry-run '{{ branch }}'
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
 Result: feature/auth-oauth2
+```
 
 Note: This command is experimental and may change in future versions.
 
@@ -516,12 +537,14 @@ $ wt step for-each -- npm install
 
 Use branch name in command:
 
-<span class="cmd">wt step for-each -- "echo Branch: {{ branch }}"</span>
+```bash
+$ wt step for-each -- "echo Branch: {{ branch }}"
+```
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```bash
-$ git fetch --prune && wt step for-each -- '[ &quot;$(git rev-parse @{u} 2>/dev/null)&quot; ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -563,7 +586,8 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 ### Example
 
 ```bash
-$ # from ~/project (main worktree)|||wt step promote feature
+# from ~/project (main worktree)
+$ wt step promote feature
 ```
 
 Before:
@@ -642,7 +666,8 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```bash
-$ wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days
+$ wt step prune --min-age=0s     # no age guard
+$ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
 
 ### Examples
@@ -803,7 +828,10 @@ port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
 ```bash
-$ wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --var env=staging          # pass extra template variables|||wt step deploy --yes                      # skip approval prompt
+$ wt step deploy                            # run the alias
+$ wt step deploy --dry-run                  # show expanded command
+$ wt step deploy --var env=staging          # pass extra template variables
+$ wt step deploy --yes                      # skip approval prompt
 ```
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
