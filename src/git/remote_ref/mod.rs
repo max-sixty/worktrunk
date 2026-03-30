@@ -79,9 +79,10 @@ pub fn branch_tracks_ref(
     branch: &str,
     provider: &dyn RemoteRefProvider,
     number: u32,
+    expected_remote: Option<&str>,
 ) -> Option<bool> {
     let expected_ref = provider.tracking_ref(number);
-    crate::git::branch_tracks_ref(repo_root, branch, &expected_ref)
+    crate::git::branch_tracks_ref(repo_root, branch, &expected_ref, expected_remote)
 }
 
 /// Generate the local branch name for a remote ref.
