@@ -1,21 +1,72 @@
 //! Remote and URL operations for Repository.
 //!
-//! # Forge resolution and `url.insteadOf`
+//! # Forge detection
 //!
-//! Worktrunk needs to identify the forge (GitHub, GitLab) behind a remote URL
-//! for PR status, API calls, and push-remote detection. This is straightforward
-//! when the raw URL contains a recognized hostname (`github.com`, `gitlab.com`,
-//! etc.), but breaks when users configure `url.insteadOf` for multi-key SSH
-//! setups — the raw URL may contain a custom hostname like `github-work`.
+//! Worktrunk needs three pieces of information from remote URLs:
 //!
-//! All forge-aware lookups use [`effective_remote_url`](Repository::effective_remote_url),
-//! which runs `git remote get-url <name>` to get the URL with `url.insteadOf`
-//! rewrites applied. This is a local operation (no network I/O). Results are
-//! cached per-remote in [`RepoCache`](super::RepoCache), so repeated lookups
-//! for the same remote cost nothing after the first call.
+//! 1. **Platform** — GitHub or GitLab (determines which CLI/API to use)
+//! 2. **Hostname** — which server to talk to (for `gh api --hostname`,
+//!    `glab auth status --hostname`)
+//! 3. **Owner/repo** — the project path (for API calls and remote matching)
 //!
-//! When no `insteadOf` rules are configured, the effective URL equals the raw
-//! config URL — there is no behavioral difference.
+//! All three are extracted from the remote URL's hostname via substring
+//! matching: [`is_github()`](super::GitRemoteUrl::is_github) checks if the
+//! host contains `"github"`, [`is_gitlab()`](super::GitRemoteUrl::is_gitlab)
+//! checks for `"gitlab"`. This covers `github.com`, GitHub Enterprise
+//! (`github.mycompany.com`), `gitlab.com`, and self-hosted GitLab
+//! (`gitlab.example.com`).
+//!
+//! ## Where each piece is resolved
+//!
+//! | Need | `wt switch pr:N` | `wt list` CI status |
+//! |------|------------------|---------------------|
+//! | Platform | Implicit (user typed `pr:` or `mr:`) | [`platform_for_repo`] in `ci_status::platform` |
+//! | Hostname | [`fetch_pr_info`] extracts from effective URL | `gh`/`glab` infer from `current_dir` |
+//! | Owner/repo | API response provides it | [`github_owner_repo`] / [`find_forge_remote`] |
+//! | Remote matching | [`find_remote_for_repo`] matches API response back to local remote | Not needed |
+//!
+//! [`platform_for_repo`]: crate::commands::list::ci_status::platform::platform_for_repo
+//! [`fetch_pr_info`]: crate::git::remote_ref::github
+//! [`github_owner_repo`]: crate::commands::list::ci_status::github
+//!
+//! ## SSH host aliases
+//!
+//! Multi-account SSH setups use host aliases (`git@github-personal:owner/repo`)
+//! where SSH resolves `github-personal` → `github.com` via `~/.ssh/config`.
+//! Git operations work, but the literal hostname breaks forge detection:
+//!
+//! - **Platform detection** fails if the alias doesn't contain `"github"` or
+//!   `"gitlab"` (e.g., `work`). Override with `ci.platform` in project config.
+//! - **`gh api --hostname`** receives the alias instead of the real hostname.
+//!   If the alias contains `"github"` (e.g., `github-personal`), `gh` gets
+//!   `--hostname github-personal` and fails. If not (e.g., `work`), we fall
+//!   back to `github.com` which works for non-Enterprise repos.
+//! - **Remote matching** fails when comparing `github.com` (from API response)
+//!   against `github-personal` (from local remote URL).
+//!
+//! ### `url.insteadOf` (current solution)
+//!
+//! Git's `url.insteadOf` rewrites URLs before any tool sees them:
+//!
+//! ```text
+//! git config url."git@github.com:".insteadOf "git@github-personal:"
+//! ```
+//!
+//! After this, [`effective_remote_url`](Repository::effective_remote_url)
+//! (which runs `git remote get-url`) returns the rewritten URL with the real
+//! hostname. All forge detection, API calls, and remote matching work.
+//!
+//! Trade-off: `url.insteadOf` also affects SSH, which sees `github.com`
+//! instead of the alias and can't select the correct `IdentityFile`. Users
+//! must pair it with per-repo `core.sshCommand` to restore key routing.
+//!
+//! ### Known gap
+//!
+//! SSH host aliases without `url.insteadOf` are partially unsupported. The
+//! hostname and remote matching steps fail because `effective_remote_url`
+//! returns the alias unchanged. Owner/repo extraction is unaffected (aliases
+//! only change the host, not the path). A future fix could resolve aliases
+//! via `ssh -G <host>` or a config option; see issue #1790.
 //!
 //! ## URL methods
 //!
@@ -24,6 +75,8 @@
 //! - `effective_remote_url` — `git remote get-url`, with `insteadOf` applied
 //!   (cached; use for all forge detection)
 //! - `find_forge_remote(pred)` — search all remotes using effective URLs
+//! - `find_remote_for_repo(host, owner, repo)` — match API response back to
+//!   local remote (checks both raw and effective URLs)
 
 use anyhow::Context;
 
