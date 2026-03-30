@@ -65,7 +65,7 @@ Ports are deterministic — `fix-auth` always gets port 16460, regardless of whi
 
 ## Database per worktree
 
-Each worktree can have its own isolated database. Docker containers get unique names and ports:
+Each worktree can have its own isolated database. Docker containers get unique names and ports, and the connection string is stored in `vars` for use outside hooks:
 
 ```toml
 [post-start]
@@ -77,27 +77,17 @@ docker run -d --rm \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
+db-url = "wt config state vars set db-url 'postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
 
 [pre-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
-The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
-Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
+The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
 
-The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
+The connection string is now accessible anywhere — not just in hooks:
 
-Generate `.env.local` with the correct `DATABASE_URL` using a `pre-start` hook:
-
-```toml
-[pre-start]
-env = """
-cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
-DEV_PORT={{ branch | hash_port }}
-EOF
-"""
-```
+{{ terminal(cmd="DATABASE_URL=$(wt config state vars get db-url) npm start") }}
 
 ## Local CI gate
 
