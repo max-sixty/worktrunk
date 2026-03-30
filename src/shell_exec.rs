@@ -396,12 +396,32 @@ pub struct Cmd {
     external_label: Option<String>,
 }
 
+struct ExternalCommandLog {
+    label: Option<String>,
+    cmd_str: String,
+    started_at: Option<Instant>,
+}
+
+impl ExternalCommandLog {
+    fn new(label: Option<String>, cmd_str: String) -> Self {
+        let started_at = label.as_ref().map(|_| Instant::now());
+        Self {
+            label,
+            cmd_str,
+            started_at,
+        }
+    }
+
+    fn record(&self, exit_code: Option<i32>) {
+        if let Some(label) = &self.label {
+            let duration = self.started_at.as_ref().map(Instant::elapsed);
+            crate::command_log::log_command(label, &self.cmd_str, exit_code, duration);
+        }
+    }
+}
+
 impl Cmd {
-    /// Create a new command builder for the given program.
-    ///
-    /// The program is executed directly without shell interpretation.
-    /// For shell commands (with pipes, redirects, etc.), use [`Cmd::shell()`].
-    pub fn new(program: impl Into<String>) -> Self {
+    fn builder(program: impl Into<String>, shell_wrap: bool) -> Self {
         Self {
             program: program.into(),
             args: Vec::new(),
@@ -411,12 +431,20 @@ impl Cmd {
             timeout: None,
             envs: Vec::new(),
             env_removes: Vec::new(),
-            shell_wrap: false,
+            shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
             forward_signals: false,
             external_label: None,
         }
+    }
+
+    /// Create a new command builder for the given program.
+    ///
+    /// The program is executed directly without shell interpretation.
+    /// For shell commands (with pipes, redirects, etc.), use [`Cmd::shell()`].
+    pub fn new(program: impl Into<String>) -> Self {
+        Self::builder(program, false)
     }
 
     /// Create a command builder for a shell command string.
@@ -426,20 +454,51 @@ impl Cmd {
     ///
     /// Only valid with `.stream()` — shell commands cannot use `.run()`.
     pub fn shell(command: impl Into<String>) -> Self {
-        Self {
-            program: command.into(),
-            args: Vec::new(),
-            current_dir: None,
-            context: None,
-            stdin_data: None,
-            timeout: None,
-            envs: Vec::new(),
-            env_removes: Vec::new(),
-            shell_wrap: true,
-            stdout_cfg: None,
-            stdin_cfg: None,
-            forward_signals: false,
-            external_label: None,
+        Self::builder(command, true)
+    }
+
+    fn command_string(&self) -> String {
+        if self.shell_wrap || self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        }
+    }
+
+    fn direct_command(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+        cmd
+    }
+
+    fn apply_common_settings(&self, cmd: &mut Command) {
+        if let Some(dir) = &self.current_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.envs {
+            cmd.env(key, val);
+        }
+        for key in &self.env_removes {
+            cmd.env_remove(key);
+        }
+
+        // Prevent subprocesses from writing shell directives (security).
+        // Applied last to ensure it can't be re-added by user-provided envs.
+        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+    }
+
+    fn log_run_start(&self, cmd_str: &str) {
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
+            None => log::debug!("$ {}", cmd_str),
+        }
+    }
+
+    fn log_stream_start(&self, cmd_str: &str, exec_mode: &str) {
+        match &self.context {
+            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
+            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
         }
     }
 
@@ -565,18 +624,9 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
 
-        // Build command string for logging
-        let cmd_str = if self.args.is_empty() {
-            self.program.clone()
-        } else {
-            format!("{} {}", self.program, self.args.join(" "))
-        };
-
-        // Log command with optional context
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
-            None => log::debug!("$ {}", cmd_str),
-        }
+        let cmd_str = self.command_string();
+        let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());
+        self.log_run_start(&cmd_str);
 
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
@@ -586,24 +636,8 @@ impl Cmd {
         let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
         let tid = thread_id_number();
 
-        // Build the Command
-        let mut cmd = Command::new(&self.program);
-        cmd.args(&self.args);
-
-        if let Some(ref dir) = self.current_dir {
-            cmd.current_dir(dir);
-        }
-
-        for (key, val) in &self.envs {
-            cmd.env(key, val);
-        }
-        for key in &self.env_removes {
-            cmd.env_remove(key);
-        }
-
-        // Prevent subprocesses from writing shell directives (security).
-        // Applied last to ensure it can't be re-added by user-provided envs.
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+        let mut cmd = self.direct_command();
+        self.apply_common_settings(&mut cmd);
 
         // Determine effective timeout: explicit > thread-local > none
         let effective_timeout = self.timeout.or_else(|| COMMAND_TIMEOUT.with(|t| t.get()));
@@ -684,14 +718,8 @@ impl Cmd {
             }
         }
 
-        // Log to command log if this is an external command
-        if let Some(label) = &self.external_label {
-            let (exit_code, duration) = match &result {
-                Ok(output) => (output.status.code(), Some(t0.elapsed())),
-                Err(_) => (None, Some(t0.elapsed())),
-            };
-            crate::command_log::log_command(label, &cmd_str, exit_code, duration);
-        }
+        let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
+        external_log.record(exit_code);
 
         result
     }
@@ -718,21 +746,11 @@ impl Cmd {
             std::os::unix::process::CommandExt,
         };
 
-        // Extract external label for command logging (must happen before self is consumed).
-        // t0 is Some iff external_label is Some — both initialized together so timing is accurate.
-        let external_label = self.external_label.take();
-        let t0 = external_label.as_ref().map(|_| Instant::now());
-
         // Shell-wrapped commands don't use args (the command string is the full command)
         assert!(
             !self.shell_wrap || self.args.is_empty(),
             "Cmd::shell() cannot use .arg() - include arguments in the shell command string"
         );
-
-        let working_dir = self
-            .current_dir
-            .as_deref()
-            .unwrap_or_else(|| std::path::Path::new("."));
 
         // Build the command - either shell-wrapped or direct
         let (mut cmd, exec_mode) = if self.shell_wrap {
@@ -740,32 +758,13 @@ impl Cmd {
             let mode = format!("shell: {}", shell.name);
             (shell.command(&self.program), mode)
         } else {
-            let mut cmd = Command::new(&self.program);
-            cmd.args(&self.args);
-            (cmd, "direct".to_string())
+            (self.direct_command(), "direct".to_string())
         };
 
-        // Build command string for logging (shell commands have full command in program,
-        // non-shell commands may have args)
-        let cmd_str = if self.shell_wrap || self.args.is_empty() {
-            self.program.clone()
-        } else {
-            format!("{} {}", self.program, self.args.join(" "))
-        };
-
-        // Closure for command log entries (deduplicates 4 exit-path logging blocks)
-        let log_external = |exit_code: Option<i32>| {
-            if let Some(label) = &external_label {
-                let duration = t0.map(|t| t.elapsed());
-                crate::command_log::log_command(label, &cmd_str, exit_code, duration);
-            }
-        };
-
-        // Log command for debugging (output goes to logger, not stdout/stderr)
-        match &self.context {
-            Some(ctx) => log::debug!("$ {} [{}] (streaming, {})", cmd_str, ctx, exec_mode),
-            None => log::debug!("$ {} (streaming, {})", cmd_str, exec_mode),
-        }
+        let cmd_str = self.command_string();
+        let external_log = ExternalCommandLog::new(self.external_label.take(), cmd_str.clone());
+        self.log_stream_start(&cmd_str, &exec_mode);
+        self.apply_common_settings(&mut cmd);
 
         #[cfg(not(unix))]
         let _ = self.forward_signals;
@@ -794,23 +793,11 @@ impl Cmd {
         }
 
         // Apply environment and spawn
-        cmd.current_dir(working_dir)
-            .stdin(stdin_mode)
+        cmd.stdin(stdin_mode)
             .stdout(stdout_mode)
             .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
-
-        for (key, val) in &self.envs {
-            cmd.env(key, val);
-        }
-        for key in &self.env_removes {
-            cmd.env_remove(key);
-        }
-
-        // Prevent hooks from writing shell directives (security).
-        // Applied last to ensure it can't be re-added by user-provided envs.
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
         let mut child = cmd.spawn().map_err(|e| {
             anyhow::Error::from(GitError::Other {
@@ -870,7 +857,7 @@ impl Cmd {
         // Handle signals (Unix only)
         #[cfg(unix)]
         if let Some(sig) = seen_signal {
-            log_external(Some(128 + sig));
+            external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
                 message: format!("terminated by signal {}", sig),
@@ -883,10 +870,10 @@ impl Cmd {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
             if sig == SIGPIPE {
-                log_external(Some(0));
+                external_log.record(Some(0));
                 return Ok(());
             }
-            log_external(Some(128 + sig));
+            external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
                 message: format!("terminated by signal {}", sig),
@@ -896,7 +883,7 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
-            log_external(status.code());
+            external_log.record(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
                 message: format!("exit status: {}", code),
@@ -904,7 +891,7 @@ impl Cmd {
             .into());
         }
 
-        log_external(Some(0));
+        external_log.record(Some(0));
 
         Ok(())
     }
