@@ -213,6 +213,161 @@ fn format_path_mismatch_warning(
     ))
 }
 
+struct SwitchOutputContext {
+    path: PathBuf,
+    path_display: String,
+    branch: String,
+    shell_warning_reason: Option<String>,
+    user_wont_be_in_worktree: bool,
+    branch_worktree_mismatch_warning: Option<FormattedMessage>,
+    is_git_subcommand: bool,
+}
+
+fn build_switch_output_context(
+    result: &SwitchResult,
+    branch_info: &SwitchBranchInfo,
+    change_dir: bool,
+) -> SwitchOutputContext {
+    let path = super::to_logical_path(result.path());
+    let path_display = format_path_for_display(&path);
+    let branch = branch_info
+        .branch
+        .clone()
+        .unwrap_or_else(|| "detached worktree".to_string());
+
+    let is_git_subcommand = crate::is_git_subcommand();
+    let is_shell_integration_active = super::is_shell_integration_active();
+    let shell_warning_reason = if !change_dir || is_shell_integration_active {
+        None
+    } else if is_git_subcommand {
+        Some("ran git wt; running through git prevents cd".to_string())
+    } else {
+        Some(compute_shell_warning_reason())
+    };
+    let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
+    let branch_worktree_mismatch_warning = branch_info
+        .expected_path
+        .as_ref()
+        .map(|expected| format_path_mismatch_warning(&branch, &path, expected));
+
+    SwitchOutputContext {
+        path,
+        path_display,
+        branch,
+        shell_warning_reason,
+        user_wont_be_in_worktree,
+        branch_worktree_mismatch_warning,
+        is_git_subcommand,
+    }
+}
+
+fn print_switch_path_mismatch_warning(ctx: &SwitchOutputContext) {
+    if let Some(warning) = &ctx.branch_worktree_mismatch_warning {
+        eprintln!("{}", warning);
+    }
+}
+
+fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
+    if is_git_subcommand {
+        eprintln!("{}", hint_message(git_subcommand_warning()));
+    } else if should_show_explicit_path_hint() {
+        eprintln!("{}", hint_message(explicit_path_hint(branch)));
+    }
+}
+
+fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+    print_switch_path_mismatch_warning(ctx);
+    eprintln!(
+        "{}",
+        info_message(cformat!(
+            "Already on worktree for <bold>{}</> @ <bold>{}</>",
+            ctx.branch,
+            ctx.path_display
+        ))
+    );
+    None
+}
+
+fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+    print_switch_path_mismatch_warning(ctx);
+
+    if let Some(reason) = &ctx.shell_warning_reason {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Worktree for <bold>{}</> @ <bold>{}</>, but cannot change directory — {reason}",
+                ctx.branch,
+                ctx.path_display
+            ))
+        );
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    } else {
+        eprintln!(
+            "{}",
+            info_message(format_switch_message(
+                &ctx.branch,
+                &ctx.path,
+                false, // worktree_created
+                false, // created_branch
+                None,
+                None,
+            ))
+        );
+    }
+
+    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+}
+
+fn maybe_print_worktree_path_hint(created_branch: bool) {
+    if !created_branch {
+        return;
+    }
+
+    if let Ok(repo) = worktrunk::git::Repository::current() {
+        let has_custom_config = UserConfig::load()
+            .map(|c| c.has_custom_worktree_path())
+            .unwrap_or(false);
+        if !has_custom_config && !repo.has_shown_hint("worktree-path") {
+            let hint = hint_message(cformat!(
+                "To customize worktree locations, run <underline>wt config create</>"
+            ));
+            eprintln!("{}", hint);
+            let _ = repo.mark_hint_shown("worktree-path");
+        }
+    }
+}
+
+fn handle_switch_created_output(
+    ctx: &SwitchOutputContext,
+    created_branch: bool,
+    base_branch: Option<&str>,
+    from_remote: Option<&str>,
+) -> Option<PathBuf> {
+    eprintln!(
+        "{}",
+        success_message(format_switch_message(
+            &ctx.branch,
+            &ctx.path,
+            true, // worktree_created
+            created_branch,
+            base_branch,
+            from_remote,
+        ))
+    );
+
+    maybe_print_worktree_path_hint(created_branch);
+
+    if let Some(reason) = &ctx.shell_warning_reason {
+        eprintln!(
+            "{}",
+            warning_message(cformat!("Cannot change directory — {reason}"))
+        );
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    }
+
+    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+}
+
 struct BranchDeletionDisplay {
     deletion: BranchDeletionResult,
     show_unmerged_hint: bool,
@@ -473,157 +628,22 @@ pub fn handle_switch_output(
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
-    let path = super::to_logical_path(result.path());
-    let path_display = format_path_for_display(&path);
-    // For detached HEAD worktrees, use a static label since the path already appears after @.
-    let branch: &str = match &branch_info.branch {
-        Some(b) => b,
-        None => "detached worktree",
-    };
-
-    // Check if shell integration is active (directive file set)
-    let is_shell_integration_active = super::is_shell_integration_active();
-
-    // Compute shell warning reason once (only if we'll need it)
-    // Git subcommand case is special — needs a hint after the warning
-    // With --no-cd: no warning (user explicitly requested no cd), but hooks still get path
-    let is_git_subcommand = crate::is_git_subcommand();
-    let shell_warning_reason: Option<String> = if !change_dir || is_shell_integration_active {
-        None
-    } else if is_git_subcommand {
-        Some("ran git wt; running through git prevents cd".to_string())
-    } else {
-        Some(compute_shell_warning_reason())
-    };
-
-    // When not changing directory, user won't be in the worktree (unless already there)
-    // Used to determine if hooks should show "@ path" annotation
-    let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
-
-    // Compute branch-worktree mismatch warning (shown before action messages)
-    let branch_worktree_mismatch_warning = branch_info
-        .expected_path
-        .as_ref()
-        .map(|expected| format_path_mismatch_warning(branch, &path, expected));
+    let ctx = build_switch_output_context(result, branch_info, change_dir);
 
     let display_path_for_hooks = match result {
-        SwitchResult::AlreadyAt(_) => {
-            // Already in target directory — no shell warning needed
-            // Show path mismatch warning first - discovered while checking current state
-            if let Some(warning) = branch_worktree_mismatch_warning {
-                eprintln!("{}", warning);
-            }
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
-                ))
-            );
-            // User is already there - no path annotation needed
-            None
-        }
-        SwitchResult::Existing { .. } => {
-            if let Some(reason) = &shell_warning_reason {
-                // Shell integration not active — single warning with context
-                if let Some(warning) = branch_worktree_mismatch_warning {
-                    eprintln!("{}", warning);
-                }
-                // Show what exists + why cd won't happen
-                // (--execute command display is handled by execute_user_command)
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
-                    ))
-                );
-                // Show appropriate hint based on invocation mode
-                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
-                if is_git_subcommand {
-                    eprintln!("{}", hint_message(git_subcommand_warning()));
-                } else if should_show_explicit_path_hint() {
-                    eprintln!("{}", hint_message(explicit_path_hint(branch)));
-                }
-            } else {
-                // Shell integration active or --no-cd — user switched (or chose not to cd)
-                // Show path mismatch warning first - discovered while evaluating the switch
-                if let Some(warning) = branch_worktree_mismatch_warning {
-                    eprintln!("{}", warning);
-                }
-                eprintln!(
-                    "{}",
-                    info_message(format_switch_message(
-                        branch, &path, false, // worktree_created
-                        false, // created_branch
-                        None, None,
-                    ))
-                );
-            }
-            // Return path for hook annotations if user won't be in the worktree
-            if user_wont_be_in_worktree {
-                Some(path.clone())
-            } else {
-                None
-            }
-        }
+        SwitchResult::AlreadyAt(_) => handle_switch_already_at_output(&ctx),
+        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx),
         SwitchResult::Created {
             created_branch,
             base_branch,
             from_remote,
             ..
-        } => {
-            // Always show success for creation
-            eprintln!(
-                "{}",
-                success_message(format_switch_message(
-                    branch,
-                    &path,
-                    true, // worktree_created
-                    *created_branch,
-                    base_branch.as_deref(),
-                    from_remote.as_deref(),
-                ))
-            );
-
-            // Show worktree-path config hint on first --create in this repo,
-            // unless user already has a custom worktree-path config
-            if *created_branch && let Ok(repo) = worktrunk::git::Repository::current() {
-                let has_custom_config = UserConfig::load()
-                    .map(|c| c.has_custom_worktree_path())
-                    .unwrap_or(false);
-                if !has_custom_config && !repo.has_shown_hint("worktree-path") {
-                    let hint = hint_message(cformat!(
-                        "To customize worktree locations, run <underline>wt config create</>"
-                    ));
-                    eprintln!("{}", hint);
-                    let _ = repo.mark_hint_shown("worktree-path");
-                }
-            }
-
-            // Warn if shell won't cd to the new worktree (but not for --no-cd)
-            // (--execute command display is handled by execute_user_command)
-            if let Some(reason) = shell_warning_reason {
-                // Don't repeat "Created worktree" — success message above already said that
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!("Cannot change directory — {reason}"))
-                );
-                // Show appropriate hint based on invocation mode
-                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
-                if is_git_subcommand {
-                    eprintln!("{}", hint_message(git_subcommand_warning()));
-                } else if should_show_explicit_path_hint() {
-                    eprintln!("{}", hint_message(explicit_path_hint(branch)));
-                }
-            }
-            // Return path for hook annotations if user won't be in the worktree
-            if user_wont_be_in_worktree {
-                Some(path.clone())
-            } else {
-                None
-            }
-            // Note: No branch_worktree_mismatch_warning — created worktrees are always at
-            // the expected path (SwitchBranchInfo::expected_path is None)
-        }
+        } => handle_switch_created_output(
+            &ctx,
+            *created_branch,
+            base_branch.as_deref(),
+            from_remote.as_deref(),
+        ),
     };
 
     stderr().flush()?;
