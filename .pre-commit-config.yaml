@@ -11,7 +11,7 @@ repos:
         exclude: '.*\.(rs|snap)$'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
-    rev: v1
+    rev: v1.44.0
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -26,7 +26,7 @@ repos:
       - id: clippy
         args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
-    rev: nightly
+    rev: lychee-v0.23.0
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
