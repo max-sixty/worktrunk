@@ -9,9 +9,16 @@
 //! reliably locate its JSON data files. Use MOCK_DEBUG=1 to troubleshoot
 //! path issues.
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{
+    TestRepo, make_snapshot_cmd,
+    mock_commands::{MockConfig, MockResponse},
+    repo, setup_snapshot_settings,
+};
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::path::Path;
+use std::process::Command;
 
 /// Get the HEAD commit SHA for a branch
 fn branch_sha(repo: &TestRepo, branch: &str) -> String {
@@ -49,6 +56,52 @@ fn run_ci_status_test(repo: &mut TestRepo, snapshot_name: &str, pr_json: &str, r
         repo.configure_mock_commands(&mut cmd);
         assert_cmd_snapshot!(snapshot_name, cmd);
     });
+}
+
+/// Setup mock `gh` with configurable `pr list` and `api repos/.../check-runs`
+/// responses.
+fn setup_mock_gh_with_api_data(
+    repo: &TestRepo,
+    pr_json: &str,
+    api_responses: &[(&str, &str)],
+) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    std::fs::create_dir_all(&mock_bin).unwrap();
+
+    let mut gh = MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command("pr list", MockResponse::output(pr_json));
+
+    for (command, response) in api_responses {
+        gh = gh.command(command, MockResponse::output(response));
+    }
+
+    gh.command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("glab")
+        .version("glab version 1.0.0 (mock)")
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    mock_bin
+}
+
+/// Configure command environment for local gh/glab mocks.
+fn configure_mock_ci_env(cmd: &mut Command, mock_bin: &Path) {
+    cmd.env("MOCK_CONFIG_DIR", mock_bin);
+
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current_path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, mock_bin.to_path_buf());
+    let new_path = std::env::join_paths(&paths).unwrap();
+    cmd.env(path_var_name, new_path);
 }
 
 /// Setup a repo with GitHub remote and feature worktree, returns head SHA
@@ -709,6 +762,54 @@ fn test_list_full_with_url_based_pushremote(mut repo: TestRepo) {
     );
 
     run_ci_status_test(&mut repo, "url_based_pushremote", &pr_json, "[]");
+}
+
+/// When a branch has no PR yet, fallback check-runs detection should query the
+/// branch's pushremote repository rather than the first GitHub remote in the
+/// repo.
+#[rstest]
+fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo) {
+    setup_github_repo_with_feature(&mut repo);
+
+    let feature_a_sha = branch_sha(&repo, "feature-a");
+    repo.run_git(&[
+        "config",
+        "branch.feature-a.pushremote",
+        "https://github.com/fork-owner/test-repo.git",
+    ]);
+
+    let fork_checks = r#"[{"status":"COMPLETED","conclusion":"SUCCESS"}]"#;
+    let mock_bin = setup_mock_gh_with_api_data(
+        &repo,
+        "[]",
+        &[
+            (
+                &format!("api repos/upstream-owner/test-repo/commits/{feature_a_sha}/check-runs"),
+                "[]",
+            ),
+            (
+                &format!("api repos/fork-owner/test-repo/commits/{feature_a_sha}/check-runs"),
+                fork_checks,
+            ),
+        ],
+    );
+
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    configure_mock_ci_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .ansi_strip()
+        .into_owned();
+    let feature_a_line = stdout
+        .lines()
+        .find(|line| line.contains("feature-a"))
+        .expect("expected feature-a line in wt list output");
+    assert!(
+        feature_a_line.contains("●"),
+        "expected feature-a to show passed branch CI from the fork repo fallback\nstdout:\n{stdout}",
+    );
 }
 
 // =============================================================================

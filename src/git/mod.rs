@@ -269,18 +269,16 @@ use crate::shell_exec::Cmd;
 ///
 /// Used by PR/MR checkout to detect when a branch name collision exists.
 ///
-/// TODO: This only checks `branch.<name>.merge`, not `branch.<name>.remote`. A branch
-/// could track the right ref but have the wrong remote configured, which matters for
-/// fork PRs/MRs where refs live on the target repo. Consider checking both values.
-///
 /// # Arguments
 /// * `repo_root` - Path to run git commands from
 /// * `branch` - Local branch name to check
 /// * `expected_ref` - Full ref path (e.g., `refs/pull/101/head` or `refs/merge-requests/42/head`)
+/// * `expected_remote` - Optional remote name that must also match `branch.<name>.remote`
 pub fn branch_tracks_ref(
     repo_root: &std::path::Path,
     branch: &str,
     expected_ref: &str,
+    expected_remote: Option<&str>,
 ) -> Option<bool> {
     let config_key = format!("branch.{}.merge", branch);
     let output = Cmd::new("git")
@@ -308,7 +306,29 @@ pub fn branch_tracks_ref(
     }
 
     let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Some(merge_ref == expected_ref)
+    if merge_ref != expected_ref {
+        return Some(false);
+    }
+
+    let Some(expected_remote) = expected_remote else {
+        return Some(true);
+    };
+
+    let remote_key = format!("branch.{}.remote", branch);
+    let remote_output = Cmd::new("git")
+        .args(["config", "--get", &remote_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !remote_output.status.success() {
+        return Some(false);
+    }
+
+    let remote = String::from_utf8_lossy(&remote_output.stdout)
+        .trim()
+        .to_string();
+    Some(remote == expected_remote)
 }
 
 // Note: HookType and WorktreeInfo are defined in this module and are already public.
@@ -747,9 +767,18 @@ mod tests {
             .current_dir(&repo)
             .run()
             .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.remote", "origin"])
+            .current_dir(&repo)
+            .run()
+            .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head"),
+            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", None),
+            Some(true),
+        );
+        assert_eq!(
+            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(true),
         );
     }
@@ -771,7 +800,33 @@ mod tests {
 
         // Ask about a different ref — should return Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/999/head"),
+            branch_tracks_ref(&repo, "pr-branch", "refs/pull/999/head", None),
+            Some(false),
+        );
+    }
+
+    #[test]
+    fn test_branch_tracks_ref_wrong_remote() {
+        let (_tmp, repo) = init_test_repo();
+
+        crate::shell_exec::Cmd::new("git")
+            .args(["branch", "pr-branch"])
+            .current_dir(&repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
+            .current_dir(&repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.remote", "fork"])
+            .current_dir(&repo)
+            .run()
+            .unwrap();
+
+        assert_eq!(
+            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(false),
         );
     }
@@ -789,7 +844,7 @@ mod tests {
 
         // Branch exists but has no merge config — Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "local-only", "refs/pull/1/head"),
+            branch_tracks_ref(&repo, "local-only", "refs/pull/1/head", None),
             Some(false),
         );
     }
@@ -800,7 +855,7 @@ mod tests {
 
         // Branch doesn't exist at all — None
         assert_eq!(
-            branch_tracks_ref(&repo, "no-such-branch", "refs/pull/1/head"),
+            branch_tracks_ref(&repo, "no-such-branch", "refs/pull/1/head", None),
             None,
         );
     }
@@ -810,7 +865,7 @@ mod tests {
         // Invalid repo path causes Cmd::run() to fail → .ok()? returns None
         let bad_path = std::path::Path::new("/nonexistent/repo/path");
         assert_eq!(
-            branch_tracks_ref(bad_path, "main", "refs/pull/1/head"),
+            branch_tracks_ref(bad_path, "main", "refs/pull/1/head", None),
             None,
         );
     }
@@ -834,13 +889,23 @@ mod tests {
             .current_dir(&repo)
             .run()
             .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.mr-branch.remote", "origin"])
+            .current_dir(&repo)
+            .run()
+            .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "mr-branch", "refs/merge-requests/42/head"),
+            branch_tracks_ref(
+                &repo,
+                "mr-branch",
+                "refs/merge-requests/42/head",
+                Some("origin"),
+            ),
             Some(true),
         );
         assert_eq!(
-            branch_tracks_ref(&repo, "mr-branch", "refs/pull/42/head"),
+            branch_tracks_ref(&repo, "mr-branch", "refs/pull/42/head", Some("origin")),
             Some(false),
         );
     }
