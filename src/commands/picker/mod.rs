@@ -302,13 +302,7 @@ pub fn handle_picker(
     let command_timeout = config.list.task_timeout();
 
     // Wall-clock budget for the entire collect phase (default: 500ms).
-    // WORKTRUNK_TEST_PICKER_NO_TIMEOUT bypasses config to ensure tests reliably
-    // disable the timeout even when config file loading is unreliable (macOS CI).
-    let collect_deadline = if std::env::var("WORKTRUNK_TEST_PICKER_NO_TIMEOUT").is_ok() {
-        None
-    } else {
-        config.switch_picker.timeout().map(|d| Instant::now() + d)
-    };
+    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
 
     let Some(list_data) = collect::collect(
         &repo,
