@@ -305,12 +305,6 @@ impl UserConfig {
                 )));
             }
 
-            // Validate commit generation config (check both old and new locations)
-            // Old: [projects."...".commit-generation] (deprecated)
-            if let Some(ref cg) = project_config.commit_generation {
-                Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
-            }
-            // New: [projects."...".commit.generation]
             if let Some(ref commit) = project_config.overrides.commit
                 && let Some(ref cg) = commit.generation
             {
@@ -318,18 +312,20 @@ impl UserConfig {
             }
         }
 
-        // Validate commit generation config (check both old and new locations)
-        let commit_gen = self.commit_generation(None);
-        if commit_gen.template.is_some() && commit_gen.template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
-            ));
-        }
+        if let Some(ref commit) = self.configs.commit
+            && let Some(ref cg) = commit.generation
+        {
+            if cg.template.is_some() && cg.template_file.is_some() {
+                return Err(ConfigError::Message(
+                    "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
+                ));
+            }
 
-        if commit_gen.squash_template.is_some() && commit_gen.squash_template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
-            ));
+            if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
+                return Err(ConfigError::Message(
+                    "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
+                ));
+            }
         }
 
         Ok(())

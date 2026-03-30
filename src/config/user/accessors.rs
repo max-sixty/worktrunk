@@ -41,65 +41,6 @@ impl UserConfig {
         )
     }
 
-    fn global_commit_generation(&self) -> Option<&CommitGenerationConfig> {
-        self.configs
-            .commit
-            .as_ref()
-            .and_then(|c| c.generation.as_ref())
-            .or(self.commit_generation.as_ref())
-    }
-
-    fn project_commit_generation(&self, project: Option<&str>) -> Option<&CommitGenerationConfig> {
-        self.project_overrides(project).and_then(|config| {
-            config
-                .overrides
-                .commit
-                .as_ref()
-                .and_then(|commit| commit.generation.as_ref())
-                .or(config.commit_generation.as_ref())
-        })
-    }
-
-    fn global_switch_picker(&self) -> SwitchPickerConfig {
-        self.configs
-            .switch
-            .as_ref()
-            .and_then(|s| s.picker.as_ref())
-            .cloned()
-            .unwrap_or_else(|| {
-                self.configs
-                    .select
-                    .as_ref()
-                    .map(Self::switch_picker_from_select)
-                    .unwrap_or_default()
-            })
-    }
-
-    fn project_switch_picker(&self, project: Option<&str>) -> Option<SwitchPickerConfig> {
-        self.project_overrides(project).and_then(|config| {
-            config
-                .overrides
-                .switch
-                .as_ref()
-                .and_then(|switch| switch.picker.as_ref())
-                .cloned()
-                .or_else(|| {
-                    config
-                        .overrides
-                        .select
-                        .as_ref()
-                        .map(Self::switch_picker_from_select)
-                })
-        })
-    }
-
-    fn switch_picker_from_select(select: &SelectConfig) -> SwitchPickerConfig {
-        SwitchPickerConfig {
-            pager: select.pager.clone(),
-            timeout_ms: None,
-        }
-    }
-
     /// Returns the worktree path template, falling back to the default if not set.
     pub fn worktree_path(&self) -> String {
         self.configs
@@ -127,21 +68,25 @@ impl UserConfig {
     /// Returns the commit generation config for a specific project.
     ///
     /// Merges project-specific settings with global settings, where project
-    /// settings take precedence for fields that are set.
-    ///
-    /// Checks locations in order of precedence:
-    /// 1. `[commit.generation]` (new format)
-    /// 2. `[commit-generation]` (deprecated format)
-    /// 3. Per-project overrides
+    /// settings take precedence for fields that are set. Deprecated
+    /// `[commit-generation]` sections are normalized into `[commit.generation]`
+    /// during config loading.
     pub fn commit_generation(&self, project: Option<&str>) -> CommitGenerationConfig {
-        self.global_commit_generation()
-            .map(|global| {
-                self.project_commit_generation(project)
-                    .map(|project_config| global.merge_with(project_config))
-                    .unwrap_or_else(|| global.clone())
-            })
-            .or_else(|| self.project_commit_generation(project).cloned())
-            .unwrap_or_default()
+        self.merged_project_config(
+            project,
+            self.configs
+                .commit
+                .as_ref()
+                .and_then(|commit| commit.generation.as_ref()),
+            |config| {
+                config
+                    .overrides
+                    .commit
+                    .as_ref()
+                    .and_then(|commit| commit.generation.as_ref())
+            },
+        )
+        .unwrap_or_default()
     }
 
     /// Returns the list config for a specific project.
@@ -210,12 +155,27 @@ impl UserConfig {
 
     /// Returns the switch picker config for a specific project.
     ///
-    /// Prefers `[switch.picker]` (new format), falls back to `[select]` (deprecated).
     /// Merges project-specific settings with global settings, where project
-    /// settings take precedence for fields that are set.
+    /// settings take precedence for fields that are set. Deprecated `[select]`
+    /// sections are normalized into `[switch.picker]` during config loading.
     pub fn switch_picker(&self, project: Option<&str>) -> SwitchPickerConfig {
-        let global = self.global_switch_picker();
-        self.project_switch_picker(project)
+        let global = self
+            .configs
+            .switch
+            .as_ref()
+            .and_then(|switch| switch.picker.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        self.project_overrides(project)
+            .and_then(|config| {
+                config
+                    .overrides
+                    .switch
+                    .as_ref()
+                    .and_then(|switch| switch.picker.as_ref())
+                    .cloned()
+            })
             .map(|project_config| global.merge_with(&project_config))
             .unwrap_or(global)
     }

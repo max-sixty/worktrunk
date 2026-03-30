@@ -1280,19 +1280,26 @@ no-cd = true
 
 #[test]
 fn test_switch_picker_fallback_from_select() {
-    // When only [select] is configured, switch_picker() should use its pager
-    let config = UserConfig {
-        configs: OverridableConfig {
-            select: Some(SelectConfig {
-                pager: Some("bat".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let config = UserConfig::load_from_str(
+        r#"
+[select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("bat"));
+    assert!(config.configs.select.is_none());
+    assert_eq!(
+        config
+            .configs
+            .switch
+            .as_ref()
+            .and_then(|switch| switch.picker.as_ref())
+            .and_then(|picker| picker.pager.as_deref()),
+        Some("bat")
+    );
     // timeout_ms not available from select, so default applies
     assert_eq!(picker.timeout_ms, None);
     assert_eq!(
@@ -1303,29 +1310,22 @@ fn test_switch_picker_fallback_from_select() {
 
 #[test]
 fn test_switch_picker_prefers_new_over_select() {
-    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+    let config = UserConfig::load_from_str(
+        r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 100
 
-    // When both [switch.picker] and [select] are configured, switch.picker wins
-    let config = UserConfig {
-        configs: OverridableConfig {
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("delta".to_string()),
-                    timeout_ms: Some(100),
-                }),
-                ..Default::default()
-            }),
-            select: Some(SelectConfig {
-                pager: Some("bat".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+[select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("delta"));
     assert_eq!(picker.timeout_ms, Some(100));
+    assert!(config.configs.select.is_none());
 }
 
 #[test]
@@ -1370,40 +1370,30 @@ fn test_switch_picker_project_override() {
 
 #[test]
 fn test_switch_picker_project_fallback_from_select() {
-    // Project has [select], global has [switch.picker]
-    // Project's select pager should be used
-    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+    let config = UserConfig::load_from_str(
+        r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 300
 
-    let mut config = UserConfig {
-        configs: OverridableConfig {
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("delta".to_string()),
-                    timeout_ms: Some(300),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            overrides: OverridableConfig {
-                select: Some(SelectConfig {
-                    pager: Some("bat".to_string()),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(Some("github.com/user/repo"));
-    assert_eq!(picker.pager.as_deref(), Some("bat")); // Project select fallback
-    assert_eq!(picker.timeout_ms, Some(300)); // From global (select has no timeout)
+    assert_eq!(picker.pager.as_deref(), Some("bat"));
+    assert_eq!(picker.timeout_ms, Some(300));
+    assert!(
+        config
+            .projects
+            .get("github.com/user/repo")
+            .unwrap()
+            .overrides
+            .select
+            .is_none()
+    );
 }
 
 #[test]
@@ -1623,7 +1613,7 @@ exclude = [".repo-local/", ".entire/"]
 
 #[test]
 fn test_deprecated_commit_generation_format_serde() {
-    // Test old format: [commit-generation] is still parsed for backward compatibility
+    // Raw serde still accepts the old shape for backward compatibility.
     let content = r#"
 [commit-generation]
 command = "llm -m claude-haiku-4.5"
@@ -1646,8 +1636,43 @@ command = "claude -p --model opus"
         project.commit_generation.as_ref().unwrap().command,
         Some("claude -p --model opus".to_string())
     );
+}
 
-    // Effective config uses the deprecated values
+#[test]
+fn test_load_normalizes_deprecated_commit_generation_sections() {
+    let content = r#"
+[commit-generation]
+command = "llm -m claude-haiku-4.5"
+
+[projects."github.com/user/repo".commit-generation]
+command = "claude -p --model opus"
+"#;
+
+    let config = UserConfig::load_from_str(content).unwrap();
+
+    assert!(config.commit_generation.is_none());
+    assert_eq!(
+        config
+            .configs
+            .commit
+            .as_ref()
+            .and_then(|commit| commit.generation.as_ref())
+            .and_then(|generation| generation.command.as_deref()),
+        Some("llm -m claude-haiku-4.5")
+    );
+
+    let project = config.projects.get("github.com/user/repo").unwrap();
+    assert!(project.commit_generation.is_none());
+    assert_eq!(
+        project
+            .overrides
+            .commit
+            .as_ref()
+            .and_then(|commit| commit.generation.as_ref())
+            .and_then(|generation| generation.command.as_deref()),
+        Some("claude -p --model opus")
+    );
+
     let effective_cg = config.commit_generation(Some("github.com/user/repo"));
     assert_eq!(
         effective_cg.command,
