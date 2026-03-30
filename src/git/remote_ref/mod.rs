@@ -38,9 +38,15 @@ pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};
 
+use std::io::ErrorKind;
 use std::path::Path;
+use std::process::Output;
 
+use anyhow::bail;
+
+use crate::git::error::GitError;
 use crate::git::{RefType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
@@ -67,6 +73,59 @@ pub trait RemoteRefProvider {
     fn tracking_ref(&self, number: u32) -> String {
         format!("refs/{}", self.ref_path(number))
     }
+}
+
+pub(super) struct CliApiRequest<'a> {
+    pub tool: &'a str,
+    pub args: &'a [&'a str],
+    pub repo_root: &'a Path,
+    pub prompt_env: (&'a str, &'a str),
+    pub install_hint: &'a str,
+    pub run_context: &'a str,
+}
+
+pub(super) fn run_cli_api(request: CliApiRequest<'_>) -> anyhow::Result<Output> {
+    match Cmd::new(request.tool)
+        .args(request.args.iter().copied())
+        .current_dir(request.repo_root)
+        .env(request.prompt_env.0, request.prompt_env.1)
+        .run()
+    {
+        Ok(output) => Ok(output),
+        Err(error) => {
+            if error.kind() == ErrorKind::NotFound {
+                bail!("{}", request.install_hint);
+            }
+            Err(anyhow::Error::from(error).context(request.run_context.to_string()))
+        }
+    }
+}
+
+pub(super) fn cli_api_error_details(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.trim().is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        stderr.trim().to_string()
+    }
+}
+
+pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output) -> anyhow::Error {
+    GitError::CliApiError {
+        ref_type,
+        message,
+        stderr: cli_api_error_details(output),
+    }
+    .into()
+}
+
+pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
+    Cmd::new(tool)
+        .args(["config", "get", key])
+        .run()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Check if a local branch is tracking a specific remote ref.
