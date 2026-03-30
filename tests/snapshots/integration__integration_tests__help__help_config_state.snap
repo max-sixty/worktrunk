@@ -85,7 +85,7 @@ Set a marker for current branch:
 [107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state marker set [0m[2m[32m"🚧 WIP"[0m[2m[0m
 
 Store arbitrary data:
-[107m [0m [2m[0m[2m[34mwt[0m[2m config state vars set env staging[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state vars set env staging[0m
 
 Clear all CI status cache:
 [107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state ci-status clear [0m[2m[36m--all[0m[2m[0m

@@ -1026,7 +1026,7 @@ fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
     for (branch, entries) in &all_vars {
         for key in entries.keys() {
             let config_key = format!("worktrunk.state.{branch}.vars.{key}");
-            repo.run_command(&["config", "--unset", &config_key])?;
+            let _ = repo.run_command(&["config", "--unset", &config_key]);
             cleared += 1;
         }
     }

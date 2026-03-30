@@ -356,9 +356,14 @@ pub fn validate_template(
     name: &str,
 ) -> Result<(), TemplateExpandError> {
     let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
-    let context: HashMap<String, minijinja::Value> = all_vars
+    let mut context: HashMap<String, minijinja::Value> = all_vars
         .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
         .collect();
+    // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
+    context.insert(
+        "vars".to_string(),
+        minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
+    );
 
     let env = setup_template_env(repo);
 
