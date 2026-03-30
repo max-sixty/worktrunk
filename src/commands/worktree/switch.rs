@@ -108,21 +108,12 @@ fn resolve_fork_ref(
     let ref_type = provider.ref_type();
     let repo_root = repo.repo_path()?;
     let local_branch = remote_ref::local_branch_name(info);
-    let expected_remote = match ref_type {
-        RefType::Pr => match find_github_remote(repo, info) {
-            Ok(remote) => Some(remote),
-            Err(e) => {
-                log::debug!("Could not resolve GitHub remote for PR: {e:#}");
-                None
-            }
-        },
-        RefType::Mr => match find_gitlab_remote(repo, info) {
-            Ok(remote) => Some(remote),
-            Err(e) => {
-                log::debug!("Could not resolve GitLab remote for MR: {e:#}");
-                None
-            }
-        },
+    let expected_remote = match remote_ref::find_remote(repo, info) {
+        Ok(remote) => Some(remote),
+        Err(e) => {
+            log::debug!("Could not resolve remote for {}: {e:#}", ref_type.name());
+            None
+        }
     };
 
     // Check if branch already exists and is tracking this ref
@@ -186,7 +177,7 @@ fn resolve_fork_ref(
 
             // Use prefixed branch name; push won't work (None for fork_push_url)
             // This is GitHub-only (GitLab doesn't support prefixed names)
-            let remote = find_github_remote(repo, info)?;
+            let remote = remote_ref::find_remote(repo, info)?;
             return Ok(ResolvedTarget {
                 branch: prefixed,
                 method: CreationMethod::ForkRef {
@@ -214,7 +205,7 @@ fn resolve_fork_ref(
     let (fork_push_url, remote) = match ref_type {
         RefType::Pr => {
             // GitHub: URLs already in info, just find remote.
-            let remote = find_github_remote(repo, info)?;
+            let remote = remote_ref::find_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }
         RefType::Mr => {
@@ -263,97 +254,15 @@ fn resolve_fork_ref(
     })
 }
 
-/// Find the remote for a GitHub PR (where PR refs live).
-fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
-    use worktrunk::git::remote_ref::PlatformData;
-
-    let PlatformData::GitHub {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    else {
-        anyhow::bail!("find_github_remote called on non-GitHub ref");
-    };
-
-    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
-        .ok_or_else(|| {
-            let suggested_url =
-                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
-            GitError::NoRemoteForRepo {
-                owner: base_owner.clone(),
-                repo: base_repo.clone(),
-                suggested_url,
-            }
-            .into()
-        })
-}
-
-/// Find the remote for a GitLab MR (where MR refs live).
-fn find_gitlab_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
-    use worktrunk::git::remote_ref::PlatformData;
-
-    let PlatformData::GitLab {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    else {
-        anyhow::bail!("find_gitlab_remote called on non-GitLab ref");
-    };
-
-    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
-        .ok_or_else(|| {
-            GitError::NoRemoteForRepo {
-                owner: base_owner.clone(),
-                repo: base_repo.clone(),
-                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
-            }
-            .into()
-        })
-}
-
 /// Resolve a same-repo (non-fork) PR/MR.
 fn resolve_same_repo_ref(
     repo: &Repository,
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
-    use worktrunk::git::remote_ref::PlatformData;
-
     // Find the remote for the same-repo PR/MR and fetch the branch with an
     // explicit refspec. This ensures the remote tracking branch is created even
     // in repos with limited fetch refspecs (single-branch clones, bare repos).
-    let remote = match &info.platform_data {
-        PlatformData::GitHub {
-            host,
-            base_owner,
-            base_repo,
-            ..
-        } => {
-            let suggested_url =
-                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
-            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
-                .ok_or_else(|| GitError::NoRemoteForRepo {
-                    owner: base_owner.clone(),
-                    repo: base_repo.clone(),
-                    suggested_url,
-                })?
-        }
-        PlatformData::GitLab {
-            host,
-            base_owner,
-            base_repo,
-            ..
-        } => repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
-            .ok_or_else(|| GitError::NoRemoteForRepo {
-                owner: base_owner.clone(),
-                repo: base_repo.clone(),
-                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
-            })?,
-    };
+    let remote = remote_ref::find_remote(repo, info)?;
 
     let branch = &info.source_branch;
     eprintln!(

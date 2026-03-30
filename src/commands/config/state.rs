@@ -802,7 +802,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     if all_vars.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
-        let mut rows = Vec::new();
+        let headers = &["Branch", "Key", "Value"];
+        let mut rows: Vec<Vec<String>> = Vec::new();
         for (branch, entries) in &all_vars {
             for (key, value) in entries {
                 // Truncate long values for display
@@ -814,7 +815,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                 rows.push(vec![branch.to_string(), key.to_string(), display_value]);
             }
         }
-        let rendered = crate::md_help::render_data_table(&["Branch", "Key", "Value"], &rows);
+        let rendered = crate::md_help::render_data_table(headers, &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
     writeln!(out)?;
