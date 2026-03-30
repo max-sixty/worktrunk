@@ -2009,7 +2009,8 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
         let file_bytes = fs::read(&skill_md_path)
             .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
         let hash = Sha256::digest(&file_bytes);
-        format!("sha256:{hash:x}")
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        format!("sha256:{hex}")
     };
 
     // Parse the description from SKILL.md frontmatter
