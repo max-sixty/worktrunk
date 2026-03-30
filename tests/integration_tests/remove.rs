@@ -3,6 +3,7 @@ use crate::common::{
     make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -1232,6 +1233,112 @@ fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo)
         &["feature-remote-squash"],
         None
     ));
+}
+
+/// Like `test_remove_squash_merged_on_remote`, but local `main` also advances
+/// with a local-only commit after the fetch. Integration should still be
+/// detected via `origin/main`.
+#[rstest]
+fn test_remove_squash_merged_on_remote_when_local_main_diverged(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap();
+
+    repo.run_git(&["checkout", "-b", "feature-remote-squash-diverged"]);
+    std::fs::write(repo.root_path().join("feature-diverged.txt"), "initial").unwrap();
+    repo.run_git(&["add", "feature-diverged.txt"]);
+    repo.run_git(&["commit", "-m", "Add diverged feature"]);
+    std::fs::write(
+        repo.root_path().join("feature-diverged.txt"),
+        "final version",
+    )
+    .unwrap();
+    repo.run_git(&["add", "feature-diverged.txt"]);
+    repo.run_git(&["commit", "-m", "Finalize diverged feature"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-squash-diverged"]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Simulate a remote squash merge.
+    let github_sim = repo.home_path().join("github-sim-diverged");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-diverged",
+        ],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-remote-squash-diverged"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add diverged feature (#3)"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch the remote squash merge, then create a local-only commit on main so
+    // local and upstream diverge.
+    repo.run_git(&["fetch", "origin"]);
+    std::fs::write(repo.root_path().join("local-only.txt"), "local only").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "Local-only main commit"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should diverge from origin/main"
+    );
+
+    let local_behind_remote = repo
+        .git_command()
+        .args(["merge-base", "--is-ancestor", "main", "origin/main"])
+        .run()
+        .unwrap();
+    assert!(
+        !local_behind_remote.status.success(),
+        "local main should not be an ancestor of origin/main in diverged state"
+    );
+
+    let remote_behind_local = repo
+        .git_command()
+        .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+        .run()
+        .unwrap();
+    assert!(
+        !remote_behind_local.status.success(),
+        "origin/main should not be an ancestor of local main in diverged state"
+    );
+
+    let output = make_snapshot_cmd(&repo, "remove", &["feature-remote-squash-diverged"], None)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(
+        stderr.contains("Removed branch feature-remote-squash-diverged"),
+        "expected branch to be removed once origin/main contains the squash merge\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains("origin/main"),
+        "expected remove output to mention origin/main as the integration target\nstderr:\n{stderr}",
+    );
+
+    let branch_still_exists = repo
+        .git_command()
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-remote-squash-diverged",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        !branch_still_exists.status.success(),
+        "feature branch should be deleted after successful remove"
+    );
 }
 
 /// Like `test_remove_squash_merged_on_remote`, but main advances on the

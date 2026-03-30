@@ -3,6 +3,7 @@ use crate::common::{
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
     setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -2115,6 +2116,96 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_different_pr", cmd);
     });
+}
+
+/// Test fork PR where branch already exists with the same PR ref path but the
+/// wrong remote configured.
+///
+/// This branch should not be reused because push/pull would be wired to the
+/// wrong repository.
+#[rstest]
+fn test_switch_pr_fork_existing_same_pr_wrong_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.setup_custom_remote("fork", "main");
+
+    // Create a PR ref on the real PR remote.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{sha}:refs/pull/42/head")]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Create the branch with a stale tracking configuration pointing at a
+    // different remote that happens to use the same PR ref path.
+    let branch_name = "feature-fix";
+    repo.run_git(&["branch", branch_name, "main"]);
+    repo.run_git(&["config", &format!("branch.{branch_name}.remote"), "fork"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{branch_name}.merge"),
+        "refs/pull/42/head",
+    ]);
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork).
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{bare_url}.insteadOf"),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+    configure_mock_gh_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "switch should succeed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("Using prefixed branch name contributor/feature-fix due to name conflict"),
+        "expected prefixed branch warning when existing branch tracks the PR on the wrong remote\nstderr:\n{stderr}",
+    );
 }
 
 /// Test fork PR where branch exists but has no tracking config
