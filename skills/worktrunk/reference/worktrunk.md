@@ -180,7 +180,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
 - Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
-  picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
+  picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/),
+  [OpenCode integration](https://worktrunk.dev/opencode/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - Run `wt --help` or `wt <command> --help` for quick CLI reference

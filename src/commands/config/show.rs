@@ -56,6 +56,10 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     show_output.push('\n');
     render_claude_code_status(&mut show_output)?;
 
+    // Render OpenCode status
+    show_output.push('\n');
+    render_opencode_status(&mut show_output)?;
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -221,6 +225,58 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
             hint_message(
                 "Statusline not configured. See https://worktrunk.dev/claude-code/#statusline"
             )
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if OpenCode CLI is available
+fn is_opencode_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OPENCODE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("opencode").is_ok()
+}
+
+/// Render OPENCODE section (plugin status)
+fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
+    let opencode_available = is_opencode_available();
+
+    writeln!(out, "{}", format_heading("OPENCODE", None))?;
+
+    if !opencode_available {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("<bold>opencode</> CLI not installed"))
+        )?;
+        return Ok(());
+    }
+
+    // Plugin status
+    let plugin_installed = super::opencode::is_plugin_installed();
+    let plugin_exists = super::opencode::plugin_file_exists();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if plugin_exists {
+        writeln!(out, "{}", hint_message("Plugin outdated. To update, run:"))?;
+        writeln!(
+            out,
+            "{}",
+            format_bash_with_gutter("wt config opencode install")
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message("Plugin not installed. To install, run:")
+        )?;
+        writeln!(
+            out,
+            "{}",
+            format_bash_with_gutter("wt config opencode install")
         )?;
     }
 

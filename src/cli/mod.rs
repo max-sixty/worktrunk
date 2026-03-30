@@ -4,8 +4,9 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigOpencodeCommand, ConfigShellCommand,
+    DefaultBranchAction, HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand,
+    VarsAction,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
@@ -1690,7 +1691,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 # [commit.generation]

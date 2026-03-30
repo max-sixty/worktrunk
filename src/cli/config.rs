@@ -156,6 +156,52 @@ Detects various forms of the integration pattern regardless of:
 }
 
 #[derive(Subcommand)]
+pub enum ConfigOpencodeCommand {
+    /// Install the OpenCode activity tracking plugin
+    #[command(
+        after_long_help = r#"Writes the worktrunk plugin to the OpenCode plugins directory.
+
+## Examples
+
+Install with confirmation:
+```console
+wt config opencode install
+```
+
+Install without confirmation:
+```console
+wt config opencode install --yes
+```
+
+## Plugin location
+
+The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`.
+Override with the `OPENCODE_CONFIG_DIR` environment variable."#
+    )]
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove the OpenCode activity tracking plugin
+    #[command(
+        after_long_help = r#"Removes the worktrunk plugin from the OpenCode plugins directory.
+
+## Examples
+
+```console
+wt config opencode uninstall
+```"#
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ApprovalsCommand {
     /// Store approvals in approvals.toml
     #[command(
@@ -190,6 +236,28 @@ pub enum ConfigCommand {
     Shell {
         #[command(subcommand)]
         action: ConfigShellCommand,
+    },
+
+    /// OpenCode plugin setup
+    #[command(
+        after_long_help = r#"Manages the worktrunk activity tracking plugin for OpenCode.
+
+The plugin tracks OpenCode session activity per branch, showing status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+## Installation
+
+```console
+wt config opencode install
+```
+
+This writes the plugin to `~/.config/opencode/plugins/worktrunk.ts`
+(or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts` if set)."#
+    )]
+    Opencode {
+        #[command(subcommand)]
+        action: ConfigOpencodeCommand,
     },
 
     /// Create configuration file
@@ -422,7 +490,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) and [OpenCode](@/opencode.md) plugins set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage

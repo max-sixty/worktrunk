@@ -120,7 +120,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 # [commit.generation]
@@ -437,11 +437,12 @@ Includes shell integration, hooks, and saved state.
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>   Shell integration setup
-  <b><span class=c>create</span></b>  Create configuration file
-  <b><span class=c>show</span></b>    Show configuration files &amp; locations
-  <b><span class=c>update</span></b>  Update deprecated config settings
-  <b><span class=c>state</span></b>   Manage internal data and cache
+  <b><span class=c>shell</span></b>     Shell integration setup
+  <b><span class=c>opencode</span></b>  OpenCode plugin setup
+  <b><span class=c>create</span></b>    Create configuration file
+  <b><span class=c>show</span></b>      Show configuration files &amp; locations
+  <b><span class=c>update</span></b>    Update deprecated config settings
+  <b><span class=c>state</span></b>     Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -713,7 +714,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](https://worktrunk.dev/claude-code/) sets markers automatically
+- **Agent tracking** — The [Claude Code](https://worktrunk.dev/claude-code/) and [OpenCode](https://worktrunk.dev/opencode/) plugins set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

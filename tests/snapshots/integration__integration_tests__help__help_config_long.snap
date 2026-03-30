@@ -8,7 +8,10 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
+    GIT_BRANCH_ICON: ""
+    GIT_DIR_ICON: ""
+    GIT_REMOTE_BRANCH_ICON: ""
+    GIT_WORKTREE_ICON: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -23,6 +26,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -38,11 +42,12 @@ Includes shell integration, hooks, and saved state.[0m
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mshell[0m   Shell integration setup
-  [1m[36mcreate[0m  Create configuration file
-  [1m[36mshow[0m    Show configuration files & locations
-  [1m[36mupdate[0m  Update deprecated config settings
-  [1m[36mstate[0m   Manage internal data and cache
+  [1m[36mshell[0m     Shell integration setup
+  [1m[36mopencode[0m  OpenCode plugin setup
+  [1m[36mcreate[0m    Create configuration file
+  [1m[36mshow[0m      Show configuration files & locations
+  [1m[36mupdate[0m    Update deprecated config settings
+  [1m[36mstate[0m     Manage internal data and cache
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -157,7 +162,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
-[32mopencode[0m
+[32mOpenCode[0m
 
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
