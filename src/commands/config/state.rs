@@ -94,31 +94,35 @@ fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std:
             .then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
-    let mut table = String::from("| File | Size | Age |\n");
-    table.push_str("|------|------|-----|\n");
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let meta = entry.metadata().ok();
 
-    for entry in entries.iter() {
-        let path = entry.path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let size_str = if size < 1024 {
+                format!("{size}B")
+            } else {
+                format!("{}K", size / 1024)
+            };
 
-        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let size_str = if size < 1024 {
-            format!("{size}B")
-        } else {
-            format!("{}K", size / 1024)
-        };
+            let age = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format_relative_time_short(d.as_secs() as i64))
+                .unwrap_or_else(|| "?".to_string());
 
-        let age = meta
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| format_relative_time_short(d.as_secs() as i64))
-            .unwrap_or_else(|| "?".to_string());
+            vec![name, size_str, age]
+        })
+        .collect();
 
-        table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
-    }
-
-    let rendered = crate::md_help::render_markdown_table(&table);
+    let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &rows);
     write!(out, "{}", rendered.trim_end())?;
 
     Ok(())
@@ -779,16 +783,14 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     if markers.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
-        let mut table = String::from("| Branch | Marker | Age |\n");
-        table.push_str("|--------|--------|-----|\n");
-        for entry in markers {
-            let age = format_relative_time_short(entry.set_at as i64);
-            table.push_str(&format!(
-                "| {} | {} | {} |\n",
-                entry.branch, entry.marker, age
-            ));
-        }
-        let rendered = crate::md_help::render_markdown_table(&table);
+        let rows: Vec<Vec<String>> = markers
+            .iter()
+            .map(|entry| {
+                let age = format_relative_time_short(entry.set_at as i64);
+                vec![entry.branch.clone(), entry.marker.clone(), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Marker", "Age"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
     writeln!(out)?;
@@ -830,24 +832,23 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
-        // Build markdown table
-        let mut table = String::from("| Branch | Status | Age | Head |\n");
-        table.push_str("|--------|--------|-----|------|\n");
-        for (branch, cached) in entries {
-            let status = match &cached.status {
-                Some(pr_status) => {
-                    let status: &'static str = pr_status.ci_status.into();
-                    status.to_string()
-                }
-                None => "none".to_string(),
-            };
-            let age = format_relative_time_short(cached.checked_at as i64);
-            let head: String = cached.head.chars().take(8).collect();
-
-            table.push_str(&format!("| {branch} | {status} | {age} | {head} |\n"));
-        }
-
-        let rendered = crate::md_help::render_markdown_table(&table);
+        let rows: Vec<Vec<String>> = entries
+            .iter()
+            .map(|(branch, cached)| {
+                let status = match &cached.status {
+                    Some(pr_status) => {
+                        let s: &'static str = pr_status.ci_status.into();
+                        s.to_string()
+                    }
+                    None => "none".to_string(),
+                };
+                let age = format_relative_time_short(cached.checked_at as i64);
+                let head: String = cached.head.chars().take(8).collect();
+                vec![branch.clone(), status, age, head]
+            })
+            .collect();
+        let rendered =
+            crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
     writeln!(out)?;
