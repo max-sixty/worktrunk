@@ -1787,13 +1787,18 @@ fn transform_docs_for_skill(content: &str) -> String {
                 let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
                 format!("```bash\n{converted}```")
             }
-            None => body.to_string(),
+            // Terminal bodies without cmd are styled CLI output demos (colored
+            // spans, bold text). Strip HTML to plain text for skill files.
+            None => strip_html(body),
         }
     });
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
         });
+
+    // Strip rawcode shortcodes (keep content)
+    let content = ZOLA_RAWCODE_PATTERN.replace_all(&content, "$1");
 
     // Replace placeholders used to escape Tera template syntax in cmd parameters
     let content = content
@@ -1922,8 +1927,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
             }
             let docs_content = fs::read_to_string(&docs_file)
                 .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
-            let content = transform_docs_for_skill(&docs_content);
-            strip_html_tags(&content)
+            transform_docs_for_skill(&docs_content)
         };
         let expected = trim_lines(&expected);
 
@@ -2011,134 +2015,6 @@ fn finalize_skill_content(content: &str) -> String {
         })
         .0
         .join("\n")
-}
-
-/// Strip HTML tags and decode entities from content (for non-command skill files).
-///
-/// Uses a character-level state machine — no regex on HTML/XML. Handles:
-/// - Opening and closing tags (`<span class=c>`, `</b>`)
-/// - Self-closing tags (`<br/>`)
-/// - HTML comments (`<!-- ... -->`)
-/// - Common HTML entities (`&#39;`, `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&nbsp;`)
-///
-/// Content inside fenced code blocks (``` or ````+) is passed through unchanged —
-/// `<` in shell redirects (`<< EOF`, `< /dev/tty`) must not be treated as tags.
-fn strip_html_tags(content: &str) -> String {
-    let mut result = String::with_capacity(content.len());
-    let mut in_code_fence = false;
-
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_code_fence = !in_code_fence;
-            result.push_str(line);
-            continue;
-        }
-
-        if in_code_fence {
-            // Inside code fences: pass through unchanged
-            result.push_str(line);
-        } else {
-            // Outside code fences: strip HTML tags and decode entities
-            result.push_str(&strip_html_from_line(line));
-        }
-    }
-
-    result
-}
-
-/// Strip HTML tags and decode entities from a single line of non-code content.
-fn strip_html_from_line(line: &str) -> String {
-    let mut result = String::with_capacity(line.len());
-    let chars: Vec<char> = line.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        if chars[i] == '<' {
-            // Check for HTML comment <!-- ... -->
-            if i + 3 < len && chars[i + 1] == '!' && chars[i + 2] == '-' && chars[i + 3] == '-' {
-                // Skip to end of comment
-                if let Some(end) = find_comment_end(&chars, i + 4) {
-                    i = end;
-                    continue;
-                }
-            }
-            // Only strip if this looks like an HTML tag (starts with letter or /)
-            if i + 1 < len && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '/') {
-                // Skip to closing '>', handling quoted attributes
-                let mut in_quote = None;
-                i += 1;
-                while i < len {
-                    match chars[i] {
-                        '"' | '\'' if in_quote == Some(chars[i]) => in_quote = None,
-                        '"' | '\'' if in_quote.is_none() => in_quote = Some(chars[i]),
-                        '>' if in_quote.is_none() => {
-                            i += 1;
-                            break;
-                        }
-                        _ => {}
-                    }
-                    i += 1;
-                }
-            } else {
-                // Not an HTML tag (e.g., `<` in math or text) — keep as-is
-                result.push('<');
-                i += 1;
-            }
-        } else if chars[i] == '&' {
-            // Decode HTML entities
-            if let Some((decoded, advance)) = decode_entity(&chars, i) {
-                result.push_str(decoded);
-                i += advance;
-            } else {
-                result.push('&');
-                i += 1;
-            }
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-
-    result
-}
-
-/// Find the end of an HTML comment (position after "-->").
-fn find_comment_end(chars: &[char], start: usize) -> Option<usize> {
-    let mut i = start;
-    while i + 2 < chars.len() {
-        if chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>' {
-            return Some(i + 3);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Decode an HTML entity starting at `&`. Returns (decoded str, chars to advance).
-fn decode_entity(chars: &[char], start: usize) -> Option<(&'static str, usize)> {
-    // Collect chars until ';' or max entity length
-    let mut end = start + 1;
-    while end < chars.len() && end - start < 10 && chars[end] != ';' {
-        end += 1;
-    }
-    if end >= chars.len() || chars[end] != ';' {
-        return None;
-    }
-
-    let entity: String = chars[start..=end].iter().collect();
-    let advance = end - start + 1;
-
-    match entity.as_str() {
-        "&#39;" => Some(("'", advance)),
-        "&lt;" => Some(("<", advance)),
-        "&gt;" => Some((">", advance)),
-        "&amp;" => Some(("&", advance)),
-        "&quot;" => Some(("\"", advance)),
-        "&nbsp;" => Some((" ", advance)),
-        _ => None,
-    }
 }
 
 /// Sync .well-known/agent-skills/ index.json and verify symlink.

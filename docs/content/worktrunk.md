@@ -43,12 +43,41 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 **Core commands:**
 
-| Task | Worktrunk | Plain git |
-|------|-----------|-----------|
-| Switch worktrees | `wt switch feat` | `cd ../repo.feat` |
-| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ../repo.feat && cd ../repo.feat && claude` |
-| Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feat && git branch -d feat` |
-| List with status | `wt list` | `git worktree list` (paths only) |
+<table class="cmd-compare">
+  <thead>
+    <tr>
+      <th>Task</th>
+      <th>Worktrunk</th>
+      <th>Plain git</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Switch worktrees</td>
+      <td>{% rawcode() %}wt switch feat{% end %}</td>
+      <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
+    </tr>
+    <tr>
+      <td>Create + start Claude</td>
+      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
+      <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
+cd ../repo.feat && \
+claude{% end %}</td>
+    </tr>
+    <tr>
+      <td>Clean up</td>
+      <td>{% rawcode() %}wt remove{% end %}</td>
+      <td>{% rawcode() %}cd ../repo && \
+git worktree remove ../repo.feat && \
+git branch -d feat{% end %}</td>
+    </tr>
+    <tr>
+      <td>List with status</td>
+      <td>{% rawcode() %}wt list{% end %}</td>
+      <td>{% rawcode() %}git worktree list{% end %} (paths only)</td>
+    </tr>
+  </tbody>
+</table>
 
 > Expand into the more advanced commands as needed
 

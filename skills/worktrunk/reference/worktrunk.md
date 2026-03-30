@@ -28,12 +28,41 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 **Core commands:**
 
-| Task | Worktrunk | Plain git |
-|------|-----------|-----------|
-| Switch worktrees | `wt switch feat` | `cd ../repo.feat` |
-| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ../repo.feat && cd ../repo.feat && claude` |
-| Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feat && git branch -d feat` |
-| List with status | `wt list` | `git worktree list` (paths only) |
+<table class="cmd-compare">
+  <thead>
+    <tr>
+      <th>Task</th>
+      <th>Worktrunk</th>
+      <th>Plain git</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Switch worktrees</td>
+      <td>wt switch feat</td>
+      <td>cd ../repo.feat</td>
+    </tr>
+    <tr>
+      <td>Create + start Claude</td>
+      <td>wt switch -c -x claude feat</td>
+      <td>git worktree add -b feat ../repo.feat && \
+cd ../repo.feat && \
+claude</td>
+    </tr>
+    <tr>
+      <td>Clean up</td>
+      <td>wt remove</td>
+      <td>cd ../repo && \
+git worktree remove ../repo.feat && \
+git branch -d feat</td>
+    </tr>
+    <tr>
+      <td>List with status</td>
+      <td>wt list</td>
+      <td>git worktree list (paths only)</td>
+    </tr>
+  </tbody>
+</table>
 
 > Expand into the more advanced commands as needed
 
@@ -67,8 +96,8 @@ Shell integration allows commands to change directories.
 $ cargo install worktrunk && wt config shell install
 ```
 
-
-Windows
+<details>
+<summary><strong>Windows</strong></summary>
 
 On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
@@ -79,7 +108,7 @@ $ git-wt config shell install
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
-
+</details>
 
 **Arch Linux:**
 
@@ -154,7 +183,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
-- Run `wt --help` or `wt  --help` for quick CLI reference
+- Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading
 

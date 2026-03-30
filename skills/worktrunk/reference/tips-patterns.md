@@ -292,7 +292,7 @@ clean-derived = """
 This precisely targets only the DerivedData for the removed worktree, leaving caches for other worktrees and the main repository intact.
 
 ## Subdomain routing with Caddy
-
+<!-- Hand-tested 2026-03-07 -->
 
 Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. Useful for cookies, CORS, and matching production URL structure.
 
@@ -346,7 +346,7 @@ $ alias wtlog='f() { tail -f &quot;$(wt config state logs get --hook=&quot;$1&qu
 
 A [bare repository](https://git-scm.com/docs/gitrepository-layout) has no working tree, so all branches — including the default — are [linked worktrees](https://git-scm.com/docs/git-worktree) at equal paths. No branch gets special treatment.
 
-Cloning a bare repo into `/.git` puts all worktrees under one directory:
+Cloning a bare repo into `<project>/.git` puts all worktrees under one directory:
 
 ```bash
 $ git clone --bare <url> myproject/.git
