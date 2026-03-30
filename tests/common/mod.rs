@@ -2909,6 +2909,14 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     settings.add_filter(r"(?m)^.*for powershell .*\n", "");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
+    // Normalize git "not a git repository" messages across environments.
+    // Local:     "fatal: not a git repository (or any parent up to mount point /)\n
+    //             Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+    // CI/Docker: "fatal: not a git repository (or any of the parent directories): .git"
+    settings.add_filter(
+        r"fatal: not a git repository \(or any[^\n]*(?:\n[^\n]*filesystem boundary[^\n]*)?",
+        "fatal: not a git repository [GIT_DISCOVERY_MSG]",
+    );
 
     add_standard_env_redactions(&mut settings);
 
