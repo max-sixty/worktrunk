@@ -42,41 +42,12 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 **Core commands:**
 
-<table class="cmd-compare">
-  <thead>
-    <tr>
-      <th>Task</th>
-      <th>Worktrunk</th>
-      <th>Plain git</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Switch worktrees</td>
-      <td><pre>wt switch feat</pre></td>
-      <td><pre>cd ../repo.feat</pre></td>
-    </tr>
-    <tr>
-      <td>Create + start Claude</td>
-      <td><pre>wt switch -c -x claude feat</pre></td>
-      <td><pre>git worktree add -b feat ../repo.feat && \
-cd ../repo.feat && \
-claude</pre></td>
-    </tr>
-    <tr>
-      <td>Clean up</td>
-      <td><pre>wt remove</pre></td>
-      <td><pre>cd ../repo && \
-git worktree remove ../repo.feat && \
-git branch -d feat</pre></td>
-    </tr>
-    <tr>
-      <td>List with status</td>
-      <td><pre>wt list</pre></td>
-      <td><pre>git worktree list</pre> (paths only)</td>
-    </tr>
-  </tbody>
-</table>
+| Task | Worktrunk | Plain git |
+|------|-----------|-----------|
+| Switch worktrees | `wt switch feat` | `cd ../repo.feat` |
+| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ../repo.feat && cd ../repo.feat && claude` |
+| Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feat && git branch -d feat` |
+| List with status | `wt list` | `git worktree list` (paths only) |
 
 > Expand into the more advanced commands as needed
 

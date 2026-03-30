@@ -110,57 +110,58 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## Command reference
 
+```
 wt switch - Switch to a worktree; create if needed
 
-Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
+Usage: wt switch [OPTIONS] [BRANCH] [-- <EXECUTE_ARGS>...]
 
-<b><span class=g>Arguments:</span></b>
-  <span class=c>[BRANCH]</span>
+Arguments:
+  [BRANCH]
           Branch name or shortcut
 
-          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39;
-          (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
+          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@'
+          (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
 
-  <span class=c>[EXECUTE_ARGS]...</span>
+  [EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
 
-          Arguments after <b>--</b> are appended to the execute command. Each argument is expanded for
+          Arguments after -- are appended to the execute command. Each argument is expanded for
           templates, then POSIX shell-escaped.
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
+Options:
+  -c, --create
           Create a new branch
 
-  <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
+  -b, --base <BASE>
           Base branch
 
           Defaults to default branch.
 
-  <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
+  -x, --execute <EXECUTE>
           Command to run after switch
 
           Replaces the wt process with the command after switching, giving it full terminal control.
           Useful for launching editors, AI agents, or other interactive tools.
 
-          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>, etc.) and filters. <b>{{</b>
-<b>          base }}</b> and <b>{{ base_worktree_path }}</b> require <b>--create</b>.
+          Supports hook template variables ({{ branch }}, {{ worktree_path }}, etc.) and filters. {{
+          base }} and {{ base_worktree_path }} require --create.
 
           Especially useful with shell aliases:
 
-            <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
-            <b>wsc feature-branch -- &#39;Fix GH #322&#39;</b>
+            alias wsc='wt switch --create -x claude'
+            wsc feature-branch -- 'Fix GH #322'
 
-          Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code. Arguments after <b>--</b>
-          are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
+          Then wsc feature-branch creates the worktree and launches Claude Code. Arguments after --
+          are passed to the command, so wsc feature -- 'Fix GH #322' runs claude 'Fix GH #322',
           starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
-<b>          new -s {{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
+          Template example: -x 'code {{ worktree_path }}' opens VS Code at the worktree, -x 'tmux
+          new -s {{ branch | sanitize }}' starts a tmux session named after the branch.
 
-      <b><span class=c>--clobber</span></b>
+      --clobber
           Remove stale paths at target
 
-      <b><span class=c>--no-cd</span></b>
+      --no-cd
           Skip directory change after switching
 
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
@@ -169,29 +170,30 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           In picker mode (no branch argument), prints the selected branch name and exits without
           switching. Useful for scripting.
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Picker Options:</span></b>
-      <b><span class=c>--branches</span></b>
+Picker Options:
+      --branches
           Include branches without worktrees
 
-      <b><span class=c>--remotes</span></b>
+      --remotes
           Include remote branches
 
-<b><span class=g>Automation:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+Automation:
+  -y, --yes
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      --no-verify
           Skip hooks
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```

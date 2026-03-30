@@ -73,58 +73,60 @@ lint = "cargo clippy"
 
 ## Command reference
 
+```
 wt merge - Merge current branch into the target branch
 
-Squash &amp; rebase, fast-forward the target branch, remove the worktree.
+Squash & rebase, fast-forward the target branch, remove the worktree.
 
-Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
+Usage: wt merge [OPTIONS] [TARGET]
 
-<b><span class=g>Arguments:</span></b>
-  <span class=c>[TARGET]</span>
+Arguments:
+  [TARGET]
           Target branch
 
           Defaults to default branch.
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--no-squash</span></b>
+Options:
+      --no-squash
           Skip commit squashing
 
-      <b><span class=c>--no-commit</span></b>
+      --no-commit
           Skip commit and squash
 
-      <b><span class=c>--no-rebase</span></b>
+      --no-rebase
           Skip rebase (fail if not already rebased)
 
-      <b><span class=c>--no-remove</span></b>
+      --no-remove
           Keep worktree after merge
 
-      <b><span class=c>--no-ff</span></b>
+      --no-ff
           Create a merge commit (no fast-forward)
 
-      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+      --stage <STAGE>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked changes
-          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
-          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+          - all:     Stage everything: untracked files + unstaged tracked changes
+          - tracked: Stage tracked changes only (like git add -u)
+          - none:    Stage nothing, commit only what's already in the index
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Automation:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+Automation:
+  -y, --yes
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      --no-verify
           Skip hooks
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```

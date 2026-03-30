@@ -68,9 +68,9 @@ Worktrunk creates files in four categories.
 
 ### 1. Worktree directories
 
-Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
+Created by `wt switch ` when switching to a branch that doesn't have a worktree. Use `wt switch --create ` to create a new branch. Default location is `../.` (sibling to main repo), configurable via `worktree-path` in user config.
 
-**To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
+**To remove:** `wt remove ` removes the worktree directory and deletes the branch.
 
 ### 2. Config files
 
@@ -164,16 +164,16 @@ User hooks don't require approval (you defined them). Commands from project hook
 
 ### Example approval prompt
 
-<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
+▲ repo needs approval to execute 3 commands:
 
-<span class="d">○</span> pre-start <b>install</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
-<span class="d">○</span> pre-start <b>build</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
-<span class="d">○</span> pre-start <b>env</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+○ pre-start install:
+  npm ci
+○ pre-start build:
+  cargo build --release
+○ pre-start env:
+  echo 'PORT={{ branch | hash_port }}' > .env.local
 
-<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
+❯ Allow and remember? [y/N]
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -199,7 +199,7 @@ Yes. Core commands, shell integration, and tab completion work in both Git Bash 
 
 **Git for Windows required** — Hooks use bash syntax and execute via Git Bash, so [Git for Windows](https://gitforwindows.org/) must be installed even when PowerShell is the interactive shell.
 
-**`wt switch` interactive picker unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch <branch>` instead.
+**`wt switch` interactive picker unavailable** — Uses [skim](https://github.com/skim-rs/skim), which doesn't support Windows. Use `wt list` and `wt switch ` instead.
 
 ## How does Worktrunk determine the default branch?
 

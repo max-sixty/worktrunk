@@ -1814,38 +1814,15 @@ fn transform_docs_for_skill(content: &str) -> String {
         "[experimental]",
     );
 
-    // Transform Zola internal links to full URLs
-    let content = ZOLA_LINK_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
-        .into_owned();
-
-    // Remove "See also" section (just contains links to other pages)
-    let content = remove_section(&content, "## See also");
-
-    // Clean up multiple consecutive blank lines
-    let content = content
-        .lines()
-        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
-            let is_blank = line.trim().is_empty();
-            if !(is_blank && prev_blank) {
-                acc.push(line);
-            }
-            (acc, is_blank)
-        })
-        .0
-        .join("\n");
-
     // Prepend title as H1 if extracted
-    if let Some(title) = title {
+    let content = if let Some(title) = title {
         format!("# {}\n\n{}", title, content.trim())
     } else {
         content.trim().to_string()
-    }
+    };
+
+    // Apply shared finalization: Zola links, See also removal, blank line cleanup
+    finalize_skill_content(&content)
 }
 
 /// Remove a section from markdown content (from heading to next same-level heading)
@@ -1924,19 +1901,30 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     entries.sort();
 
     for name in &entries {
-        let docs_file = docs_dir.join(name);
         let skill_file = skill_dir.join(name);
+        let cmd_name = name.trim_end_matches(".md");
 
-        if !docs_file.exists() {
-            errors.push(format!("Missing docs file: {}", docs_file.display()));
-            continue;
-        }
-
-        let docs_content = fs::read_to_string(&docs_file)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
-
-        // Transform and use content directly (docs already have proper H1 titles)
-        let expected = transform_docs_for_skill(&docs_content);
+        let expected = if COMMAND_PAGES.contains(&cmd_name) {
+            // Command pages: generate directly from --help-page --plain (no HTML)
+            match generate_skill_from_help(cmd_name, project_root) {
+                Ok(content) => content,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            }
+        } else {
+            // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
+            let docs_file = docs_dir.join(name);
+            if !docs_file.exists() {
+                errors.push(format!("Missing docs file: {}", docs_file.display()));
+                continue;
+            }
+            let docs_content = fs::read_to_string(&docs_file)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
+            let content = transform_docs_for_skill(&docs_content);
+            strip_html_tags(&content)
+        };
         let expected = trim_lines(&expected);
 
         let current = if skill_file.exists() {
@@ -1961,6 +1949,196 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     }
 
     (errors, updated_files)
+}
+
+/// Generate a skill reference file directly from `--help-page --plain` output.
+///
+/// For command pages, this produces clean markdown without HTML. The only
+/// post-processing needed is Zola link transformation and section cleanup.
+fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, String> {
+    let output = wt_command()
+        .args([cmd, "--help-page", "--plain"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt --help-page --plain");
+
+    if !output.status.success() {
+        return Err(format!(
+            "'wt {} --help-page --plain' failed (exit {}): {}",
+            cmd,
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    if content.trim().is_empty() {
+        return Err(format!(
+            "Empty output from 'wt {} --help-page --plain': {}",
+            cmd,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(finalize_skill_content(&content))
+}
+
+/// Apply final transforms shared between command and non-command skill files:
+/// Zola internal links → full URLs, remove "See also" section, collapse blank lines.
+fn finalize_skill_content(content: &str) -> String {
+    // Transform Zola internal links to full URLs
+    let content = ZOLA_LINK_PATTERN
+        .replace_all(content, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            let page = caps.get(2).unwrap().as_str();
+            let anchor = caps.get(3).map_or("", |m| m.as_str());
+            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
+        })
+        .into_owned();
+
+    // Remove "See also" section (just contains links to other pages)
+    let content = remove_section(&content, "## See also");
+
+    // Clean up multiple consecutive blank lines
+    content
+        .lines()
+        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
+            let is_blank = line.trim().is_empty();
+            if !(is_blank && prev_blank) {
+                acc.push(line);
+            }
+            (acc, is_blank)
+        })
+        .0
+        .join("\n")
+}
+
+/// Strip HTML tags and decode entities from content (for non-command skill files).
+///
+/// Uses a character-level state machine — no regex on HTML/XML. Handles:
+/// - Opening and closing tags (`<span class=c>`, `</b>`)
+/// - Self-closing tags (`<br/>`)
+/// - HTML comments (`<!-- ... -->`)
+/// - Common HTML entities (`&#39;`, `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&nbsp;`)
+///
+/// Content inside fenced code blocks (``` or ````+) is passed through unchanged —
+/// `<` in shell redirects (`<< EOF`, `< /dev/tty`) must not be treated as tags.
+fn strip_html_tags(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut in_code_fence = false;
+
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            result.push_str(line);
+            continue;
+        }
+
+        if in_code_fence {
+            // Inside code fences: pass through unchanged
+            result.push_str(line);
+        } else {
+            // Outside code fences: strip HTML tags and decode entities
+            result.push_str(&strip_html_from_line(line));
+        }
+    }
+
+    result
+}
+
+/// Strip HTML tags and decode entities from a single line of non-code content.
+fn strip_html_from_line(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '<' {
+            // Check for HTML comment <!-- ... -->
+            if i + 3 < len && chars[i + 1] == '!' && chars[i + 2] == '-' && chars[i + 3] == '-' {
+                // Skip to end of comment
+                if let Some(end) = find_comment_end(&chars, i + 4) {
+                    i = end;
+                    continue;
+                }
+            }
+            // Only strip if this looks like an HTML tag (starts with letter or /)
+            if i + 1 < len && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '/') {
+                // Skip to closing '>', handling quoted attributes
+                let mut in_quote = None;
+                i += 1;
+                while i < len {
+                    match chars[i] {
+                        '"' | '\'' if in_quote == Some(chars[i]) => in_quote = None,
+                        '"' | '\'' if in_quote.is_none() => in_quote = Some(chars[i]),
+                        '>' if in_quote.is_none() => {
+                            i += 1;
+                            break;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            } else {
+                // Not an HTML tag (e.g., `<` in math or text) — keep as-is
+                result.push('<');
+                i += 1;
+            }
+        } else if chars[i] == '&' {
+            // Decode HTML entities
+            if let Some((decoded, advance)) = decode_entity(&chars, i) {
+                result.push_str(decoded);
+                i += advance;
+            } else {
+                result.push('&');
+                i += 1;
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Find the end of an HTML comment (position after "-->").
+fn find_comment_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i + 2 < chars.len() {
+        if chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>' {
+            return Some(i + 3);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Decode an HTML entity starting at `&`. Returns (decoded str, chars to advance).
+fn decode_entity(chars: &[char], start: usize) -> Option<(&'static str, usize)> {
+    // Collect chars until ';' or max entity length
+    let mut end = start + 1;
+    while end < chars.len() && end - start < 10 && chars[end] != ';' {
+        end += 1;
+    }
+    if end >= chars.len() || chars[end] != ';' {
+        return None;
+    }
+
+    let entity: String = chars[start..=end].iter().collect();
+    let advance = end - start + 1;
+
+    match entity.as_str() {
+        "&#39;" => Some(("'", advance)),
+        "&lt;" => Some(("<", advance)),
+        "&gt;" => Some((">", advance)),
+        "&amp;" => Some(("&", advance)),
+        "&quot;" => Some(("\"", advance)),
+        "&nbsp;" => Some((" ", advance)),
+        _ => None,
+    }
 }
 
 /// Sync .well-known/agent-skills/ index.json and verify symlink.
