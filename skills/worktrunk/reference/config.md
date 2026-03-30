@@ -539,7 +539,7 @@ $ wt config state marker set "🚧 WIP"
 
 Store arbitrary data:
 ```bash
-$ wt config state vars set env staging
+$ wt config state vars set env=staging
 ```
 
 Clear all CI status cache:
@@ -763,13 +763,13 @@ Store custom variables per branch. Values are stored as-is — plain strings or 
 
 Set and get values:
 ```bash
-$ wt config state vars set env staging
+$ wt config state vars set env=staging
 $ wt config state vars get env
 ```
 
 Store JSON:
 ```bash
-$ wt config state vars set config '{"port": 3000, "debug": true}'
+$ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 
 List all keys:
@@ -779,7 +779,7 @@ $ wt config state vars list
 
 Operate on a different branch:
 ```bash
-$ wt config state vars set env production --branch=main
+$ wt config state vars set env=production --branch=main
 ```
 
 ### Template access
@@ -794,7 +794,7 @@ dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.p
 JSON object and array values support dot access:
 
 ```bash
-$ wt config state vars set config '{"port": 3000, "debug": true}'
+$ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 ```toml
 [post-start]

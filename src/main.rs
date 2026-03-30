@@ -391,7 +391,10 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
         },
         StateCommand::Vars { action } => match action {
             VarsAction::Get { key, branch } => handle_vars_get(&key, branch),
-            VarsAction::Set { key, value, branch } => handle_vars_set(&key, &value, branch),
+            VarsAction::Set {
+                assignment: (key, value),
+                branch,
+            } => handle_vars_set(&key, &value, branch),
             VarsAction::List { branch } => handle_vars_list(branch),
             VarsAction::Clear { key, all, branch } => {
                 handle_vars_clear(key.as_deref(), all, branch)

@@ -39,6 +39,20 @@ pub(super) fn parse_key_val(s: &str) -> Result<(String, String), String> {
     Ok((key.to_string(), value.to_string()))
 }
 
+/// Parse KEY=VALUE string for `wt config state vars set`.
+///
+/// Like `parse_key_val`, but without template variable name validation.
+/// Key validation is deferred to `validate_vars_key` in the command handler.
+pub(super) fn parse_vars_assignment(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
+    if key.is_empty() {
+        return Err("invalid KEY=VALUE: key cannot be empty".to_string());
+    }
+    Ok((key.to_string(), value.to_string()))
+}
+
 /// Custom styles for help output - matches worktrunk's color scheme
 fn help_styles() -> Styles {
     Styles::styled()
@@ -1441,7 +1455,7 @@ docker run -d --rm \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
-db-url = "wt config state vars set db-url 'postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
+db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
 
 [post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"

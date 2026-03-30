@@ -531,7 +531,7 @@ Set a marker for current branch:
 {{ terminal(cmd="wt config state marker set __WT_QUOT__🚧 WIP__WT_QUOT__") }}
 
 Store arbitrary data:
-{{ terminal(cmd="wt config state vars set env staging") }}
+{{ terminal(cmd="wt config state vars set env=staging") }}
 
 Clear all CI status cache:
 {{ terminal(cmd="wt config state ci-status clear --all") }}
@@ -751,16 +751,16 @@ Store custom variables per branch. Values are stored as-is — plain strings or 
 ### Examples
 
 Set and get values:
-{{ terminal(cmd="wt config state vars set env staging|||wt config state vars get env") }}
+{{ terminal(cmd="wt config state vars set env=staging|||wt config state vars get env") }}
 
 Store JSON:
-{{ terminal(cmd="wt config state vars set config '{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
+{{ terminal(cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
 
 List all keys:
 {{ terminal(cmd="wt config state vars list") }}
 
 Operate on a different branch:
-{{ terminal(cmd="wt config state vars set env production --branch=main") }}
+{{ terminal(cmd="wt config state vars set env=production --branch=main") }}
 
 ### Template access
 
@@ -773,7 +773,7 @@ dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.p
 
 JSON object and array values support dot access:
 
-{{ terminal(cmd="wt config state vars set config '{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
+{{ terminal(cmd="wt config state vars set config='{__WT_QUOT__port__WT_QUOT__: 3000, __WT_QUOT__debug__WT_QUOT__: true}'") }}
 ```toml
 [post-start]
 dev = "npm start -- --port {{ vars.config.port }}"

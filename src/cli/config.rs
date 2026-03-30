@@ -293,7 +293,7 @@ $ wt config state marker set "🚧 WIP"
 
 Store arbitrary data:
 ```console
-$ wt config state vars set env staging
+$ wt config state vars set env=staging
 ```
 
 Clear all CI status cache:
@@ -529,13 +529,13 @@ $ wt config state hints clear NAME   # re-show specific hint
 
 Set and get values:
 ```console
-$ wt config state vars set env staging
+$ wt config state vars set env=staging
 $ wt config state vars get env
 ```
 
 Store JSON:
 ```console
-$ wt config state vars set config '{"port": 3000, "debug": true}'
+$ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 
 List all keys:
@@ -545,7 +545,7 @@ $ wt config state vars list
 
 Operate on a different branch:
 ```console
-$ wt config state vars set env production --branch=main
+$ wt config state vars set env=production --branch=main
 ```
 
 ## Template access
@@ -560,7 +560,7 @@ dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.p
 JSON object and array values support dot access:
 
 ```console
-$ wt config state vars set config '{"port": 3000, "debug": true}'
+$ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 ```toml
 [post-start]
@@ -917,24 +917,22 @@ $ wt config state vars get env --branch=feature
 
 Set a plain string:
 ```console
-$ wt config state vars set env staging
+$ wt config state vars set env=staging
 ```
 
 Set JSON:
 ```console
-$ wt config state vars set config '{"port": 3000}'
+$ wt config state vars set config='{"port": 3000}'
 ```
 
 Set for a specific branch:
 ```console
-$ wt config state vars set env production --branch=main
+$ wt config state vars set env=production --branch=main
 ```"#)]
     Set {
-        /// Key name
-        key: String,
-
-        /// Value (plain string or JSON)
-        value: String,
+        /// KEY=VALUE pair
+        #[arg(value_name = "KEY=VALUE", value_parser = super::parse_vars_assignment)]
+        assignment: (String, String),
 
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]

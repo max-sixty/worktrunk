@@ -1440,7 +1440,7 @@ fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
 #[rstest]
 fn test_vars_set_and_get(repo: TestRepo) {
     // Set a value
-    let output = wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
+    let output = wt_state_cmd(&repo, "vars", "set", &["env=staging"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1458,7 +1458,7 @@ fn test_vars_set_and_get(repo: TestRepo) {
 #[rstest]
 fn test_vars_set_json_value(repo: TestRepo) {
     let json = r#"{"port":3000,"debug":true}"#;
-    let output = wt_state_cmd(&repo, "vars", "set", &["config", json])
+    let output = wt_state_cmd(&repo, "vars", "set", &[&format!("config={json}")])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1483,10 +1483,10 @@ fn test_vars_get_missing_key(repo: TestRepo) {
 #[rstest]
 fn test_vars_list(repo: TestRepo) {
     // Set multiple values
-    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "vars", "set", &["port", "3000"])
+    wt_state_cmd(&repo, "vars", "set", &["port=3000"])
         .output()
         .unwrap();
 
@@ -1514,7 +1514,7 @@ fn test_vars_list_empty(repo: TestRepo) {
 #[rstest]
 fn test_vars_clear_single_key(repo: TestRepo) {
     // Set and clear
-    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
         .output()
         .unwrap();
     let output = wt_state_cmd(&repo, "vars", "clear", &["env"])
@@ -1537,10 +1537,10 @@ fn test_vars_clear_single_key(repo: TestRepo) {
 #[rstest]
 fn test_vars_clear_all(repo: TestRepo) {
     // Set multiple values
-    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "vars", "set", &["port", "3000"])
+    wt_state_cmd(&repo, "vars", "set", &["port=3000"])
         .output()
         .unwrap();
 
@@ -1562,7 +1562,7 @@ fn test_vars_clear_all(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_invalid_key(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "vars", "set", &["foo.bar", "value"])
+    let output = wt_state_cmd(&repo, "vars", "set", &["foo.bar=value"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1583,7 +1583,7 @@ fn test_vars_branch_flag(repo: TestRepo) {
         &repo,
         "vars",
         "set",
-        &["env", "production", "--branch=feature"],
+        &["env=production", "--branch=feature"],
     )
     .output()
     .unwrap();
@@ -1604,7 +1604,7 @@ fn test_vars_branch_flag(repo: TestRepo) {
 
 #[rstest]
 fn test_vars_value_with_spaces(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "vars", "set", &["note", "hello world foo"])
+    let output = wt_state_cmd(&repo, "vars", "set", &["note=hello world foo"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1620,11 +1620,38 @@ fn test_vars_value_with_spaces(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_vars_overwrite(repo: TestRepo) {
-    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
+fn test_vars_value_containing_equals(repo: TestRepo) {
+    let url = "postgres://user:pass@host/db?sslmode=require";
+    let output = wt_state_cmd(&repo, "vars", "set", &[&format!("db-url={url}")])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "vars", "set", &["env", "production"])
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["db-url"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), url);
+}
+
+#[rstest]
+fn test_vars_empty_value(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["key="])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["key"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_overwrite(repo: TestRepo) {
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    wt_state_cmd(&repo, "vars", "set", &["env=production"])
         .output()
         .unwrap();
 

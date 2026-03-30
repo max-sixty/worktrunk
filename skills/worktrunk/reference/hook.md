@@ -343,7 +343,7 @@ docker run -d --rm \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
-db-url = "wt config state vars set db-url 'postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
+db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
 
 [post-remove]
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
