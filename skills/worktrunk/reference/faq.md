@@ -106,7 +106,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
-| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
+| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
 | `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt/logs/*.log` | Background command output | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |

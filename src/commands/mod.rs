@@ -29,7 +29,8 @@ pub(crate) use alias::{AliasOptions, step_alias};
 pub(crate) use config::{
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
     handle_hints_get, handle_logs_get, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show,
+    handle_state_get, handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,

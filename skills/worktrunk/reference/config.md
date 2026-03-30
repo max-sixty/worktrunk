@@ -519,6 +519,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
+- **vars**: [experimental] Custom variables per branch
 - **logs**: Background operation logs
 
 ### Examples
@@ -536,6 +537,11 @@ $ wt config state default-branch set main
 Set a marker for current branch:
 ```bash
 $ wt config state marker set "🚧 WIP"
+```
+
+Store arbitrary data:
+```bash
+$ wt config state vars set env=staging
 ```
 
 Clear all CI status cache:
@@ -567,6 +573,7 @@ Commands:
   marker           Branch markers
   logs             Background operation logs
   hints            One-time hints shown in this repo
+  vars             [experimental] Custom variables per branch
   get              Get all stored state
   clear            Clear all stored state
 
@@ -738,6 +745,88 @@ Commands:
   get    Get marker for a branch
   set    Set marker for a branch
   clear  Clear marker for a branch
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+```
+
+## wt config state vars
+
+[experimental]
+
+Custom variables per branch.
+
+Store custom variables per branch. Values are stored as-is — plain strings or JSON.
+
+### Examples
+
+Set and get values:
+```bash
+$ wt config state vars set env=staging
+$ wt config state vars get env
+```
+
+Store JSON:
+```bash
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+
+List all keys:
+```bash
+$ wt config state vars list
+```
+
+Operate on a different branch:
+```bash
+$ wt config state vars set env=production --branch=main
+```
+
+### Template access
+
+Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+
+```toml
+[post-start]
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
+```
+
+JSON object and array values support dot access:
+
+```bash
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+```toml
+[post-start]
+dev = "npm start -- --port {{ vars.config.port }}"
+```
+
+### Storage format
+
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
+
+### Command reference
+
+```
+wt config state vars - [experimental] Custom variables per branch
+
+Usage: wt config state vars [OPTIONS] <COMMAND>
+
+Commands:
+  get    Get a value
+  set    Set a value
+  list   List all keys
+  clear  Clear a key or all keys
 
 Options:
   -h, --help
