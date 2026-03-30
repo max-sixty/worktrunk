@@ -52,15 +52,16 @@ use commands::{
     handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
     handle_rebase, handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all,
     handle_state_get, handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_diff, step_eval,
-    step_for_each, step_prune, step_relocate,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
+    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
+    step_relocate,
 };
 use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
     DefaultBranchAction, HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
-    PreviousBranchAction, StateCommand, StepCommand,
+    PreviousBranchAction, StateCommand, StepCommand, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -388,6 +389,17 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
         StateCommand::Hints { action } => match action {
             Some(HintsAction::Get) | None => handle_hints_get(),
             Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+        },
+        StateCommand::Vars { action } => match action {
+            VarsAction::Get { key, branch } => handle_vars_get(&key, branch),
+            VarsAction::Set {
+                assignment: (key, value),
+                branch,
+            } => handle_vars_set(&key, &value, branch),
+            VarsAction::List { branch } => handle_vars_list(branch),
+            VarsAction::Clear { key, all, branch } => {
+                handle_vars_clear(key.as_deref(), all, branch)
+            }
         },
         StateCommand::Get { format } => handle_state_show(format),
         StateCommand::Clear => handle_state_clear_all(),

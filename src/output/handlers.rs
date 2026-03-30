@@ -369,7 +369,7 @@ fn handle_switch_created_output(
 }
 
 struct BranchDeletionDisplay {
-    deletion: BranchDeletionResult,
+    result: BranchDeletionResult,
     show_unmerged_hint: bool,
 }
 
@@ -399,9 +399,9 @@ fn handle_branch_deletion_result(
     branch_name: &str,
 ) -> anyhow::Result<BranchDeletionDisplay> {
     match result {
-        Ok(deletion) => Ok(BranchDeletionDisplay {
-            show_unmerged_hint: matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted),
-            deletion,
+        Ok(result) => Ok(BranchDeletionDisplay {
+            show_unmerged_hint: matches!(result.outcome, BranchDeletionOutcome::NotDeleted),
+            result,
         }),
         Err(e) => {
             // Git command failed - this is an error (we decided to delete but couldn't)
@@ -750,7 +750,7 @@ fn handle_branch_only_output(
     let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
     let deletion = handle_branch_deletion_result(result, branch_name)?;
 
-    if matches!(deletion.deletion.outcome, BranchDeletionOutcome::NotDeleted) {
+    if matches!(deletion.result.outcome, BranchDeletionOutcome::NotDeleted) {
         eprintln!("{}", info_message(&branch_info));
         if deletion.show_unmerged_hint {
             print_retained_unmerged_branch(branch_name);
@@ -758,8 +758,8 @@ fn handle_branch_only_output(
     } else {
         let flag_note = flag_note(
             deletion_mode,
-            &deletion.deletion.outcome,
-            Some(&deletion.deletion.integration_target),
+            &deletion.result.outcome,
+            Some(&deletion.result.integration_target),
         );
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after(AnsiColor::Green);
@@ -935,9 +935,9 @@ impl RemovalDisplayInfo {
                 let deletion = handle_branch_deletion_result(result, branch_name)?;
                 // Only use integration_target for display if we had a real target (not "HEAD" fallback)
                 let display_target =
-                    target_branch.map(|_| deletion.deletion.integration_target.clone());
+                    target_branch.map(|_| deletion.result.integration_target.clone());
                 (
-                    deletion.deletion.outcome,
+                    deletion.result.outcome,
                     display_target,
                     deletion.show_unmerged_hint,
                 )
