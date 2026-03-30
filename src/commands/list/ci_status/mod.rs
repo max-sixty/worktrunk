@@ -390,7 +390,7 @@ impl PrStatus {
     ///
     /// Platform is determined by project config override or remote URL detection.
     /// Returns `None` if the platform cannot be determined (user should set
-    /// `ci.platform` in project config for non-standard hostnames).
+    /// `forge.platform` in project config for non-standard hostnames).
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
@@ -400,7 +400,7 @@ impl PrStatus {
     ) -> Option<Self> {
         // Load project config for platform override (cached in Repository)
         let project_config = repo.load_project_config().ok().flatten();
-        let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
+        let platform_override = project_config.as_ref().and_then(|c| c.forge_platform());
 
         // Determine platform (config override, branch's remote, or any remote URL)
         // For remote branches, use their specific remote to get the correct platform
@@ -409,10 +409,10 @@ impl PrStatus {
         match platform {
             Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),
             None => {
-                // Unknown platform - user should set ci.platform in project config
+                // Unknown platform — user should set forge.platform in project config
                 log::debug!(
                     "Could not detect CI platform from remote URL; \
-                     set ci.platform in .config/wt.toml for CI status"
+                     set forge.platform in .config/wt.toml for CI status"
                 );
                 None
             }

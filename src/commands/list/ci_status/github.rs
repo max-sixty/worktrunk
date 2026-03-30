@@ -10,15 +10,14 @@ use super::{
     non_interactive_cmd, parse_json,
 };
 
-/// Get the owner and repo name from any GitHub remote.
+/// Get the owner and repo name from the primary remote.
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
-/// Searches all remotes for a GitHub URL (API calls are repo-wide, not branch-specific).
-///
-/// Uses [`Repository::find_forge_remote`] with effective URLs to handle
-/// `url.insteadOf` aliases.
+/// Platform is already known to be GitHub when this runs, so we extract
+/// directly from the primary remote's raw URL without checking the hostname.
 fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    let (_, url) = repo.find_forge_remote(|parsed| parsed.is_github())?;
+    let remote = repo.primary_remote().ok()?;
+    let url = repo.remote_url(&remote)?;
     parse_owner_repo(&url)
 }
 
@@ -175,14 +174,23 @@ pub(super) fn detect_github_commit_checks(
     let (owner, repo_name) =
         github_owner_repo_for_branch(repo, branch).or_else(|| github_owner_repo(repo))?;
 
+    // Only pass --hostname when explicitly configured (for GHE / self-hosted)
+    let hostname = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_hostname().map(String::from));
+
     // Use GitHub's check-runs API to get all checks for this commit
+    let api_path = format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs");
+    let mut args = vec!["api", api_path.as_str()];
+    if let Some(h) = &hostname {
+        args.extend(["--hostname", h.as_str()]);
+    }
+    args.extend(["--jq", ".check_runs | map({status, conclusion})"]);
+
     let output = match non_interactive_cmd("gh")
-        .args([
-            "api",
-            &format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs"),
-            "--jq",
-            ".check_runs | map({status, conclusion})",
-        ])
+        .args(args)
         .current_dir(&repo_root)
         .run()
     {

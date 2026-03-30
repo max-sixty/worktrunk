@@ -56,6 +56,35 @@ pub struct ProjectCiConfig {
     pub platform: Option<String>,
 }
 
+/// Project-level forge configuration.
+///
+/// Override forge detection when URL-based detection fails (e.g., SSH host
+/// aliases, GitHub Enterprise, or self-hosted GitLab with custom domains).
+///
+/// # Example
+///
+/// ```toml
+/// [forge]
+/// platform = "github"              # or "gitlab"
+/// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectForgeConfig {
+    /// Forge platform override. When set, skips URL-based platform detection.
+    ///
+    /// Values: "github" or "gitlab"
+    #[serde(default)]
+    pub platform: Option<String>,
+
+    /// API hostname for GitHub Enterprise or self-hosted GitLab.
+    ///
+    /// Only needed when the remote URL uses an SSH host alias that doesn't
+    /// resolve to the real API hostname. For standard github.com/gitlab.com
+    /// setups, this is not needed.
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
 impl ProjectListConfig {
     /// Returns true if any list configuration is set.
     pub fn is_configured(&self) -> bool {
@@ -65,8 +94,23 @@ impl ProjectListConfig {
 
 impl ProjectConfig {
     /// Get the CI platform override if configured.
+    ///
+    /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
+    }
+
+    /// Get the forge platform override, checking `[forge]` first then `[ci]`.
+    pub fn forge_platform(&self) -> Option<&str> {
+        self.forge
+            .as_ref()
+            .and_then(|f| f.platform.as_deref())
+            .or_else(|| self.ci_platform())
+    }
+
+    /// Get the forge API hostname if configured.
+    pub fn forge_hostname(&self) -> Option<&str> {
+        self.forge.as_ref().and_then(|f| f.hostname.as_deref())
     }
 
     /// Get `wt step copy-ignored` configuration if configured.
@@ -115,9 +159,13 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub list: Option<ProjectListConfig>,
 
-    /// CI configuration (platform override)
+    /// CI configuration (platform override). Deprecated: use `[forge]` instead.
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
+
+    /// Forge configuration (platform detection override, API hostname)
+    #[serde(default)]
+    pub forge: Option<ProjectForgeConfig>,
 
     /// Configuration for `wt step` subcommands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -344,6 +392,67 @@ platform = "gitlab"
     fn test_ci_config_default() {
         let config = ProjectCiConfig::default();
         assert!(config.platform.is_none());
+    }
+
+    // ============================================================================
+    // ForgeConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_forge_platform() {
+        let contents = r#"
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert!(config.forge_hostname().is_none());
+    }
+
+    #[test]
+    fn test_deserialize_forge_hostname() {
+        let contents = r#"
+[forge]
+platform = "github"
+hostname = "github.example.com"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert_eq!(config.forge_hostname(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn test_forge_platform_falls_back_to_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform not set, falls back to ci.platform
+        assert_eq!(config.forge_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_platform_takes_precedence_over_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform takes precedence
+        assert_eq!(config.forge_platform(), Some("github"));
+        // ci.platform still accessible directly
+        assert_eq!(config.ci_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_config_default() {
+        let config = ProjectForgeConfig::default();
+        assert!(config.platform.is_none());
+        assert!(config.hostname.is_none());
     }
 
     // ============================================================================

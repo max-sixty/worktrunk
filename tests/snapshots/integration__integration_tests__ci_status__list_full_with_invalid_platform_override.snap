@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -49,6 +50,7 @@ exit_code: 0
 [2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
+[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
 [2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.
 [2m[W][22m Invalid CI platform in config: 'invalid_platform'. Expected 'github' or 'gitlab'.

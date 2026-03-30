@@ -271,7 +271,7 @@ fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result
         anyhow::bail!("find_github_remote called on non-GitHub ref");
     };
 
-    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+    repo.find_remote_for_repo(None, base_owner, base_repo)
         .ok_or_else(|| {
             let suggested_url =
                 worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
@@ -303,7 +303,7 @@ fn resolve_same_repo_ref(
         } => {
             let suggested_url =
                 worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
-            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
+            repo.find_remote_for_repo(None, base_owner, base_repo)
                 .ok_or_else(|| GitError::NoRemoteForRepo {
                     owner: base_owner.clone(),
                     repo: base_repo.clone(),
@@ -316,7 +316,7 @@ fn resolve_same_repo_ref(
             base_repo,
             ..
         } => repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
+            .find_remote_for_repo(None, base_owner, base_repo)
             .ok_or_else(|| GitError::NoRemoteForRepo {
                 owner: base_owner.clone(),
                 repo: base_repo.clone(),

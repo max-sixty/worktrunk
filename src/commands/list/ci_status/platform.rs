@@ -32,7 +32,7 @@ impl CiToolsAvailable {
 /// CI platform detected from project config override or remote URL.
 ///
 /// Platform is determined by:
-/// 1. Project config `ci.platform = "github"` or `"gitlab"` (takes precedence)
+/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
 /// 2. Remote URL detection (searches for "github" or "gitlab" in hostname)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]

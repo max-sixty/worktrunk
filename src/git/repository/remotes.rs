@@ -30,12 +30,10 @@
 //! For `wt list`, steps 1-4 are sufficient — each branch uses its
 //! associated remote.
 //!
-//! For `wt switch pr:N`, the query remote and the fetch remote may
-//! differ (fork/upstream setups). The API call uses `gh`/`glab`
-//! placeholders to query the right repo, then the API response provides
-//! the base repo's identity. [`find_remote_for_repo`] matches the base
-//! repo back to a local remote using owner/repo, with host as
-//! disambiguator only (not a hard requirement).
+//! For `wt switch pr:N`, the API call uses owner/repo from the primary
+//! remote's raw URL. The API response provides the base repo's identity,
+//! and [`find_remote_for_repo`] matches it back to a local remote by
+//! owner/repo (host is not required to match).
 //!
 //! ## Where each piece is used
 //!
