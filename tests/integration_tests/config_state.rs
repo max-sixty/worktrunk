@@ -621,9 +621,9 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         r#"{"checked_at":1704067200,"head":"abc123","branch":"feature"}"#,
     );
 
-    // KV data
+    // Vars data
     repo.git_command()
-        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
         .run()
         .unwrap();
 
@@ -658,13 +658,13 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     );
     assert!(
         repo.git_command()
-            .args(["config", "--get", "worktrunk.state.main.kv.env"])
+            .args(["config", "--get", "worktrunk.state.main.vars.env"])
             .run()
             .unwrap()
             .status
             .code()
             == Some(1),
-        "KV data should be cleared"
+        "Vars data should be cleared"
     );
     // CI cache is now file-based, verify the cache file is cleared
     let ci_cache_dir = git_dir.join("wt").join("cache").join("ci-status");
@@ -705,7 +705,7 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mBRANCH MARKERS[39m
         [107m [0m (none)
 
-        [36mKV DATA[39m
+        [36mVARS[39m
         [107m [0m (none)
 
         [36mCI STATUS CACHE[39m
@@ -783,13 +783,13 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Set up KV data
+    // Set up vars data
     repo.git_command()
-        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
         .run()
         .unwrap();
     repo.git_command()
-        .args(["config", "worktrunk.state.feature.kv.port", "3000"])
+        .args(["config", "worktrunk.state.feature.vars.port", "3000"])
         .run()
         .unwrap();
 
@@ -851,9 +851,9 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Set up KV data
+    // Set up vars data
     repo.git_command()
-        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
         .run()
         .unwrap();
 
@@ -882,12 +882,12 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     assert_eq!(markers[0]["marker"], "🚧 WIP");
     assert_eq!(markers[0]["set_at"], TEST_EPOCH);
 
-    // Check KV data
-    let kv = json["kv"].as_array().unwrap();
-    assert_eq!(kv.len(), 1);
-    assert_eq!(kv[0]["branch"], "main");
-    assert_eq!(kv[0]["key"], "env");
-    assert_eq!(kv[0]["value"], "staging");
+    // Check vars data
+    let vars = json["vars"].as_array().unwrap();
+    assert_eq!(vars.len(), 1);
+    assert_eq!(vars[0]["branch"], "main");
+    assert_eq!(vars[0]["key"], "env");
+    assert_eq!(vars[0]["value"], "staging");
 
     // Check CI status
     let ci_status = json["ci_status"].as_array().unwrap();
@@ -1434,13 +1434,13 @@ fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
 }
 
 // ============================================================================
-// kv
+// vars
 // ============================================================================
 
 #[rstest]
-fn test_kv_set_and_get(repo: TestRepo) {
+fn test_vars_set_and_get(repo: TestRepo) {
     // Set a value
-    let output = wt_state_cmd(&repo, "kv", "set", &["env", "staging"])
+    let output = wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1448,20 +1448,22 @@ fn test_kv_set_and_get(repo: TestRepo) {
     assert!(stderr.contains("Set"), "Expected success message: {stderr}");
 
     // Get the value
-    let output = wt_state_cmd(&repo, "kv", "get", &["env"]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "staging");
 }
 
 #[rstest]
-fn test_kv_set_json_value(repo: TestRepo) {
+fn test_vars_set_json_value(repo: TestRepo) {
     let json = r#"{"port":3000,"debug":true}"#;
-    let output = wt_state_cmd(&repo, "kv", "set", &["config", json])
+    let output = wt_state_cmd(&repo, "vars", "set", &["config", json])
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let output = wt_state_cmd(&repo, "kv", "get", &["config"])
+    let output = wt_state_cmd(&repo, "vars", "get", &["config"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1469,8 +1471,8 @@ fn test_kv_set_json_value(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_kv_get_missing_key(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "kv", "get", &["nonexistent"])
+fn test_vars_get_missing_key(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "get", &["nonexistent"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1479,16 +1481,16 @@ fn test_kv_get_missing_key(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_kv_list(repo: TestRepo) {
+fn test_vars_list(repo: TestRepo) {
     // Set multiple values
-    wt_state_cmd(&repo, "kv", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "kv", "set", &["port", "3000"])
+    wt_state_cmd(&repo, "vars", "set", &["port", "3000"])
         .output()
         .unwrap();
 
-    let output = wt_state_cmd(&repo, "kv", "list", &[]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -1499,23 +1501,23 @@ fn test_kv_list(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_kv_list_empty(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "kv", "list", &[]).output().unwrap();
+fn test_vars_list_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No kv data"),
+        stderr.contains("No variables"),
         "Expected empty message: {stderr}"
     );
 }
 
 #[rstest]
-fn test_kv_clear_single_key(repo: TestRepo) {
+fn test_vars_clear_single_key(repo: TestRepo) {
     // Set and clear
-    wt_state_cmd(&repo, "kv", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
         .output()
         .unwrap();
-    let output = wt_state_cmd(&repo, "kv", "clear", &["env"])
+    let output = wt_state_cmd(&repo, "vars", "clear", &["env"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1526,21 +1528,23 @@ fn test_kv_clear_single_key(repo: TestRepo) {
     );
 
     // Verify it's gone
-    let output = wt_state_cmd(&repo, "kv", "get", &["env"]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
 
 #[rstest]
-fn test_kv_clear_all(repo: TestRepo) {
+fn test_vars_clear_all(repo: TestRepo) {
     // Set multiple values
-    wt_state_cmd(&repo, "kv", "set", &["env", "staging"])
+    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "kv", "set", &["port", "3000"])
+    wt_state_cmd(&repo, "vars", "set", &["port", "3000"])
         .output()
         .unwrap();
 
-    let output = wt_state_cmd(&repo, "kv", "clear", &["--all"])
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1551,14 +1555,14 @@ fn test_kv_clear_all(repo: TestRepo) {
     );
 
     // Verify all gone
-    let output = wt_state_cmd(&repo, "kv", "list", &[]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No kv data"));
+    assert!(stderr.contains("No variables"));
 }
 
 #[rstest]
-fn test_kv_invalid_key(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "kv", "set", &["foo.bar", "value"])
+fn test_vars_invalid_key(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["foo.bar", "value"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -1570,14 +1574,14 @@ fn test_kv_invalid_key(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_kv_branch_flag(repo: TestRepo) {
+fn test_vars_branch_flag(repo: TestRepo) {
     // Create a branch
     repo.run_git(&["branch", "feature"]);
 
-    // Set kv on a different branch
+    // Set vars on a different branch
     let output = wt_state_cmd(
         &repo,
-        "kv",
+        "vars",
         "set",
         &["env", "production", "--branch=feature"],
     )
@@ -1586,24 +1590,26 @@ fn test_kv_branch_flag(repo: TestRepo) {
     assert!(output.status.success());
 
     // Get from that branch
-    let output = wt_state_cmd(&repo, "kv", "get", &["env", "--branch=feature"])
+    let output = wt_state_cmd(&repo, "vars", "get", &["env", "--branch=feature"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "production");
 
     // Current branch should not have the value
-    let output = wt_state_cmd(&repo, "kv", "get", &["env"]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
 
 #[rstest]
-fn test_kv_value_with_spaces(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "kv", "set", &["note", "hello world foo"])
+fn test_vars_value_with_spaces(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["note", "hello world foo"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let output = wt_state_cmd(&repo, "kv", "get", &["note"])
+    let output = wt_state_cmd(&repo, "vars", "get", &["note"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1614,27 +1620,29 @@ fn test_kv_value_with_spaces(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_kv_overwrite(repo: TestRepo) {
-    wt_state_cmd(&repo, "kv", "set", &["env", "staging"])
+fn test_vars_overwrite(repo: TestRepo) {
+    wt_state_cmd(&repo, "vars", "set", &["env", "staging"])
         .output()
         .unwrap();
-    wt_state_cmd(&repo, "kv", "set", &["env", "production"])
+    wt_state_cmd(&repo, "vars", "set", &["env", "production"])
         .output()
         .unwrap();
 
-    let output = wt_state_cmd(&repo, "kv", "get", &["env"]).output().unwrap();
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "production");
 }
 
 #[rstest]
-fn test_kv_in_json_output(repo: TestRepo) {
-    // Set kv data
+fn test_vars_in_json_output(repo: TestRepo) {
+    // Set vars data
     repo.git_command()
-        .args(["config", "worktrunk.state.main.kv.env", "staging"])
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
         .run()
         .unwrap();
     repo.git_command()
-        .args(["config", "worktrunk.state.main.kv.port", "3000"])
+        .args(["config", "worktrunk.state.main.vars.port", "3000"])
         .run()
         .unwrap();
 
@@ -1649,13 +1657,13 @@ fn test_kv_in_json_output(repo: TestRepo) {
     assert!(!items.is_empty());
 
     let main_item = &items[0];
-    assert_eq!(main_item["kv"]["env"], "staging");
-    assert_eq!(main_item["kv"]["port"], "3000");
+    assert_eq!(main_item["vars"]["env"], "staging");
+    assert_eq!(main_item["vars"]["port"], "3000");
 }
 
 #[rstest]
-fn test_kv_absent_in_json_when_empty(repo: TestRepo) {
-    // No kv data set — kv field should be absent from JSON
+fn test_vars_absent_in_json_when_empty(repo: TestRepo) {
+    // No vars data set — vars field should be absent from JSON
     let output = repo
         .wt_command()
         .args(["list", "--format=json"])
@@ -1666,70 +1674,70 @@ fn test_kv_absent_in_json_when_empty(repo: TestRepo) {
     let items = json.as_array().unwrap();
     assert!(!items.is_empty());
 
-    // kv should not be present when empty (skip_serializing_if)
-    assert!(items[0].get("kv").is_none());
+    // vars should not be present when empty (skip_serializing_if)
+    assert!(items[0].get("vars").is_none());
 }
 
 #[rstest]
-fn test_kv_clear_nonexistent_key(repo: TestRepo) {
+fn test_vars_clear_nonexistent_key(repo: TestRepo) {
     // Clear a key that was never set
-    let output = wt_state_cmd(&repo, "kv", "clear", &["nonexistent"])
+    let output = wt_state_cmd(&repo, "vars", "clear", &["nonexistent"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No kv key"),
-        "Expected 'No kv key' message: {stderr}"
+        stderr.contains("No variable"),
+        "Expected 'No variable' message: {stderr}"
     );
 }
 
 #[rstest]
-fn test_kv_clear_all_empty(repo: TestRepo) {
-    // Clear --all when no kv data exists
-    let output = wt_state_cmd(&repo, "kv", "clear", &["--all"])
+fn test_vars_clear_all_empty(repo: TestRepo) {
+    // Clear --all when no vars data exists
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No kv data"),
-        "Expected 'No kv data' message: {stderr}"
+        stderr.contains("No variables"),
+        "Expected 'No variables' message: {stderr}"
     );
 }
 
 #[rstest]
-fn test_kv_list_with_branch_flag(repo: TestRepo) {
-    // Create a branch and set kv data
+fn test_vars_list_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set vars data
     repo.run_git(&["branch", "feature"]);
     repo.git_command()
-        .args(["config", "worktrunk.state.feature.kv.env", "production"])
+        .args(["config", "worktrunk.state.feature.vars.env", "production"])
         .run()
         .unwrap();
 
-    // List kv for specific branch
-    let output = wt_state_cmd(&repo, "kv", "list", &["--branch=feature"])
+    // List vars for specific branch
+    let output = wt_state_cmd(&repo, "vars", "list", &["--branch=feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("env\tproduction"),
-        "Expected kv entry: {stdout}"
+        "Expected vars entry: {stdout}"
     );
 }
 
 #[rstest]
-fn test_kv_clear_with_branch_flag(repo: TestRepo) {
-    // Create a branch and set kv data
+fn test_vars_clear_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set vars data
     repo.run_git(&["branch", "feature"]);
     repo.git_command()
-        .args(["config", "worktrunk.state.feature.kv.env", "production"])
+        .args(["config", "worktrunk.state.feature.vars.env", "production"])
         .run()
         .unwrap();
 
-    // Clear kv for specific branch
-    let output = wt_state_cmd(&repo, "kv", "clear", &["env", "--branch=feature"])
+    // Clear vars for specific branch
+    let output = wt_state_cmd(&repo, "vars", "clear", &["env", "--branch=feature"])
         .output()
         .unwrap();
     assert!(output.status.success());

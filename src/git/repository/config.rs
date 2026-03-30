@@ -58,17 +58,17 @@ impl Repository {
         branch.and_then(|branch| self.branch_marker(branch))
     }
 
-    /// Get all kv entries for a branch, sorted by key name.
+    /// Get all vars entries for a branch, sorted by key name.
     ///
     /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
-    /// via `{{ kv.key }}`.
-    pub fn kv_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
-        let pattern = format!(r"^worktrunk\.state\.{branch}\.kv\.");
+    /// via `{{ vars.key }}`.
+    pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
+        let pattern = format!(r"^worktrunk\.state\.{branch}\.vars\.");
         let output = self
             .run_command(&["config", "--get-regexp", &pattern])
             .unwrap_or_default();
 
-        let prefix = format!("worktrunk.state.{branch}.kv.");
+        let prefix = format!("worktrunk.state.{branch}.vars.");
         output
             .lines()
             .filter_map(|line| {
@@ -79,15 +79,15 @@ impl Repository {
             .collect()
     }
 
-    /// Get all kv entries across all branches in a single git call.
+    /// Get all vars entries across all branches in a single git call.
     ///
     /// Returns a map of branch → (key → value). Uses one `git config --get-regexp`
     /// instead of N per-branch calls, avoiding N+1 subprocess spawns in `wt list --format=json`.
-    pub fn all_kv_entries(
+    pub fn all_vars_entries(
         &self,
     ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
         let output = self
-            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.kv\."])
+            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.vars\."])
             .unwrap_or_default();
 
         let mut result: std::collections::HashMap<
@@ -101,7 +101,7 @@ impl Repository {
             let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
                 continue;
             };
-            let Some((branch, key)) = rest.split_once(".kv.") else {
+            let Some((branch, key)) = rest.split_once(".vars.") else {
                 continue;
             };
             result

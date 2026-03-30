@@ -303,15 +303,15 @@ fn run_json() -> Result<()> {
     // Populate computed fields (parallel git operations)
     list::populate_item(&repo, &mut item, options)?;
 
-    // Convert to JSON format — single-branch lookup (not all_kv_entries)
-    let mut all_kv = HashMap::new();
+    // Convert to JSON format — single-branch lookup (not all_vars_entries)
+    let mut all_vars = HashMap::new();
     if let Some(branch) = &item.branch {
-        let entries = repo.kv_entries(branch);
+        let entries = repo.vars_entries(branch);
         if !entries.is_empty() {
-            all_kv.insert(branch.clone(), entries);
+            all_vars.insert(branch.clone(), entries);
         }
     }
-    let json_item = json_output::JsonItem::from_list_item(&item, &mut all_kv);
+    let json_item = json_output::JsonItem::from_list_item(&item, &mut all_vars);
 
     // Output as JSON array (consistent with wt list --format=json)
     let output = serde_json::to_string_pretty(&[json_item])?;

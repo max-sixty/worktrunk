@@ -118,7 +118,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | Remote URL |
 | `{{ hook_type }}` | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ kv.<key> }}` | Per-branch kv data from `wt config state kv` |
+| `{{ vars.<key> }}` | Per-branch variables from `wt config state vars` |
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
@@ -130,7 +130,7 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 
 Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
-Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `kv` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
 [pre-start]
@@ -138,11 +138,11 @@ Some variables are conditional: `upstream` requires remote tracking; `base`/`tar
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
 
-Kv data uses dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ kv.config.port }}` works when the value is `{"port": 3000}`:
+Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
 
 ```toml
 [post-start]
-dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.config.port | default('3000') }}"
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
 ## Worktrunk filters

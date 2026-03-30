@@ -13,14 +13,18 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -57,7 +61,7 @@ Shows all stored state including:
 - [1mDefault branch[0m: Cached result of querying remote for default branch
 - [1mPrevious branch[0m: Previous branch for [2mwt switch -[0m
 - [1mBranch markers[0m: User-defined branch notes
-- [1mKV data[0m: Arbitrary key-value data per branch
+- [1mVars[0m: Custom variables per branch
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Background operation logs

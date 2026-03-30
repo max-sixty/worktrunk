@@ -11,7 +11,7 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [36mBRANCH MARKERS[39m
 [107m [0m (none)
 
-[36mKV DATA[39m
+[36mVARS[39m
 [107m [0m (none)
 
 [36mCI STATUS CACHE[39m

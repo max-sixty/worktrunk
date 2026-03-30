@@ -586,9 +586,9 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
-    // Clear all kv data
-    let kv_cleared = clear_all_kv(&repo)?;
-    if kv_cleared > 0 {
+    // Clear all vars data
+    let vars_cleared = clear_all_vars(&repo)?;
+    if vars_cleared > 0 {
         cleared_any = true;
     }
 
@@ -719,9 +719,9 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
             (vec![], vec![])
         };
 
-    // Get kv data (all branches) — collect into BTreeMap for sorted output
-    let all_kv: std::collections::BTreeMap<_, _> = repo.all_kv_entries().into_iter().collect();
-    let kv_data: Vec<serde_json::Value> = all_kv
+    // Get vars data (all branches) — collect into BTreeMap for sorted output
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
+    let vars_data: Vec<serde_json::Value> = all_vars
         .into_iter()
         .flat_map(|(branch, entries)| {
             entries.into_iter().map(move |(key, value)| {
@@ -742,7 +742,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
-        "kv": kv_data,
+        "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
         "hints": hints
@@ -793,16 +793,16 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show kv data
-    writeln!(out, "{}", format_heading("KV DATA", None))?;
-    let all_kv: std::collections::BTreeMap<_, _> = repo.all_kv_entries().into_iter().collect();
+    // Show vars data
+    writeln!(out, "{}", format_heading("VARS", None))?;
+    let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
 
-    if all_kv.is_empty() {
+    if all_vars.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         let mut table = String::from("| Branch | Key | Value |\n");
         table.push_str("|--------|-----|-------|\n");
-        for (branch, entries) in &all_kv {
+        for (branch, entries) in &all_vars {
             for (key, value) in entries {
                 // Truncate long values for display
                 let display_value = if value.len() > 40 {
@@ -881,10 +881,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ==================== KV Operations ====================
+// ==================== Vars Operations ====================
 
-/// Validate a kv key name: letters, digits, hyphens, underscores only.
-fn validate_kv_key(key: &str) -> anyhow::Result<()> {
+/// Validate a vars key name: letters, digits, hyphens, underscores only.
+fn validate_vars_key(key: &str) -> anyhow::Result<()> {
     if key.is_empty() {
         anyhow::bail!("Key cannot be empty");
     }
@@ -899,32 +899,32 @@ fn validate_kv_key(key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle kv get
-pub fn handle_kv_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
-    validate_kv_key(key)?;
+/// Handle vars get
+pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
-        None => repo.require_current_branch("get kv value for current branch")?,
+        None => repo.require_current_branch("get variable for current branch")?,
     };
 
-    let config_key = format!("worktrunk.state.{branch_name}.kv.{key}");
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     if let Some(value) = repo.config_value(&config_key)? {
         println!("{value}");
     }
     Ok(())
 }
 
-/// Handle kv set
-pub fn handle_kv_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
-    validate_kv_key(key)?;
+/// Handle vars set
+pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow::Result<()> {
+    validate_vars_key(key)?;
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
-        None => repo.require_current_branch("set kv value for current branch")?,
+        None => repo.require_current_branch("set variable for current branch")?,
     };
 
-    let config_key = format!("worktrunk.state.{branch_name}.kv.{key}");
+    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
     repo.run_command(&["config", &config_key, value])?;
 
     eprintln!(
@@ -934,19 +934,19 @@ pub fn handle_kv_set(key: &str, value: &str, branch: Option<String>) -> anyhow::
     Ok(())
 }
 
-/// Handle kv list
-pub fn handle_kv_list(branch: Option<String>) -> anyhow::Result<()> {
+/// Handle vars list
+pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
-        None => repo.require_current_branch("list kv values for current branch")?,
+        None => repo.require_current_branch("list variables for current branch")?,
     };
 
-    let entries: Vec<_> = repo.kv_entries(&branch_name).into_iter().collect();
+    let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
     if entries.is_empty() {
         eprintln!(
             "{}",
-            info_message(cformat!("No kv data for <bold>{branch_name}</>"))
+            info_message(cformat!("No variables for <bold>{branch_name}</>"))
         );
     } else {
         for (key, value) in &entries {
@@ -956,12 +956,16 @@ pub fn handle_kv_list(branch: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle kv clear
-pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> anyhow::Result<()> {
+/// Handle vars clear
+pub fn handle_vars_clear(
+    key: Option<&str>,
+    all: bool,
+    branch: Option<String>,
+) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
-        None => repo.require_current_branch("clear kv value for current branch")?,
+        None => repo.require_current_branch("clear variable for current branch")?,
     };
 
     if !all && key.is_none() {
@@ -969,30 +973,30 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
     }
 
     if all {
-        let entries: Vec<_> = repo.kv_entries(&branch_name).into_iter().collect();
+        let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
         if entries.is_empty() {
             eprintln!(
                 "{}",
-                info_message(cformat!("No kv data for <bold>{branch_name}</>"))
+                info_message(cformat!("No variables for <bold>{branch_name}</>"))
             );
         } else {
             let count = entries.len();
             for (key, _) in entries {
-                let config_key = format!("worktrunk.state.{branch_name}.kv.{key}");
+                let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
                 let _ = repo.run_command(&["config", "--unset", &config_key]);
             }
             eprintln!(
                 "{}",
                 success_message(cformat!(
-                    "Cleared <bold>{count}</> kv entr{} for <bold>{branch_name}</>",
-                    if count == 1 { "y" } else { "ies" }
+                    "Cleared <bold>{count}</> variable{} for <bold>{branch_name}</>",
+                    if count == 1 { "" } else { "s" }
                 ))
             );
         }
     } else {
         let key = key.expect("key required when --all not set");
-        validate_kv_key(key)?;
-        let config_key = format!("worktrunk.state.{branch_name}.kv.{key}");
+        validate_vars_key(key)?;
+        let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
         if repo
             .run_command(&["config", "--unset", &config_key])
             .is_ok()
@@ -1007,7 +1011,7 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
             eprintln!(
                 "{}",
                 info_message(cformat!(
-                    "No kv key <bold>{key}</> for <bold>{branch_name}</>"
+                    "No variable <bold>{key}</> for <bold>{branch_name}</>"
                 ))
             );
         }
@@ -1015,13 +1019,13 @@ pub fn handle_kv_clear(key: Option<&str>, all: bool, branch: Option<String>) -> 
     Ok(())
 }
 
-/// Clear all kv entries across all branches (used by handle_state_clear_all).
-fn clear_all_kv(repo: &Repository) -> anyhow::Result<usize> {
-    let all_kv = repo.all_kv_entries();
+/// Clear all vars entries across all branches (used by handle_state_clear_all).
+fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
+    let all_vars = repo.all_vars_entries();
     let mut cleared = 0;
-    for (branch, entries) in &all_kv {
+    for (branch, entries) in &all_vars {
         for key in entries.keys() {
-            let config_key = format!("worktrunk.state.{branch}.kv.{key}");
+            let config_key = format!("worktrunk.state.{branch}.vars.{key}");
             repo.run_command(&["config", "--unset", &config_key])?;
             cleared += 1;
         }

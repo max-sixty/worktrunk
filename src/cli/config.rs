@@ -271,7 +271,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
-- **kv**: [experimental] Arbitrary key-value data per branch
+- **vars**: [experimental] Custom variables per branch
 - **logs**: Background operation logs
 
 ## Examples
@@ -293,7 +293,7 @@ $ wt config state marker set "🚧 WIP"
 
 Store arbitrary data:
 ```console
-wt config state kv set env staging
+wt config state vars set env staging
 ```
 
 Clear all CI status cache:
@@ -313,7 +313,7 @@ $ wt config state clear
 <!-- subdoc: default-branch -->
 <!-- subdoc: ci-status -->
 <!-- subdoc: marker -->
-<!-- subdoc: kv -->
+<!-- subdoc: vars -->
 <!-- subdoc: logs -->"#
     )]
     State {
@@ -520,64 +520,64 @@ $ wt config state hints clear NAME   # re-show specific hint
         action: Option<HintsAction>,
     },
 
-    /// \[experimental\] Arbitrary key-value data per branch
+    /// \[experimental\] Custom variables per branch
     #[command(
-        name = "kv",
-        after_long_help = r#"Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
+        name = "vars",
+        after_long_help = r#"Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
 ## Examples
 
 Set and get values:
 ```console
-wt config state kv set env staging
-wt config state kv get env
+wt config state vars set env staging
+wt config state vars get env
 ```
 
 Store JSON:
 ```console
-wt config state kv set config '{"port": 3000, "debug": true}'
+wt config state vars set config '{"port": 3000, "debug": true}'
 ```
 
 List all keys:
 ```console
-wt config state kv list
+wt config state vars list
 ```
 
 Operate on a different branch:
 ```console
-wt config state kv set env production --branch=main
+wt config state vars set env production --branch=main
 ```
 
 ## Template access
 
-Kv data is available in hook templates as `{{ kv.<key> }}`. Use the `default` filter for keys that may not be set:
+Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
 [post-start]
-dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.port | default('3000') }}"
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
 ```
 
 JSON object and array values support dot access:
 
 ```console
-wt config state kv set config '{"port": 3000, "debug": true}'
+wt config state vars set config '{"port": 3000, "debug": true}'
 ```
 ```toml
 [post-start]
-dev = "npm start -- --port {{ kv.config.port }}"
+dev = "npm start -- --port {{ vars.config.port }}"
 ```
 
 ## Storage
 
-Stored in git config as `worktrunk.state.<branch>.kv.<key>`.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`.
 
 ## Key names
 
 Keys must contain only letters, digits, hyphens, and underscores. Dots are not allowed (they conflict with git config's section separator)."#
     )]
-    Kv {
+    Vars {
         #[command(subcommand)]
-        action: KvAction,
+        action: VarsAction,
     },
 
     /// Get all stored state
@@ -586,7 +586,7 @@ Keys must contain only letters, digits, hyphens, and underscores. Dots are not a
 - **Default branch**: Cached result of querying remote for default branch
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
-- **KV data**: Arbitrary key-value data per branch
+- **Vars**: Custom variables per branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
 - **Hints**: One-time hints that have been shown
 - **Log files**: Background operation logs
@@ -604,7 +604,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Default branch cache
 - Previous branch
 - All branch markers
-- All kv data
+- All variables
 - All CI status cache
 - All hints
 - All log files
@@ -890,18 +890,18 @@ $ wt config state hints clear worktree-path
 }
 
 #[derive(Subcommand)]
-pub enum KvAction {
+pub enum VarsAction {
     /// Get a value
     #[command(after_long_help = r#"## Examples
 
 Get a value for the current branch:
 ```console
-wt config state kv get env
+wt config state vars get env
 ```
 
 Get a value for a specific branch:
 ```console
-wt config state kv get env --branch=feature
+wt config state vars get env --branch=feature
 ```"#)]
     Get {
         /// Key name
@@ -917,17 +917,17 @@ wt config state kv get env --branch=feature
 
 Set a plain string:
 ```console
-wt config state kv set env staging
+wt config state vars set env staging
 ```
 
 Set JSON:
 ```console
-wt config state kv set config '{"port": 3000}'
+wt config state vars set config '{"port": 3000}'
 ```
 
 Set for a specific branch:
 ```console
-wt config state kv set env production --branch=main
+wt config state vars set env production --branch=main
 ```"#)]
     Set {
         /// Key name
@@ -946,12 +946,12 @@ wt config state kv set env production --branch=main
 
 List keys for current branch:
 ```console
-wt config state kv list
+wt config state vars list
 ```
 
 List keys for a specific branch:
 ```console
-wt config state kv list --branch=feature
+wt config state vars list --branch=feature
 ```"#)]
     List {
         /// Target branch (defaults to current)
@@ -964,17 +964,17 @@ wt config state kv list --branch=feature
 
 Clear a specific key:
 ```console
-wt config state kv clear env
+wt config state vars clear env
 ```
 
 Clear all keys for current branch:
 ```console
-wt config state kv clear --all
+wt config state vars clear --all
 ```
 
 Clear all keys for a specific branch:
 ```console
-wt config state kv clear env --branch=feature
+wt config state vars clear env --branch=feature
 ```"#)]
     Clear {
         /// Key to clear (required unless --all)

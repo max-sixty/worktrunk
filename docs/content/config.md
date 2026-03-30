@@ -516,7 +516,7 @@ Use `wt config show` to view file-based configuration.
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
-- **kv**: <span class="badge-experimental"></span> Arbitrary key-value data per branch
+- **vars**: <span class="badge-experimental"></span> Custom variables per branch
 - **logs**: Background operation logs
 
 ### Examples
@@ -532,7 +532,7 @@ Set a marker for current branch:
 
 Store arbitrary data:
 ```bash
-wt config state kv set env staging
+wt config state vars set env staging
 ```
 
 Clear all CI status cache:
@@ -558,7 +558,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>marker</span></b>           Branch markers
   <b><span class=c>logs</span></b>             Background operation logs
   <b><span class=c>hints</span></b>            One-time hints shown in this repo
-  <b><span class=c>kv</span></b>               [experimental] Arbitrary key-value data per branch
+  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
   <b><span class=c>get</span></b>              Get all stored state
   <b><span class=c>clear</span></b>            Clear all stored state
 
@@ -742,59 +742,59 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
           Verbose output (-v: hooks, templates; -vv: debug report)
 {% end %}
 
-## wt config state kv
+## wt config state vars
 
 <span class="badge-experimental"></span>
 
-Arbitrary key-value data per branch.
+Custom variables per branch.
 
-Store arbitrary key-value data per branch. Values are stored as-is — plain strings or JSON.
+Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
 ### Examples
 
 Set and get values:
 ```bash
-wt config state kv set env staging
-wt config state kv get env
+wt config state vars set env staging
+wt config state vars get env
 ```
 
 Store JSON:
 ```bash
-wt config state kv set config '{"port": 3000, "debug": true}'
+wt config state vars set config '{"port": 3000, "debug": true}'
 ```
 
 List all keys:
 ```bash
-wt config state kv list
+wt config state vars list
 ```
 
 Operate on a different branch:
 ```bash
-wt config state kv set env production --branch=main
+wt config state vars set env production --branch=main
 ```
 
 ### Template access
 
-Kv data is available in hook templates as `{{ kv.<key> }}`. Use the `default` filter for keys that may not be set:
+Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
 [post-start]
-dev = "ENV={{ kv.env | default('development') }} npm start -- --port {{ kv.port | default('3000') }}"
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
 ```
 
 JSON object and array values support dot access:
 
 ```bash
-wt config state kv set config '{"port": 3000, "debug": true}'
+wt config state vars set config '{"port": 3000, "debug": true}'
 ```
 ```toml
 [post-start]
-dev = "npm start -- --port {{ kv.config.port }}"
+dev = "npm start -- --port {{ vars.config.port }}"
 ```
 
 ### Storage
 
-Stored in git config as `worktrunk.state.<branch>.kv.<key>`.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`.
 
 ### Key names
 
@@ -803,9 +803,9 @@ Keys must contain only letters, digits, hyphens, and underscores. Dots are not a
 ### Command reference
 
 {% terminal() %}
-wt config state kv - [experimental] Arbitrary key-value data per branch
+wt config state vars - [experimental] Custom variables per branch
 
-Usage: <b><span class=c>wt config state kv</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>    Get a value
