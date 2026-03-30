@@ -1894,6 +1894,45 @@ fn test_step_commit_branch_flag_nonexistent(repo: TestRepo) {
     });
 }
 
+#[rstest]
+fn test_step_commit_detached_head(mut repo: TestRepo) {
+    // Detach HEAD in a worktree, then commit — should work since commit
+    // only needs a worktree path, not a branch name.
+    let feature_wt = repo.add_worktree("feature");
+
+    // Detach HEAD in the feature worktree
+    repo.detach_head_in_worktree("feature");
+
+    // Create a file to commit
+    fs::write(feature_wt.join("detached_file.txt"), "detached content")
+        .expect("Failed to write file");
+
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("commit").args(["--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'chore: commit in detached state'",
+        );
+        cmd
+    });
+
+    // Verify the commit actually landed
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("chore: commit in detached state"),
+        "Commit should appear in detached worktree, got: {log_output}"
+    );
+}
+
 // =============================================================================
 // Error message snapshot tests
 // =============================================================================
