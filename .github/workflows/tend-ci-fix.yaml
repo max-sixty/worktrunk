@@ -5,7 +5,7 @@ on:
   workflow_run:
     workflows: ["ci", "publish-docs"]
     types: [completed]
-    branches: [main]
+    branches: ["main"]
 
 jobs:
   fix-ci:
@@ -20,7 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: main
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
