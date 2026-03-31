@@ -333,27 +333,33 @@ server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ bran
 
 ## Databases
 
-Each worktree can have its own database. Docker containers get unique names and ports, and the connection string is stored in `vars` for use outside hooks:
+Each worktree can have its own database. A pipeline sets up the container name and connection string as vars, then later steps and hooks reference them:
 
 ```toml
-[post-start]
-db = """
-docker run -d --rm \
-  --name {{ repo }}-{{ branch | sanitize }}-postgres \
-  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ branch | sanitize_db }} \
-  -e POSTGRES_PASSWORD=dev \
-  postgres:16
-"""
-db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
+post-start = [
+  """
+  wt config state vars set \
+    container='{{ repo }}-{{ branch | sanitize }}-postgres' \
+    port='{{ ('db-' ~ branch) | hash_port }}' \
+    db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+  """,
+  { db = """
+  docker run -d --rm \
+    --name {{ vars.container }} \
+    -p {{ vars.port }}:5432 \
+    -e POSTGRES_DB={{ branch | sanitize_db }} \
+    -e POSTGRES_PASSWORD=dev \
+    postgres:16
+  """},
+]
 
 [post-remove]
-db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+The first pipeline step derives names and ports from the branch name and stores them as vars. The second step uses `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. The `post-remove` hook reads the same vars.
 
-The connection string is now accessible anywhere — not just in hooks:
+The connection string is accessible anywhere — not just in hooks:
 
 {{ terminal(cmd="DATABASE_URL=$(wt config state vars get db-url) npm start") }}
 

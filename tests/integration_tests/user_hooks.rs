@@ -2364,3 +2364,55 @@ fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
         "Later pipeline steps should NOT run after serial step failure"
     );
 }
+
+#[rstest]
+fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
+    // Foreground mode exercises the in-process re-expansion path in
+    // run_hook_with_filter. Pre-set a var, then run a pipeline whose
+    // step references it via {{ vars.container_name }}.
+    repo.write_test_config(
+        r#"[post-start]
+db = "echo {{ vars.name }} > lazy_expanded.txt"
+"#,
+    );
+
+    // Pre-set the var that the hook template references
+    let set_output = crate::common::wt_command()
+        .current_dir(repo.root_path())
+        .args(["config", "state", "vars", "set", "name=main-postgres"])
+        .output()
+        .expect("Failed to set var");
+    assert!(
+        set_output.status.success(),
+        "vars set should succeed: {}",
+        String::from_utf8_lossy(&set_output.stderr)
+    );
+
+    // Run the hook in foreground on the main worktree
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--foreground"]);
+
+    let output = cmd.output().expect("Failed to run foreground hook");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Foreground hook should succeed.\nstdout: {}\nstderr: {stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    // With foreground, marker file should exist immediately
+    let marker_file = repo.root_path().join("lazy_expanded.txt");
+    assert!(
+        marker_file.exists(),
+        "Foreground lazy expansion should create marker file"
+    );
+
+    let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
+    assert_eq!(
+        content, "main-postgres",
+        "Lazy expansion should resolve pre-set var"
+    );
+}

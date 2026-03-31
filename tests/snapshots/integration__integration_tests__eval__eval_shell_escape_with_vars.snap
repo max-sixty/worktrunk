@@ -1,12 +1,12 @@
 ---
-source: tests/integration_tests/switch.rs
-assertion_line: 74
+source: tests/integration_tests/eval.rs
 info:
   program: wt
   args:
-    - switch
-    - "--create"
-    - feature-progress
+    - step
+    - eval
+    - "--shell-escape"
+    - "docker run --name {{ vars.name }}"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -32,7 +32,7 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
-    WORKTRUNK_TEST_DELAYED_STREAM_MS: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -42,12 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+docker run --name 'my container'
 
 ----- stderr -----
-[36m◎[39m [36mCreating worktree for [1mfeature-progress[22m...[39m
-Preparing worktree (new branch 'feature-progress')
-HEAD is now at 05a4a45 Initial commit
-[32m✓[39m [32mCreated branch [1mfeature-progress[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-progress[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
