@@ -61,7 +61,7 @@ test = "npm test"
 <!-- USER_CONFIG_START -->
 # User Configuration
 
-Create with `wt config create`.
+Create with `wt config create`. Values shown are defaults unless noted otherwise.
 
 Location:
 
@@ -82,21 +82,27 @@ Controls where new worktrees are created.
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
+Default — sibling directory (`~/code/myproject.feature-auth`):
+
 ```toml
-# Default — sibling directory
-# Creates: ~/code/myproject.feature-auth
-# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
+```
 
-# Inside the repository
-# Creates: ~/code/myproject/.worktrees/feature-auth
+Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
+
+```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
+```
 
-# Centralized worktrees directory
-# Creates: ~/worktrees/myproject/feature-auth
+Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
+
+```toml
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+```
 
-# Bare repository (git clone --bare <url> myproject/.git)
-# Creates: ~/code/myproject/feature-auth
+Bare repository (`~/code/myproject/feature-auth`):
+
+```toml
 worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 ```
 
@@ -109,36 +115,36 @@ Generate commit messages automatically during merge. Requires an external CLI to
 ### Claude Code
 
 ```toml
-# [commit.generation]
-# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+[commit.generation]
+command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 ```
 
 ### Codex
 
 ```toml
-# [commit.generation]
-# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+[commit.generation]
+command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
 ### opencode
 
 ```toml
-# [commit.generation]
-# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+[commit.generation]
+command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 ```
 
 ### llm
 
 ```toml
-# [commit.generation]
-# command = "llm -m claude-haiku-4.5"
+[commit.generation]
+command = "llm -m claude-haiku-4.5"
 ```
 
 ### aichat
 
 ```toml
-# [commit.generation]
-# command = "aichat -m claude:claude-haiku-4.5"
+[commit.generation]
+command = "aichat -m claude:claude-haiku-4.5"
 ```
 
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -188,22 +194,18 @@ no-ff = false      # Create a merge commit even when fast-forward is possible (-
 
 ```toml
 [switch]
-no-cd = true       # Skip directory change after switching (--cd to override)
+no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)
 
 [switch.picker]
-# Pager command for diff preview (overrides git's core.pager)
-# pager = "delta --paging=never"
-
-# Wall-clock budget (ms) for picker data collection (default: 500)
-# Tasks still running when the budget expires are abandoned; 0 disables
-# timeout-ms = 500
+pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables
 ```
 
 ### Step
 
 ```toml
 [step.copy-ignored]
-exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude
+exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 ```
 
 Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.

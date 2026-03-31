@@ -975,8 +975,8 @@ fn sync_readme_markers(
 ///
 /// The generated file (`dev/config.example.toml`) is the entire source with every line
 /// `# ` prefixed and code fence markers stripped. This creates a fully-commented config
-/// file that serves as inline documentation — users read through, find what they want,
-/// and uncomment the relevant `key = value` line.
+/// file that serves as inline documentation. Code blocks show default values (single `#`
+/// prefix in the output); users uncomment the relevant `key = value` line to customize.
 ///
 /// # Transform Rules
 ///
@@ -1142,17 +1142,17 @@ fn test_config_docs_include_all_sections() {
 }
 
 /// Verify that LLM tool commands in docs/content/llm-commits.md match
-/// the double-commented examples in config.example.toml (the single source of truth).
+/// the examples in config.example.toml (the single source of truth).
 #[test]
 fn test_llm_docs_commands_match_config_example() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
     let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
 
-    // Extract commands from config example: "# # command = ..." lines
+    // Extract commands from config example: "# command = ..." lines
     let config_commands: Vec<String> = config_example
         .lines()
-        .filter_map(|line| line.strip_prefix("# # "))
+        .filter_map(|line| line.strip_prefix("# "))
         .filter(|line| line.starts_with("command = "))
         .filter_map(|line| {
             let table: toml::Table = toml::from_str(line).ok()?;
@@ -1187,7 +1187,7 @@ fn test_llm_docs_commands_match_config_example() {
 }
 
 /// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
-/// the double-commented examples in config.example.toml (the single source of truth).
+/// the examples in config.example.toml (the single source of truth).
 /// Only compares tools present in both files — either side may have tools the other lacks.
 #[test]
 fn test_taskfile_llm_commands_match_config_example() {
@@ -1196,13 +1196,13 @@ fn test_taskfile_llm_commands_match_config_example() {
     let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
 
     // Extract tool -> command from config example using h3 headings for tool names
-    // e.g. "# ### Claude Code" heading followed by '# # command = "..."' line
+    // e.g. "# ### Claude Code" heading followed by '# command = "..."' line
     let mut config_commands = std::collections::HashMap::new();
     let mut current_tool: Option<String> = None;
     for line in config_example.lines() {
         if let Some(heading) = line.strip_prefix("# ### ") {
             current_tool = heading.split_whitespace().next().map(|s| s.to_lowercase());
-        } else if let Some(cmd_line) = line.strip_prefix("# # ")
+        } else if let Some(cmd_line) = line.strip_prefix("# ")
             && cmd_line.starts_with("command = ")
             && let Some(ref tool) = current_tool
             && let Ok(table) = toml::from_str::<toml::Table>(cmd_line)
