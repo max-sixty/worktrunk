@@ -1,110 +1,54 @@
-# Worktrunk Project Configuration
-# Copy to: <repo>/.config/wt.toml
+# # Project Configuration
 #
-# Project-specific hooks that run automatically during worktree operations.
-# Check this file into git to share hooks across all developers.
-
-# ============================================================================
-# Hook Formats
-# ============================================================================
-# All hooks support two formats:
+# Create with `wt config create --project`.
 #
-# Single command:
-#   pre-start = "npm install"
+# Location: `.config/wt.toml` (checked into version control and shared with the team).
 #
-# Named table (multiple commands):
-#   [pre-start]
-#   deps = "npm install"
-#   build = "npm run build"
+# ## Hooks
 #
-# Named commands appear in output, making it easier to identify failures.
-
-# ============================================================================
-# Template Variables — see https://worktrunk.dev/hook/#template-variables
-# ============================================================================
-# Common variables:
-#   {{ repo }}               - Repository directory name (e.g., "myproject")
-#   {{ branch }}             - Branch name (e.g., "feature/auth")
-#   {{ worktree_path }}      - Absolute path to worktree
-#   {{ primary_worktree_path }} - Main worktree (or default branch worktree for bare repos)
-#   {{ default_branch }}     - Default branch name (e.g., "main")
-#   {{ target }}             - Target branch (merge hooks only)
+# See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:
 #
-# Filters:
-#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")
-#   {{ branch | hash_port }}    - Deterministic port 10000-19999
-
-# ============================================================================
-# Hooks
-# ============================================================================
-
-# Pre-Start: Runs after worktree creation, BLOCKS until complete
-# Use for: installing dependencies, setting up databases, copying configs
+# # Single command
+# pre-start = "npm ci"
 #
-# [pre-start]
-# deps = "npm ci"
-# env = "cp .env.example .env"
-
-# Post-Start: Runs in BACKGROUND after worktree creation (parallel)
-# Use for: dev servers, file watchers, background builds
-# Output logged to .git/wt/logs/{branch}-project-post-start-{name}.log
-#
-# [post-start]
-# server = "npm run dev -- --port {{ branch | hash_port }}"
-# watch = "npm run watch"
-
-# Post-Switch: Runs in BACKGROUND after every switch (parallel)
-# Use for: terminal tab naming, tmux window titles, IDE notifications
-#
-# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"
-
-# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)
-# Use for: formatters, linters, quick checks
-#
-# [pre-commit]
-# format = "npm run format:check"
-# lint = "npm run lint"
-
-# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)
-# Use for: tests, build verification
-#
+# # Multiple named commands (concurrent for post-*, sequential for pre-*)
 # [pre-merge]
 # test = "npm test"
 # build = "npm run build"
-
-# Post-Merge: Runs after successful merge, BLOCKS
-# Use for: deployment, notifications
 #
-# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"
-
-# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)
-# Use for: cleanup, stopping services
+# # Pipeline — list of maps, run in order (each map concurrent)
+# post-start = [
+#     { install = "npm ci" },
+#     { build = "npm run build", server = "npm run dev" }
+# ]
 #
-# pre-remove = "docker compose down"
-
-# ============================================================================
-# Aliases (experimental) — run with `wt step <name>`
-# ============================================================================
-# Command templates that support the same variables as hooks.
-# Project-config aliases require command approval on first run.
+# ## Dev server URL
+#
+# # URL column in wt list (dimmed when port not listening)
+# [list]
+# url = "http://localhost:{{ branch | hash_port }}"
+#
+# ## Forge platform override
+#
+# # Override platform detection for SSH aliases or self-hosted instances
+# [forge]
+# platform = "github"  # or "gitlab"
+# # hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
+#
+# ## Copy-ignored excludes
+#
+# # Add more gitignored excludes for wt step copy-ignored
+# [step.copy-ignored]
+# exclude = [".cache/", ".turbo/"]
+#
+# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+#
+# ## Aliases
+#
+# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.
 #
 # [aliases]
 # deploy = "make deploy BRANCH={{ branch }}"
 # url = "echo http://localhost:{{ branch | hash_port }}"
-
-# ============================================================================
-# Dev Server URL (shown in `wt list`)
-# ============================================================================
-# [list]
-# url = "http://localhost:{{ branch | hash_port }}"
-
-# ============================================================================
-# Forge (GitHub/GitLab) Settings
-# ============================================================================
-# Override platform detection for SSH host aliases or custom domains.
-# Set hostname for GitHub Enterprise or self-hosted GitLab API calls.
 #
-# [forge]
-# platform = "github"              # or "gitlab"
-# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
+# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#aliases) `[aliases]` section instead.

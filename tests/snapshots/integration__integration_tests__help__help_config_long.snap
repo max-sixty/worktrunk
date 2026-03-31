@@ -343,34 +343,60 @@ Default template:
 [107m [0m [2m[32m</diff>[0m
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
-
 [32mPROJECT CONFIGURATION[0m
 
-Project config ([2m.config/wt.toml[0m) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with [2mwt config create --project[0m.
+Create with [2mwt config create --project[0m.
 
-See [2mwt hook[0m for hook types, execution order, template variables, and examples.
+Location: [2m.config/wt.toml[0m (checked into version control and shared with the team).
 
-[32mNon-hook settings[0m
+[1m[32mHooks[0m
 
-[107m [0m [2m# .config/wt.toml[0m
+See [2mwt hook --help[0m for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:
+
+[107m [0m [2m# Single command[0m
+[107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
 [107m [0m 
+[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*)[0m
+[107m [0m [2m[36m[pre-merge][0m
+[107m [0m [2mtest = [0m[2m[32m"npm test"[0m
+[107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
+[107m [0m 
+[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent)[0m
+[107m [0m [2mpost-start = [[0m
+[107m [0m [2m    { install = [0m[2m[32m"npm ci"[0m[2m },[0m
+[107m [0m [2m    { build = [0m[2m[32m"npm run build"[0m[2m, server = [0m[2m[32m"npm run dev"[0m[2m }[0m
+[107m [0m [2m][0m
+
+[1m[32mDev server URL[0m
+
 [107m [0m [2m# URL column in wt list (dimmed when port not listening)[0m
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
-[107m [0m 
+
+[1m[32mForge platform override[0m
+
 [107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances[0m
 [107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
 [107m [0m [2m# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m
-[107m [0m 
+
+[1m[32mCopy-ignored excludes[0m
+
 [107m [0m [2m# Add more gitignored excludes for wt step copy-ignored[0m
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
-[107m [0m 
-[107m [0m [2m# Command aliases (run with wt step <name>)[0m
+
+Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.pi/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+
+[1m[32mAliases[0m
+
+Command templates that run with [2mwt step <name>[0m. See [2mwt step[0m aliases for usage and flags.
+
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
-[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
+[107m [0m [2murl = [0m[2m[32m"echo http://localhost:{{ branch | hash_port }}"[0m
+
+Aliases defined here are shared with teammates. For personal aliases, use the user config [2m[aliases][0m section instead.
 
 [32mSHELL INTEGRATION[0m
 
