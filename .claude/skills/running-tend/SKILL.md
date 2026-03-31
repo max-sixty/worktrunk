@@ -60,6 +60,12 @@ If surrounding lines also need updating, note that in your reply.
 
 When a bug may already be fixed, ask the reporter: `wt --version`
 
+### Closing Duplicates
+
+When an issue is clearly a duplicate, close it after commenting. Use
+`gh issue close <number>` and tell the reporter: if they believe this was
+closed in error, they can let us know and we'll reopen it.
+
 ### Suggesting Aliases for Feature Requests
 
 When a feature request can be addressed with a shell alias or `wt step` alias,
