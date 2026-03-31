@@ -40,7 +40,7 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin marketplace add failed: {stderr}");
+        bail!("claude plugin marketplace add failed: {}", stderr.trim());
     }
 
     eprintln!("{}", progress_message("Installing plugin..."));
@@ -51,7 +51,7 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin install failed: {stderr}");
+        bail!("claude plugin install failed: {}", stderr.trim());
     }
 
     eprintln!("{}", success_message("Plugin installed"));
@@ -93,7 +93,7 @@ pub fn handle_claude_uninstall(yes: bool) -> anyhow::Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("claude plugin uninstall failed: {stderr}");
+        bail!("claude plugin uninstall failed: {}", stderr.trim());
     }
 
     eprintln!("{}", success_message("Plugin uninstalled"));

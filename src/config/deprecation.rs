@@ -687,11 +687,7 @@ pub fn find_ci_section_deprecation(content: &str) -> bool {
     doc.get("ci")
         .and_then(|ci| ci.as_table())
         .and_then(|t| t.get("platform"))
-        .is_some_and(|p| {
-            p.as_str()
-                .or_else(|| p.as_value().and_then(|v| v.as_str()))
-                .is_some_and(|s| !s.is_empty())
-        })
+        .is_some_and(|p| p.as_str().is_some_and(|s| !s.is_empty()))
 }
 
 /// Migrate `[ci]` section to `[forge]`.
