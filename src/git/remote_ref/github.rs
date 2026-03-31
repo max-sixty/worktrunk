@@ -78,20 +78,34 @@ struct GhOwner {
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
-    // Best-effort hostname extraction for GitHub Enterprise support.
-    // Uses effective URL (with url.insteadOf applied) to handle custom SSH
-    // hostnames (e.g., github-work → github.com for multi-key SSH setups).
-    // Falls back to gh's default (github.com) if the remote URL can't be parsed.
-    let hostname = repo
-        .primary_remote()
-        .ok()
-        .and_then(|remote| repo.effective_remote_url(&remote))
-        .and_then(|url| git::GitRemoteUrl::parse(&url))
-        .map(|parsed| parsed.host().to_string())
-        .unwrap_or_else(|| "github.com".to_string());
+    // Extract owner/repo from primary remote URL. Uses raw URL (not
+    // effective) because insteadOf may rewrite to a non-parseable path.
+    // SSH aliases only affect the host, not the path — owner/repo is always real.
+    let remote = repo.primary_remote()?;
+    let url = repo
+        .remote_url(&remote)
+        .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
+    let parsed = git::GitRemoteUrl::parse(&url)
+        .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
 
-    let api_path = format!("repos/{{owner}}/{{repo}}/pulls/{}", pr_number);
-    let args = ["api", api_path.as_str(), "--hostname", hostname.as_str()];
+    let api_path = format!(
+        "repos/{}/{}/pulls/{}",
+        parsed.owner(),
+        parsed.repo(),
+        pr_number
+    );
+
+    // Only pass --hostname when explicitly configured (for GHE / self-hosted).
+    let hostname = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_hostname().map(String::from));
+
+    let mut args = vec!["api", api_path.as_str()];
+    if let Some(h) = &hostname {
+        args.extend(["--hostname", h.as_str()]);
+    }
     let output = run_cli_api(CliApiRequest {
         tool: "gh",
         args: &args,

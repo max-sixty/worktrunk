@@ -367,12 +367,13 @@ build = "npm run build"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## CI platform override
+## Forge platform override
 
 ```toml
-# Override CI platform detection for self-hosted instances
-[ci]
+# Override platform detection for SSH aliases or self-hosted instances
+[forge]
 platform = "github"  # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 ```
 
 ## Copy-ignored excludes
@@ -466,11 +467,12 @@ Includes shell integration, hooks, and saved state.
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:
-  shell   Shell integration setup
-  create  Create configuration file
-  show    Show configuration files & locations
-  update  Update deprecated config settings
-  state   Manage internal data and cache
+  shell    Shell integration setup
+  create   Create configuration file
+  show     Show configuration files & locations
+  update   Update deprecated config settings
+  plugins  Plugin management
+  state    Manage internal data and cache
 
 Options:
   -h, --help
@@ -684,7 +686,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](https://worktrunk.dev/list/#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

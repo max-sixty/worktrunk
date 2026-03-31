@@ -370,12 +370,13 @@ build = "npm run build"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## CI platform override
+## Forge platform override
 
 ```toml
-# Override CI platform detection for self-hosted instances
-[ci]
+# Override platform detection for SSH aliases or self-hosted instances
+[forge]
 platform = "github"  # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 ```
 
 ## Copy-ignored excludes
@@ -465,11 +466,12 @@ Includes shell integration, hooks, and saved state.
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>   Shell integration setup
-  <b><span class=c>create</span></b>  Create configuration file
-  <b><span class=c>show</span></b>    Show configuration files &amp; locations
-  <b><span class=c>update</span></b>  Update deprecated config settings
-  <b><span class=c>state</span></b>   Manage internal data and cache
+  <b><span class=c>shell</span></b>    Shell integration setup
+  <b><span class=c>create</span></b>   Create configuration file
+  <b><span class=c>show</span></b>     Show configuration files &amp; locations
+  <b><span class=c>update</span></b>   Update deprecated config settings
+  <b><span class=c>plugins</span></b>  Plugin management
+  <b><span class=c>state</span></b>    Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -665,7 +667,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

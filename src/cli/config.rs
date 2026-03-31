@@ -185,6 +185,60 @@ all approvals across all projects."#
 }
 
 #[derive(Subcommand)]
+pub enum ConfigPluginsCommand {
+    /// Claude Code plugin
+    #[command(after_long_help = r#"## Examples
+
+Install the plugin:
+```console
+$ wt config plugins claude install
+```
+
+Remove the plugin:
+```console
+$ wt config plugins claude uninstall
+```"#)]
+    Claude {
+        #[command(subcommand)]
+        action: ConfigPluginsClaudeCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigPluginsClaudeCommand {
+    /// Install the Worktrunk plugin
+    #[command(
+        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+
+```console
+$ claude plugin marketplace add max-sixty/worktrunk
+$ claude plugin install worktrunk@worktrunk
+```
+
+Requires `claude` CLI. Skips gracefully if already installed."#
+    )]
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove the Worktrunk plugin
+    #[command(
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code. Equivalent to:
+
+```console
+$ claude plugin uninstall worktrunk@worktrunk
+```"#
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
     Shell {
@@ -258,6 +312,26 @@ $ wt config update --yes
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+    },
+
+    /// Plugin management
+    #[command(
+        after_long_help = r#"Install and manage Worktrunk plugins for AI coding tools.
+
+## Supported tools
+
+- **claude** — Claude Code plugin
+
+## Examples
+
+```console
+$ wt config plugins claude install
+$ wt config plugins claude uninstall
+```"#
+    )]
+    Plugins {
+        #[command(subcommand)]
+        action: ConfigPluginsCommand,
     },
 
     /// Manage internal data and cache
@@ -378,7 +452,7 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

@@ -81,7 +81,7 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 // ==================== Helper Functions ====================
 
 /// Check if Claude Code CLI is available
-fn is_claude_available() -> bool {
+pub(super) fn is_claude_available() -> bool {
     // Allow tests to override detection
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
         return val == "1";
@@ -100,7 +100,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+pub(super) fn is_plugin_installed() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -196,10 +196,10 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message("Plugin not installed. To install, run:")
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins claude install</>"
+            ))
         )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
     }
 
     // Statusline status
@@ -263,9 +263,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
-    let project_config = repo.load_project_config().ok().flatten();
-    let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = platform_for_repo(&repo, platform_override, None);
+    let platform = platform_for_repo(&repo, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -368,10 +366,11 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
+            .into_iter()
+            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+            .collect();
+        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
     }
 
     // Display TOML with syntax highlighting
@@ -435,10 +434,14 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        // Only check for unknown keys if config is valid.
+        // Filter deprecated section keys to avoid duplicate warnings
+        // (deprecation system already warns about these).
+        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
+            .into_iter()
+            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+            .collect();
+        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
     }
 
     // Add "Current config" label when deprecations shown (to separate from diff)

@@ -22,11 +22,12 @@
 # [list]
 # url = "http://localhost:{{ branch | hash_port }}"
 #
-# ## CI platform override
+# ## Forge platform override
 #
-# # Override CI platform detection for self-hosted instances
-# [ci]
+# # Override platform detection for SSH aliases or self-hosted instances
+# [forge]
 # platform = "github"  # or "gitlab"
+# # hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 #
 # ## Copy-ignored excludes
 #

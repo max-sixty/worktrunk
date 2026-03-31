@@ -4,8 +4,9 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigPluginsClaudeCommand,
+    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
+    MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
@@ -1937,12 +1938,13 @@ build = "npm run build"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## CI platform override
+## Forge platform override
 
 ```toml
-# Override CI platform detection for self-hosted instances
-[ci]
+# Override platform detection for SSH aliases or self-hosted instances
+[forge]
 platform = "github"  # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 ```
 
 ## Copy-ignored excludes

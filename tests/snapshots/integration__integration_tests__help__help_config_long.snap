@@ -38,11 +38,12 @@ Includes shell integration, hooks, and saved state.[0m
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mshell[0m   Shell integration setup
-  [1m[36mcreate[0m  Create configuration file
-  [1m[36mshow[0m    Show configuration files & locations
-  [1m[36mupdate[0m  Update deprecated config settings
-  [1m[36mstate[0m   Manage internal data and cache
+  [1m[36mshell[0m    Shell integration setup
+  [1m[36mcreate[0m   Create configuration file
+  [1m[36mshow[0m     Show configuration files & locations
+  [1m[36mupdate[0m   Update deprecated config settings
+  [1m[36mplugins[0m  Plugin management
+  [1m[36mstate[0m    Manage internal data and cache
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -370,11 +371,12 @@ See [2mwt hook --help[0m for hook types, execution order, template variables, 
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
 
-[1m[32mCI platform override[0m
+[1m[32mForge platform override[0m
 
-[107m [0m [2m# Override CI platform detection for self-hosted instances[0m
-[107m [0m [2m[36m[ci][0m
+[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances[0m
+[107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
+[107m [0m [2m# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m
 
 [1m[32mCopy-ignored excludes[0m
 
