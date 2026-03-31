@@ -39,7 +39,7 @@ Worktrunk checks five conditions (in order of cost):
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
-5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
+5. **Merge adds nothing** — Simulated merge produces the same tree as target, or patch-id matching detects a squash-merge commit on target. Handles squash-merged branches where target has advanced, even when the same files were modified further. Shows `⊂`.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
