@@ -117,7 +117,12 @@ pub fn handle_claude_install_statusline(yes: bool) -> anyhow::Result<()> {
                 eprintln!(
                     "{}",
                     worktrunk::styling::format_with_gutter(
-                        r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
+                        r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "wt list statusline --format=claude-code"
+  }
+}"#,
                         None,
                     )
                 );
