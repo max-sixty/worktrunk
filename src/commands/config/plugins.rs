@@ -22,10 +22,7 @@ pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {
             &cformat!("Install Worktrunk plugin for <bold>Claude Code</>?"),
             || {
                 let commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-                eprintln!(
-                    "{}",
-                    worktrunk::styling::format_bash_with_gutter(commands)
-                );
+                eprintln!("{}", worktrunk::styling::format_bash_with_gutter(commands));
             },
         )? {
             PromptResponse::Accepted => {}
