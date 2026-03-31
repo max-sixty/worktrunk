@@ -81,7 +81,7 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 // ==================== Helper Functions ====================
 
 /// Check if Claude Code CLI is available
-fn is_claude_available() -> bool {
+pub(super) fn is_claude_available() -> bool {
     // Allow tests to override detection
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
         return val == "1";
@@ -100,7 +100,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+pub(super) fn is_plugin_installed() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -196,10 +196,10 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message("Plugin not installed. To install, run:")
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins claude install</>"
+            ))
         )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
     }
 
     // Statusline status

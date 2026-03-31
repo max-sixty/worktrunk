@@ -437,11 +437,12 @@ Includes shell integration, hooks, and saved state.
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:
-  shell   Shell integration setup
-  create  Create configuration file
-  show    Show configuration files & locations
-  update  Update deprecated config settings
-  state   Manage internal data and cache
+  shell    Shell integration setup
+  create   Create configuration file
+  show     Show configuration files & locations
+  update   Update deprecated config settings
+  plugins  Plugin management
+  state    Manage internal data and cache
 
 Options:
   -h, --help

@@ -436,11 +436,12 @@ Includes shell integration, hooks, and saved state.
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>   Shell integration setup
-  <b><span class=c>create</span></b>  Create configuration file
-  <b><span class=c>show</span></b>    Show configuration files &amp; locations
-  <b><span class=c>update</span></b>  Update deprecated config settings
-  <b><span class=c>state</span></b>   Manage internal data and cache
+  <b><span class=c>shell</span></b>    Shell integration setup
+  <b><span class=c>create</span></b>   Create configuration file
+  <b><span class=c>show</span></b>     Show configuration files &amp; locations
+  <b><span class=c>update</span></b>   Update deprecated config settings
+  <b><span class=c>plugins</span></b>  Plugin management
+  <b><span class=c>state</span></b>    Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

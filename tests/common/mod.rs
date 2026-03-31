@@ -1430,6 +1430,11 @@ impl TestRepo {
         &self.root
     }
 
+    /// Get the mock bin directory path (for custom mock setups)
+    pub fn mock_bin_path(&self) -> Option<&Path> {
+        self.mock_bin_path.as_deref()
+    }
+
     /// Get the path to the bare remote repository, if created.
     pub fn remote_path(&self) -> Option<&Path> {
         self.remote.as_deref()
@@ -1939,6 +1944,59 @@ impl TestRepo {
             r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
         )
         .unwrap();
+    }
+
+    /// Setup mock `claude` CLI with plugin subcommand support
+    ///
+    /// Creates a mock claude binary that handles `plugin marketplace`,
+    /// `plugin install`, and `plugin uninstall` commands. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin directory.
+    pub fn setup_mock_claude_with_plugins(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command("plugin marketplace", MockResponse::exit(0))
+            .command("plugin install", MockResponse::exit(0))
+            .command("plugin uninstall", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
+    /// Setup mock `claude` CLI where plugin commands fail
+    ///
+    /// Creates a mock claude binary where `plugin marketplace`, `plugin install`,
+    /// and `plugin uninstall` all exit with code 1 and print an error.
+    /// Must call `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_plugins_failing(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command(
+                "plugin marketplace",
+                MockResponse::exit(1).with_stderr("error: network timeout\n"),
+            )
+            .command(
+                "plugin install",
+                MockResponse::exit(1).with_stderr("error: install failed\n"),
+            )
+            .command(
+                "plugin uninstall",
+                MockResponse::exit(1).with_stderr("error: uninstall failed\n"),
+            )
+            .write(mock_bin);
+
+        self.claude_installed = true;
     }
 
     /// Setup mock `gh` that returns configurable PR/CI data
