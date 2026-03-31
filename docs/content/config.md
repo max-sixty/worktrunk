@@ -341,35 +341,65 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
-
+<!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
+Create with `wt config create --project`.
 
-See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples.
+Location: `.config/wt.toml` (checked into version control and shared with the team).
 
-### Non-hook settings
+## Hooks
+
+See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:
 
 ```toml
-# .config/wt.toml
+# Single command
+pre-start = "npm ci"
 
+# Multiple named commands
+[pre-merge]
+test = "npm test"
+build = "npm run build"
+```
+
+## Dev server URL
+
+```toml
 # URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
+```
 
+## CI platform override
+
+```toml
 # Override CI platform detection for self-hosted instances
 [ci]
 platform = "github"  # or "gitlab"
+```
 
+## Copy-ignored excludes
+
+```toml
 # Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
+```
 
-# Command aliases (run with wt step <name>)
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+
+## Aliases
+
+Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+
+```toml
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
-test = "cargo test"
+url = "echo http://localhost:{{ branch | hash_port }}"
 ```
+
+Aliases defined here are shared with teammates. For personal aliases, use the [user config](@/config.md#aliases) `[aliases]` section instead.
+<!-- PROJECT_CONFIG_END -->
 
 # Shell Integration
 
