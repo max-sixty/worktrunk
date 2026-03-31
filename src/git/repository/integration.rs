@@ -144,7 +144,7 @@ impl Repository {
     /// - `Err` if git commands fail
     ///
     /// When this returns `Ok(true)` due to conflicts, the caller should additionally
-    /// check [`is_squash_merged_via_patch_id`] as a fallback (#1818).
+    /// check [`Self::is_squash_merged_via_patch_id`] as a fallback (#1818).
     pub fn would_merge_add_to_target(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
