@@ -248,13 +248,21 @@ pub fn compute_integration_lazy(
     }
 
     // Priority 5: Would merge add (expensive)
-    signals.would_merge_add = Some(repo.would_merge_add_to_target(branch, target)?);
-    if signals.would_merge_add == Some(false) {
-        return Ok(signals);
+    let merge_result = repo.would_merge_add_to_target(branch, target)?;
+    match merge_result {
+        Some(would_add) => {
+            signals.would_merge_add = Some(would_add);
+            if !would_add {
+                return Ok(signals);
+            }
+            // merge-tree succeeded and says branch has changes — no need for patch-id
+        }
+        None => {
+            // merge-tree conflicted — conservatively mark as "would add" and try patch-id
+            signals.would_merge_add = Some(true);
+            signals.is_patch_id_match = Some(repo.is_squash_merged_via_patch_id(branch, target)?);
+        }
     }
-
-    // Priority 6: Patch-id match (most expensive, only when merge-tree conflicts)
-    signals.is_patch_id_match = Some(repo.is_squash_merged_via_patch_id(branch, target)?);
 
     Ok(signals)
 }

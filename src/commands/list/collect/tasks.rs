@@ -288,15 +288,18 @@ impl Task for WouldMergeAddTask {
             });
         };
         let repo = &ctx.repo;
-        let would_merge_add = repo
+        let merge_result = repo
             .would_merge_add_to_target(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
-        // When merge-tree conflicts (would_merge_add=true), try patch-id as fallback
-        let is_patch_id_match = if would_merge_add {
-            repo.is_squash_merged_via_patch_id(branch, &base)
-                .unwrap_or(false)
-        } else {
-            false
+        let (would_merge_add, is_patch_id_match) = match merge_result {
+            Some(would_add) => (would_add, false),
+            None => {
+                // merge-tree conflicted — try patch-id fallback
+                let matched = repo
+                    .is_squash_merged_via_patch_id(branch, &base)
+                    .unwrap_or(false);
+                (true, matched)
+            }
         };
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,

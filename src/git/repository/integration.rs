@@ -138,14 +138,15 @@ impl Repository {
     /// - Rebased branches where the base has moved forward
     ///
     /// Returns:
-    /// - `Ok(true)` if merging would change the target (branch has unintegrated changes)
-    /// - `Ok(false)` if merging would NOT change target (branch is already integrated)
-    /// - `Ok(true)` if merge would have conflicts (conservative: treat as not integrated)
-    /// - `Err` if git commands fail
-    ///
-    /// When this returns `Ok(true)` due to conflicts, the caller should additionally
-    /// check [`Self::is_squash_merged_via_patch_id`] as a fallback (#1818).
-    pub fn would_merge_add_to_target(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+    /// - `Ok(Some(true))` if merging would change the target (branch has unintegrated changes)
+    /// - `Ok(Some(false))` if merging would NOT change target (branch is already integrated)
+    /// - `Ok(None)` if merge-tree conflicted (caller should try patch-id fallback)
+    /// - `Err` if git commands fail unexpectedly
+    pub fn would_merge_add_to_target(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<Option<bool>> {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
         // Simulate merging branch into target
@@ -153,22 +154,21 @@ impl Repository {
         let merge_result = self.run_command(&["merge-tree", "--write-tree", &target, &branch]);
 
         let Ok(merge_tree) = merge_result else {
-            // merge-tree failed (likely conflicts) — conservatively treat as having changes.
-            // Caller should check is_squash_merged_via_patch_id() as a fallback.
-            return Ok(true);
+            // merge-tree failed (likely conflicts) — caller should try patch-id fallback
+            return Ok(None);
         };
 
         let merge_tree = merge_tree.trim();
         if merge_tree.is_empty() {
             // Empty output is unexpected - treat as having changes
-            return Ok(true);
+            return Ok(Some(true));
         }
 
         // Get target's tree for comparison
         let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
 
         // If merge result differs from target's tree, merging would add something
-        Ok(merge_tree != target_tree)
+        Ok(Some(merge_tree != target_tree))
     }
 
     /// Detect squash merges via patch-id matching.
