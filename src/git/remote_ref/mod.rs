@@ -130,26 +130,25 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
 
 /// Find the local remote that points to the base (target) project for a PR/MR.
 ///
-/// Dispatches on `PlatformData` to extract host/owner/repo, then searches
-/// configured remotes. The suggested URL in the error respects each platform's
-/// configured git protocol (SSH vs HTTPS).
+/// Matches by owner/repo only (host is not required to match). This handles
+/// SSH host aliases where the local hostname differs from the API hostname.
+/// The suggested URL in the error respects each platform's configured git
+/// protocol (SSH vs HTTPS).
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
-    let (host, owner, repo_name) = match &info.platform_data {
+    let (owner, repo_name) = match &info.platform_data {
         PlatformData::GitHub {
-            host,
             base_owner,
             base_repo,
             ..
         }
         | PlatformData::GitLab {
-            host,
             base_owner,
             base_repo,
             ..
-        } => (host.as_str(), base_owner.as_str(), base_repo.as_str()),
+        } => (base_owner.as_str(), base_repo.as_str()),
     };
 
-    repo.find_remote_for_repo(Some(host), owner, repo_name)
+    repo.find_remote_for_repo(None, owner, repo_name)
         .ok_or_else(|| {
             let suggested_url = match &info.platform_data {
                 PlatformData::GitHub {

@@ -32,7 +32,7 @@ impl CiToolsAvailable {
 /// CI platform detected from project config override or remote URL.
 ///
 /// Platform is determined by:
-/// 1. Project config `ci.platform = "github"` or `"gitlab"` (takes precedence)
+/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
 /// 2. Remote URL detection (searches for "github" or "gitlab" in hostname)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -117,19 +117,20 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 /// Get the CI platform for a repository, optionally prioritizing a specific remote.
 ///
 /// Priority order:
-/// 1. Project config `ci.platform` override (if provided)
-/// 2. The specific remote's URL (if `remote_hint` is provided)
-/// 3. Any remote URL that matches a known platform
+/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
+/// 2. The specific remote's effective URL (if `remote_hint` is provided)
+/// 3. The primary remote's effective URL
 ///
 /// For remote branches, pass the branch's remote as `remote_hint` to ensure
 /// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
-pub fn platform_for_repo(
-    repo: &Repository,
-    platform_override: Option<&str>,
-    remote_hint: Option<&str>,
-) -> Option<CiPlatform> {
+pub fn platform_for_repo(repo: &Repository, remote_hint: Option<&str>) -> Option<CiPlatform> {
     // Config override takes precedence
-    if let Some(platform_str) = platform_override {
+    if let Some(platform_str) = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
         if let Ok(platform) = platform_str.parse::<CiPlatform>() {
             log::debug!("Using CI platform from config override: {}", platform);
             return Some(platform);
@@ -154,17 +155,12 @@ pub fn platform_for_repo(
         return Some(platform);
     }
 
-    // Search all remotes for a supported platform.
-    // Uses find_forge_remote which checks effective URLs (with insteadOf applied).
-    if let Some((remote_name, url)) =
-        repo.find_forge_remote(|parsed| parsed.is_github() || parsed.is_gitlab())
+    // Fall back to primary remote's effective URL.
+    if let Some(remote) = repo.primary_remote().ok()
+        && let Some(url) = repo.effective_remote_url(&remote)
+        && let Some(platform) = detect_platform_from_url(&url)
     {
-        let platform = detect_platform_from_url(&url)?;
-        log::debug!(
-            "Detected CI platform {} from remote '{}'",
-            platform,
-            remote_name
-        );
+        log::debug!("Detected CI platform {} from remote '{}'", platform, remote);
         return Some(platform);
     }
 

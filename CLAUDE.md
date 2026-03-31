@@ -114,6 +114,7 @@ When changing:
 - Detection logic
 - CLI flags or their defaults
 - Error conditions or messages
+- Config fields or sections — also update `dev/*.example.toml` (these are embedded in CLI help via `include_str!`, so stale examples propagate to docs and snapshots)
 
 Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/mod.rs` first.
 
@@ -123,6 +124,8 @@ Documentation has three categories:
 
 1. **Command pages** (config, hook, list, merge, remove, step, switch):
    ```
+   dev/*.example.toml (included via include_str!)
+       ↓
    src/cli/mod.rs (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync
    docs/content/{command}.md → skills/worktrunk/reference/{command}.md

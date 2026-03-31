@@ -605,7 +605,7 @@ impl Task for CiStatusTask {
         let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
             // Use from_branch_ref with the authoritative is_remote flag
             // rather than guessing from the branch name
-            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote, repo);
+            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote);
             PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha)
         });
 
