@@ -65,19 +65,17 @@ The CI column shows GitHub/GitLab pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|
-| <span style='color:#0a0'>●</span> green | All checks passed |
-| <span style='color:#00a'>●</span> blue | Checks running |
-| <span style='color:#a00'>●</span> red | Checks failed |
-| <span style='color:#a60'>●</span> yellow | Merge conflicts with base |
-| <span style='color:#888'>●</span> gray | No checks configured |
-| <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
+| `●` green | All checks passed |
+| `●` blue | Checks running |
+| `●` red | Checks failed |
+| `●` yellow | Merge conflicts with base |
+| `●` gray | No checks configured |
+| `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries
-
-[experimental]
+### LLM summaries [experimental]
 
 Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
@@ -248,49 +246,51 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
 
-Missing a field that would be generally useful? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
+Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
 ## Command reference
 
+```
 wt list - List worktrees and their status
 
-Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
-       <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt list [OPTIONS]
+       wt list <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>statusline</span></b>  Single-line status for shell prompts
+Commands:
+  statusline  Single-line status for shell prompts
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+Options:
+      --format <FORMAT>
           Output format (table, json)
 
           [default: table]
 
-      <b><span class=c>--branches</span></b>
+      --branches
           Include branches without worktrees
 
-      <b><span class=c>--remotes</span></b>
+      --remotes
           Include remote branches
 
-      <b><span class=c>--full</span></b>
+      --full
           Show CI, diff analysis, and LLM summaries
 
-      <b><span class=c>--progressive</span></b>
+      --progressive
           Show fast info immediately, update with slow info
 
           Displays local data (branches, paths, status) first, then updates with remote data (CI,
           upstream) as it arrives. Use --no-progressive to force buffered rendering. Auto-enabled
           for TTY.
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```

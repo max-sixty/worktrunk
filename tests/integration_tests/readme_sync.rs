@@ -1787,13 +1787,18 @@ fn transform_docs_for_skill(content: &str) -> String {
                 let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
                 format!("```bash\n{converted}```")
             }
-            None => body.to_string(),
+            // Terminal bodies without cmd are styled CLI output demos (colored
+            // spans, bold text). Strip HTML to plain text for skill files.
+            None => strip_html(body),
         }
     });
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
             cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
         });
+
+    // Strip rawcode shortcodes (keep content)
+    let content = ZOLA_RAWCODE_PATTERN.replace_all(&content, "$1");
 
     // Replace placeholders used to escape Tera template syntax in cmd parameters
     let content = content
@@ -1814,38 +1819,15 @@ fn transform_docs_for_skill(content: &str) -> String {
         "[experimental]",
     );
 
-    // Transform Zola internal links to full URLs
-    let content = ZOLA_LINK_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
-        .into_owned();
-
-    // Remove "See also" section (just contains links to other pages)
-    let content = remove_section(&content, "## See also");
-
-    // Clean up multiple consecutive blank lines
-    let content = content
-        .lines()
-        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
-            let is_blank = line.trim().is_empty();
-            if !(is_blank && prev_blank) {
-                acc.push(line);
-            }
-            (acc, is_blank)
-        })
-        .0
-        .join("\n");
-
     // Prepend title as H1 if extracted
-    if let Some(title) = title {
+    let content = if let Some(title) = title {
         format!("# {}\n\n{}", title, content.trim())
     } else {
         content.trim().to_string()
-    }
+    };
+
+    // Apply shared finalization: Zola links, See also removal, blank line cleanup
+    finalize_skill_content(&content)
 }
 
 /// Remove a section from markdown content (from heading to next same-level heading)
@@ -1924,19 +1906,29 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     entries.sort();
 
     for name in &entries {
-        let docs_file = docs_dir.join(name);
         let skill_file = skill_dir.join(name);
+        let cmd_name = name.trim_end_matches(".md");
 
-        if !docs_file.exists() {
-            errors.push(format!("Missing docs file: {}", docs_file.display()));
-            continue;
-        }
-
-        let docs_content = fs::read_to_string(&docs_file)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
-
-        // Transform and use content directly (docs already have proper H1 titles)
-        let expected = transform_docs_for_skill(&docs_content);
+        let expected = if COMMAND_PAGES.contains(&cmd_name) {
+            // Command pages: generate directly from --help-page --plain (no HTML)
+            match generate_skill_from_help(cmd_name, project_root) {
+                Ok(content) => content,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            }
+        } else {
+            // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
+            let docs_file = docs_dir.join(name);
+            if !docs_file.exists() {
+                errors.push(format!("Missing docs file: {}", docs_file.display()));
+                continue;
+            }
+            let docs_content = fs::read_to_string(&docs_file)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
+            transform_docs_for_skill(&docs_content)
+        };
         let expected = trim_lines(&expected);
 
         let current = if skill_file.exists() {
@@ -1961,6 +1953,68 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     }
 
     (errors, updated_files)
+}
+
+/// Generate a skill reference file directly from `--help-page --plain` output.
+///
+/// For command pages, this produces clean markdown without HTML. The only
+/// post-processing needed is Zola link transformation and section cleanup.
+fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, String> {
+    let output = wt_command()
+        .args([cmd, "--help-page", "--plain"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt --help-page --plain");
+
+    if !output.status.success() {
+        return Err(format!(
+            "'wt {} --help-page --plain' failed (exit {}): {}",
+            cmd,
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    if content.trim().is_empty() {
+        return Err(format!(
+            "Empty output from 'wt {} --help-page --plain': {}",
+            cmd,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(finalize_skill_content(&content))
+}
+
+/// Apply final transforms shared between command and non-command skill files:
+/// Zola internal links → full URLs, remove "See also" section, collapse blank lines.
+fn finalize_skill_content(content: &str) -> String {
+    // Transform Zola internal links to full URLs
+    let content = ZOLA_LINK_PATTERN
+        .replace_all(content, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            let page = caps.get(2).unwrap().as_str();
+            let anchor = caps.get(3).map_or("", |m| m.as_str());
+            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
+        })
+        .into_owned();
+
+    // Remove "See also" section (just contains links to other pages)
+    let content = remove_section(&content, "## See also");
+
+    // Clean up multiple consecutive blank lines
+    content
+        .lines()
+        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
+            let is_blank = line.trim().is_empty();
+            if !(is_blank && prev_blank) {
+                acc.push(line);
+            }
+            (acc, is_blank)
+        })
+        .0
+        .join("\n")
 }
 
 /// Sync .well-known/agent-skills/ index.json and verify symlink.

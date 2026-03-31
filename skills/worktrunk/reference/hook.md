@@ -37,16 +37,18 @@ During `wt merge`, hooks run in this order: pre-commit → post-commit → pre-m
 
 Project commands require approval on first run:
 
-<span class="y">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>
+```
+▲ repo needs approval to execute 3 commands:
 
-<span class="d">○</span> pre-start <b>install</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">npm</span> ci</span>
-<span class="d">○</span> pre-start <b>build</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">cargo</span> build <span class="c">--release</span></span>
-<span class="d">○</span> pre-start <b>env</b>:
-<span style='background:var(--bright-white,#fff)'> </span> <span class="d"><span class="b">echo</span> <span class="g">'PORT={{ branch | hash_port }}'</span> <span class="c">></span> .env.local</span>
+○ pre-start install:
+   npm ci
+○ pre-start build:
+   cargo build --release
+○ pre-start env:
+   echo 'PORT={{ branch | hash_port }}' > .env.local
 
-<span class="c">❯</span> Allow and remember? <b>[y/N]</b>
+❯ Allow and remember? [y/N]
+```
 
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
@@ -211,9 +213,7 @@ The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` 
 
 The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
-# Pipeline Ordering
-
-[experimental]
+# Pipeline Ordering [experimental]
 
 By default, all commands in a `post-*` hook run concurrently in the background. The TOML type determines execution order. In the simplest case, a string runs one command:
 
@@ -443,37 +443,39 @@ remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null
 
 ## Command reference
 
+```
 wt hook - Run configured hooks
 
-Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt hook [OPTIONS] <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>show</span></b>         Show configured hooks
-  <b><span class=c>pre-switch</span></b>   Run pre-switch hooks
-  <b><span class=c>post-switch</span></b>  Run post-switch hooks
-  <b><span class=c>pre-start</span></b>    Run pre-start hooks
-  <b><span class=c>post-start</span></b>   Run post-start hooks
-  <b><span class=c>pre-commit</span></b>   Run pre-commit hooks
-  <b><span class=c>post-commit</span></b>  Run post-commit hooks
-  <b><span class=c>pre-merge</span></b>    Run pre-merge hooks
-  <b><span class=c>post-merge</span></b>   Run post-merge hooks
-  <b><span class=c>pre-remove</span></b>   Run pre-remove hooks
-  <b><span class=c>post-remove</span></b>  Run post-remove hooks
-  <b><span class=c>approvals</span></b>    Manage command approvals
+Commands:
+  show         Show configured hooks
+  pre-switch   Run pre-switch hooks
+  post-switch  Run post-switch hooks
+  pre-start    Run pre-start hooks
+  post-start   Run post-start hooks
+  pre-commit   Run pre-commit hooks
+  post-commit  Run post-commit hooks
+  pre-merge    Run pre-merge hooks
+  post-merge   Run post-merge hooks
+  pre-remove   Run pre-remove hooks
+  post-remove  Run post-remove hooks
+  approvals    Manage command approvals
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 # Subcommands
 
@@ -506,24 +508,26 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ### Command reference
 
+```
 wt hook approvals - Manage command approvals
 
-Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt hook approvals [OPTIONS] <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>add</span></b>    Store approvals in approvals.toml
-  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
+Commands:
+  add    Store approvals in approvals.toml
+  clear  Clear approved commands from approvals.toml
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```

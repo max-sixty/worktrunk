@@ -230,9 +230,7 @@ For context:
 
 Entries are keyed by project identifier (e.g., `github.com/user/repo`).
 
-#### Setting overrides
-
-[experimental]
+#### Setting overrides [experimental]
 
 Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
@@ -430,32 +428,34 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 
 ## Command reference
 
-wt config - Manage user &amp; project configs
+```
+wt config - Manage user & project configs
 
 Includes shell integration, hooks, and saved state.
 
-Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt config [OPTIONS] <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>   Shell integration setup
-  <b><span class=c>create</span></b>  Create configuration file
-  <b><span class=c>show</span></b>    Show configuration files &amp; locations
-  <b><span class=c>update</span></b>  Update deprecated config settings
-  <b><span class=c>state</span></b>   Manage internal data and cache
+Commands:
+  shell   Shell integration setup
+  create  Create configuration file
+  show    Show configuration files & locations
+  update  Update deprecated config settings
+  state   Manage internal data and cache
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 # Subcommands
 
@@ -483,26 +483,28 @@ This tests:
 
 ### Command reference
 
-wt config show - Show configuration files &amp; locations
+```
+wt config show - Show configuration files & locations
 
-Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
+Usage: wt config show [OPTIONS]
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--full</span></b>
+Options:
+      --full
           Run diagnostic checks (CI tools, commit generation, version)
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state
 
@@ -559,34 +561,36 @@ $ wt config state clear
 
 ### Command reference
 
+```
 wt config state - Manage internal data and cache
 
-Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt config state [OPTIONS] <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>default-branch</span></b>   Default branch detection and override
-  <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
-  <b><span class=c>ci-status</span></b>        CI status cache
-  <b><span class=c>marker</span></b>           Branch markers
-  <b><span class=c>logs</span></b>             Background operation logs
-  <b><span class=c>hints</span></b>            One-time hints shown in this repo
-  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
-  <b><span class=c>get</span></b>              Get all stored state
-  <b><span class=c>clear</span></b>            Clear all stored state
+Commands:
+  default-branch   Default branch detection and override
+  previous-branch  Previous branch (for wt switch -)
+  ci-status        CI status cache
+  marker           Branch markers
+  logs             Background operation logs
+  hints            One-time hints shown in this repo
+  vars             [experimental] Custom variables per branch
+  get              Get all stored state
+  clear            Clear all stored state
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state default-branch
 
@@ -619,28 +623,30 @@ The local inference fallback uses these heuristics in order:
 
 ### Command reference
 
+```
 wt config state default-branch - Default branch detection and override
 
-Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+Usage: wt config state default-branch [OPTIONS] [COMMAND]
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get the default branch
-  <b><span class=c>set</span></b>    Set the default branch
-  <b><span class=c>clear</span></b>  Clear the default branch cache
+Commands:
+  get    Get the default branch
+  set    Set the default branch
+  clear  Clear the default branch cache
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state ci-status
 
@@ -671,27 +677,29 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ### Command reference
 
+```
 wt config state ci-status - CI status cache
 
-Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+Usage: wt config state ci-status [OPTIONS] [COMMAND]
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get CI status for a branch
-  <b><span class=c>clear</span></b>  Clear CI status cache
+Commands:
+  get    Get CI status for a branch
+  clear  Clear CI status cache
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state marker
 
@@ -728,28 +736,30 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
 
 ### Command reference
 
+```
 wt config state marker - Branch markers
 
-Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+Usage: wt config state marker [OPTIONS] [COMMAND]
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get marker for a branch
-  <b><span class=c>set</span></b>    Set marker for a branch
-  <b><span class=c>clear</span></b>  Clear marker for a branch
+Commands:
+  get    Get marker for a branch
+  set    Set marker for a branch
+  clear  Clear marker for a branch
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state vars
 
@@ -807,29 +817,31 @@ Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain
 
 ### Command reference
 
+```
 wt config state vars - [experimental] Custom variables per branch
 
-Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt config state vars [OPTIONS] <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get a value
-  <b><span class=c>set</span></b>    Set a value
-  <b><span class=c>list</span></b>   List all keys
-  <b><span class=c>clear</span></b>  Clear a key or all keys
+Commands:
+  get    Get a value
+  set    Set a value
+  list   List all keys
+  clear  Clear a key or all keys
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
 
 ## wt config state logs
 
@@ -888,24 +900,26 @@ $ wt config state logs clear
 
 ### Command reference
 
+```
 wt config state logs - Background operation logs
 
-Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+Usage: wt config state logs [OPTIONS] [COMMAND]
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get log file paths
-  <b><span class=c>clear</span></b>  Clear background operation logs
+Commands:
+  get    Get log file paths
+  clear  Clear background operation logs
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```

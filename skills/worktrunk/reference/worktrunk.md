@@ -39,27 +39,27 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <tbody>
     <tr>
       <td>Switch worktrees</td>
-      <td>{% rawcode() %}wt switch feat{% end %}</td>
-      <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
+      <td>wt switch feat</td>
+      <td>cd ../repo.feat</td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
-      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
-      <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
+      <td>wt switch -c -x claude feat</td>
+      <td>git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-claude{% end %}</td>
+claude</td>
     </tr>
     <tr>
       <td>Clean up</td>
-      <td>{% rawcode() %}wt remove{% end %}</td>
-      <td>{% rawcode() %}cd ../repo && \
+      <td>wt remove</td>
+      <td>cd ../repo && \
 git worktree remove ../repo.feat && \
-git branch -d feat{% end %}</td>
+git branch -d feat</td>
     </tr>
     <tr>
       <td>List with status</td>
-      <td>{% rawcode() %}wt list{% end %}</td>
-      <td>{% rawcode() %}git worktree list{% end %} (paths only)</td>
+      <td>wt list</td>
+      <td>git worktree list (paths only)</td>
     </tr>
   </tbody>
 </table>
