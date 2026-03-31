@@ -10,10 +10,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_BRANCH_ICON: ""
-    GIT_DIR_ICON: ""
-    GIT_REMOTE_BRANCH_ICON: ""
-    GIT_WORKTREE_ICON: ""
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -28,6 +25,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -73,7 +71,7 @@ Markers appear at the start of the Status column:
 [1m[32mUse cases[0m
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The Claude Code and OpenCode plugins set markers automatically
+- [1mAgent tracking[0m — The Claude Code plugin sets markers automatically
 - [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
 
 [1m[32mStorage[0m

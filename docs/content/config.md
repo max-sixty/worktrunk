@@ -703,7 +703,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](@/claude-code.md) and [OpenCode](@/opencode.md) plugins set markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

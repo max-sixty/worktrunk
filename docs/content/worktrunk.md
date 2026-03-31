@@ -198,8 +198,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)
 - Set up [project hooks](@/hook.md) for automated setup
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
-  picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md),
-  [OpenCode integration](@/opencode.md), [CI
+  picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
 - Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - Run `wt --help` or `wt <command> --help` for quick CLI reference

@@ -722,7 +722,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](https://worktrunk.dev/claude-code/) and [OpenCode](https://worktrunk.dev/opencode/) plugins set markers automatically
+- **Agent tracking** — The [Claude Code](https://worktrunk.dev/claude-code/) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage
