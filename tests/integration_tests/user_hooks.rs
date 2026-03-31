@@ -2364,3 +2364,46 @@ fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
         "Later pipeline steps should NOT run after serial step failure"
     );
 }
+
+#[rstest]
+fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
+    // Pipeline step 1 sets a var, step 2 uses it via {{ vars.name }}.
+    // Foreground mode exercises the in-process lazy re-expansion path
+    // in run_hook_with_filter.
+    repo.write_test_config(
+        r#"post-start = [
+    "git config worktrunk.state.main.vars.name '{{ branch | sanitize }}-postgres'",
+    { db = "echo {{ vars.name }} > lazy_expanded.txt" }
+]
+"#,
+    );
+
+    // Run the hook in foreground on the main worktree.
+    // Step 1 uses `git config` directly (avoids needing `wt` on PATH in CI).
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--foreground"]);
+
+    let output = cmd.output().expect("Failed to run foreground hook");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Foreground hook should succeed.\nstdout: {}\nstderr: {stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    // With foreground, marker file should exist immediately
+    let marker_file = repo.root_path().join("lazy_expanded.txt");
+    assert!(
+        marker_file.exists(),
+        "Foreground lazy expansion should create marker file"
+    );
+
+    let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
+    assert_eq!(
+        content, "main-postgres",
+        "Lazy step should see var set by prior step"
+    );
+}

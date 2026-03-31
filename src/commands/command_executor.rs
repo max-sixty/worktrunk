@@ -2,7 +2,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{Command, CommandConfig, HookStep, UserConfig, expand_template};
+use worktrunk::config::{
+    Command, CommandConfig, HookStep, UserConfig, expand_template, template_references_var,
+};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -13,6 +15,9 @@ pub struct PreparedCommand {
     pub name: Option<String>,
     pub expanded: String,
     pub context_json: String,
+    /// Raw template for lazy expansion at execution time (when template references `vars.`).
+    /// When `Some`, the `expanded` field is a placeholder — use `lazy_template` instead.
+    pub lazy_template: Option<String>,
 }
 
 /// A step in a prepared pipeline, mirroring `HookStep`.
@@ -160,17 +165,19 @@ pub fn build_hook_context(
     Ok(map)
 }
 
-/// Expand commands from a CommandConfig without approval
+/// Expand commands from a CommandConfig without approval.
 ///
-/// This is the canonical command expansion implementation.
-/// Returns cloned commands with their expanded forms filled in, each with per-command JSON context.
+/// When `lazy_enabled` is true, commands referencing `vars.` are validated but not
+/// expanded — they carry a `lazy_template` for deferred expansion at execution time.
+/// Only enable for pipeline steps where ordering guarantees vars are set by prior steps.
 fn expand_commands(
     commands: &[Command],
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
     source: HookSource,
-) -> anyhow::Result<Vec<(Command, String)>> {
+    lazy_enabled: bool,
+) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
     if commands.is_empty() {
         return Ok(Vec::new());
     }
@@ -189,16 +196,32 @@ fn expand_commands(
             cmd_context.insert("hook_name".into(), name.clone());
         }
 
-        let vars: HashMap<&str, &str> = cmd_context
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
         let template_name = match &cmd.name {
             Some(name) => format!("{}:{}", source, name),
             None => format!("{} {} hook", source, hook_type),
         };
-        let expanded_str = expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?;
+
+        let lazy = lazy_enabled && template_references_var(&cmd.template, "vars");
+
+        let (expanded_str, lazy_template) = if lazy {
+            // Parse-only validation: catch syntax errors upfront without rendering.
+            // Full rendering (validate_template) would fail on {{ vars.X }} because
+            // vars aren't set yet — that's the whole point of lazy expansion.
+            let env = minijinja::Environment::new();
+            env.template_from_named_str(&template_name, &cmd.template)
+                .map_err(|e| anyhow::anyhow!("syntax error in {template_name}: {e}"))?;
+            let tpl = cmd.template.clone();
+            (tpl.clone(), Some(tpl))
+        } else {
+            let vars: HashMap<&str, &str> = cmd_context
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            (
+                expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?,
+                None,
+            )
+        };
 
         let context_json = serde_json::to_string(&cmd_context)
             .expect("HashMap<String, String> serialization should never fail");
@@ -206,6 +229,7 @@ fn expand_commands(
         result.push((
             Command::with_expansion(cmd.name.clone(), cmd.template.clone(), expanded_str),
             context_json,
+            lazy_template,
         ));
     }
 
@@ -232,14 +256,18 @@ pub fn prepare_commands(
         return Ok(Vec::new());
     }
 
-    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source)?;
+    // Lazy expansion for pipeline configs (sequential ordering guarantees vars are
+    // set by prior steps). Flat configs (concurrent table) expand eagerly.
+    let lazy = command_config.is_pipeline();
+    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source, lazy)?;
 
     Ok(expanded_with_json
         .into_iter()
-        .map(|(cmd, context_json)| PreparedCommand {
+        .map(|(cmd, context_json, lazy_template)| PreparedCommand {
             name: cmd.name,
             expanded: cmd.expanded,
             context_json,
+            lazy_template,
         })
         .collect())
 }
@@ -272,7 +300,7 @@ pub fn prepare_steps(
         .collect();
 
     let all_commands: Vec<Command> = command_config.commands().cloned().collect();
-    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source)?;
+    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source, true)?;
     let mut expanded_iter = all_expanded.into_iter();
 
     let mut result = Vec::new();
@@ -280,20 +308,22 @@ pub fn prepare_steps(
         let chunk: Vec<_> = expanded_iter.by_ref().take(size).collect();
         match step {
             HookStep::Single(_) => {
-                let (cmd, json) = chunk.into_iter().next().unwrap();
+                let (cmd, json, lazy) = chunk.into_iter().next().unwrap();
                 result.push(PreparedStep::Single(PreparedCommand {
                     name: cmd.name,
                     expanded: cmd.expanded,
                     context_json: json,
+                    lazy_template: lazy,
                 }));
             }
             HookStep::Concurrent(_) => {
                 let prepared = chunk
                     .into_iter()
-                    .map(|(cmd, json)| PreparedCommand {
+                    .map(|(cmd, json, lazy)| PreparedCommand {
                         name: cmd.name,
                         expanded: cmd.expanded,
                         context_json: json,
+                        lazy_template: lazy,
                     })
                     .collect();
                 result.push(PreparedStep::Concurrent(prepared));
@@ -302,4 +332,31 @@ pub fn prepare_steps(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_template_references_var_for_vars() {
+        // Real vars references
+        assert!(template_references_var("{{ vars.container }}", "vars"));
+        assert!(template_references_var("{{vars.container}}", "vars"));
+        assert!(template_references_var(
+            "docker run --name {{ vars.name }}",
+            "vars"
+        ));
+        assert!(template_references_var(
+            "{% if vars.key %}yes{% endif %}",
+            "vars"
+        ));
+
+        // Literal text — not a template reference
+        assert!(!template_references_var(
+            "echo hello > template_vars.txt",
+            "vars"
+        ));
+        assert!(!template_references_var("no vars references here", "vars"));
+    }
 }
