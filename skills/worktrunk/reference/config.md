@@ -356,9 +356,10 @@ See [`wt hook`](https://worktrunk.dev/hook/) for hook types, execution order, te
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 
-# Override CI platform detection for self-hosted instances
-[ci]
+# Override platform detection for SSH aliases or self-hosted instances
+[forge]
 platform = "github"  # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 
 # Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]

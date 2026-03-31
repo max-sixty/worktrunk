@@ -361,9 +361,10 @@ See [2mwt hook[0m for hook types, execution order, template variables, and exa
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m 
-[107m [0m [2m# Override CI platform detection for self-hosted instances[0m
-[107m [0m [2m[36m[ci][0m
+[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances[0m
+[107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
+[107m [0m [2m# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m
 [107m [0m 
 [107m [0m [2m# Add more gitignored excludes for wt step copy-ignored[0m
 [107m [0m [2m[36m[step.copy-ignored][0m
