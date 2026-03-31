@@ -2372,14 +2372,14 @@ fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
     // in run_hook_with_filter.
     repo.write_test_config(
         r#"post-start = [
-    "wt config state vars set name='{{ branch | sanitize }}-postgres'",
+    "git config worktrunk.state.main.vars.name '{{ branch | sanitize }}-postgres'",
     { db = "echo {{ vars.name }} > lazy_expanded.txt" }
 ]
 "#,
     );
 
     // Run the hook in foreground on the main worktree.
-    // Step 1 calls `wt` — the test binary is on PATH via wt_command().
+    // Step 1 uses `git config` directly (avoids needing `wt` on PATH in CI).
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
