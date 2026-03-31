@@ -76,48 +76,50 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 
 ## Command reference
 
+```
 wt remove - Remove worktree; delete branch if merged
 
 Defaults to the current worktree.
 
-Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
+Usage: wt remove [OPTIONS] [BRANCHES]...
 
-<b><span class=g>Arguments:</span></b>
-  <span class=c>[BRANCHES]...</span>
+Arguments:
+  [BRANCHES]...
           Branch name [default: current]
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--no-delete-branch</span></b>
+Options:
+      --no-delete-branch
           Keep branch after removal
 
-  <b><span class=c>-D</span></b>, <b><span class=c>--force-delete</span></b>
+  -D, --force-delete
           Delete unmerged branches
 
-      <b><span class=c>--foreground</span></b>
+      --foreground
           Run removal in foreground (block until complete)
 
-  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
+  -f, --force
           Force worktree removal
 
           Remove worktrees even if they contain untracked files (like build artifacts). Without this
           flag, removal fails if untracked files exist.
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Automation:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+Automation:
+  -y, --yes
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      --no-verify
           Skip hooks
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+  -v, --verbose...
           Verbose output (-v: hooks, templates; -vv: debug report)
+```
