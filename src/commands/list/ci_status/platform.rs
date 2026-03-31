@@ -117,19 +117,20 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 /// Get the CI platform for a repository, optionally prioritizing a specific remote.
 ///
 /// Priority order:
-/// 1. Project config `forge.platform` override (if provided)
+/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
 /// 2. The specific remote's effective URL (if `remote_hint` is provided)
 /// 3. The primary remote's effective URL
 ///
 /// For remote branches, pass the branch's remote as `remote_hint` to ensure
 /// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
-pub fn platform_for_repo(
-    repo: &Repository,
-    platform_override: Option<&str>,
-    remote_hint: Option<&str>,
-) -> Option<CiPlatform> {
+pub fn platform_for_repo(repo: &Repository, remote_hint: Option<&str>) -> Option<CiPlatform> {
     // Config override takes precedence
-    if let Some(platform_str) = platform_override {
+    if let Some(platform_str) = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
         if let Ok(platform) = platform_str.parse::<CiPlatform>() {
             log::debug!("Using CI platform from config override: {}", platform);
             return Some(platform);

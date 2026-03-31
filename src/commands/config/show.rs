@@ -271,9 +271,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
-    let project_config = repo.load_project_config().ok().flatten();
-    let platform_override = project_config.as_ref().and_then(|c| c.forge_platform());
-    let platform = platform_for_repo(&repo, platform_override, None);
+    let platform = platform_for_repo(&repo, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {

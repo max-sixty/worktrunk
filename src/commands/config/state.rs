@@ -337,7 +337,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 .into());
             }
 
-            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote, &repo);
+            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
             let ci_status = PrStatus::detect(&repo, &ci_branch, &head)
                 .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
                     s.ci_status
