@@ -323,10 +323,16 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# # Single command[0m
 [107m [0m [2m# pre-start = "npm ci"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Multiple named commands[0m
+[107m [0m [2m# # Multiple named commands (concurrent for post-*, sequential for pre-*)[0m
 [107m [0m [2m# [pre-merge][0m
 [107m [0m [2m# test = "npm test"[0m
 [107m [0m [2m# build = "npm run build"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Pipeline — list of maps, run in order (each map concurrent)[0m
+[107m [0m [2m# post-start = [[0m
+[107m [0m [2m#     { install = "npm ci" },[0m
+[107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
+[107m [0m [2m# ][0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m

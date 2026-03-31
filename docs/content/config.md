@@ -356,10 +356,16 @@ See `wt hook --help` for hook types, execution order, template variables, and ex
 # Single command
 pre-start = "npm ci"
 
-# Multiple named commands
+# Multiple named commands (concurrent for post-*, sequential for pre-*)
 [pre-merge]
 test = "npm test"
 build = "npm run build"
+
+# Pipeline — list of maps, run in order (each map concurrent)
+post-start = [
+    { install = "npm ci" },
+    { build = "npm run build", server = "npm run dev" }
+]
 ```
 
 ## Dev server URL

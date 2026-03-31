@@ -360,10 +360,16 @@ See [2mwt hook --help[0m for hook types, execution order, template variables, 
 [107m [0m [2m# Single command[0m
 [107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
 [107m [0m 
-[107m [0m [2m# Multiple named commands[0m
+[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*)[0m
 [107m [0m [2m[36m[pre-merge][0m
 [107m [0m [2mtest = [0m[2m[32m"npm test"[0m
 [107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
+[107m [0m 
+[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent)[0m
+[107m [0m [2mpost-start = [[0m
+[107m [0m [2m    { install = [0m[2m[32m"npm ci"[0m[2m },[0m
+[107m [0m [2m    { build = [0m[2m[32m"npm run build"[0m[2m, server = [0m[2m[32m"npm run dev"[0m[2m }[0m
+[107m [0m [2m][0m
 
 [1m[32mDev server URL[0m
 
