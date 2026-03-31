@@ -59,7 +59,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
 [107m [0m [2m# # User Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create`.[0m
+[107m [0m [2m# Create with `wt config create`. Values shown are defaults unless noted otherwise.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Location:[0m
 [107m [0m [2m#[0m
@@ -80,20 +80,20 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Default — sibling directory[0m
-[107m [0m [2m# # Creates: ~/code/myproject.feature-auth[0m
-[107m [0m [2m# # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+[107m [0m [2m# Default — sibling directory (`~/code/myproject.feature-auth`):[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Inside the repository[0m
-[107m [0m [2m# # Creates: ~/code/myproject/.worktrees/feature-auth[0m
+[107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Inside the repository (`~/code/myproject/.worktrees/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Centralized worktrees directory[0m
-[107m [0m [2m# # Creates: ~/worktrees/myproject/feature-auth[0m
+[107m [0m [2m# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Bare repository (git clone --bare <url> myproject/.git)[0m
-[107m [0m [2m# # Creates: ~/code/myproject/feature-auth[0m
+[107m [0m [2m# Bare repository (`~/code/myproject/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `~` expands to the home directory. Relative paths resolve from `repo_path`.[0m
@@ -104,28 +104,28 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Claude Code[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### opencode[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### llm[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "llm -m claude-haiku-4.5"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "llm -m claude-haiku-4.5"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### aichat[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m
@@ -167,20 +167,16 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch][0m
-[107m [0m [2m# no-cd = true       # Skip directory change after switching (--cd to override)[0m
+[107m [0m [2m# no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
-[107m [0m [2m# # Pager command for diff preview (overrides git's core.pager)[0m
-[107m [0m [2m# # pager = "delta --paging=never"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# # Wall-clock budget (ms) for picker data collection (default: 500)[0m
-[107m [0m [2m# # Tasks still running when the budget expires are abandoned; 0 disables[0m
-[107m [0m [2m# # timeout-ms = 500[0m
+[107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m
+[107m [0m [2m# timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Step[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [step.copy-ignored][0m
-[107m [0m [2m# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude[0m
+[107m [0m [2m# exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
