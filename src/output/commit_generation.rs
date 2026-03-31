@@ -52,7 +52,7 @@ impl LlmTool {
 
     /// Returns the recommended configuration command for this tool.
     ///
-    /// Parsed from the double-commented examples in dev/config.example.toml,
+    /// Parsed from the examples in dev/config.example.toml,
     /// which is the single source of truth for these commands.
     pub fn recommended_config(&self) -> &str {
         // Indexing is safe: all LlmTool variants have entries in the config example.
@@ -66,11 +66,11 @@ impl std::fmt::Display for LlmTool {
     }
 }
 
-/// Parse tool commands from the double-commented config example.
+/// Parse tool commands from the config example.
 ///
-/// Scans the entire file for `# ### ToolName` headings followed by `# # command = "..."`
+/// Scans the entire file for `# ### ToolName` headings followed by `# command = "..."`
 /// lines. Currently only the LLM section uses this pattern; if other sections gain
-/// `# # command = ` lines, scope the scan to the `## LLM commit messages` section.
+/// `# command = ` lines, scope the scan to the `## LLM commit messages` section.
 /// The command value is TOML-unescaped via the `toml` crate.
 fn parse_recommended_commands(config: &str) -> HashMap<String, String> {
     let mut commands = HashMap::new();
@@ -83,8 +83,8 @@ fn parse_recommended_commands(config: &str) -> HashMap<String, String> {
             continue;
         }
 
-        // Double-commented command: "# # command = "...""
-        if let Some(toml_part) = line.strip_prefix("# # ")
+        // Command line: "# command = "...""
+        if let Some(toml_part) = line.strip_prefix("# ")
             && toml_part.starts_with("command = ")
             && let Some(heading) = current_heading.take()
         {
@@ -265,13 +265,13 @@ mod tests {
         let config = "\
 # ### MyTool
 #
-# # [commit.generation]
-# # command = \"echo hello\"
+# [commit.generation]
+# command = \"echo hello\"
 #
 # ### OtherTool
 #
-# # [commit.generation]
-# # command = \"jq -sr '[.[] | select(.type? == \\\"msg\\\")]'\"
+# [commit.generation]
+# command = \"jq -sr '[.[] | select(.type? == \\\"msg\\\")]'\"
 ";
         let commands = parse_recommended_commands(config);
         assert_eq!(commands.len(), 2);
@@ -287,10 +287,10 @@ mod tests {
         let config = "\
 # ### ToolA
 #
-# # [commit.generation]
-# # template = \"not a command\"
+# [commit.generation]
+# template = \"not a command\"
 # ### ToolB
-# # command = \"real command\"
+# command = \"real command\"
 ";
         let commands = parse_recommended_commands(config);
         // ToolA has no command line, ToolB does

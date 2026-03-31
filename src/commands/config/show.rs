@@ -58,9 +58,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         render_claude_code_status(&mut show_output)?;
     }
 
-    // Render OpenCode status
-    show_output.push('\n');
-    render_opencode_status(&mut show_output)?;
+    // Render OpenCode status (only when opencode CLI is available)
+    if is_opencode_available() {
+        show_output.push('\n');
+        render_opencode_status(&mut show_output)?;
+    }
 
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
@@ -85,7 +87,7 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 // ==================== Helper Functions ====================
 
 /// Check if Claude Code CLI is available
-fn is_claude_available() -> bool {
+pub(super) fn is_claude_available() -> bool {
     // Allow tests to override detection
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
         return val == "1";
@@ -104,7 +106,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+pub(super) fn is_plugin_installed() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -200,10 +202,10 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message("Plugin not installed. To install, run:")
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins claude install</>"
+            ))
         )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
     }
 
     // Statusline status
@@ -232,20 +234,10 @@ fn is_opencode_available() -> bool {
     which::which("opencode").is_ok()
 }
 
-/// Render OPENCODE section (plugin status)
+/// Render OPENCODE section (plugin status).
+/// Caller must check `is_opencode_available()` first.
 fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
-    let opencode_available = is_opencode_available();
-
     writeln!(out, "{}", format_heading("OPENCODE", None))?;
-
-    if !opencode_available {
-        writeln!(
-            out,
-            "{}",
-            info_message(cformat!("<bold>opencode</> CLI not installed"))
-        )?;
-        return Ok(());
-    }
 
     // Plugin status
     let plugin_installed = super::opencode::is_plugin_installed();
