@@ -1430,6 +1430,11 @@ impl TestRepo {
         &self.root
     }
 
+    /// Get the mock bin directory path (for custom mock setups)
+    pub fn mock_bin_path(&self) -> Option<&Path> {
+        self.mock_bin_path.as_deref()
+    }
+
     /// Get the path to the bare remote repository, if created.
     pub fn remote_path(&self) -> Option<&Path> {
         self.remote.as_deref()
