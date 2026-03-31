@@ -2367,28 +2367,19 @@ fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
 
 #[rstest]
 fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
-    // Foreground mode exercises the in-process re-expansion path in
-    // run_hook_with_filter. Pre-set a var, then run a pipeline whose
-    // step references it via {{ vars.container_name }}.
+    // Pipeline step 1 sets a var, step 2 uses it via {{ vars.name }}.
+    // Foreground mode exercises the in-process lazy re-expansion path
+    // in run_hook_with_filter.
     repo.write_test_config(
-        r#"[post-start]
-db = "echo {{ vars.name }} > lazy_expanded.txt"
+        r#"post-start = [
+    "wt config state vars set name='{{ branch | sanitize }}-postgres'",
+    { db = "echo {{ vars.name }} > lazy_expanded.txt" }
+]
 "#,
     );
 
-    // Pre-set the var that the hook template references
-    let set_output = crate::common::wt_command()
-        .current_dir(repo.root_path())
-        .args(["config", "state", "vars", "set", "name=main-postgres"])
-        .output()
-        .expect("Failed to set var");
-    assert!(
-        set_output.status.success(),
-        "vars set should succeed: {}",
-        String::from_utf8_lossy(&set_output.stderr)
-    );
-
-    // Run the hook in foreground on the main worktree
+    // Run the hook in foreground on the main worktree.
+    // Step 1 calls `wt` — the test binary is on PATH via wt_command().
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
@@ -2413,6 +2404,6 @@ db = "echo {{ vars.name }} > lazy_expanded.txt"
     let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
     assert_eq!(
         content, "main-postgres",
-        "Lazy expansion should resolve pre-set var"
+        "Lazy step should see var set by prior step"
     );
 }
