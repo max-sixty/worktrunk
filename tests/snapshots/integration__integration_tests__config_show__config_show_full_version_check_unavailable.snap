@@ -60,9 +60,6 @@ exit_code: 0
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 
-[36mCLAUDE CODE[39m
-[2m○[22m [1mclaude[22m CLI not installed
-
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
 [2m↳[22m [2mVersion check unavailable[22m
