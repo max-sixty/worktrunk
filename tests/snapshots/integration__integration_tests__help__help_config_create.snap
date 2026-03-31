@@ -198,11 +198,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - User configs generally apply to all projects.[0m
 [107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# #### Setting overrides [experimental][0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
