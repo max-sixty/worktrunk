@@ -100,10 +100,11 @@
 # url = "http://localhost:{{ branch | hash_port }}"
 
 # ============================================================================
-# CI Platform Override
+# Forge (GitHub/GitLab) Settings
 # ============================================================================
-# Override CI platform detection for GitHub Enterprise or self-hosted GitLab
-# with custom domains where URL detection fails.
+# Override platform detection for SSH host aliases or custom domains.
+# Set hostname for GitHub Enterprise or self-hosted GitLab API calls.
 #
-# [ci]
-# platform = "github"  # or "gitlab"
+# [forge]
+# platform = "github"              # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
