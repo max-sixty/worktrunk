@@ -1112,9 +1112,6 @@ fn test_config_source_generates_example_toml() {
     );
 }
 
-// TODO: Evaluate whether pointing to `wt hook --help` is sufficient for the project
-// config example, or whether it should include a slim hooks quick-start (formats +
-// common examples) so the created file is more self-contained.
 #[test]
 fn test_project_config_source_generates_example_toml() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
