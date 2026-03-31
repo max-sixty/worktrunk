@@ -1963,6 +1963,37 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
+    /// Setup mock `claude` CLI where plugin commands fail
+    ///
+    /// Creates a mock claude binary where `plugin marketplace`, `plugin install`,
+    /// and `plugin uninstall` all exit with code 1 and print an error.
+    /// Must call `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_plugins_failing(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command(
+                "plugin marketplace",
+                MockResponse::exit(1).with_stderr("error: network timeout\n"),
+            )
+            .command(
+                "plugin install",
+                MockResponse::exit(1).with_stderr("error: install failed\n"),
+            )
+            .command(
+                "plugin uninstall",
+                MockResponse::exit(1).with_stderr("error: uninstall failed\n"),
+            )
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
