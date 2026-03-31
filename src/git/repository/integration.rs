@@ -194,7 +194,7 @@ impl Repository {
         };
 
         // Get all target commits' patch-ids in one pass.
-        // `git log -p` pipes all patches through `git patch-id --stable`.
+        // `git log -p` pipes all patches through `git patch-id --verbatim`.
         let target_log =
             self.run_command(&["log", "-p", "--reverse", &format!("{merge_base}..{target}")])?;
 
@@ -205,10 +205,14 @@ impl Repository {
             .any(|line| line.split_whitespace().next() == Some(branch_pid)))
     }
 
-    /// Pipe diff content through `git patch-id --stable` and return the output.
+    /// Pipe diff content through `git patch-id --verbatim` and return the output.
+    ///
+    /// Uses `--verbatim` (not `--stable`) to avoid false positives from whitespace
+    /// normalization — `--stable` strips whitespace, so tabs-vs-spaces would produce
+    /// matching patch-ids even though the content differs.
     fn compute_patch_ids(&self, diff: &str) -> anyhow::Result<String> {
         let output = Cmd::new("git")
-            .args(["patch-id", "--stable"])
+            .args(["patch-id", "--verbatim"])
             .current_dir(&self.discovery_path)
             .context(self.logging_context())
             .stdin_bytes(diff.to_owned())
