@@ -346,24 +346,31 @@ squash-template = """
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Create with `wt config create --project`.
+Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
 
 Location: `.config/wt.toml` (checked into version control and shared with the team).
 
 ## Hooks
 
-See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:
+See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.
+
+Single command:
 
 ```toml
-# Single command
 pre-start = "npm ci"
+```
 
-# Multiple named commands (concurrent for post-*, sequential for pre-*)
+Multiple named commands (concurrent for post-*, sequential for pre-*):
+
+```toml
 [pre-merge]
 test = "npm test"
 build = "npm run build"
+```
 
-# Pipeline — list of maps, run in order (each map concurrent)
+Pipeline — list of maps, run in order (each map concurrent):
+
+```toml
 post-start = [
     { install = "npm ci" },
     { build = "npm run build", server = "npm run dev" }
@@ -372,25 +379,28 @@ post-start = [
 
 ## Dev server URL
 
+URL column in `wt list` (dimmed when port not listening):
+
 ```toml
-# URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
 ## Forge platform override
 
+Override platform detection for SSH aliases or self-hosted instances:
+
 ```toml
-# Override platform detection for SSH aliases or self-hosted instances
 [forge]
 platform = "github"  # or "gitlab"
-# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
+hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
 ## Copy-ignored excludes
 
+Additional excludes for `wt step copy-ignored`:
+
 ```toml
-# Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
 ```

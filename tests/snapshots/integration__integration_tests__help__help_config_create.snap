@@ -308,23 +308,26 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 
 [107m [0m [2m# # Project Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create --project`.[0m
+[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:[0m
+[107m [0m [2m# See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Single command[0m
+[107m [0m [2m# Single command:[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# pre-start = "npm ci"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Multiple named commands (concurrent for post-*, sequential for pre-*)[0m
+[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [pre-merge][0m
 [107m [0m [2m# test = "npm test"[0m
 [107m [0m [2m# build = "npm run build"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Pipeline — list of maps, run in order (each map concurrent)[0m
+[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# post-start = [[0m
 [107m [0m [2m#     { install = "npm ci" },[0m
 [107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
@@ -332,20 +335,23 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # URL column in wt list (dimmed when port not listening)[0m
+[107m [0m [2m# URL column in `wt list` (dimmed when port not listening):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [list][0m
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Forge platform override[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Override platform detection for SSH aliases or self-hosted instances[0m
+[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
 [107m [0m [2m# platform = "github"  # or "gitlab"[0m
-[107m [0m [2m# # hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m
+[107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Add more gitignored excludes for wt step copy-ignored[0m
+[107m [0m [2m# Additional excludes for `wt step copy-ignored`:[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = [".cache/", ".turbo/"][0m
 [107m [0m [2m#[0m
