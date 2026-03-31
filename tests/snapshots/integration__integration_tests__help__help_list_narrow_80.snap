@@ -333,7 +333,7 @@ These values describe the relation to the default branch.
 [32mintegration_reason values[0m
 
 When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m 
-[2m"merge_adds_nothing"[0m
+[2m"merge_adds_nothing"[0m [2m"patch-id-match"[0m
 
 [32mci.status values[0m
 

@@ -226,7 +226,7 @@ These values describe the relation to the default branch.
 
 ### integration_reason values
 
-When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"`
+When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` `"patch-id-match"`
 
 ### ci.status values
 

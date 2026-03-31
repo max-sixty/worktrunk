@@ -176,6 +176,10 @@ pub struct ListItem {
     /// as the integration target. Catches squash-merged branches where the integration target advanced.
     #[serde(skip)]
     pub would_merge_add: Option<bool>,
+    /// Whether the branch's squashed patch-id matches a commit on the integration target.
+    /// Detects squash merges when merge-tree conflicts (both sides modified the same files).
+    #[serde(skip)]
+    pub is_patch_id_match: Option<bool>,
     /// Whether branch HEAD is an ancestor of the integration target (or same commit).
     /// True means branch is already part of the integration target's history.
     /// This is the cheapest integration check (~1ms).
@@ -243,6 +247,7 @@ impl ListItem {
             committed_trees_match: None,
             has_file_changes: None,
             would_merge_add: None,
+            is_patch_id_match: None,
             is_ancestor: None,
             is_orphan: None,
             upstream: None,
@@ -613,6 +618,7 @@ impl ListItem {
             has_added_changes: self.has_file_changes,
             trees_match: self.committed_trees_match,
             would_merge_add: self.would_merge_add,
+            is_patch_id_match: self.is_patch_id_match,
         };
         let reason = check_integration(&signals);
 

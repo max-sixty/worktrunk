@@ -73,6 +73,7 @@ pub use url::parse_owner_repo;
 /// 3. [`NoAddedChanges`](Self::NoAddedChanges) - three-dot diff (~50-100ms)
 /// 4. [`TreesMatch`](Self::TreesMatch) - tree SHA comparison (~100-300ms)
 /// 5. [`MergeAddsNothing`](Self::MergeAddsNothing) - merge simulation (~500ms-2s)
+/// 6. [`PatchIdMatch`](Self::PatchIdMatch) - patch-id matching when merge-tree conflicts (~1-3s)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, strum::IntoStaticStr)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
@@ -101,13 +102,22 @@ pub enum IntegrationReason {
     /// Symbol in `wt list`: `⊂`
     TreesMatch,
 
-    /// The branch has changes, but they're already in target via a different path.
+    /// The branch has changes, but merging would produce the same tree as target.
     ///
-    /// Detected via `git merge-tree` (produces same tree as target) or, when
-    /// merge-tree conflicts, via patch-id matching (squash-merge commit found on target).
+    /// Detected via `git merge-tree` simulation. Handles squash-merged branches
+    /// where target has advanced with changes to different files.
     ///
     /// Symbol in `wt list`: `⊂`
     MergeAddsNothing,
+
+    /// The branch's squashed diff matches a commit on target via patch-id.
+    ///
+    /// Detected via `git patch-id --verbatim` when `merge-tree` conflicts
+    /// (both sides modified the same files). This catches squash merges where
+    /// target later advanced the same files that the branch touched.
+    ///
+    /// Symbol in `wt list`: `⊂`
+    PatchIdMatch,
 }
 
 impl IntegrationReason {
@@ -122,6 +132,7 @@ impl IntegrationReason {
             Self::NoAddedChanges => "no added changes on",
             Self::TreesMatch => "tree matches",
             Self::MergeAddsNothing => "all changes in",
+            Self::PatchIdMatch => "all changes in",
         }
     }
 
@@ -152,6 +163,7 @@ pub struct IntegrationSignals {
     pub has_added_changes: Option<bool>,
     pub trees_match: Option<bool>,
     pub would_merge_add: Option<bool>,
+    pub is_patch_id_match: Option<bool>,
 }
 
 /// Canonical integration check using pre-computed signals.
@@ -182,9 +194,14 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
         return Some(IntegrationReason::TreesMatch);
     }
 
-    // Priority 5 (most expensive ~500ms-2s): Merge would not add anything
+    // Priority 5 (expensive ~500ms-2s): Merge would not add anything
     if signals.would_merge_add == Some(false) {
         return Some(IntegrationReason::MergeAddsNothing);
+    }
+
+    // Priority 6 (most expensive): Patch-id match detects squash merge when merge-tree conflicts
+    if signals.is_patch_id_match == Some(true) {
+        return Some(IntegrationReason::PatchIdMatch);
     }
 
     None
@@ -230,8 +247,14 @@ pub fn compute_integration_lazy(
         return Ok(signals);
     }
 
-    // Priority 5: Would merge add (most expensive)
+    // Priority 5: Would merge add (expensive)
     signals.would_merge_add = Some(repo.would_merge_add_to_target(branch, target)?);
+    if signals.would_merge_add == Some(false) {
+        return Ok(signals);
+    }
+
+    // Priority 6: Patch-id match (most expensive, only when merge-tree conflicts)
+    signals.is_patch_id_match = Some(repo.is_squash_merged_via_patch_id(branch, target)?);
 
     Ok(signals)
 }
@@ -549,14 +572,28 @@ mod tests {
     #[test]
     fn test_check_integration() {
         // Each integration reason + not integrated
-        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add)
+        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add, is_patch_id_match)
         let cases = [
             (
-                (Some(true), Some(false), Some(true), Some(false), Some(true)),
+                (
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::SameCommit),
             ),
             (
-                (Some(false), Some(true), Some(true), Some(false), Some(true)),
+                (
+                    Some(false),
+                    Some(true),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::Ancestor),
             ),
             (
@@ -566,11 +603,19 @@ mod tests {
                     Some(false),
                     Some(false),
                     Some(true),
+                    None,
                 ),
                 Some(IntegrationReason::NoAddedChanges),
             ),
             (
-                (Some(false), Some(false), Some(true), Some(true), Some(true)),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(true),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::TreesMatch),
             ),
             (
@@ -580,42 +625,65 @@ mod tests {
                     Some(true),
                     Some(false),
                     Some(false),
+                    None,
                 ),
                 Some(IntegrationReason::MergeAddsNothing),
             ),
             (
+                // Patch-id match (merge-tree conflicts but patch-id finds squash commit)
                 (
                     Some(false),
                     Some(false),
                     Some(true),
                     Some(false),
                     Some(true),
+                    Some(true),
+                ),
+                Some(IntegrationReason::PatchIdMatch),
+            ),
+            (
+                // Not integrated (nothing matches)
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
                 ),
                 None,
-            ), // Not integrated
+            ),
             (
-                (Some(true), Some(true), Some(false), Some(true), Some(false)),
+                (
+                    Some(true),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    None,
+                ),
                 Some(IntegrationReason::SameCommit),
             ), // Priority test: is_same_commit wins
             // None values are treated conservatively (as if not integrated)
-            ((None, None, None, None, None), None),
+            ((None, None, None, None, None, None), None),
             (
-                (None, Some(true), Some(false), Some(true), Some(false)),
+                (None, Some(true), Some(false), Some(true), Some(false), None),
                 Some(IntegrationReason::Ancestor),
             ),
         ];
-        for ((same, ancestor, added, trees, merge), expected) in cases {
+        for ((same, ancestor, added, trees, merge, patch_id), expected) in cases {
             let signals = IntegrationSignals {
                 is_same_commit: same,
                 is_ancestor: ancestor,
                 has_added_changes: added,
                 trees_match: trees,
                 would_merge_add: merge,
+                is_patch_id_match: patch_id,
             };
             assert_eq!(
                 check_integration(&signals),
                 expected,
-                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?}"
+                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?},{patch_id:?}"
             );
         }
     }
@@ -634,6 +702,10 @@ mod tests {
         assert_eq!(IntegrationReason::TreesMatch.description(), "tree matches");
         assert_eq!(
             IntegrationReason::MergeAddsNothing.description(),
+            "all changes in"
+        );
+        assert_eq!(
+            IntegrationReason::PatchIdMatch.description(),
             "all changes in"
         );
     }

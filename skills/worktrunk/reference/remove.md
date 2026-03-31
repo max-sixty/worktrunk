@@ -33,13 +33,14 @@ $ wt remove -D experimental
 
 By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
-Worktrunk checks five conditions (in order of cost):
+Worktrunk checks six conditions (in order of cost):
 
 1. **Same commit** — Branch HEAD equals the default branch. Shows `_` in `wt list`.
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
-5. **Merge adds nothing** — Simulated merge produces the same tree as target, or patch-id matching detects a squash-merge commit on target. Handles squash-merged branches where target has advanced, even when the same files were modified further. Shows `⊂`.
+5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
+6. **Patch-id match** — Branch's squashed diff matches a commit on target. Detects squash merges even when target later modified the same files (causing merge conflicts). Shows `⊂`.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 

@@ -137,14 +137,14 @@ impl Repository {
     /// - Squash-merged branches where main has advanced with additional commits
     /// - Rebased branches where the base has moved forward
     ///
-    /// When `merge-tree` reports conflicts (e.g., branch and target both modified the
-    /// same files), falls back to patch-id matching to detect squash merges where the
-    /// target later advanced the same files (#1818).
-    ///
     /// Returns:
     /// - `Ok(true)` if merging would change the target (branch has unintegrated changes)
     /// - `Ok(false)` if merging would NOT change target (branch is already integrated)
+    /// - `Ok(true)` if merge would have conflicts (conservative: treat as not integrated)
     /// - `Err` if git commands fail
+    ///
+    /// When this returns `Ok(true)` due to conflicts, the caller should additionally
+    /// check [`is_squash_merged_via_patch_id`] as a fallback (#1818).
     pub fn would_merge_add_to_target(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
@@ -153,11 +153,9 @@ impl Repository {
         let merge_result = self.run_command(&["merge-tree", "--write-tree", &target, &branch]);
 
         let Ok(merge_tree) = merge_result else {
-            // merge-tree failed (likely conflicts) — fall back to patch-id matching
-            // to detect squash merges where target later modified the same files
-            return self
-                .is_squash_merged_via_patch_id(&branch, &target)
-                .map(|integrated| !integrated);
+            // merge-tree failed (likely conflicts) — conservatively treat as having changes.
+            // Caller should check is_squash_merged_via_patch_id() as a fallback.
+            return Ok(true);
         };
 
         let merge_tree = merge_tree.trim();
@@ -181,7 +179,11 @@ impl Repository {
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
     /// `Ok(false)` otherwise (including when patch-id computation fails — conservative).
-    fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+    pub fn is_squash_merged_via_patch_id(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
         };

@@ -276,6 +276,7 @@ impl Task for WouldMergeAddTask {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
+                is_patch_id_match: false,
             });
         };
         // When integration_target is None, return true (conservative: assume would add)
@@ -283,15 +284,24 @@ impl Task for WouldMergeAddTask {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
+                is_patch_id_match: false,
             });
         };
         let repo = &ctx.repo;
         let would_merge_add = repo
             .would_merge_add_to_target(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
+        // When merge-tree conflicts (would_merge_add=true), try patch-id as fallback
+        let is_patch_id_match = if would_merge_add {
+            repo.is_squash_merged_via_patch_id(branch, &base)
+                .unwrap_or(false)
+        } else {
+            false
+        };
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
             would_merge_add,
+            is_patch_id_match,
         })
     }
 }
