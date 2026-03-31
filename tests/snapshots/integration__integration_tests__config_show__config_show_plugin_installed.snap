@@ -60,7 +60,7 @@ exit_code: 0
 
 [36mCLAUDE CODE[39m
 [32m✓[39m [32mPlugin installed[39m
-[2m↳[22m [2mStatusline not configured. See https://worktrunk.dev/claude-code/#statusline[22m
+[2m↳[22m [2mStatusline not configured. To configure, run [4mwt config plugins claude install-statusline[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

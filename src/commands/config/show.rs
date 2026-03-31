@@ -90,7 +90,7 @@ pub(super) fn is_claude_available() -> bool {
 }
 
 /// Get the home directory for Claude Code config detection
-fn home_dir() -> Option<PathBuf> {
+pub(super) fn home_dir() -> Option<PathBuf> {
     // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -115,7 +115,7 @@ pub(super) fn is_plugin_installed() -> bool {
 }
 
 /// Check if the statusline is configured in Claude Code settings
-fn is_statusline_configured() -> bool {
+pub(super) fn is_statusline_configured() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -210,9 +210,9 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message(
-                "Statusline not configured. See https://worktrunk.dev/claude-code/#statusline"
-            )
+            hint_message(cformat!(
+                "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
+            ))
         )?;
     }
 
