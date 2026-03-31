@@ -173,9 +173,14 @@ impl Repository {
 
     /// Detect squash merges via patch-id matching.
     ///
-    /// Computes the squashed patch-id of the entire branch diff (merge-base..branch)
-    /// and checks if any commit on the target has a matching patch-id. This detects
-    /// squash-merged branches even when the target has since modified the same files.
+    /// Computes the combined diff of the entire branch (`diff-tree -p merge-base branch`)
+    /// and checks if any single commit on the target has the same patch-id. A match means
+    /// the target has a commit containing the exact same file changes as the whole branch
+    /// — i.e., a squash merge.
+    ///
+    /// Only runs when `merge-tree` conflicts (both sides modified the same files),
+    /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
+    /// number of commits on target since the merge-base (`git log -p`).
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
     /// `Ok(false)` otherwise (including when patch-id computation fails — conservative).

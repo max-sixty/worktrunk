@@ -110,11 +110,14 @@ pub enum IntegrationReason {
     /// Symbol in `wt list`: `⊂`
     MergeAddsNothing,
 
-    /// The branch's squashed diff matches a commit on target via patch-id.
+    /// The branch's entire squashed diff matches a single commit on target.
     ///
-    /// Detected via `git patch-id --verbatim` when `merge-tree` conflicts
-    /// (both sides modified the same files). This catches squash merges where
-    /// target later advanced the same files that the branch touched.
+    /// Fallback for when `merge-tree` conflicts (both sides modified the same
+    /// files). Computes `git diff-tree -p merge-base branch` as one combined
+    /// diff and checks if any individual commit on target has the same
+    /// patch-id. This specifically detects GitHub/GitLab squash merges — the
+    /// squash commit contains the whole branch in one commit, so the patch-ids
+    /// match. Does NOT detect cherry-picks of individual commits.
     ///
     /// Symbol in `wt list`: `⊂`
     PatchIdMatch,
