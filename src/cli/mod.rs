@@ -4,8 +4,9 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigPluginsClaudeCommand,
+    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
+    MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;

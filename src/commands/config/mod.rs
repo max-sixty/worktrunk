@@ -4,6 +4,7 @@
 
 mod create;
 mod hints;
+mod plugins;
 mod show;
 mod state;
 mod update;
@@ -11,6 +12,7 @@ mod update;
 // Re-export public functions
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
+pub use plugins::{handle_claude_install, handle_claude_uninstall};
 pub use show::handle_config_show;
 pub use state::{
     handle_logs_get, handle_state_clear, handle_state_clear_all, handle_state_get,

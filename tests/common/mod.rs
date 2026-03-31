@@ -1941,6 +1941,28 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Setup mock `claude` CLI with plugin subcommand support
+    ///
+    /// Creates a mock claude binary that handles `plugin marketplace`,
+    /// `plugin install`, and `plugin uninstall` commands. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin directory.
+    pub fn setup_mock_claude_with_plugins(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command("plugin marketplace", MockResponse::exit(0))
+            .command("plugin install", MockResponse::exit(0))
+            .command("plugin uninstall", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
     /// Setup mock `gh` that returns configurable PR/CI data
     ///
     /// Use this for testing CI status parsing code. The mock returns JSON data
