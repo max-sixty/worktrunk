@@ -394,54 +394,6 @@ fn test_effective_remote_url_is_cached(repo: TestRepo) {
     assert_eq!(first, second);
 }
 
-/// Test find_forge_remote: finds forge via effective URL with insteadOf.
-#[rstest]
-fn test_find_forge_remote_insteadof(repo: TestRepo) {
-    setup_insteadof(
-        &repo,
-        "origin",
-        "git@work-ssh:org/repo.git",
-        "git@github.com:org",
-    );
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-
-    let (remote_name, url) = git_repo
-        .find_forge_remote(|parsed| parsed.is_github())
-        .expect("Should find GitHub via insteadOf");
-    assert_eq!(remote_name, "origin");
-    assert_eq!(GitRemoteUrl::parse(&url).unwrap().host(), "github.com");
-
-    assert!(
-        git_repo
-            .find_forge_remote(|parsed| parsed.is_gitlab())
-            .is_none(),
-        "Should not find GitLab"
-    );
-}
-
-/// Test find_forge_remote: matches when URL already has known forge hostname.
-#[rstest]
-fn test_find_forge_remote_known_forge(repo: TestRepo) {
-    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    let (name, url) = git_repo
-        .find_forge_remote(|parsed| parsed.is_github())
-        .expect("Should find GitHub");
-    assert_eq!(name, "origin");
-    assert_eq!(url, "git@github.com:org/repo.git");
-}
-
-/// Test find_forge_remote: returns None when no remotes are configured.
-#[rstest]
-fn test_find_forge_remote_no_remotes(repo: TestRepo) {
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert!(git_repo.find_forge_remote(|p| p.is_github()).is_none());
-}
-
 /// Test find_remote_for_repo: resolves through insteadOf to match owner/repo.
 #[rstest]
 fn test_find_remote_for_repo_insteadof(repo: TestRepo) {

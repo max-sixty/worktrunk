@@ -412,10 +412,11 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m[0m
 [107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# CI Platform Override[0m
+[107m [0m [2m# Forge (GitHub/GitLab) Settings[0m
 [107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Override CI platform detection for GitHub Enterprise or self-hosted GitLab[0m
-[107m [0m [2m# with custom domains where URL detection fails.[0m
+[107m [0m [2m# Override platform detection for SSH host aliases or custom domains.[0m
+[107m [0m [2m# Set hostname for GitHub Enterprise or self-hosted GitLab API calls.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [ci][0m
-[107m [0m [2m# platform = "github"  # or "gitlab"[0m
+[107m [0m [2m# [forge][0m
+[107m [0m [2m# platform = "github"              # or "gitlab"[0m
+[107m [0m [2m# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m

@@ -357,9 +357,10 @@ See [`wt hook`](@/hook.md) for hook types, execution order, template variables, 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 
-# Override CI platform detection for self-hosted instances
-[ci]
+# Override platform detection for SSH aliases or self-hosted instances
+[forge]
 platform = "github"  # or "gitlab"
+# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
 
 # Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]
@@ -635,7 +636,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

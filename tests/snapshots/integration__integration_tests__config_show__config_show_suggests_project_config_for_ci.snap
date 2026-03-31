@@ -43,7 +43,22 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m
+[33m▲[39m [33mUser config uses deprecated config section: [ci] → [forge][39m
+[2m↳[22m [2mTo apply:[22m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[107m [0m [1mindex 2e0e0bb..9d78d51 100644[m
+[107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
+[107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[107m [0m [36m@@ -1,4 +1,4 @@[m
+[107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
+[107m [0m  [m
+[107m [0m [31m-[ci][m
+[107m [0m [31m-platform = "github"[m
+[107m [0m / No newline at end of file[m
+[107m [0m [32m+[m[32m[forge][m
+[107m [0m [32m+[m[32mplatform = "github"[m
+[2m○[22m Current config:
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [2m[36m[ci]

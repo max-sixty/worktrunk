@@ -263,9 +263,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
-    let project_config = repo.load_project_config().ok().flatten();
-    let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = platform_for_repo(&repo, platform_override, None);
+    let platform = platform_for_repo(&repo, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -368,10 +366,11 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
+            .into_iter()
+            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+            .collect();
+        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
     }
 
     // Display TOML with syntax highlighting
@@ -435,10 +434,14 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        // Only check for unknown keys if config is valid.
+        // Filter deprecated section keys to avoid duplicate warnings
+        // (deprecation system already warns about these).
+        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
+            .into_iter()
+            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+            .collect();
+        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
     }
 
     // Add "Current config" label when deprecations shown (to separate from diff)

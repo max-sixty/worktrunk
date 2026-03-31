@@ -428,9 +428,8 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 
 #[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a remote-tracking ref for a non-existent remote to exercise the
-    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
-    // This simulates a ref that remains after a remote is deleted
+    // Create a remote-tracking ref for a non-existent remote.
+    // This simulates a ref that remains after a remote is deleted.
     let head_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
@@ -453,10 +452,8 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
         "deleted-remote should not exist"
     );
 
-    // Run with --remotes --full to trigger the fallback path
-    // The orphaned ref should be parsed using split_once('/') as fallback
-    // Note: We don't use snapshot testing here because the spinner character
-    // in stderr is non-deterministic (timing-dependent)
+    // The orphaned ref should still appear — split_once('/') parses it correctly
+    // even though the remote no longer exists.
     let output = repo
         .wt_command()
         .args(["list", "--remotes", "--full"])
@@ -468,12 +465,6 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     assert!(
         stdout.contains("deleted-remote/orphaned-branch"),
         "should show orphaned remote branch in output: {stdout}"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown remote 'deleted-remote'"),
-        "should warn about unknown remote: {stderr}"
     );
 }
 
