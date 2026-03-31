@@ -87,7 +87,7 @@ For pre-* hooks, commands in a table run sequentially. For post-* hooks, they ru
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories (or [per-project](@/config.md#setting-overrides)) |
+| Scope | Single repository | All repositories (or [per-project](@/config.md#user-project-specific-settings)) |
 | Approval | Required | Not required |
 | Execution order | After user hooks | First |
 
