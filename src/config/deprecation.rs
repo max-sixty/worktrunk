@@ -69,7 +69,7 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
 
 /// Top-level section keys that are deprecated and handled separately.
 /// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
-pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select"];
+pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select", "ci"];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -200,6 +200,8 @@ pub struct Deprecations {
     pub select: bool,
     /// Has `[hooks.post-create]` (renamed to `[hooks.pre-start]`)
     pub post_create: bool,
+    /// Has `[ci]` section (moved to `[forge]`)
+    pub ci_section: bool,
 }
 
 impl Deprecations {
@@ -210,6 +212,7 @@ impl Deprecations {
             && !self.approved_commands
             && !self.select
             && !self.post_create
+            && !self.ci_section
     }
 }
 
@@ -224,6 +227,7 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         approved_commands: find_approved_commands_deprecation(content),
         select: find_select_deprecation(content),
         post_create: find_post_create_deprecation(content),
+        ci_section: find_ci_section_deprecation(content),
     }
 }
 
@@ -663,6 +667,74 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
     doc.to_string()
 }
 
+/// Check if config has a deprecated `[ci]` section without a corresponding `[forge]`.
+///
+/// Returns true if `[ci]` exists with a non-empty `platform` field and `[forge]` does not exist.
+pub fn find_ci_section_deprecation(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Skip if [forge] already exists
+    if doc
+        .get("forge")
+        .is_some_and(|f| f.is_table() || f.is_inline_table())
+    {
+        return false;
+    }
+
+    // Check if [ci] exists with a non-empty platform field
+    doc.get("ci")
+        .and_then(|ci| ci.as_table())
+        .and_then(|t| t.get("platform"))
+        .is_some_and(|p| {
+            p.as_str()
+                .or_else(|| p.as_value().and_then(|v| v.as_str()))
+                .is_some_and(|s| !s.is_empty())
+        })
+}
+
+/// Migrate `[ci]` section to `[forge]`.
+///
+/// Moves `platform` from `[ci]` to `[forge]`, preserving the value.
+/// Removes `[ci]` if `platform` was its only field.
+/// Skips migration if `[forge]` already exists.
+pub fn migrate_ci_to_forge(content: &str) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    // Skip if [forge] already exists
+    if doc
+        .get("forge")
+        .is_some_and(|f| f.is_table() || f.is_inline_table())
+    {
+        return content.to_string();
+    }
+
+    // Get platform value from [ci]
+    let platform = doc
+        .get("ci")
+        .and_then(|ci| ci.as_table())
+        .and_then(|t| t.get("platform"))
+        .and_then(|p| p.as_str())
+        .map(String::from);
+
+    let Some(platform) = platform else {
+        return content.to_string();
+    };
+
+    // Remove [ci] section (it only has platform)
+    doc.remove("ci");
+
+    // Create [forge] section with platform
+    let mut forge_table = toml_edit::Table::new();
+    forge_table.insert("platform", toml_edit::value(platform));
+    doc.insert("forge", toml_edit::Item::Table(forge_table));
+
+    doc.to_string()
+}
+
 /// Copy approved-commands from config.toml to approvals.toml.
 ///
 /// Called during migration to ensure approved-commands are preserved before
@@ -955,6 +1027,9 @@ pub fn write_migration_file(
     if deprecations.post_create {
         new_content = migrate_post_create_to_pre_start(&new_content);
     }
+    if deprecations.ci_section {
+        new_content = migrate_ci_to_forge(&new_content);
+    }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -1080,6 +1155,17 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             "{}",
             warning_message(format!(
                 "{} uses deprecated hook name: post-create → pre-start",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.ci_section {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated config section: [ci] → [forge]",
                 info.label
             ))
         );
@@ -2124,6 +2210,7 @@ approved-commands = ["npm install"]
                 approved_commands: true,
                 select: false,
                 post_create: false,
+                ci_section: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2153,6 +2240,7 @@ approved-commands = ["npm install"]
                 approved_commands: true,
                 select: false,
                 post_create: false,
+                ci_section: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2183,6 +2271,7 @@ approved-commands = ["npm install"]
             approved_commands: true,
             select: false,
             post_create: false,
+            ci_section: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
@@ -2442,6 +2531,7 @@ branches = true
                 approved_commands: false,
                 select: true,
                 post_create: false,
+                ci_section: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2475,6 +2565,7 @@ pager = "delta --paging=never"
             approved_commands: false,
             select: true,
             post_create: false,
+            ci_section: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(result.is_some(), "Should write migration file for select");
@@ -2722,6 +2813,7 @@ server = "npm run dev"
                 approved_commands: false,
                 select: false,
                 post_create: true,
+                ci_section: false,
             },
             label: "Project config".to_string(),
             main_worktree_path: None,
@@ -2755,6 +2847,7 @@ server = "npm run dev"
             approved_commands: false,
             select: false,
             post_create: true,
+            ci_section: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
