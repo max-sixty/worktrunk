@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/config_show.rs
-assertion_line: 799
 info:
   program: wt
   args:
@@ -59,9 +58,6 @@ exit_code: 0
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 [2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
-
-[36mCLAUDE CODE[39m
-[2m○[22m [1mclaude[22m CLI not installed
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

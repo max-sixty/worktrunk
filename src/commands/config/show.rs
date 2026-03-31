@@ -52,9 +52,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Render shell integration status
     render_shell_status(&mut show_output)?;
 
-    // Render Claude Code status
-    show_output.push('\n');
-    render_claude_code_status(&mut show_output)?;
+    // Render Claude Code status (only when claude CLI is available)
+    if is_claude_available() {
+        show_output.push('\n');
+        render_claude_code_status(&mut show_output)?;
+    }
 
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
@@ -181,20 +183,10 @@ fn check_zsh_compinit_missing() -> bool {
 
 // ==================== Render Functions ====================
 
-/// Render CLAUDE CODE section (plugin and statusline status)
+/// Render CLAUDE CODE section (plugin and statusline status).
+/// Caller must check `is_claude_available()` first.
 fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
-    let claude_available = is_claude_available();
-
     writeln!(out, "{}", format_heading("CLAUDE CODE", None))?;
-
-    if !claude_available {
-        writeln!(
-            out,
-            "{}",
-            info_message(cformat!("<bold>claude</> CLI not installed"))
-        )?;
-        return Ok(());
-    }
 
     // Plugin status
     let plugin_installed = is_plugin_installed();
