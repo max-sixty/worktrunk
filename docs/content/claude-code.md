@@ -14,10 +14,7 @@ The worktrunk Claude Code plugin provides two features:
 
 ## Installation
 
-{% terminal() %}
-<span class="cmd">claude plugin marketplace add max-sixty/worktrunk</span>
-<span class="cmd">claude plugin install worktrunk@worktrunk</span>
-{% end %}
+{{ terminal(cmd="claude plugin marketplace add max-sixty/worktrunk|||claude plugin install worktrunk@worktrunk") }}
 
 ## Configuration skill
 
