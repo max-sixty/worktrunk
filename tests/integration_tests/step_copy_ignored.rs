@@ -1390,7 +1390,11 @@ fn test_copy_ignored_many_directories_no_emfile(mut repo: TestRepo) {
         let dir = repo.root_path().join(format!("ignored-dir-{i}"));
         fs::create_dir_all(&dir).unwrap();
         for j in 0..10 {
-            fs::write(dir.join(format!("file-{j}.txt")), format!("content {i}-{j}")).unwrap();
+            fs::write(
+                dir.join(format!("file-{j}.txt")),
+                format!("content {i}-{j}"),
+            )
+            .unwrap();
         }
         gitignore_entries.push_str(&dir_name);
         gitignore_entries.push('\n');
