@@ -2172,8 +2172,8 @@ fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
     );
 
     // The worktree contents should be gone IMMEDIATELY (moved to .git/wt/trash/).
-    // An empty placeholder directory may remain briefly (for shell PWD validity).
-    crate::common::assert_worktree_removed(&worktree_path);
+    // No placeholder created because this is a non-current worktree removal.
+    assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
 /// Background removal should prune git worktree metadata synchronously.

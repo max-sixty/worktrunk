@@ -406,33 +406,43 @@ pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf
 /// This is used after the worktree has been renamed to a staging path,
 /// git metadata has been pruned, and the branch has been deleted synchronously.
 ///
-/// The delay mirrors `build_remove_command`'s `sleep 1`. After the rename,
-/// a placeholder directory is created at `original_path` so the shell's
+/// The delay mirrors `build_remove_command`'s `sleep 1`.
+///
+/// When `changed_directory` is true — the shell is cd-ing away from the removed
+/// worktree — a placeholder directory is created at `original_path` so the shell's
 /// working directory remains valid until the wrapper has processed the `cd`
 /// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
-/// emit errors between binary exit and the `cd`.
+/// emit errors between binary exit and the `cd`. The background command then
+/// waits for the shell wrapper before cleaning up the placeholder.
 ///
-/// The background command removes both the placeholder and the staged directory.
+/// When `changed_directory` is false, no placeholder exists, so the background
+/// command just removes the staged directory directly.
 pub fn build_remove_command_staged(
     staged_path: &std::path::Path,
     original_path: &std::path::Path,
+    changed_directory: bool,
 ) -> String {
     use shell_escape::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
 
-    let original_path_str = original_path.to_string_lossy();
-    let original_escaped = escape(original_path_str.as_ref().into());
+    if changed_directory {
+        let original_path_str = original_path.to_string_lossy();
+        let original_escaped = escape(original_path_str.as_ref().into());
 
-    // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
-    // rmdir: remove the empty placeholder (safe — only removes empty directories).
-    // rm -rf: remove the staged worktree contents.
-    // Use -- to prevent option parsing for paths starting with -
-    format!(
-        "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
-        original_escaped, staged_escaped
-    )
+        // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
+        // rmdir: remove the empty placeholder (safe — only removes empty directories).
+        // rm -rf: remove the staged worktree contents.
+        // Use -- to prevent option parsing for paths starting with -
+        format!(
+            "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
+            original_escaped, staged_escaped
+        )
+    } else {
+        // No placeholder to clean up — just remove the staged directory.
+        format!("rm -rf -- {}", staged_escaped)
+    }
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -623,12 +633,17 @@ mod tests {
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+
+        // changed_directory=true: placeholder cleanup before rm -rf
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, true), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+
+        // changed_directory=false: just rm -rf, no placeholder
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, false), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
 
         // Shell escaping for special characters (space in path)
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
     }
 
     #[test]
