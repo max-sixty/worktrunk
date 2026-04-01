@@ -1126,112 +1126,125 @@ fn test_project_config_source_generates_example_toml() {
     );
 }
 
-/// Verify that all config section keys appear in the user config documentation.
+/// Verify that all user config struct fields are documented in the user config example.
 ///
-/// When a new config section is added (e.g., `[switch.picker]`), this test ensures
-/// it also appears in the user config docs in `src/cli/mod.rs`. Without this, new
-/// config sections can ship undocumented.
+/// Section names are derived from `UserConfig`'s JsonSchema, so adding a new field
+/// to the struct automatically fails this test if the docs aren't updated.
 #[test]
 fn test_config_docs_include_all_sections() {
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{DEPRECATED_SECTION_KEYS, valid_user_config_keys};
+    use worktrunk::git::HookType;
+
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let cli_mod_path = project_root.join("src/cli/mod.rs");
     let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
     let user_config_content =
         extract_config_section(&cli_mod_content, &USER_CONFIG_PATTERN, "USER_CONFIG");
 
-    // Config sections that MUST be documented (non-deprecated, non-hook table sections).
-    // When adding a new config section, add it here — the test will fail if it's
-    // missing from the docs.
-    let required_sections = [
-        "list",
-        "commit",
-        "commit.generation",
-        "merge",
-        "switch.picker",
-    ];
+    let all_keys = valid_user_config_keys();
 
-    // Deprecated sections — should NOT appear in docs (old users get migration guidance)
-    let deprecated_sections = ["select", "commit-generation"];
+    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    let hook_keys: HashSet<String> = HookType::iter()
+        .map(|h| h.to_string())
+        .chain(std::iter::once("post-create".to_string()))
+        .collect();
 
-    // Check required sections appear as TOML headers in code blocks
-    for section in &required_sections {
-        let header = format!("[{section}]");
-        assert!(
-            user_config_content.contains(&header),
-            "Config section `{header}` is missing from user config docs in src/cli/mod.rs.\n\
-             All config sections must be documented between USER_CONFIG_START/END markers."
-        );
-    }
+    // Keys that are bare scalars or internal flags, not TOML section headers
+    let non_section_keys: HashSet<&str> = [
+        "worktree-path",
+        "skip-shell-integration-prompt",
+        "skip-commit-generation-prompt",
+    ]
+    .into();
 
-    // Check deprecated sections do NOT appear as TOML headers
-    for section in &deprecated_sections {
-        let header = format!("[{section}]");
-        assert!(
-            !user_config_content.contains(&header),
-            "Deprecated section `{header}` should not appear in user config docs.\n\
-             Use the new section name instead."
-        );
+    // Separate schema keys into section keys (excluding hooks and bare scalars)
+    let section_keys: Vec<&String> = all_keys
+        .iter()
+        .filter(|k| !hook_keys.contains(*k) && !non_section_keys.contains(k.as_str()))
+        .collect();
+
+    // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
+    for key in &section_keys {
+        if DEPRECATED_SECTION_KEYS.contains(&key.as_str()) {
+            let header = format!("[{key}]");
+            assert!(
+                !user_config_content.contains(&header),
+                "Deprecated section `{header}` should not appear in user config docs.\n\
+                 Use the new section name instead."
+            );
+        } else {
+            let header = format!("[{key}]");
+            let nested = format!("[{key}.");
+            assert!(
+                user_config_content.contains(&header) || user_config_content.contains(&nested),
+                "Config section `[{key}]` (from UserConfig schema) is missing from user \
+                 config docs in src/cli/mod.rs.\nAll config sections must be documented between \
+                 USER_CONFIG_START/END markers."
+            );
+        }
     }
 }
 
 /// Verify that all project config struct fields are documented in the project config example.
 ///
-/// When a new field is added to `ProjectConfig` (e.g., a `[ci]` section), this test
-/// ensures it also appears in the project config docs in `src/cli/mod.rs`. Without
-/// this, new project config sections can ship undocumented.
+/// Section names are derived from `ProjectConfig`'s JsonSchema, so adding a new field
+/// to the struct automatically fails this test if the docs aren't updated.
 #[test]
 fn test_project_config_docs_include_all_sections() {
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{DEPRECATED_SECTION_KEYS, valid_project_config_keys};
+    use worktrunk::git::HookType;
+
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let cli_mod_path = project_root.join("src/cli/mod.rs");
     let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
     let project_config_content =
         extract_config_section(&cli_mod_content, &PROJECT_CONFIG_PATTERN, "PROJECT_CONFIG");
 
-    // Section headers that MUST appear in the project config docs.
-    // When adding a new project config section, add it here — the test will fail
-    // if it's missing from the docs.
-    let required_sections = ["list", "forge", "step.copy-ignored", "aliases"];
+    let all_keys = valid_project_config_keys();
 
-    // Deprecated sections — should NOT appear in docs
-    let deprecated_sections = ["ci"];
+    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    let hook_keys: HashSet<String> = HookType::iter()
+        .map(|h| h.to_string())
+        .chain(std::iter::once("post-create".to_string()))
+        .collect();
 
-    // Check required sections appear as TOML headers
-    for section in &required_sections {
-        let header = format!("[{section}]");
-        assert!(
-            project_config_content.contains(&header),
-            "Config section `{header}` is missing from project config docs in src/cli/mod.rs.\n\
-             All config sections must be documented between PROJECT_CONFIG_START/END markers."
-        );
-    }
+    // Separate schema keys into section keys and hook keys
+    let section_keys: Vec<&String> = all_keys
+        .iter()
+        .filter(|k| !hook_keys.contains(*k))
+        .collect();
 
-    // Check deprecated sections do NOT appear as TOML headers
-    for section in &deprecated_sections {
-        let header = format!("[{section}]");
-        assert!(
-            !project_config_content.contains(&header),
-            "Deprecated section `{header}` should not appear in project config docs.\n\
-             Use the new section name instead."
-        );
+    // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
+    for key in &section_keys {
+        if DEPRECATED_SECTION_KEYS.contains(&key.as_str()) {
+            let header = format!("[{key}]");
+            assert!(
+                !project_config_content.contains(&header),
+                "Deprecated section `{header}` should not appear in project config docs.\n\
+                 Use the new section name instead."
+            );
+        } else {
+            let header = format!("[{key}]");
+            let nested = format!("[{key}.");
+            assert!(
+                project_config_content.contains(&header)
+                    || project_config_content.contains(&nested),
+                "Config section `[{key}]` (from ProjectConfig schema) is missing from project \
+                 config docs in src/cli/mod.rs.\nAll config sections must be documented between \
+                 PROJECT_CONFIG_START/END markers."
+            );
+        }
     }
 
     // Hooks are flattened (not a [hooks] table), so verify at least one hook type
     // appears as a bare key
-    let hook_keys = [
-        "pre-switch",
-        "post-switch",
-        "pre-start",
-        "post-start",
-        "pre-commit",
-        "post-commit",
-        "pre-merge",
-        "post-merge",
-        "pre-remove",
-        "post-remove",
-    ];
     let has_hook = hook_keys
         .iter()
-        .any(|key| project_config_content.contains(key));
+        .any(|key| project_config_content.contains(key.as_str()));
     assert!(
         has_hook,
         "No hook keys found in project config docs. Expected at least one of: {hook_keys:?}\n\
