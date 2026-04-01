@@ -254,17 +254,21 @@ impl Task for HasFileChangesTask {
     }
 }
 
-/// Task 3b: Merge simulation
+/// Task 3b: Merge simulation + patch-id fallback
 ///
-/// Checks if merging the branch into target would add any changes by simulating
-/// the merge with `git merge-tree --write-tree`. Returns false when the merge
-/// result equals target's tree, indicating the branch is already integrated.
+/// Runs two integration checks sequentially within one task:
 ///
-/// This catches branches where target has advanced past the squash-merge point -
-/// the three-dot diff might show changes, but those changes are already in target
-/// via the squash merge.
+/// 1. `merge-tree --write-tree` — simulates merging branch into target. If the
+///    result tree equals target's tree, the branch is integrated (`MergeAddsNothing`).
+/// 2. `patch-id` fallback — only when merge-tree conflicts (returns `None`).
+///    Computes the branch's entire diff as a single patch-id and checks if any
+///    target commit matches (`PatchIdMatch`). Detects squash merges where target
+///    later modified the same files.
 ///
-/// Uses target for integration detection.
+/// These are bundled in one task because patch-id only runs when merge-tree
+/// conflicts — it needs the merge-tree result first. Splitting them into separate
+/// parallel tasks would either waste work (running patch-id unconditionally) or
+/// require two-phase scheduling.
 pub struct WouldMergeAddTask;
 
 impl Task for WouldMergeAddTask {
