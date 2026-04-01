@@ -363,6 +363,30 @@ fn test_switch_nonexistent_branch(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_nonexistent_branch_with_fetch_time(repo: TestRepo) {
+    // When FETCH_HEAD exists, the hint should include "last fetched X ago".
+    let git_dir = repo.root_path().join(".git");
+    fs::write(git_dir.join("FETCH_HEAD"), "").unwrap();
+
+    // Set TEST_EPOCH to 3 hours after the real mtime so the file appears "3h ago"
+    let mtime = fs::metadata(git_dir.join("FETCH_HEAD"))
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let epoch_3h_later = mtime + 3 * 3600;
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["nonexistent-branch"], None);
+        cmd.env("WORKTRUNK_TEST_EPOCH", epoch_3h_later.to_string());
+        assert_cmd_snapshot!("switch_nonexistent_with_fetch_time", cmd);
+    });
+}
+
+#[rstest]
 fn test_switch_base_accepts_commitish(repo: TestRepo) {
     // Issue #630: --base should accept any commit-ish, not just branch names
     // Test HEAD as base (common use case: branch from current HEAD)

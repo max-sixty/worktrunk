@@ -137,7 +137,7 @@ fn execute_instant_removal_or_fallback(
         // small check-vs-use window where newly introduced changes could be
         // removed. See remove_worktree() docs for the detailed safety analysis.
         let force = force_worktree || worktree_path.join(".gitmodules").exists();
-        build_remove_command(worktree_path, branch_to_delete, force)
+        build_remove_command(worktree_path, branch_to_delete, force, changed_directory)
     }
 }
 

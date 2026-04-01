@@ -15,6 +15,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use worktrunk::shell_exec::Cmd;
 use wt_perf::{RepoConfig, run_git, setup_fake_remote};
 
 fn release_binary() -> &'static Path {
@@ -23,13 +24,13 @@ fn release_binary() -> &'static Path {
 
 /// Isolate a command from host environment (mirrors test configure_cli_command).
 fn isolate_cmd(cmd: &mut Command, user_config_path: &Path) {
-    // Remove host GIT_* and WORKTRUNK_* vars
     for (key, _) in std::env::vars() {
         if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
             cmd.env_remove(&key);
         }
     }
     cmd.env_remove("NO_COLOR");
+    cmd.env_remove("SHELL");
     cmd.env("WORKTRUNK_CONFIG_PATH", user_config_path);
     cmd.env(
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
@@ -39,7 +40,6 @@ fn isolate_cmd(cmd: &mut Command, user_config_path: &Path) {
         "WORKTRUNK_APPROVALS_PATH",
         "/nonexistent/bench/approvals.toml",
     );
-    cmd.env_remove("SHELL");
 }
 
 /// Create a benchmark repo at a specific path with optional hooks.
@@ -84,11 +84,21 @@ fn recreate_worktree(repo_path: &Path) {
         let _ = std::fs::remove_dir_all(&trash_dir);
     }
 
-    // Prune stale worktree metadata
-    let _ = run_git_ok(repo_path, &["worktree", "prune"]);
+    // Prune stale worktree metadata (best-effort)
+    let _ = Cmd::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .run();
 
-    // Delete branch if it exists (may or may not have been deleted by removal)
-    let _ = run_git_ok(repo_path, &["branch", "-D", "feature-wt-1"]);
+    // Delete branch if it exists (may already be deleted by removal)
+    let _ = Cmd::new("git")
+        .args(["branch", "-D", "feature-wt-1"])
+        .current_dir(repo_path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .run();
 
     // Recreate branch + worktree
     run_git(
@@ -102,18 +112,6 @@ fn recreate_worktree(repo_path: &Path) {
             "HEAD",
         ],
     );
-}
-
-/// Run git, returning true if successful.
-fn run_git_ok(path: &Path, args: &[&str]) -> bool {
-    use worktrunk::shell_exec::Cmd;
-    Cmd::new("git")
-        .args(args.iter().copied())
-        .current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .run()
-        .is_ok_and(|o| o.status.success())
 }
 
 fn bench_remove_e2e(c: &mut Criterion) {

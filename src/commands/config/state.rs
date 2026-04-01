@@ -333,6 +333,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 return Err(worktrunk::git::GitError::BranchNotFound {
                     branch: branch_name,
                     show_create_hint: true,
+                    last_fetch_ago: None,
                 }
                 .into());
             }

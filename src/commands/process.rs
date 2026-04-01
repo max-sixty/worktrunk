@@ -406,8 +406,6 @@ pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf
 /// This is used after the worktree has been renamed to a staging path,
 /// git metadata has been pruned, and the branch has been deleted synchronously.
 ///
-/// The delay mirrors `build_remove_command`'s `sleep 1`.
-///
 /// When `changed_directory` is true — the shell is cd-ing away from the removed
 /// worktree — a placeholder directory is created at `original_path` so the shell's
 /// working directory remains valid until the wrapper has processed the `cd`
@@ -456,23 +454,20 @@ pub fn build_remove_command_staged(
 ///
 /// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
 /// even when the worktree contains untracked files (like build artifacts).
+///
+/// When `changed_directory` is true, a 1-second delay runs first so the shell
+/// wrapper can cd away before the directory is removed. When false (removing a
+/// non-current worktree), the removal runs immediately.
 pub fn build_remove_command(
     worktree_path: &std::path::Path,
     branch_to_delete: Option<&str>,
     force_worktree: bool,
+    changed_directory: bool,
 ) -> String {
     use shell_escape::escape;
 
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
-
-    // Delay before deleting the worktree directory. After wt exits, the shell
-    // wrapper reads the directive file and runs `cd`. The 1s delay ensures the
-    // shell has finished cd'ing before the directory is removed. The primary fix
-    // for the "shell-init: error retrieving current directory" race is in the
-    // fish wrapper (using builtins instead of subprocesses to read the directive),
-    // but this delay provides defense in depth for other shells and edge cases.
-    let delay = "sleep 1";
 
     // Stop fsmonitor daemon first (best effort - ignore errors)
     // This prevents zombie daemons from accumulating when using builtin fsmonitor
@@ -483,18 +478,29 @@ pub fn build_remove_command(
 
     let force_flag = if force_worktree { " --force" } else { "" };
 
+    // When removing the current worktree, delay so the shell wrapper can cd away
+    // before the directory is removed. The primary fix for the "shell-init: error
+    // retrieving current directory" race is in the fish wrapper (using builtins
+    // instead of subprocesses to read the directive), but this provides defense in
+    // depth for other shells and edge cases.
+    let prefix = if changed_directory {
+        format!("sleep 1 && {} && ", stop_fsmonitor)
+    } else {
+        format!("{} && ", stop_fsmonitor)
+    };
+
     match branch_to_delete {
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{} && {} && git worktree remove{} {} && git branch -D {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped, branch_escaped
+                "{}git worktree remove{} {} && git branch -D {}",
+                prefix, force_flag, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{} && {} && git worktree remove{} {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped
+                "{}git worktree remove{} {}",
+                prefix, force_flag, worktree_escaped
             )
         }
     }
@@ -590,21 +596,20 @@ mod tests {
 
         let path = PathBuf::from("/tmp/test-worktree");
 
-        // Without branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        // changed_directory=true: sleep before removal
+        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
-        // With branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        // changed_directory=false: no sleep
+        assert_snapshot!(build_remove_command(&path, None, false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
-
-        // With branch deletion and force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]

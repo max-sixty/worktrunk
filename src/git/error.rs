@@ -180,6 +180,9 @@ pub enum GitError {
         /// Show hint about creating the branch. Set to false for remove operations
         /// where suggesting creation doesn't make sense.
         show_create_hint: bool,
+        /// Pre-formatted label for the last fetch time (e.g., "3h ago", "never").
+        /// When present, the list-branches hint includes the fetch age as a parenthetical.
+        last_fetch_ago: Option<String>,
     },
     /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
     ReferenceNotFound {
@@ -404,6 +407,7 @@ impl GitError {
             GitError::BranchNotFound {
                 branch,
                 show_create_hint,
+                last_fetch_ago,
             } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
                 let hint = if *show_create_hint {
@@ -411,8 +415,10 @@ impl GitError {
                     if let Some(ctx) = ctx {
                         create_cmd = ctx.apply(create_cmd);
                     }
+                    let fetch_note = last_fetch_ago.as_ref().map(|ago| cformat!(" ({ago})"));
                     cformat!(
-                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>"
+                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>{note}",
+                        note = fetch_note.as_deref().unwrap_or("")
                     )
                 } else {
                     cformat!("To list branches, run <underline>{list_cmd}</>")
@@ -1640,6 +1646,7 @@ mod tests {
             source: Box::new(GitError::BranchNotFound {
                 branch: "emails".into(),
                 show_create_hint: true,
+                last_fetch_ago: None,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],
