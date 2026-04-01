@@ -1224,28 +1224,12 @@ fn test_project_config_docs_include_all_sections() {
         );
     }
 
-    // Hooks are flattened (not a [hooks] table), so verify at least one hook type
-    // appears as a bare key
-    let hook_keys = [
-        "pre-switch",
-        "post-switch",
-        "pre-start",
-        "post-start",
-        "pre-commit",
-        "post-commit",
-        "pre-merge",
-        "post-merge",
-        "pre-remove",
-        "post-remove",
-    ];
-    let has_hook = hook_keys
-        .iter()
-        .any(|key| project_config_content.contains(key));
+    // Hooks section should exist (individual hook keys are documented in user config
+    // and cross-referenced from project config)
     assert!(
-        has_hook,
-        "No hook keys found in project config docs. Expected at least one of: {hook_keys:?}\n\
-         Hooks should appear as bare keys (not under a [hooks] table) between \
-         PROJECT_CONFIG_START/END markers."
+        project_config_content.contains("## Hooks"),
+        "Hooks section heading missing from project config docs.\n\
+         Expected `## Hooks` between PROJECT_CONFIG_START/END markers."
     );
 }
 
