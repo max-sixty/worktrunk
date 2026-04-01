@@ -223,6 +223,26 @@ url = "echo http://localhost:{{ branch | hash_port }}"
 
 Aliases defined here apply to all projects. For project-specific aliases, use the [project config](@/config.md#project-configuration) `[aliases]` section instead.
 
+### Hooks
+
+See `wt hook --help` for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](@/config.md#project-configuration) apply only to that repository.
+
+```toml
+# Single command
+pre-start = "npm ci"
+
+# Multiple named commands (concurrent for post-*, sequential for pre-*)
+[pre-merge]
+test = "npm test"
+build = "npm run build"
+
+# Pipeline — list of maps, run in order (each map concurrent)
+post-start = [
+    { install = "npm ci" },
+    { build = "npm run build", server = "npm run dev" }
+]
+```
+
 ### User project-specific settings
 
 For context:
@@ -352,23 +372,7 @@ Location: `.config/wt.toml` (checked into version control and shared with the te
 
 ## Hooks
 
-See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format:
-
-```toml
-# Single command
-pre-start = "npm ci"
-
-# Multiple named commands (concurrent for post-*, sequential for pre-*)
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-
-# Pipeline — list of maps, run in order (each map concurrent)
-post-start = [
-    { install = "npm ci" },
-    { build = "npm run build", server = "npm run dev" }
-]
-```
+Project hooks apply to this repository only. Format is the same as [user hooks](@/config.md#hooks); see `wt hook --help` for hook types, execution order, and examples.
 
 ## Dev server URL
 
