@@ -1452,7 +1452,7 @@ post-start = [
   wt config state vars set \
     container='{{ repo }}-{{ branch | sanitize }}-postgres' \
     port='{{ ('db-' ~ branch) | hash_port }}' \
-    db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+    db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
   """,
   { db = """
   docker run -d --rm \
@@ -1473,7 +1473,7 @@ The first pipeline step derives names and ports from the branch name and stores 
 The connection string is accessible anywhere — not just in hooks:
 
 ```console
-$ DATABASE_URL=$(wt config state vars get db-url) npm start
+$ DATABASE_URL=$(wt config state vars get db_url) npm start
 ```
 
 ## Progressive validation
