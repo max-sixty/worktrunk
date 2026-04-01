@@ -110,8 +110,13 @@ pub(super) fn is_plugin_installed() -> bool {
         return false;
     };
 
-    // Look for "worktrunk@worktrunk" in the plugins object
-    content.contains("\"worktrunk@worktrunk\"")
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("plugins")
+        .and_then(|p| p.get("worktrunk@worktrunk"))
+        .is_some()
 }
 
 /// Check if the statusline is configured in Claude Code settings

@@ -165,6 +165,10 @@ After editing `after_long_help` text, also update the help snapshots:
 cargo insta test --accept -- --test integration "test_help"
 ```
 
+### Config doc TOML blocks
+
+Config docs (`USER_CONFIG_START`/`PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is commented out with `#`. TOML comments inside code blocks become double-commented (`# # comment`). Use plain text descriptions ending with colons before each code block instead — inline end-of-line comments (e.g., `key = "value"  # explanation`) are fine.
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. A failed command that preserves data is better than a "successful" command that silently destroys work.
@@ -334,6 +338,10 @@ Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or
 fn validate_config() { ... }
 ```
 
+### System Docstrings
+
+Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves.
+
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
@@ -362,6 +370,47 @@ if worktree.is_dirty() {
 - **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error. Panics in fallible code bypass error handling.
 - **Don't `logger.error` before raising** — include context in the error message itself
 - **Let errors propagate** — don't catch and re-raise without adding information
+
+## Config Deprecation
+
+Config deprecation has two layers, both required for a complete migration.
+
+### Layer 1: Pre-deserialization scanning (`src/config/deprecation.rs`)
+
+`check_and_migrate()` scans raw TOML text before serde parses it. It detects deprecated template variables, renamed sections, and removed fields, then generates a migration file (e.g., `config.deprecated.toml`) with upgrade instructions. Warnings are deduplicated per-process via `WARNED_DEPRECATED_PATHS`.
+
+To register a new deprecation at this layer:
+
+1. Add detection logic to `detect_deprecations()` and extend the `Deprecations` struct
+2. Add the migration instructions to `write_migration_file()`
+3. If it's a top-level section, add the key to `DEPRECATED_SECTION_KEYS` (this prevents `warn_unknown_fields` from also flagging it)
+
+### Layer 2: Post-deserialization normalization (`src/config/user/mod.rs`)
+
+After serde parses the config, `normalize_deprecated_sections()` moves deprecated values to their canonical locations. This runs on every load path (`load()`, `load_from_str()`, and `mutation.rs` reloads). Existing examples: `[commit-generation]` → `[commit.generation]`, `[select]` → `[switch.picker]`.
+
+### Renaming a field within a section
+
+This is the most common case. Serde's `#[serde(deny_unknown_fields)]` is not used on config sections, so unrecognized fields inside a section like `[merge]` are silently ignored — they won't trigger `warn_unknown_fields`, which only checks top-level keys. The serde-level approach below is the only way to catch and migrate inner-section fields.
+
+Recipe for renaming `old-name` → `new-name` inside an existing section:
+
+1. **Keep the old field in the struct** so serde still deserializes it:
+
+   ```rust
+   /// **DEPRECATED**: Use `new-name` instead.
+   #[serde(rename = "old-name", skip_serializing, default)]
+   #[schemars(skip)]
+   pub old_name: Option<bool>,
+   ```
+
+   `skip_serializing` prevents writing the old name back. `schemars(skip)` hides it from the JSON schema.
+
+2. **Add a normalization method** on the section struct that transfers the old value to the new field, applying any inversion or transformation needed, and emits a deprecation warning via `warning_message()`.
+
+3. **Call it from `normalize_deprecated_sections()`** in `src/config/user/mod.rs`, alongside the existing normalizations.
+
+Do not silently drop old config keys — this causes silent behavior changes for users.
 
 ## Adding CLI Commands
 
