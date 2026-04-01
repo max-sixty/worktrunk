@@ -3128,14 +3128,8 @@ server = "npm run dev"
             approvals_copied_to: None,
         };
         let output = format_deprecation_warnings(&info);
-        assert!(
-            output.contains("no-ff"),
-            "Should mention no-ff: {output}"
-        );
-        assert!(
-            output.contains("no-cd"),
-            "Should mention no-cd: {output}"
-        );
+        assert!(output.contains("no-ff"), "Should mention no-ff: {output}");
+        assert!(output.contains("no-cd"), "Should mention no-cd: {output}");
     }
 
     #[test]
