@@ -839,6 +839,7 @@ fn strip_html(content: &str) -> String {
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
 /// - AUTO-GENERATED-HTML terminal markers → plain code blocks
+/// - `{{ terminal(cmd="...") }}` → ```bash code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -865,6 +866,14 @@ fn transform_zola_to_github(content: &str) -> String {
             // Strip HTML, converting .cmd spans to "$ ..." (adds prompt)
             let plain = strip_html(inner);
             format!("```console\n{}\n```", plain)
+        })
+        .into_owned();
+
+    // Transform self-closing terminal shortcodes to bash code blocks for README
+    // These are `{{ terminal(cmd="...") }}` shortcodes without body content
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
         })
         .into_owned();
 
