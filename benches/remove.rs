@@ -88,12 +88,16 @@ fn recreate_worktree(repo_path: &Path) {
     let _ = Cmd::new("git")
         .args(["worktree", "prune"])
         .current_dir(repo_path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .run();
 
     // Delete branch if it exists (may already be deleted by removal)
     let _ = Cmd::new("git")
         .args(["branch", "-D", "feature-wt-1"])
         .current_dir(repo_path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .run();
 
     // Recreate branch + worktree
