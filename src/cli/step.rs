@@ -393,10 +393,6 @@ Note: This command is experimental and may change in future versions.
         /// Template expression to evaluate
         template: String,
 
-        /// Shell-escape substituted values (used internally by pipeline lazy expansion)
-        #[arg(long, hide = true)]
-        shell_escape: bool,
-
         /// Show template variables and expanded result
         #[arg(long)]
         dry_run: bool,

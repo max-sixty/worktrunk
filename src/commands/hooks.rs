@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommandConfig;
@@ -244,7 +245,6 @@ pub fn spawn_background_hooks(
             ctx.branch_or_head(),
             &hook_log,
             Some(&cmd.prepared.context_json),
-            &[],
         ) {
             let err_msg = err.to_string();
             let message = match &cmd.prepared.name {
@@ -265,7 +265,7 @@ pub fn spawn_background_hooks(
 pub(crate) enum PreparedHooks {
     /// Traditional flat commands (string or map config) — spawned independently.
     Flat(Vec<SourcedCommand>),
-    /// Pipeline steps (list config) — spawned as one compound shell command.
+    /// Pipeline steps (list config) — spawned as `wt _run-pipeline`.
     Pipeline(Vec<SourcedStep>),
 }
 
@@ -275,60 +275,6 @@ pub struct SourcedStep {
     pub source: HookSource,
     pub hook_type: HookType,
     pub display_path: Option<PathBuf>,
-}
-
-/// Build a compound shell command from pipeline steps, collecting env vars for
-/// lazy template expansion.
-///
-/// Serial steps are chained with `&&`. Concurrent groups use background
-/// processes with `wait`. Commands referencing `vars.` are wrapped in
-/// `eval "$(wt step eval --shell-escape ...)"` and their raw templates are
-/// returned as env vars for the spawned process.
-///
-/// Returns `(shell_command, env_vars)`.
-fn build_pipeline_command(steps: &[SourcedStep]) -> (String, Vec<(String, String)>) {
-    let wt_bin = std::env::current_exe()
-        .ok()
-        .map(|p| shell_escape::escape(p.to_string_lossy()).into_owned())
-        .unwrap_or_else(|| "wt".to_string());
-
-    let mut parts = Vec::new();
-    let mut env_vars: Vec<(String, String)> = Vec::new();
-
-    for step in steps {
-        match &step.step {
-            PreparedStep::Single(cmd) => {
-                // Wrap in braces to prevent operator interaction between steps.
-                // Without this, `false || echo fallback && echo next` would
-                // parse as `false || (echo fallback && echo next)`.
-                parts.push(format!(
-                    "{{ {}; }}",
-                    format_cmd(cmd, &wt_bin, &mut env_vars)
-                ));
-            }
-            PreparedStep::Concurrent(cmds) => {
-                let bg: Vec<String> = cmds
-                    .iter()
-                    .map(|c| format!("{{ {}; }} &", format_cmd(c, &wt_bin, &mut env_vars)))
-                    .collect();
-                parts.push(format!("{{ {} wait; }}", bg.join(" ")));
-            }
-        }
-    }
-    (parts.join(" && "), env_vars)
-}
-
-/// Format a single command for the pipeline, using lazy eval wrapping for commands
-/// with `lazy_template`.
-fn format_cmd(cmd: &PreparedCommand, wt_bin: &str, env_vars: &mut Vec<(String, String)>) -> String {
-    match &cmd.lazy_template {
-        Some(template) => {
-            let var_name = format!("__WT_TPL_{}", env_vars.len());
-            env_vars.push((var_name.clone(), template.clone()));
-            format!(r#"eval "$({wt_bin} step eval --shell-escape "${var_name}")"#)
-        }
-        None => cmd.expanded.clone(),
-    }
 }
 
 /// Format a summary description of a pipeline for display.
@@ -370,14 +316,18 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     parts.join(" → ")
 }
 
-/// Spawn a hook pipeline as one background process.
+/// Spawn a hook pipeline as a background `wt _run-pipeline` process.
 ///
-/// Builds a compound shell command where serial steps are chained with `&&`
-/// and concurrent groups use background processes. The entire pipeline runs
-/// as one detached process.
+/// Serializes the pipeline steps to a JSON spec file and spawns
+/// `wt _run-pipeline --spec-file <path>` as a detached process.
+/// The background process expands templates just-in-time and executes
+/// each step via the detected shell.
 ///
 /// Used for post-* hooks when the config uses a pipeline (list form).
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
+    use std::io::Write;
+
     if steps.is_empty() {
         return Ok(());
     }
@@ -397,37 +347,87 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     };
     eprintln!("{}", progress_message(message));
 
-    let (pipeline_cmd, lazy_env) = build_pipeline_command(&steps);
+    // Extract context from the first command. All steps share the same base context.
+    let context: std::collections::HashMap<String, String> = steps
+        .iter()
+        .find_map(|s| match &s.step {
+            PreparedStep::Single(cmd) => Some(&cmd.context_json),
+            PreparedStep::Concurrent(cmds) => cmds.first().map(|c| &c.context_json),
+        })
+        .map(|json| serde_json::from_str(json).expect("context_json round-trip should never fail"))
+        .unwrap_or_default();
+
+    // Build pipeline spec from prepared steps. Use the raw template for lazy
+    // steps (vars-referencing) and the expanded command for eager steps.
+    let spec_steps: Vec<PipelineStepSpec> = steps
+        .iter()
+        .map(|s| match &s.step {
+            PreparedStep::Single(cmd) => PipelineStepSpec::Single {
+                name: cmd.name.clone(),
+                template: cmd.lazy_template.as_ref().unwrap_or(&cmd.expanded).clone(),
+            },
+            PreparedStep::Concurrent(cmds) => PipelineStepSpec::Concurrent {
+                commands: cmds
+                    .iter()
+                    .map(|c| PipelineCommandSpec {
+                        name: c.name.clone(),
+                        template: c.lazy_template.as_ref().unwrap_or(&c.expanded).clone(),
+                    })
+                    .collect(),
+            },
+        })
+        .collect();
+
+    let spec = PipelineSpec {
+        worktree_path: ctx.worktree_path.to_path_buf(),
+        branch: ctx.branch_or_head().to_string(),
+        hook_type: hook_type.to_string(),
+        source: source.to_string(),
+        context,
+        steps: spec_steps,
+    };
+
+    // Write spec to a temp file. Use `.keep()` so the file persists after the
+    // parent exits — the background child reads and deletes it.
+    let mut temp = tempfile::Builder::new()
+        .prefix("wt-pipeline-")
+        .suffix(".json")
+        .tempfile()
+        .context("failed to create pipeline spec temp file")?;
+    serde_json::to_writer(&mut temp, &spec).context("failed to write pipeline spec")?;
+    temp.flush().context("failed to flush pipeline spec")?;
+    let spec_path = temp
+        .into_temp_path()
+        .keep()
+        .context("failed to persist pipeline spec temp file")?;
+
+    // Build shell command: /path/to/wt _run-pipeline --spec-file /tmp/wt-pipeline-XXXX.json
+    let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
+    let shell_cmd = format!(
+        "{} _run-pipeline --spec-file {}",
+        shell_escape::escape(wt_bin.to_string_lossy()),
+        shell_escape::escape(spec_path.to_string_lossy()),
+    );
+
     let hook_log = HookLog::hook(source, hook_type, "pipeline");
     let log_label = format!("{hook_type} {source} pipeline");
-
-    // Use the first command's context JSON for the whole pipeline.
-    // All steps share the same base context (branch, worktree_path, etc.).
-    let context_json = steps.iter().find_map(|s| match &s.step {
-        PreparedStep::Single(cmd) => Some(cmd.context_json.as_str()),
-        PreparedStep::Concurrent(cmds) => cmds.first().map(|c| c.context_json.as_str()),
-    });
-
-    let extra_env: Vec<(&str, &str)> = lazy_env
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
 
     if let Err(err) = spawn_detached(
         ctx.repo,
         ctx.worktree_path,
-        &pipeline_cmd,
+        &shell_cmd,
         ctx.branch_or_head(),
         &hook_log,
-        context_json,
-        &extra_env,
+        None,
     ) {
+        // Clean up spec file on spawn failure
+        let _ = std::fs::remove_file(&spec_path);
         eprintln!(
             "{}",
             warning_message(format!("Failed to spawn pipeline: {err}"))
         );
     } else {
-        worktrunk::command_log::log_command(&log_label, &pipeline_cmd, None, None);
+        worktrunk::command_log::log_command(&log_label, &shell_cmd, None, None);
     }
 
     Ok(())
@@ -798,48 +798,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_pipeline_command_serial_only() {
-        let steps = vec![
-            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
-            make_sourced_step(PreparedStep::Single(make_cmd(
-                Some("build"),
-                "npm run build",
-            ))),
-        ];
-        let (cmd, env) = build_pipeline_command(&steps);
-        assert_eq!(cmd, "{ npm install; } && { npm run build; }");
-        assert!(env.is_empty());
-    }
-
-    #[test]
-    fn test_build_pipeline_command_serial_then_concurrent() {
-        let steps = vec![
-            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
-            make_sourced_step(PreparedStep::Concurrent(vec![
-                make_cmd(Some("build"), "npm run build"),
-                make_cmd(Some("lint"), "npm run lint"),
-            ])),
-        ];
-        let (cmd, env) = build_pipeline_command(&steps);
-        assert_eq!(
-            cmd,
-            "{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }"
-        );
-        assert!(env.is_empty());
-    }
-
-    #[test]
-    fn test_build_pipeline_command_single_concurrent() {
-        let steps = vec![make_sourced_step(PreparedStep::Concurrent(vec![make_cmd(
-            Some("only"),
-            "echo hi",
-        )]))];
-        let (cmd, env) = build_pipeline_command(&steps);
-        assert_eq!(cmd, "{ { echo hi; } & wait; }");
-        assert!(env.is_empty());
-    }
-
-    #[test]
     fn test_format_pipeline_summary_named() {
         let steps = vec![
             make_sourced_step(PreparedStep::Single(make_cmd(
@@ -876,89 +834,5 @@ mod tests {
 
         let single = CommandConfig::single("npm install");
         assert!(!single.is_pipeline());
-    }
-
-    fn make_lazy_cmd(name: Option<&str>, template: &str) -> PreparedCommand {
-        PreparedCommand {
-            name: name.map(String::from),
-            expanded: template.to_string(),
-            context_json: "{}".to_string(),
-            lazy_template: Some(template.to_string()),
-        }
-    }
-
-    #[test]
-    fn test_build_pipeline_command_lazy_step() {
-        let steps = vec![
-            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
-            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
-                Some("db"),
-                "docker run --name {{ vars.container }}",
-            ))),
-        ];
-        let (cmd, env) = build_pipeline_command(&steps);
-
-        // Lazy step uses eval wrapping with env var reference
-        assert!(
-            cmd.contains("eval \"$("),
-            "should contain eval wrapping: {cmd}"
-        );
-        assert!(
-            cmd.contains("step eval --shell-escape"),
-            "should reference step eval: {cmd}"
-        );
-        assert!(
-            cmd.contains("$__WT_TPL_0"),
-            "should reference env var: {cmd}"
-        );
-
-        // Env var contains the raw template
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].0, "__WT_TPL_0");
-        assert_eq!(env[0].1, "docker run --name {{ vars.container }}");
-    }
-
-    #[test]
-    fn test_build_pipeline_command_mixed_lazy_and_eager() {
-        let steps = vec![
-            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
-            make_sourced_step(PreparedStep::Concurrent(vec![
-                make_lazy_cmd(Some("db"), "docker run {{ vars.name }}"),
-                make_cmd(Some("lint"), "npm run lint"),
-            ])),
-        ];
-        let (cmd, env) = build_pipeline_command(&steps);
-
-        // First step is eager (no eval wrapping)
-        assert!(cmd.starts_with("{ echo setup; }"), "eager step: {cmd}");
-
-        // Concurrent group has one lazy and one eager
-        assert!(cmd.contains("npm run lint"), "eager concurrent cmd: {cmd}");
-        assert!(cmd.contains("$__WT_TPL_0"), "lazy concurrent cmd: {cmd}");
-
-        // Only one env var (for the lazy command)
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].1, "docker run {{ vars.name }}");
-    }
-
-    #[test]
-    fn test_build_pipeline_command_multiple_lazy_steps() {
-        let steps = vec![
-            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
-            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
-                None,
-                "echo {{ vars.a }}",
-            ))),
-            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
-                None,
-                "echo {{ vars.b }}",
-            ))),
-        ];
-        let (_, env) = build_pipeline_command(&steps);
-
-        // Each lazy step gets its own numbered env var
-        assert_eq!(env.len(), 2);
-        assert_eq!(env[0].0, "__WT_TPL_0");
-        assert_eq!(env[1].0, "__WT_TPL_1");
     }
 }

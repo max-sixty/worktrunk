@@ -17,10 +17,12 @@ pub(crate) mod list;
 pub(crate) mod merge;
 #[cfg(unix)]
 pub(crate) mod picker;
+pub(crate) mod pipeline_spec;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
 pub(crate) mod repository_ext;
+mod run_pipeline;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
@@ -46,6 +48,7 @@ pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
+pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,

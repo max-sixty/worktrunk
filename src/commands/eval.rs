@@ -1,8 +1,7 @@
 //! Eval command implementation
 //!
 //! Evaluates a template expression in the current worktree context and prints
-//! the result to stdout. Output is raw by default; `--shell-escape` enables
-//! shell escaping for safe use with `eval`.
+//! the result to stdout.
 
 use std::collections::HashMap;
 
@@ -18,7 +17,7 @@ use crate::commands::command_executor::{CommandContext, build_hook_context};
 ///
 /// With `dry_run`, prints the template variables and the expanded result
 /// to stderr — useful for debugging templates.
-pub fn step_eval(template: &str, shell_escape: bool, dry_run: bool) -> anyhow::Result<()> {
+pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
@@ -34,7 +33,7 @@ pub fn step_eval(template: &str, shell_escape: bool, dry_run: bool) -> anyhow::R
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let result = expand_template(template, &vars, shell_escape, &repo, "eval")?;
+    let result = expand_template(template, &vars, false, &repo, "eval")?;
 
     if dry_run {
         let mut keys: Vec<&str> = context_map.keys().map(|k| k.as_str()).collect();

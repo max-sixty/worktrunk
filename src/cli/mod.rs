@@ -1020,6 +1020,14 @@ lint = "cargo clippy"
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
     },
+    /// Internal: run a serialized pipeline (not user-facing)
+    #[command(hide = true, name = "_run-pipeline")]
+    RunPipeline {
+        /// Path to JSON pipeline spec file
+        #[arg(long)]
+        spec_file: std::path::PathBuf,
+    },
+
     /// Deprecated: use `wt switch` instead
     ///
     /// Interactive worktree picker (now integrated into `wt switch`).

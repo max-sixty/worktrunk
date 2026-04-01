@@ -194,7 +194,6 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// * `branch` - Branch name for log organization
 /// * `hook_log` - Log specification (determines the log filename)
 /// * `context_json` - Optional JSON context to pipe to command's stdin
-/// * `extra_env` - Additional environment variables for the spawned process
 ///
 /// # Returns
 /// Path to the log file where output is being written
@@ -205,7 +204,6 @@ pub fn spawn_detached(
     branch: &str,
     hook_log: &HookLog,
     context_json: Option<&str>,
-    extra_env: &[(&str, &str)],
 ) -> anyhow::Result<std::path::PathBuf> {
     // Create log directory in the common git directory
     let log_dir = repo.wt_logs_dir();
@@ -235,12 +233,12 @@ pub fn spawn_detached(
 
     #[cfg(unix)]
     {
-        spawn_detached_unix(worktree_path, command, log_file, context_json, extra_env)?;
+        spawn_detached_unix(worktree_path, command, log_file, context_json)?;
     }
 
     #[cfg(windows)]
     {
-        spawn_detached_windows(worktree_path, command, log_file, context_json, extra_env)?;
+        spawn_detached_windows(worktree_path, command, log_file, context_json)?;
     }
 
     Ok(log_path)
@@ -252,7 +250,6 @@ fn spawn_detached_unix(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
-    extra_env: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
 
@@ -290,7 +287,6 @@ fn spawn_detached_unix(
         .stderr(Stdio::from(log_file))
         // Prevent hooks from writing to the directive file
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .envs(extra_env.iter().map(|(k, v)| (k, v)))
         .process_group(0) // New process group, not in PTY's foreground group
         .spawn()
         .context("Failed to spawn detached process")?;
@@ -309,7 +305,6 @@ fn spawn_detached_windows(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
-    extra_env: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     use worktrunk::shell_exec::ShellConfig;
@@ -365,7 +360,6 @@ fn spawn_detached_windows(
         .stderr(Stdio::from(log_file))
         // Prevent hooks from writing to the directive file
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .envs(extra_env.iter().map(|(k, v)| (k, v)))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
         .context("Failed to spawn detached process")?;

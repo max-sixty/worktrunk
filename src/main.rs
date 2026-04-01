@@ -321,11 +321,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             dry_run,
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
-        StepCommand::Eval {
-            template,
-            shell_escape,
-            dry_run,
-        } => step_eval(&template, shell_escape, dry_run),
+        StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { args } => step_for_each(args),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
@@ -965,6 +961,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
+        Commands::RunPipeline { spec_file } => commands::run_pipeline(spec_file),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List {
             subcommand,

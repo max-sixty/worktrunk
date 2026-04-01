@@ -79,30 +79,3 @@ fn test_eval_conditional(repo: TestRepo) {
         None,
     ));
 }
-
-#[rstest]
-fn test_eval_shell_escape(repo: TestRepo) {
-    // --shell-escape quotes values containing shell metacharacters
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["eval", "--shell-escape", "echo {{ branch }}"],
-        None,
-    ));
-}
-
-#[rstest]
-fn test_eval_shell_escape_with_vars(repo: TestRepo) {
-    // Set a var with spaces, then expand with shell escaping
-    repo.run_git(&["config", "worktrunk.state.main.vars.name", "my container"]);
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &[
-            "eval",
-            "--shell-escape",
-            "docker run --name {{ vars.name }}"
-        ],
-        None,
-    ));
-}
