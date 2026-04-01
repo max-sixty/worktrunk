@@ -128,7 +128,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 
 **Arch Linux:**
 
-{{ terminal(cmd="paru worktrunk-bin && wt config shell install") }}
+{{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
 
 ## Quick start
 

@@ -133,7 +133,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 **Arch Linux:**
 
 ```bash
-$ paru worktrunk-bin && wt config shell install
+$ sudo pacman -S worktrunk && wt config shell install
 ```
 
 ## Quick start
