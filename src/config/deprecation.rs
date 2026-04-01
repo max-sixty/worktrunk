@@ -3106,7 +3106,37 @@ server = "npm run dev"
         );
     }
 
-    // ==================== negated bool migration tests ====================
+    // ==================== negated bool format + migration tests ====================
+
+    #[test]
+    fn test_format_deprecation_warnings_no_ff_and_no_cd() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            migration_path: None,
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: false,
+                post_create: false,
+                ci_section: false,
+                no_ff: true,
+                no_cd: true,
+            },
+            label: "User config".to_string(),
+            main_worktree_path: None,
+            approvals_copied_to: None,
+        };
+        let output = format_deprecation_warnings(&info);
+        assert!(
+            output.contains("no-ff"),
+            "Should mention no-ff: {output}"
+        );
+        assert!(
+            output.contains("no-cd"),
+            "Should mention no-cd: {output}"
+        );
+    }
 
     #[test]
     fn test_detect_no_ff_deprecation() {
