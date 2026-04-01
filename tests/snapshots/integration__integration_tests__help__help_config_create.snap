@@ -330,6 +330,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# Project hooks apply to this repository only. Format is the same as user hooks (https://worktrunk.dev/config/#hooks); see `wt hook --help` for hook types, execution order, and examples.[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# pre-start = "npm ci"[0m
+[107m [0m [2m# post-start = "npm run dev"[0m
+[107m [0m [2m# pre-merge = "npm test"[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# URL column in `wt list` (dimmed when port not listening):[0m
