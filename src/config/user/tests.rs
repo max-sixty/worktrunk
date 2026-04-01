@@ -1224,77 +1224,89 @@ fn test_switch_config_merge() {
 }
 
 #[test]
-fn test_switch_config_no_cd_accessor() {
+fn test_switch_config_cd_accessor() {
     use crate::config::user::SwitchConfig;
 
-    // Default is false
+    // Default is true
     let config = SwitchConfig::default();
-    assert!(!config.no_cd());
-
-    // Explicit false
-    let config = SwitchConfig {
-        no_cd: Some(false),
-        ..Default::default()
-    };
-    assert!(!config.no_cd());
+    assert!(config.cd());
 
     // Explicit true
     let config = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(true),
         ..Default::default()
     };
-    assert!(config.no_cd());
+    assert!(config.cd());
+
+    // Explicit false
+    let config = SwitchConfig {
+        cd: Some(false),
+        ..Default::default()
+    };
+    assert!(!config.cd());
 }
 
 #[test]
-fn test_switch_config_no_cd_merge() {
+fn test_switch_config_cd_merge() {
     use crate::config::user::{Merge, SwitchConfig};
 
     // Other overrides base
     let base = SwitchConfig {
-        no_cd: Some(false),
+        cd: Some(true),
         ..Default::default()
     };
     let other = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(false),
         ..Default::default()
     };
     let merged = base.merge_with(&other);
-    assert!(merged.no_cd());
+    assert!(!merged.cd());
 
     // Base preserved when other is None
     let base = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(false),
         ..Default::default()
     };
     let merged = base.merge_with(&SwitchConfig::default());
-    assert!(merged.no_cd());
+    assert!(!merged.cd());
 
     // Neither set
     let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
-    assert!(!merged.no_cd()); // default false
+    assert!(merged.cd()); // default true
 }
 
 #[test]
-fn test_switch_config_no_cd_from_toml() {
+fn test_switch_config_cd_from_toml() {
     let toml = r#"
 [switch]
-no-cd = true
+cd = false
 "#;
     let config = UserConfig::load_from_str(toml).unwrap();
     let switch = config.switch(None).unwrap();
-    assert!(switch.no_cd());
+    assert!(!switch.cd());
 }
 
 #[test]
-fn test_switch_config_no_cd_resolved() {
+fn test_switch_config_cd_resolved() {
     let toml = r#"
 [switch]
-no-cd = true
+cd = false
 "#;
     let config = UserConfig::load_from_str(toml).unwrap();
     let resolved = config.resolved(None);
-    assert!(resolved.switch.no_cd());
+    assert!(!resolved.switch.cd());
+}
+
+#[test]
+fn test_deprecated_no_cd_migrated_to_cd() {
+    let config = UserConfig::load_from_str("[switch]\nno-cd = true\n").unwrap();
+    assert!(!config.configs.switch.unwrap().cd());
+}
+
+#[test]
+fn test_deprecated_no_cd_does_not_override_explicit_cd() {
+    let config = UserConfig::load_from_str("[switch]\ncd = true\nno-cd = true\n").unwrap();
+    assert!(config.configs.switch.unwrap().cd());
 }
 
 #[test]
@@ -1456,7 +1468,7 @@ fn test_resolved_config_for_project() {
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
     assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
-    assert!(!resolved.switch.no_cd()); // Default false
+    assert!(resolved.switch.cd()); // Default true
 }
 
 // =========================================================================

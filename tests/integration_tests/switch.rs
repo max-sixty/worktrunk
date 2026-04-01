@@ -3531,15 +3531,15 @@ fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
     );
 }
 
-/// Test that `--cd` flag overrides `[switch] no-cd = true` config
+/// Test that `--cd` flag overrides `[switch] cd = false` config
 #[rstest]
 fn test_switch_cd_flag_overrides_no_cd_config(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 
@@ -3613,15 +3613,15 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
-/// Test that `[switch] no-cd = true` config is respected when no flags provided
+/// Test that `[switch] cd = false` config is respected when no flags provided
 #[rstest]
 fn test_switch_no_cd_config_default(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 

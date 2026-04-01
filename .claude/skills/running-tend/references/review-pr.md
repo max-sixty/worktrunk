@@ -6,8 +6,6 @@
 
 - Does the code follow Rust idioms? (Iterator chains over manual loops, `?` over
   match-on-error, proper use of Option/Result, etc.)
-- Does it follow the project's conventions documented in CLAUDE.md? (Cmd for
-  shell commands, error handling with anyhow, accessor naming conventions, etc.)
 - Are there unnecessary allocations, clones, or owned types where borrows would
   suffice?
 - Does new code use `.expect()` or `.unwrap()` in functions returning `Result`?
@@ -16,6 +14,12 @@
 **Testing:**
 
 - Do the tests follow the project's testing conventions (see tests/CLAUDE.md)?
+
+**CLAUDE.md compliance:**
+
+- Review the CLAUDE.md sections relevant to the changed code and flag
+  deviations — code quality, error handling, command execution, data safety,
+  system docstrings, etc.
 
 **Documentation accuracy:**
 

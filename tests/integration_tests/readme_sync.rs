@@ -839,6 +839,7 @@ fn strip_html(content: &str) -> String {
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
 /// - AUTO-GENERATED-HTML terminal markers → plain code blocks
+/// - `{{ terminal(cmd="...") }}` → ```bash code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -865,6 +866,14 @@ fn transform_zola_to_github(content: &str) -> String {
             // Strip HTML, converting .cmd spans to "$ ..." (adds prompt)
             let plain = strip_html(inner);
             format!("```console\n{}\n```", plain)
+        })
+        .into_owned();
+
+    // Transform self-closing terminal shortcodes to bash code blocks for README
+    // These are `{{ terminal(cmd="...") }}` shortcodes without body content
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
         })
         .into_owned();
 
@@ -1240,16 +1249,12 @@ fn test_project_config_docs_include_all_sections() {
         }
     }
 
-    // Hooks are flattened (not a [hooks] table), so verify at least one hook type
-    // appears as a bare key
-    let has_hook = hook_keys
-        .iter()
-        .any(|key| project_config_content.contains(key.as_str()));
+    // Hooks section should exist (individual hook keys are documented in user config
+    // and cross-referenced from project config)
     assert!(
-        has_hook,
-        "No hook keys found in project config docs. Expected at least one of: {hook_keys:?}\n\
-         Hooks should appear as bare keys (not under a [hooks] table) between \
-         PROJECT_CONFIG_START/END markers."
+        project_config_content.contains("## Hooks"),
+        "Hooks section heading missing from project config docs.\n\
+         Expected `## Hooks` between PROJECT_CONFIG_START/END markers."
     );
 }
 

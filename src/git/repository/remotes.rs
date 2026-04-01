@@ -32,21 +32,17 @@
 //!
 //! For `wt switch pr:N`, the API call uses owner/repo from the primary
 //! remote's raw URL. The API response provides the base repo's identity,
-//! and [`find_remote_for_repo`] matches it back to a local remote by
+//! and `Repository::find_remote_for_repo` matches it back to a local remote by
 //! owner/repo (host is not required to match).
 //!
 //! ## Where each piece is used
 //!
 //! | Need | `wt switch pr:N` | `wt list` CI status |
 //! |------|------------------|---------------------|
-//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | [`platform_for_repo`] |
-//! | Owner/repo | [`fetch_pr_info`] builds API path | [`github_owner_repo`] for check-runs API |
+//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `platform_for_repo` |
+//! | Owner/repo | `fetch_pr_info` builds API path | `github_owner_repo` for check-runs API |
 //! | API hostname | `forge.hostname` config, else omit | `forge.hostname` config, else omit |
-//! | Fetch remote | [`find_remote_for_repo`] by owner/repo | Not needed |
-//!
-//! [`platform_for_repo`]: crate::commands::list::ci_status::platform::platform_for_repo
-//! [`fetch_pr_info`]: crate::git::remote_ref::github
-//! [`github_owner_repo`]: crate::commands::list::ci_status::github
+//! | Fetch remote | `Repository::find_remote_for_repo` by owner/repo | Not needed |
 //!
 //! ## Config: `[forge]` section
 //!

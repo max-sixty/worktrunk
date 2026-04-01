@@ -1230,9 +1230,9 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
         "wt hook post-create should succeed"
     );
 
-    // Hook should have run
+    // Hook runs in background — wait for it to write the marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    assert!(marker.exists(), "post-create hook should have run");
+    crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_CREATE"));
 }
@@ -1341,9 +1341,9 @@ fn test_standalone_hook_post_merge(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt hook post-merge should succeed");
 
-    // Hook should have run
+    // Hook runs in background — wait for it to write the marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    assert!(marker.exists(), "post-merge hook should have run");
+    crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_MERGE"));
 }
