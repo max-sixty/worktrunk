@@ -58,27 +58,35 @@ Ports are deterministic — `fix-auth` always gets port 16460, regardless of whi
 
 ## Database per worktree
 
-Each worktree can have its own isolated database. Docker containers get unique names and ports, and the connection string is stored in `vars` for use outside hooks:
+Each worktree can have its own isolated database. A pipeline sets up names and ports as vars, then later steps and hooks reference them:
 
 ```toml
-[post-start]
-db = """
-docker run -d --rm \
-  --name {{ repo }}-{{ branch | sanitize }}-postgres \
-  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ branch | sanitize_db }} \
-  -e POSTGRES_PASSWORD=dev \
-  postgres:16
-"""
-db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
+post-start = [
+  """
+  wt config state vars set \
+    container='{{ repo }}-{{ branch | sanitize }}-postgres' \
+    port='{{ ('db-' ~ branch) | hash_port }}' \
+    db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+  """,
+  { db = """
+  docker run -d --rm \
+    --name {{ vars.container }} \
+    -p {{ vars.port }}:5432 \
+    -e POSTGRES_DB={{ branch | sanitize_db }} \
+    -e POSTGRES_PASSWORD=dev \
+    postgres:16
+  """},
+]
 
 [pre-remove]
-db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
+The first pipeline step derives values from the branch and stores them as vars. The second step references `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. `post-remove` reads the same vars to stop the container.
 
-The connection string is now accessible anywhere — not just in hooks:
+The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide. The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix).
+
+The connection string is accessible anywhere — not just in hooks:
 
 ```bash
 $ DATABASE_URL=$(wt config state vars get db-url) npm start

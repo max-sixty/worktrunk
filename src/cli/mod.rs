@@ -1191,7 +1191,7 @@ For pre-* hooks, commands in a table run sequentially. For post-* hooks, they ru
 | Aspect | Project hooks | User hooks |
 |--------|--------------|------------|
 | Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
-| Scope | Single repository | All repositories (or [per-project](@/config.md#setting-overrides)) |
+| Scope | Single repository | All repositories (or [per-project](@/config.md#user-project-specific-settings)) |
 | Approval | Required | Not required |
 | Execution order | After user hooks | First |
 
@@ -1444,27 +1444,33 @@ server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ bran
 
 ## Databases
 
-Each worktree can have its own database. Docker containers get unique names and ports, and the connection string is stored in `vars` for use outside hooks:
+Each worktree can have its own database. A pipeline sets up the container name and connection string as vars, then later steps and hooks reference them:
 
 ```toml
-[post-start]
-db = """
-docker run -d --rm \
-  --name {{ repo }}-{{ branch | sanitize }}-postgres \
-  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ branch | sanitize_db }} \
-  -e POSTGRES_PASSWORD=dev \
-  postgres:16
-"""
-db-url = "wt config state vars set db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'"
+post-start = [
+  """
+  wt config state vars set \
+    container='{{ repo }}-{{ branch | sanitize }}-postgres' \
+    port='{{ ('db-' ~ branch) | hash_port }}' \
+    db-url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+  """,
+  { db = """
+  docker run -d --rm \
+    --name {{ vars.container }} \
+    -p {{ vars.port }}:5432 \
+    -e POSTGRES_DB={{ branch | sanitize_db }} \
+    -e POSTGRES_PASSWORD=dev \
+    postgres:16
+  """},
+]
 
 [post-remove]
-db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
 ```
 
-The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+The first pipeline step derives names and ports from the branch name and stores them as vars. The second step uses `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. The `post-remove` hook reads the same vars.
 
-The connection string is now accessible anywhere — not just in hooks:
+The connection string is accessible anywhere — not just in hooks:
 
 ```console
 $ DATABASE_URL=$(wt config state vars get db-url) npm start
@@ -1801,11 +1807,7 @@ For context:
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
-Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-
-#### Setting overrides [experimental]
-
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -1911,36 +1913,82 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 <!-- USER_CONFIG_END -->
-
+<!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Project config (`.config/wt.toml`) defines lifecycle hooks and project-specific settings. This file is checked into version control and shared with the team. Create with `wt config create --project`.
+Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
 
-See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples.
+Location: `.config/wt.toml` (checked into version control and shared with the team).
 
-### Non-hook settings
+## Hooks
+
+See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.
+
+Single command:
 
 ```toml
-# .config/wt.toml
+pre-start = "npm ci"
+```
 
-# URL column in wt list (dimmed when port not listening)
+Multiple named commands (concurrent for post-*, sequential for pre-*):
+
+```toml
+[pre-merge]
+test = "npm test"
+build = "npm run build"
+```
+
+Pipeline — list of maps, run in order (each map concurrent):
+
+```toml
+post-start = [
+    { install = "npm ci" },
+    { build = "npm run build", server = "npm run dev" }
+]
+```
+
+## Dev server URL
+
+URL column in `wt list` (dimmed when port not listening):
+
+```toml
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
+```
 
-# Override platform detection for SSH aliases or self-hosted instances
+## Forge platform override
+
+Override platform detection for SSH aliases or self-hosted instances:
+
+```toml
 [forge]
 platform = "github"  # or "gitlab"
-# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
+hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
+```
 
-# Add more gitignored excludes for wt step copy-ignored
+## Copy-ignored excludes
+
+Additional excludes for `wt step copy-ignored`:
+
+```toml
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
+```
 
-# Command aliases (run with wt step <name>)
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+
+## Aliases
+
+Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+
+```toml
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
-test = "cargo test"
+url = "echo http://localhost:{{ branch | hash_port }}"
 ```
+
+Aliases defined here are shared with teammates. For personal aliases, use the [user config](@/config.md#aliases) `[aliases]` section instead.
+<!-- PROJECT_CONFIG_END -->
 
 # Shell Integration
 

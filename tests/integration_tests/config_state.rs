@@ -1774,3 +1774,80 @@ fn test_vars_clear_with_branch_flag(repo: TestRepo) {
         "Expected clear message: {stderr}"
     );
 }
+
+#[rstest]
+fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
+    // Branch names with dots are common (e.g., "feature.auth") and contain
+    // regex metacharacters. Vars must round-trip correctly despite the dots.
+    repo.run_git(&["branch", "feature.auth"]);
+
+    let output = wt_state_cmd(
+        &repo,
+        "vars",
+        "set",
+        &["port=4000", "--branch=feature.auth"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["port", "--branch=feature.auth"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4000");
+
+    // Also verify the branch doesn't bleed into a similarly-named branch.
+    // "feature.auth" unescaped in regex would match "featurexauth" too.
+    repo.run_git(&["branch", "featurexauth"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.featurexauth.vars.port", "9999"])
+        .run()
+        .unwrap();
+
+    // feature.auth should still return 4000, not 9999
+    let output = wt_state_cmd(&repo, "vars", "get", &["port", "--branch=feature.auth"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4000");
+}
+
+#[rstest]
+fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
+    // Regression: branch names containing ".vars." must not confuse the
+    // all_vars_entries parser (which splits on ".vars." to find the separator).
+    let wt_path = repo.root_path().join("..").join("fix-vars-cleanup-wt");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "fix.vars.cleanup",
+        wt_path.to_str().unwrap(),
+    ]);
+    repo.git_command()
+        .args([
+            "config",
+            "worktrunk.state.fix.vars.cleanup.vars.port",
+            "5000",
+        ])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let branch_item = items
+        .iter()
+        .find(|item| item["branch"] == "fix.vars.cleanup")
+        .expect("branch fix.vars.cleanup should be in JSON output");
+
+    assert_eq!(
+        branch_item["vars"]["port"], "5000",
+        "vars key should be 'port', not a mangled key from bad split"
+    );
+}

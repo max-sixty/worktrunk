@@ -1,7 +1,8 @@
 //! README and config synchronization tests
 //!
 //! Verifies that README.md examples stay in sync with their source snapshots and help output.
-//! Also syncs default templates from src/llm.rs to dev/config.example.toml.
+//! Also syncs default templates from src/llm.rs to dev/config.example.toml
+//! and generates dev/wt.example.toml from the project config section.
 //! Automatically updates sections when out of sync.
 //!
 //! Run with: `cargo test --test integration readme_sync`
@@ -74,6 +75,12 @@ static REPO_UNDERSCORE_REGEX: LazyLock<Regex> =
 /// Matches content between USER_CONFIG_START and USER_CONFIG_END markers
 static USER_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?s)<!-- USER_CONFIG_START -->\n(.*?)\n<!-- USER_CONFIG_END -->").unwrap()
+});
+
+/// Regex to extract project config section from src/cli/mod.rs
+/// Matches content between PROJECT_CONFIG_START and PROJECT_CONFIG_END markers
+static PROJECT_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- PROJECT_CONFIG_START -->\n(.*?)\n<!-- PROJECT_CONFIG_END -->").unwrap()
 });
 
 /// Regex to find DEFAULT_TEMPLATE marker in user config section (markdown format)
@@ -1055,43 +1062,68 @@ fn convert_markdown_links_for_config(line: &str) -> String {
         .to_string()
 }
 
-/// Extract user config documentation from src/cli/mod.rs
-///
-/// The user config section is embedded in mod.rs between USER_CONFIG_START
-/// and USER_CONFIG_END markers. This function extracts that content for
-/// transforming into config.example.toml.
-fn extract_user_config_from_cli(cli_mod_content: &str) -> String {
-    USER_CONFIG_PATTERN
+/// Extract a config section from src/cli/mod.rs by marker pattern.
+fn extract_config_section(cli_mod_content: &str, pattern: &Regex, label: &str) -> String {
+    pattern
         .captures(cli_mod_content)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())
-        .expect("USER_CONFIG_START/END markers not found in src/cli/mod.rs")
+        .unwrap_or_else(|| panic!("{label} markers not found in src/cli/mod.rs"))
+}
+
+/// Verify a config example file is in sync with its source section in mod.rs.
+///
+/// If out of sync, overwrites the file and panics so CI fails.
+fn assert_config_example_in_sync(
+    cli_mod_content: &str,
+    pattern: &Regex,
+    marker_label: &str,
+    example_path: &Path,
+) {
+    let source = extract_config_section(cli_mod_content, pattern, marker_label);
+    let expected = trim_lines(&transform_config_source_to_toml(&source));
+
+    let current = fs::read_to_string(example_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", example_path.display(), e));
+    let current = trim_lines(&current);
+
+    if current != expected {
+        fs::write(example_path, format!("{}\n", expected)).unwrap();
+        panic!(
+            "{} out of sync with {} section in src/cli/mod.rs. \
+             Run tests locally and commit the changes.",
+            example_path.file_name().unwrap().to_string_lossy(),
+            marker_label,
+        );
+    }
 }
 
 #[test]
 fn test_config_source_generates_example_toml() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cli_mod_path = project_root.join("src/cli/mod.rs");
-    let config_path = project_root.join("dev/config.example.toml");
+    let cli_mod_content = fs::read_to_string(project_root.join("src/cli/mod.rs"))
+        .unwrap_or_else(|e| panic!("Failed to read src/cli/mod.rs: {e}"));
 
-    let cli_mod_content = fs::read_to_string(&cli_mod_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", cli_mod_path.display(), e));
+    assert_config_example_in_sync(
+        &cli_mod_content,
+        &USER_CONFIG_PATTERN,
+        "USER_CONFIG_START/END",
+        &project_root.join("dev/config.example.toml"),
+    );
+}
 
-    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
-    let expected = transform_config_source_to_toml(&user_config_content);
-    let expected = trim_lines(&expected);
+#[test]
+fn test_project_config_source_generates_example_toml() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_content = fs::read_to_string(project_root.join("src/cli/mod.rs"))
+        .unwrap_or_else(|e| panic!("Failed to read src/cli/mod.rs: {e}"));
 
-    let current = fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
-    let current = trim_lines(&current);
-
-    if current != expected {
-        fs::write(&config_path, format!("{}\n", expected)).unwrap();
-        panic!(
-            "config.example.toml out of sync with user config section in src/cli/mod.rs. \
-             Run tests locally and commit the changes."
-        );
-    }
+    assert_config_example_in_sync(
+        &cli_mod_content,
+        &PROJECT_CONFIG_PATTERN,
+        "PROJECT_CONFIG_START/END",
+        &project_root.join("dev/wt.example.toml"),
+    );
 }
 
 /// Verify that all config section keys appear in the user config documentation.
@@ -1104,7 +1136,8 @@ fn test_config_docs_include_all_sections() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let cli_mod_path = project_root.join("src/cli/mod.rs");
     let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
-    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+    let user_config_content =
+        extract_config_section(&cli_mod_content, &USER_CONFIG_PATTERN, "USER_CONFIG");
 
     // Config sections that MUST be documented (non-deprecated, non-hook table sections).
     // When adding a new config section, add it here — the test will fail if it's
@@ -1139,6 +1172,72 @@ fn test_config_docs_include_all_sections() {
              Use the new section name instead."
         );
     }
+}
+
+/// Verify that all project config struct fields are documented in the project config example.
+///
+/// When a new field is added to `ProjectConfig` (e.g., a `[ci]` section), this test
+/// ensures it also appears in the project config docs in `src/cli/mod.rs`. Without
+/// this, new project config sections can ship undocumented.
+#[test]
+fn test_project_config_docs_include_all_sections() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
+    let project_config_content =
+        extract_config_section(&cli_mod_content, &PROJECT_CONFIG_PATTERN, "PROJECT_CONFIG");
+
+    // Section headers that MUST appear in the project config docs.
+    // When adding a new project config section, add it here — the test will fail
+    // if it's missing from the docs.
+    let required_sections = ["list", "forge", "step.copy-ignored", "aliases"];
+
+    // Deprecated sections — should NOT appear in docs
+    let deprecated_sections = ["ci"];
+
+    // Check required sections appear as TOML headers
+    for section in &required_sections {
+        let header = format!("[{section}]");
+        assert!(
+            project_config_content.contains(&header),
+            "Config section `{header}` is missing from project config docs in src/cli/mod.rs.\n\
+             All config sections must be documented between PROJECT_CONFIG_START/END markers."
+        );
+    }
+
+    // Check deprecated sections do NOT appear as TOML headers
+    for section in &deprecated_sections {
+        let header = format!("[{section}]");
+        assert!(
+            !project_config_content.contains(&header),
+            "Deprecated section `{header}` should not appear in project config docs.\n\
+             Use the new section name instead."
+        );
+    }
+
+    // Hooks are flattened (not a [hooks] table), so verify at least one hook type
+    // appears as a bare key
+    let hook_keys = [
+        "pre-switch",
+        "post-switch",
+        "pre-start",
+        "post-start",
+        "pre-commit",
+        "post-commit",
+        "pre-merge",
+        "post-merge",
+        "pre-remove",
+        "post-remove",
+    ];
+    let has_hook = hook_keys
+        .iter()
+        .any(|key| project_config_content.contains(key));
+    assert!(
+        has_hook,
+        "No hook keys found in project config docs. Expected at least one of: {hook_keys:?}\n\
+         Hooks should appear as bare keys (not under a [hooks] table) between \
+         PROJECT_CONFIG_START/END markers."
+    );
 }
 
 /// Verify that LLM tool commands in docs/content/llm-commits.md match

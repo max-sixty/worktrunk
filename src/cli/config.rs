@@ -243,6 +243,11 @@ $ wt config plugins claude install
 Remove the plugin:
 ```console
 $ wt config plugins claude uninstall
+```
+
+Configure the statusline:
+```console
+$ wt config plugins claude install-statusline
 ```"#)]
     Claude {
         #[command(subcommand)]
@@ -278,6 +283,25 @@ $ claude plugin uninstall worktrunk@worktrunk
 ```"#
     )]
     Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Configure the Claude Code statusline
+    #[command(
+        name = "install-statusline",
+        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json`, setting:
+
+```json
+{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}
+```
+
+Preserves existing settings. Creates the `.claude/` directory and `settings.json` if needed.
+
+Skips gracefully if the statusline is already configured."#
+    )]
+    InstallStatusline {
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,

@@ -63,7 +63,8 @@ impl Repository {
     /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
     /// via `{{ vars.key }}`.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
-        let pattern = format!(r"^worktrunk\.state\.{branch}\.vars\.");
+        let escaped = regex::escape(branch);
+        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
         let output = self
             .run_command(&["config", "--get-regexp", &pattern])
             .unwrap_or_default();
@@ -101,7 +102,10 @@ impl Repository {
             let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
                 continue;
             };
-            let Some((branch, key)) = rest.split_once(".vars.") else {
+            // Use rsplit_once: var keys cannot contain dots (validated by
+            // validate_vars_key), so the last `.vars.` is always the real separator.
+            // split_once would misparse branch names containing `.vars.`.
+            let Some((branch, key)) = rest.rsplit_once(".vars.") else {
                 continue;
             };
             result
