@@ -2739,6 +2739,30 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    // Write invalid JSON to the plugins file — is_plugin_installed() should
+    // treat this as "not installed" and the install command should proceed
+    let plugins_dir = temp_home.path().join(".claude/plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(plugins_dir.join("installed_plugins.json"), "not valid json").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_plugins();
