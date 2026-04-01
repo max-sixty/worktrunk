@@ -3061,6 +3061,43 @@ mod plugin_prompt_pty {
     }
 
     #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_preview_then_accept(
+        repo: TestRepo,
+        temp_home: TempDir,
+    ) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Send "?" to trigger preview, then "y" on the re-prompted prompt
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("statusLine"),
+            "Should show preview with statusLine JSON. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration after preview. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
     fn test_plugins_claude_install_statusline_prompt_decline(repo: TestRepo, temp_home: TempDir) {
         let env_vars = plugin_env_vars(&repo);
         let cmd = build_pty_command(
