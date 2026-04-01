@@ -374,7 +374,7 @@ Config deprecation has two layers, both required for a complete migration.
 To register a new deprecation at this layer:
 
 1. Add detection logic to `detect_deprecations()` and extend the `Deprecations` struct
-2. Add the migration instructions to `format_migration_file()`
+2. Add the migration instructions to `write_migration_file()`
 3. If it's a top-level section, add the key to `DEPRECATED_SECTION_KEYS` (this prevents `warn_unknown_fields` from also flagging it)
 
 ### Layer 2: Post-deserialization normalization (`src/config/user/mod.rs`)
