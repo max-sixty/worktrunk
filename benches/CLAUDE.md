@@ -122,10 +122,15 @@ SELECT
        WHEN name LIKE '%diff --name%' THEN 'file_changes'
        WHEN name LIKE '%diff --numstat%' THEN 'diff_numstat'
        WHEN name LIKE '%diff --cached%' THEN 'diff_cached'
-       WHEN name LIKE '%rev-parse%tree%' THEN 'trees_match'
+       WHEN name LIKE '% diff main...%' THEN 'diff_3dot'
+       WHEN name LIKE '% diff HEAD%' THEN 'diff_wt'
+       WHEN name LIKE '%rev-parse%{tree}%' THEN 'trees_match'
        WHEN name LIKE '%for-each-ref%' THEN 'for_each_ref'
        WHEN name LIKE '%worktree list%' THEN 'worktree_list'
        WHEN name LIKE '%stash create%' THEN 'stash_create'
+       WHEN name LIKE '%sparse-checkout%' THEN 'sparse_checkout'
+       WHEN name LIKE '%rev-list%' THEN 'rev_list'
+       WHEN name LIKE '%claude -p%' THEN 'llm_summary'
        WHEN name LIKE '%status%' THEN 'status'
        WHEN name LIKE '%merge-base%' THEN 'merge_base'
        WHEN name LIKE '%log %' THEN 'log'
@@ -149,7 +154,7 @@ WITH status_times AS (
 ),
 trees_times AS (
   SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%rev-parse%tree%'
+  FROM slice WHERE name LIKE '%rev-parse%{tree}%'
 )
 SELECT
   s.start_us/1e6 as status_start_ms, s.end_us/1e6 as status_end_ms,

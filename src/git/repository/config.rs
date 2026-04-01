@@ -332,6 +332,7 @@ impl Repository {
             return Err(GitError::BranchNotFound {
                 branch,
                 show_create_hint: true,
+                last_fetch_ago: None,
             }
             .into());
         }
