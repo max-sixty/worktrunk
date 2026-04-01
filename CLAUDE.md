@@ -334,6 +334,10 @@ Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or
 fn validate_config() { ... }
 ```
 
+### System Docstrings
+
+Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves.
+
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
