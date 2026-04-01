@@ -2407,3 +2407,36 @@ fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
         "Lazy step should see var set by prior step"
     );
 }
+
+#[rstest]
+fn test_user_post_start_pipeline_lazy_vars_background(repo: TestRepo) {
+    // Pipeline step 1 sets a var via git config (not `wt config` — bare `wt`
+    // isn't on PATH in the detached background shell). Step 2 references
+    // {{ vars.name }}, which triggers the lazy expansion path where
+    // build_pipeline_command() wraps it in
+    //   eval "$(path/to/wt step eval --shell-escape ...)"
+    // The absolute binary path comes from std::env::current_exe().
+    repo.write_test_config(
+        r#"post-start = [
+    "git config worktrunk.state.{{ branch }}.vars.name '{{ branch | sanitize }}-postgres'",
+    { db = "echo {{ vars.name }} > lazy_bg_expanded.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_lazy_vars_bg",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker_file = worktree_path.join("lazy_bg_expanded.txt");
+    wait_for_file_content(&marker_file);
+
+    let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
+    assert_eq!(
+        content, "feature-postgres",
+        "Background lazy step should see var set by prior step"
+    );
+}
