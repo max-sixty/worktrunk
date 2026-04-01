@@ -102,16 +102,23 @@ Install [trace_processor](https://perfetto.dev/docs/analysis/trace-processor) fo
 curl -LO https://get.perfetto.dev/trace_processor && chmod +x trace_processor
 ```
 
-Useful queries:
+### Performance questions
+
+Three questions drive `wt list` performance work:
+
+1. **Where does time go?** Which subprocess types consume the most total time? The category with the highest `total_ms` is where optimization effort has the most impact.
+
+2. **How parallel are we?** Total subprocess time divided by wall time gives a parallelism factor. A factor of 4.0 means 4 commands running concurrently on average. Close to 1.0 means mostly serial execution with headroom to parallelize.
+
+3. **What's on the critical path?** The critical path passes through serial phases (setup, finalization) plus the slowest work item in the parallel phase. Phase durations show where serial overhead is; the per-worktree breakdown identifies the parallel bottleneck.
+
+### Queries
 
 ```bash
-# Top 10 slowest commands
+# 1. Where does time go? — slowest individual commands
 echo "SELECT name, ts/1e6 as start_ms, dur/1e6 as dur_ms FROM slice WHERE dur > 0 ORDER BY dur DESC LIMIT 10;" | trace_processor trace.json
 
-# Milestone events (skeleton render, worker spawn, completion)
-echo "SELECT name, ts/1e6 as ms FROM slice WHERE dur = 0 ORDER BY ts;" | trace_processor trace.json
-
-# Task type breakdown
+# 1. Where does time go? — total time by command type
 cat > /tmp/q.sql << 'EOF'
 SELECT
   CASE WHEN name LIKE '%patch-id%' THEN 'patch_id'
@@ -144,21 +151,40 @@ GROUP BY task_type ORDER BY total_ms DESC;
 EOF
 trace_processor trace.json -q /tmp/q.sql
 
-# Check parallel execution overlap between task types
+# 2. How parallel are we? — subprocess time vs subprocess span
+# parallelism ≈ 1.0 → serial; higher → concurrent execution is helping
+# (span = first subprocess start to last subprocess end; excludes wt's non-subprocess overhead)
 cat > /tmp/q.sql << 'EOF'
-WITH status_times AS (
-  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%status%'
-),
-trees_times AS (
-  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%rev-parse%{tree}%'
-)
 SELECT
-  s.start_us/1e6 as status_start_ms, s.end_us/1e6 as status_end_ms,
-  t.start_us/1e6 as trees_start_ms, t.end_us/1e6 as trees_end_ms,
-  CASE WHEN s.end_us > t.start_us AND t.end_us > s.start_us THEN 'OVERLAP' ELSE 'SEQUENTIAL' END as parallel
-FROM status_times s, trees_times t;
+  ROUND(SUM(dur)/1e6, 1) as total_subprocess_ms,
+  ROUND((MAX(ts + dur) - MIN(ts))/1e6, 1) as span_ms,
+  ROUND(CAST(SUM(dur) AS FLOAT) / (MAX(ts + dur) - MIN(ts)), 1) as parallelism
+FROM slice WHERE dur > 0;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+
+# 3. What's on the critical path? — phase durations
+# Shows time between milestones: serial setup, parallel work, finalization
+# Key milestones: "Skeleton rendered", "Parallel execution started", "All results drained"
+cat > /tmp/q.sql << 'EOF'
+SELECT
+  name,
+  ROUND(ts/1e6, 1) as ms,
+  ROUND((ts - LAG(ts) OVER (ORDER BY ts))/1e6, 1) as phase_ms
+FROM slice WHERE dur = 0
+ORDER BY ts;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+
+# 3. What's on the critical path? — parallel bottleneck (per-worktree)
+# The worktree with the highest total_ms is the likely parallel bottleneck
+cat > /tmp/q.sql << 'EOF'
+SELECT
+  EXTRACT_ARG(arg_set_id, 'args.context') as worktree,
+  COUNT(*) as commands,
+  ROUND(SUM(dur)/1e6, 1) as total_ms
+FROM slice WHERE dur > 0
+GROUP BY worktree ORDER BY total_ms DESC;
 EOF
 trace_processor trace.json -q /tmp/q.sql
 ```
