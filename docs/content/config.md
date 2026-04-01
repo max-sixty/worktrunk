@@ -188,7 +188,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
-no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
+ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
 ### Switch

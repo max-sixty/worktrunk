@@ -35,8 +35,8 @@ pub struct MergeOptions<'a> {
     pub rebase: Option<bool>,
     /// CLI override for remove. None = use effective config default.
     pub remove: Option<bool>,
-    /// CLI override for no-ff. None = use effective config default.
-    pub no_ff: Option<bool>,
+    /// CLI override for ff. None = use effective config default.
+    pub ff: Option<bool>,
     /// CLI override for verify. None = use effective config default.
     pub verify: Option<bool>,
     pub yes: bool,
@@ -92,7 +92,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         commit: commit_opt,
         rebase: rebase_opt,
         remove: remove_opt,
-        no_ff: no_ff_opt,
+        ff: ff_opt,
         verify: verify_opt,
         yes,
         stage,
@@ -119,7 +119,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let commit = commit_opt.unwrap_or(resolved.merge.commit());
     let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
     let remove = remove_opt.unwrap_or(resolved.merge.remove());
-    let no_ff = no_ff_opt.unwrap_or(resolved.merge.no_ff());
+    let ff = ff_opt.unwrap_or(resolved.merge.ff());
     let verify = verify_opt.unwrap_or(resolved.merge.verify());
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
@@ -248,7 +248,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         squashed,
         rebased,
     });
-    if no_ff {
+    if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
