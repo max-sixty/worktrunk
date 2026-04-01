@@ -165,6 +165,10 @@ After editing `after_long_help` text, also update the help snapshots:
 cargo insta test --accept -- --test integration "test_help"
 ```
 
+### Config doc TOML blocks
+
+Config docs (`USER_CONFIG_START`/`PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is commented out with `#`. TOML comments inside code blocks become double-commented (`# # comment`). Use plain text descriptions ending with colons before each code block instead — inline end-of-line comments (e.g., `key = "value"  # explanation`) are fine.
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. A failed command that preserves data is better than a "successful" command that silently destroys work.
