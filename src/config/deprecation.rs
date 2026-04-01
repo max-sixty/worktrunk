@@ -94,27 +94,19 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-/// Find all deprecated variables used in the content
-///
-/// Parses TOML to extract string values, then uses minijinja to detect
-/// which template variables are referenced.
-///
-/// Returns a deduplicated list of (deprecated_name, replacement_name) pairs
-pub fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
-    // Parse TOML and extract all string values that might contain templates
-    let template_strings = extract_template_strings(content);
-
-    // Collect all variables used across all templates
+/// Core logic for deprecated var detection, operating on pre-extracted template strings
+fn find_deprecated_vars_from_strings(
+    template_strings: &[String],
+) -> Vec<(&'static str, &'static str)> {
     let mut used_vars = HashSet::new();
     let env = Environment::new();
 
     for template_str in template_strings {
-        if let Ok(template) = env.template_from_str(&template_str) {
+        if let Ok(template) = env.template_from_str(template_str) {
             used_vars.extend(template.undeclared_variables(false));
         }
     }
 
-    // Check which deprecated variables are used
     DEPRECATED_VARS
         .iter()
         .filter(|(old, _)| used_vars.contains(*old))
@@ -124,27 +116,52 @@ pub fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> 
 
 /// Extract all string values from TOML content that might contain templates
 fn extract_template_strings(content: &str) -> Vec<String> {
-    let Ok(table) = content.parse::<toml::Table>() else {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return vec![];
     };
+    extract_template_strings_from_doc(&doc)
+}
 
+/// Extract all string values from an already-parsed TOML document
+fn extract_template_strings_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
     let mut strings = Vec::new();
-    collect_strings_from_value(&toml::Value::Table(table), &mut strings);
+    collect_strings_from_edit_table(doc.as_table(), &mut strings);
     strings
 }
 
-/// Recursively collect all string values from a TOML value
-fn collect_strings_from_value(value: &toml::Value, strings: &mut Vec<String>) {
-    match value {
-        toml::Value::String(s) => strings.push(s.clone()),
-        toml::Value::Array(arr) => {
-            for v in arr {
-                collect_strings_from_value(v, strings);
+/// Recursively collect all string values from a toml_edit table
+fn collect_strings_from_edit_table(table: &toml_edit::Table, strings: &mut Vec<String>) {
+    for (_, item) in table.iter() {
+        collect_strings_from_edit_item(item, strings);
+    }
+}
+
+/// Recursively collect all string values from a toml_edit item
+fn collect_strings_from_edit_item(item: &toml_edit::Item, strings: &mut Vec<String>) {
+    match item {
+        toml_edit::Item::Value(v) => collect_strings_from_edit_value(v, strings),
+        toml_edit::Item::Table(t) => collect_strings_from_edit_table(t, strings),
+        toml_edit::Item::ArrayOfTables(arr) => {
+            for t in arr.iter() {
+                collect_strings_from_edit_table(t, strings);
             }
         }
-        toml::Value::Table(table) => {
-            for v in table.values() {
-                collect_strings_from_value(v, strings);
+        _ => {}
+    }
+}
+
+/// Recursively collect all string values from a toml_edit value
+fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<String>) {
+    match value {
+        toml_edit::Value::String(s) => strings.push(s.value().clone()),
+        toml_edit::Value::Array(arr) => {
+            for v in arr.iter() {
+                collect_strings_from_edit_value(v, strings);
+            }
+        }
+        toml_edit::Value::InlineTable(t) => {
+            for (_, v) in t.iter() {
+                collect_strings_from_edit_value(v, strings);
             }
         }
         _ => {}
@@ -152,7 +169,7 @@ fn collect_strings_from_value(value: &toml::Value, strings: &mut Vec<String>) {
 }
 
 /// Replace all deprecated variables with their new names
-pub fn replace_deprecated_vars(content: &str) -> String {
+fn replace_deprecated_vars(content: &str) -> String {
     let strings = extract_template_strings(content);
     let mut result = content.to_string();
 
@@ -218,27 +235,29 @@ impl Deprecations {
 
 /// Detect deprecations in config content. Pure function, no I/O.
 ///
+/// Parses the TOML content once and checks all deprecation types against the
+/// parsed document.
+///
 /// Returns a `Deprecations` struct containing all detected deprecation issues.
 /// This is the recommended entry point for deprecation detection.
 pub fn detect_deprecations(content: &str) -> Deprecations {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return Deprecations::default();
+    };
+
+    let template_strings = extract_template_strings_from_doc(&doc);
+
     Deprecations {
-        vars: find_deprecated_vars(content),
-        commit_gen: find_commit_generation_deprecations(content),
-        approved_commands: find_approved_commands_deprecation(content),
-        select: find_select_deprecation(content),
-        post_create: find_post_create_deprecation(content),
-        ci_section: find_ci_section_deprecation(content),
+        vars: find_deprecated_vars_from_strings(&template_strings),
+        commit_gen: find_commit_generation_from_doc(&doc),
+        approved_commands: find_approved_commands_from_doc(&doc),
+        select: find_select_from_doc(&doc),
+        post_create: find_post_create_from_doc(&doc),
+        ci_section: find_ci_section_from_doc(&doc),
     }
 }
 
-/// Check if any `[projects."..."]` section has a non-empty `approved-commands` array.
-///
-/// These have moved to `approvals.toml` and should be removed from config.toml.
-pub fn find_approved_commands_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
+fn find_approved_commands_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) else {
         return false;
     };
@@ -255,16 +274,7 @@ pub fn find_approved_commands_deprecation(content: &str) -> bool {
     false
 }
 
-/// Find deprecated [commit-generation] sections in config
-///
-/// Returns information about:
-/// - Top-level [commit-generation] section
-/// - Project-level [projects."...".commit-generation] sections
-pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return CommitGenerationDeprecations::default();
-    };
-
+fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenerationDeprecations {
     let mut result = CommitGenerationDeprecations::default();
 
     // Check if new [commit.generation] already exists as a valid table
@@ -318,17 +328,7 @@ pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDep
     result
 }
 
-/// Migrate [commit-generation] sections to [commit.generation]
-///
-/// Performs the following migrations:
-/// - Renames [commit-generation] to [commit.generation]
-/// - Merges args field into command (if present)
-/// - Renames [projects."...".commit-generation] to [projects."...".commit.generation]
-pub fn migrate_commit_generation_sections(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
     // Check if new [commit.generation] already exists as a valid table - if so, skip migration
@@ -419,11 +419,7 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
         }
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
 /// Remove `approved-commands` from all `\[projects."..."\]` sections.
@@ -431,11 +427,7 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
 /// For each project section, removes the `approved-commands` key.
 /// If a project section becomes empty after removal, removes the project entry.
 /// If the `\[projects\]` table becomes empty, removes it.
-pub fn remove_approved_commands_from_config(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn remove_approved_commands_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
     if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
@@ -479,21 +471,10 @@ pub fn remove_approved_commands_from_config(content: &str) -> String {
         modified = true;
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
-/// Check if config has a deprecated `[select]` section without a corresponding `[switch.picker]`.
-///
-/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist.
-pub fn find_select_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
+fn find_select_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     // Check if new [switch.picker] already exists
     let has_new_section = doc
         .get("switch")
@@ -518,17 +499,7 @@ pub fn find_select_deprecation(content: &str) -> bool {
     false
 }
 
-/// Check if config has a deprecated `post-create` hook without a corresponding `pre-start`.
-///
-/// Checks both top-level hooks (`post-create = "..."`) and project hooks
-/// (`[projects."...".hooks] post-create = "..."`). This handles both user config
-/// and project config formats. Empty tables are ignored (no-op configs don't
-/// need migration warnings).
-pub fn find_post_create_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
+fn find_post_create_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     // Check top-level hooks section (project config: `post-create = "..."`)
     if doc.get("pre-start").is_none() && doc.get("post-create").is_some_and(is_non_empty_item) {
         return true;
@@ -570,11 +541,7 @@ fn is_non_empty_item(item: &toml_edit::Item) -> bool {
 /// Migrate `post-create` hooks to `pre-start`.
 ///
 /// Renames `post-create` to `pre-start` in hooks sections. Skips if `pre-start` already exists.
-pub fn migrate_post_create_to_pre_start(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_post_create_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
     // Top-level (project config format)
@@ -610,22 +577,14 @@ pub fn migrate_post_create_to_pre_start(content: &str) -> String {
         }
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
 /// Migrate `[select]` section to `[switch.picker]`.
 ///
 /// Renames `[select]` to `[switch.picker]`, preserving all fields.
 /// Skips migration if `[switch.picker]` already exists.
-pub fn migrate_select_to_switch_picker(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     // Check if [switch.picker] already exists
     let has_new_section = doc
         .get("switch")
@@ -634,12 +593,12 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
         .is_some_and(|p| p.is_table() || p.is_inline_table());
 
     if has_new_section {
-        return content.to_string();
+        return false;
     }
 
     // Remove [select] and migrate to [switch.picker]
     let Some(old_section) = doc.remove("select") else {
-        return content.to_string();
+        return false;
     };
 
     let table_opt = match old_section {
@@ -649,7 +608,7 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
     };
 
     let Some(table) = table_opt else {
-        return content.to_string();
+        return false;
     };
 
     // Ensure [switch] section exists (implicit so only [switch.picker] renders)
@@ -664,17 +623,10 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
         switch_table.insert("picker", toml_edit::Item::Table(table));
     }
 
-    doc.to_string()
+    true
 }
 
-/// Check if config has a deprecated `[ci]` section without a corresponding `[forge]`.
-///
-/// Returns true if `[ci]` exists with a non-empty `platform` field and `[forge]` does not exist.
-pub fn find_ci_section_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
+fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     // Skip if [forge] already exists
     if doc
         .get("forge")
@@ -695,17 +647,13 @@ pub fn find_ci_section_deprecation(content: &str) -> bool {
 /// Moves `platform` from `[ci]` to `[forge]`, preserving the value.
 /// Removes `[ci]` if `platform` was its only field.
 /// Skips migration if `[forge]` already exists.
-pub fn migrate_ci_to_forge(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     // Skip if [forge] already exists
     if doc
         .get("forge")
         .is_some_and(|f| f.is_table() || f.is_inline_table())
     {
-        return content.to_string();
+        return false;
     }
 
     // Get platform value from [ci]
@@ -717,7 +665,7 @@ pub fn migrate_ci_to_forge(content: &str) -> String {
         .map(String::from);
 
     let Some(platform) = platform else {
-        return content.to_string();
+        return false;
     };
 
     // Remove [ci] section (it only has platform)
@@ -728,7 +676,7 @@ pub fn migrate_ci_to_forge(content: &str) -> String {
     forge_table.insert("platform", toml_edit::value(platform));
     doc.insert("forge", toml_edit::Item::Table(forge_table));
 
-    doc.to_string()
+    true
 }
 
 /// Copy approved-commands from config.toml to approvals.toml.
@@ -1006,26 +954,49 @@ pub fn write_migration_file(
 ) -> Option<PathBuf> {
     let new_path = migration_path(path);
 
-    // Apply all migrations to generate new content
-    let mut new_content = content.to_string();
-    if !deprecations.vars.is_empty() {
-        new_content = replace_deprecated_vars(&new_content);
-    }
-    if !deprecations.commit_gen.is_empty() {
-        new_content = migrate_commit_generation_sections(&new_content);
-    }
-    if deprecations.approved_commands {
-        new_content = remove_approved_commands_from_config(&new_content);
-    }
-    if deprecations.select {
-        new_content = migrate_select_to_switch_picker(&new_content);
-    }
-    if deprecations.post_create {
-        new_content = migrate_post_create_to_pre_start(&new_content);
-    }
-    if deprecations.ci_section {
-        new_content = migrate_ci_to_forge(&new_content);
-    }
+    // Apply string-level var replacement first (operates on raw content)
+    let new_content = if !deprecations.vars.is_empty() {
+        replace_deprecated_vars(content)
+    } else {
+        content.to_string()
+    };
+
+    // Parse once for all structural migrations
+    let new_content = if let Ok(mut doc) = new_content.parse::<toml_edit::DocumentMut>() {
+        let has_structural = !deprecations.commit_gen.is_empty()
+            || deprecations.approved_commands
+            || deprecations.select
+            || deprecations.post_create
+            || deprecations.ci_section;
+
+        if has_structural {
+            let mut modified = false;
+            if !deprecations.commit_gen.is_empty() {
+                modified |= migrate_commit_generation_doc(&mut doc);
+            }
+            if deprecations.approved_commands {
+                modified |= remove_approved_commands_doc(&mut doc);
+            }
+            if deprecations.select {
+                modified |= migrate_select_doc(&mut doc);
+            }
+            if deprecations.post_create {
+                modified |= migrate_post_create_doc(&mut doc);
+            }
+            if deprecations.ci_section {
+                modified |= migrate_ci_doc(&mut doc);
+            }
+            if modified {
+                doc.to_string()
+            } else {
+                new_content
+            }
+        } else {
+            new_content
+        }
+    } else {
+        new_content
+    };
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
         // Log write failure but don't block config loading
@@ -1268,6 +1239,87 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test helpers that parse from string and delegate to the internal functions.
+    // These mirror the former pub wrappers that were inlined into
+    // `detect_deprecations` and `write_migration_file`.
+
+    fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
+        let strings = extract_template_strings(content);
+        find_deprecated_vars_from_strings(&strings)
+    }
+
+    fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .map(|doc| find_commit_generation_from_doc(&doc))
+            .unwrap_or_default()
+    }
+
+    fn find_approved_commands_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_approved_commands_from_doc(&doc))
+    }
+
+    fn find_select_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_select_from_doc(&doc))
+    }
+
+    fn find_post_create_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_post_create_from_doc(&doc))
+    }
+
+    fn migrate_commit_generation_sections(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_commit_generation_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn remove_approved_commands_from_config(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if remove_approved_commands_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn migrate_select_to_switch_picker(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_select_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn migrate_post_create_to_pre_start(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_post_create_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
 
     #[test]
     fn test_find_deprecated_vars_empty() {
