@@ -1771,7 +1771,7 @@ ff = true          # Fast-forward merge (--no-ff to create a merge commit instea
 
 ```toml
 [switch]
-no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)
+cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview

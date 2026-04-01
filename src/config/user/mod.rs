@@ -119,6 +119,9 @@ impl UserConfig {
         if let Some(merge) = &mut self.configs.merge {
             merge.normalize_deprecated_fields();
         }
+        if let Some(switch) = &mut self.configs.switch {
+            switch.normalize_deprecated_fields();
+        }
 
         for project in self.projects.values_mut() {
             Self::normalize_commit_generation_section(
@@ -131,6 +134,9 @@ impl UserConfig {
             );
             if let Some(merge) = &mut project.overrides.merge {
                 merge.normalize_deprecated_fields();
+            }
+            if let Some(switch) = &mut project.overrides.switch {
+                switch.normalize_deprecated_fields();
             }
         }
     }

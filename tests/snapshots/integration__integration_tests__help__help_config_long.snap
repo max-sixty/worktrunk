@@ -213,7 +213,7 @@ Most flags are on by default. Set to false to change default behavior.
 [32mSwitch[0m
 
 [107m [0m [2m[36m[switch][0m
-[107m [0m [2mno-cd = [0m[2m[33mfalse[0m[2m      [0m[2m# Skip directory change after switching (--no-cd; --cd to override)[0m
+[107m [0m [2mcd = [0m[2m[33mtrue[0m[2m          [0m[2m# Change directory after switching (--no-cd to skip)[0m
 [107m [0m 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never"[0m[2m   [0m[2m# Example: override git's core.pager for diff preview[0m

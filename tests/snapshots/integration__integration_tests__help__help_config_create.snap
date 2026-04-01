@@ -167,7 +167,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch][0m
-[107m [0m [2m# no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)[0m
+[107m [0m [2m# cd = true          # Change directory after switching (--no-cd to skip)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
 [107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m

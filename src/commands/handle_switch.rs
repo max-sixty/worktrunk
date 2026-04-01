@@ -239,7 +239,7 @@ pub fn handle_switch(
     // Now that we have the repo, we can resolve project-specific config.
     let change_dir = change_dir_flag.unwrap_or_else(|| {
         let project_id = repo.project_identifier().ok();
-        !config.resolved(project_id.as_deref()).switch.no_cd()
+        config.resolved(project_id.as_deref()).switch.cd()
     });
 
     // Build switch suggestion context for enriching error hints with --execute/trailing args.

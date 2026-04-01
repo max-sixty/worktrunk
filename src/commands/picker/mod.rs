@@ -281,7 +281,7 @@ pub fn handle_picker(
 
     // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
-    let change_dir = change_dir_flag.unwrap_or_else(|| !config.switch.no_cd());
+    let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
 
