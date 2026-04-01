@@ -114,14 +114,6 @@ fn find_deprecated_vars_from_strings(
         .collect()
 }
 
-/// Extract all string values from TOML content that might contain templates
-fn extract_template_strings(content: &str) -> Vec<String> {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return vec![];
-    };
-    extract_template_strings_from_doc(&doc)
-}
-
 /// Extract all string values from an already-parsed TOML document
 fn extract_template_strings_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
     let mut strings = Vec::new();
@@ -168,18 +160,17 @@ fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<S
     }
 }
 
-/// Replace all deprecated variables with their new names
-fn replace_deprecated_vars(content: &str) -> String {
-    let strings = extract_template_strings(content);
+/// Core logic for variable replacement, operating on pre-extracted template strings
+fn replace_deprecated_vars_from_strings(content: &str, template_strings: &[String]) -> String {
     let mut result = content.to_string();
 
-    for original in strings {
+    for original in template_strings {
         let mut modified = original.clone();
         for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
             modified = re.replace_all(&modified, *new).into_owned();
         }
-        if modified != original {
-            result = result.replace(&original, &modified);
+        if modified != *original {
+            result = result.replace(original, &modified);
         }
     }
 
@@ -250,15 +241,17 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return Deprecations::default();
     };
-
-    detect_deprecations_from_doc(&doc)
+    let template_strings = extract_template_strings_from_doc(&doc);
+    detect_deprecations_from_doc(&doc, &template_strings)
 }
 
-fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
-    let template_strings = extract_template_strings_from_doc(doc);
-
+/// Detect deprecations from an already-parsed document and pre-extracted template strings.
+fn detect_deprecations_from_doc(
+    doc: &toml_edit::DocumentMut,
+    template_strings: &[String],
+) -> Deprecations {
     Deprecations {
-        vars: find_deprecated_vars_from_strings(&template_strings),
+        vars: find_deprecated_vars_from_strings(template_strings),
         commit_gen: find_commit_generation_from_doc(doc),
         approved_commands: find_approved_commands_from_doc(doc),
         select: find_select_from_doc(doc),
@@ -1006,14 +999,17 @@ pub fn check_and_migrate(
     repo: Option<&crate::git::Repository>,
     show_brief_warning: bool,
 ) -> anyhow::Result<CheckAndMigrateResult> {
-    let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
-        Ok(doc) => {
-            let deprecations = detect_deprecations_from_doc(&doc);
-            let migrated_content = migrate_content_from_doc(content, doc);
-            (deprecations, migrated_content)
-        }
-        Err(_) => (Deprecations::default(), content.to_string()),
-    };
+    // Parse once — shared by detection and migration
+    let (deprecations, migrated_content, template_strings) =
+        match content.parse::<toml_edit::DocumentMut>() {
+            Ok(doc) => {
+                let template_strings = extract_template_strings_from_doc(&doc);
+                let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
+                let migrated_content = migrate_content_from_doc(content, doc);
+                (deprecations, migrated_content, template_strings)
+            }
+            Err(_) => (Deprecations::default(), content.to_string(), vec![]),
+        };
 
     if deprecations.is_empty() {
         // Config is clean - clear hint so future deprecations get full treatment.
@@ -1105,7 +1101,8 @@ pub fn check_and_migrate(
         // Still write migration file if needed (first time only)
         // The file is needed for `wt config update` / `wt config show` to work
         if !should_skip_write {
-            info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
+            info.migration_path =
+                write_migration_file(path, content, &info.deprecations, repo, &template_strings);
         }
 
         std::io::stderr().flush().ok();
@@ -1118,7 +1115,8 @@ pub fn check_and_migrate(
     // Silent mode for `wt config show` - just write migration file and return info
     // The caller will use format_deprecation_details() to add output to its buffer
     if !should_skip_write {
-        info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
+        info.migration_path =
+            write_migration_file(path, content, &info.deprecations, repo, &template_strings);
     }
 
     Ok(CheckAndMigrateResult {
@@ -1151,17 +1149,19 @@ pub fn format_brief_warning(label: &str) -> String {
 /// * `content` - Content of the config file
 /// * `deprecations` - Detected deprecations to fix
 /// * `repo` - Optional repository for hint tracking (project config only)
+/// * `template_strings` - Pre-extracted template strings from detection (avoids re-parsing)
 pub fn write_migration_file(
     path: &Path,
     content: &str,
     deprecations: &Deprecations,
     repo: Option<&crate::git::Repository>,
+    template_strings: &[String],
 ) -> Option<PathBuf> {
     let new_path = migration_path(path);
 
     // Apply string-level var replacement first (cosmetic, operates on raw content)
     let new_content = if !deprecations.vars.is_empty() {
-        replace_deprecated_vars(content)
+        replace_deprecated_vars_from_strings(content, template_strings)
     } else {
         content.to_string()
     };
@@ -1451,6 +1451,18 @@ mod tests {
     // Test helpers that parse from string and delegate to the internal functions.
     // These mirror the former pub wrappers that were inlined into
     // `detect_deprecations` and `write_migration_file`.
+
+    fn extract_template_strings(content: &str) -> Vec<String> {
+        let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return vec![];
+        };
+        extract_template_strings_from_doc(&doc)
+    }
+
+    fn replace_deprecated_vars(content: &str) -> String {
+        let strings = extract_template_strings(content);
+        replace_deprecated_vars_from_strings(content, &strings)
+    }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
         let strings = extract_template_strings(content);
@@ -2567,7 +2579,7 @@ approved-commands = ["npm install"]
             no_ff: false,
             no_cd: false,
         };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
+        let result = write_migration_file(&config_path, content, &deprecations, None, &[]);
         assert!(
             result.is_some(),
             "Should write migration file for approved-commands"
@@ -2865,7 +2877,7 @@ pager = "delta --paging=never"
             no_ff: false,
             no_cd: false,
         };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
+        let result = write_migration_file(&config_path, content, &deprecations, None, &[]);
         assert!(result.is_some(), "Should write migration file for select");
         let migration_path = result.unwrap();
         let migrated = std::fs::read_to_string(&migration_path).unwrap();
@@ -3151,7 +3163,7 @@ server = "npm run dev"
             no_ff: false,
             no_cd: false,
         };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
+        let result = write_migration_file(&config_path, content, &deprecations, None, &[]);
         assert!(
             result.is_some(),
             "Should write migration file for post_create"
