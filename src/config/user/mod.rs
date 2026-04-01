@@ -142,14 +142,16 @@ impl UserConfig {
             // Use show_brief_warning=true to emit a brief pointer to `wt config show`
             // Warning is deduplicated per-process via WARNED_DEPRECATED_PATHS.
             if let Ok(content) = std::fs::read_to_string(config_path) {
-                let _ = super::deprecation::check_and_migrate(
+                let migrated = super::deprecation::check_and_migrate(
                     config_path,
                     &content,
                     true,
                     "User config",
                     None,
                     true, // show_brief_warning
-                );
+                )
+                .map(|result| result.migrated_content)
+                .unwrap_or_else(|_| super::deprecation::migrate_content(&content));
 
                 // Warn about unknown fields in the config file
                 // (must check file content directly, not config.unknown, because
@@ -166,8 +168,8 @@ impl UserConfig {
                     "User config",
                 );
 
-                // Feed migrated content to serde so deprecated patterns parse correctly
-                let migrated = super::deprecation::migrate_content(&content);
+                // Feed migrated content from check_and_migrate to serde so deprecated
+                // patterns parse correctly without reparsing the TOML here.
                 builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
             }
         } else if let Some(config_path) = config_path.as_ref()

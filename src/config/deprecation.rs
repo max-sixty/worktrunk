@@ -251,17 +251,21 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         return Deprecations::default();
     };
 
-    let template_strings = extract_template_strings_from_doc(&doc);
+    detect_deprecations_from_doc(&doc)
+}
+
+fn detect_deprecations_from_doc(doc: &toml_edit::DocumentMut) -> Deprecations {
+    let template_strings = extract_template_strings_from_doc(doc);
 
     Deprecations {
         vars: find_deprecated_vars_from_strings(&template_strings),
-        commit_gen: find_commit_generation_from_doc(&doc),
-        approved_commands: find_approved_commands_from_doc(&doc),
-        select: find_select_from_doc(&doc),
-        post_create: find_post_create_from_doc(&doc),
-        ci_section: find_ci_section_from_doc(&doc),
-        no_ff: find_negated_bool_from_doc(&doc, "merge", "no-ff", "ff"),
-        no_cd: find_negated_bool_from_doc(&doc, "switch", "no-cd", "cd"),
+        commit_gen: find_commit_generation_from_doc(doc),
+        approved_commands: find_approved_commands_from_doc(doc),
+        select: find_select_from_doc(doc),
+        post_create: find_post_create_from_doc(doc),
+        ci_section: find_ci_section_from_doc(doc),
+        no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
+        no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
     }
 }
 
@@ -828,19 +832,24 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     modified
 }
 
-/// Apply all TOML-level migrations to config content.
-///
-/// Parses the TOML, applies all structural migrations, and returns the result.
-/// Called by all config load paths to feed corrected TOML to serde.
-pub fn migrate_content(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
+fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
     if migrate_content_doc(&mut doc) {
         doc.to_string()
     } else {
         content.to_string()
     }
+}
+
+/// Apply all TOML-level migrations to config content.
+///
+/// Parses the TOML, applies all structural migrations, and returns the result.
+/// Called by load paths that only need structural migration. `check_and_migrate()`
+/// reuses the same migration path when it also needs warnings or `.new` files.
+pub fn migrate_content(content: &str) -> String {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+    migrate_content_from_doc(content, doc)
 }
 
 /// Copy approved-commands from config.toml to approvals.toml.
@@ -942,6 +951,16 @@ impl DeprecationInfo {
     }
 }
 
+/// Result of checking config content for deprecations.
+///
+/// `migrated_content` is the structurally migrated TOML used for serde loading.
+/// `info` is present only when user-visible deprecations were detected.
+#[derive(Debug)]
+pub struct CheckAndMigrateResult {
+    pub info: Option<DeprecationInfo>,
+    pub migrated_content: String,
+}
+
 fn migration_path(path: &Path) -> PathBuf {
     // config.toml -> config.toml.new
     // config -> config.new
@@ -977,7 +996,8 @@ fn migration_path(path: &Path) -> PathBuf {
 ///
 /// Warnings are deduplicated per path per process.
 ///
-/// Returns `Ok(Some(info))` if deprecations were found, `Ok(None)` otherwise.
+/// Returns the structurally migrated content for serde loading, plus optional
+/// deprecation info when user-visible deprecations were found.
 pub fn check_and_migrate(
     path: &Path,
     content: &str,
@@ -985,9 +1005,15 @@ pub fn check_and_migrate(
     label: &str,
     repo: Option<&crate::git::Repository>,
     show_brief_warning: bool,
-) -> anyhow::Result<Option<DeprecationInfo>> {
-    // Detect all deprecation types
-    let deprecations = detect_deprecations(content);
+) -> anyhow::Result<CheckAndMigrateResult> {
+    let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => {
+            let deprecations = detect_deprecations_from_doc(&doc);
+            let migrated_content = migrate_content_from_doc(content, doc);
+            (deprecations, migrated_content)
+        }
+        Err(_) => (Deprecations::default(), content.to_string()),
+    };
 
     if deprecations.is_empty() {
         // Config is clean - clear hint so future deprecations get full treatment.
@@ -998,7 +1024,10 @@ pub fn check_and_migrate(
         if let Some(repo) = repo {
             let _ = repo.clear_hint(HINT_DEPRECATED_CONFIG);
         }
-        return Ok(None);
+        return Ok(CheckAndMigrateResult {
+            info: None,
+            migrated_content,
+        });
     }
 
     let new_path = migration_path(path);
@@ -1026,7 +1055,10 @@ pub fn check_and_migrate(
 
     // Skip warning entirely if not in main worktree (for project config)
     if !warn_and_migrate {
-        return Ok(Some(info));
+        return Ok(CheckAndMigrateResult {
+            info: Some(info),
+            migrated_content,
+        });
     }
 
     // Deduplicate warnings per path per process
@@ -1038,7 +1070,10 @@ pub fn check_and_migrate(
             if new_path.exists() {
                 info.migration_path = Some(new_path);
             }
-            return Ok(Some(info));
+            return Ok(CheckAndMigrateResult {
+                info: Some(info),
+                migrated_content,
+            });
         }
         guard.insert(canonical_path.clone());
     }
@@ -1074,7 +1109,10 @@ pub fn check_and_migrate(
         }
 
         std::io::stderr().flush().ok();
-        return Ok(Some(info));
+        return Ok(CheckAndMigrateResult {
+            info: Some(info),
+            migrated_content,
+        });
     }
 
     // Silent mode for `wt config show` - just write migration file and return info
@@ -1083,7 +1121,10 @@ pub fn check_and_migrate(
         info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
     }
 
-    Ok(Some(info))
+    Ok(CheckAndMigrateResult {
+        info: Some(info),
+        migrated_content,
+    })
 }
 
 /// Format brief warning for normal config loading.
@@ -1785,7 +1826,7 @@ approved-commands = [
         let result =
             check_and_migrate(non_existent_path, content, true, "Test config", None, false);
         assert!(result.is_ok());
-        assert!(result.unwrap().is_some());
+        assert!(result.unwrap().info.is_some());
     }
 
     #[test]
@@ -1798,12 +1839,33 @@ approved-commands = [
         // First call should process normally
         let result1 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result1.is_ok());
-        assert!(result1.unwrap().is_some());
+        assert!(result1.unwrap().info.is_some());
 
         // Second call with same path should early-return (hits the deduplication branch)
         let result2 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result2.is_ok());
-        assert!(result2.unwrap().is_some());
+        assert!(result2.unwrap().info.is_some());
+    }
+
+    #[test]
+    fn test_check_and_migrate_returns_migrated_content() {
+        let content = r#"
+[select]
+pager = "delta"
+"#;
+
+        let result = check_and_migrate(
+            std::path::Path::new("/tmp/config.toml"),
+            content,
+            true,
+            "Test config",
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(result.migrated_content, migrate_content(content));
+        assert!(result.info.is_some());
     }
 
     #[test]

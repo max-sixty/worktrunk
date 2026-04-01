@@ -122,7 +122,14 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         None,  // no repo context for user config
         false, // silent mode
     )? {
-        Some(info) if info.has_deprecations() => info,
+        result
+            if result
+                .info
+                .as_ref()
+                .is_some_and(DeprecationInfo::has_deprecations) =>
+        {
+            result.info.unwrap()
+        }
         _ => return Ok(None),
     };
 
@@ -165,7 +172,14 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         Some(&repo),
         false, // silent mode
     )? {
-        Some(info) if info.has_deprecations() => info,
+        result
+            if result
+                .info
+                .as_ref()
+                .is_some_and(DeprecationInfo::has_deprecations) =>
+        {
+            result.info.unwrap()
+        }
         _ => return Ok(None),
     };
 

@@ -377,7 +377,7 @@ All config deprecation is handled by a single layer: pre-deserialization TOML mi
 
 ### How it works
 
-`migrate_content()` transforms raw TOML text before serde parses it, rewriting deprecated patterns into their canonical form. All load paths (`load()`, `load_from_str()`, `mutation.rs` reloads) call `migrate_content()` on the TOML before passing it to serde.
+`migrate_content()` is the structural TOML migration entry point before serde parses config, rewriting deprecated patterns into their canonical form. Load paths that only need migration call it directly; `check_and_migrate()` reuses the same migration path and returns the migrated TOML so callers don't reparse the file just to load it.
 
 Separately, `check_and_migrate()` detects deprecated patterns, emits warnings, and generates a `.new` migration file (which additionally renames deprecated template variables and removes `approved-commands`). Warnings are deduplicated per-process via `WARNED_DEPRECATED_PATHS`.
 
