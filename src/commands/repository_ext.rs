@@ -147,6 +147,7 @@ impl RepositoryCliExt for Repository {
                             return Err(GitError::BranchNotFound {
                                 branch: branch.into(),
                                 show_create_hint: false,
+                                last_fetch_ago: None,
                             }
                             .into());
                         }
