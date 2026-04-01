@@ -2981,3 +2981,259 @@ fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: Te
         assert_cmd_snapshot!(cmd);
     });
 }
+
+// ==================== Plugin Prompt PTY Tests ====================
+
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod plugin_prompt_pty {
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+    use crate::common::{TestRepo, repo, temp_home, wt_bin};
+    use rstest::rstest;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Build env vars for plugin PTY tests, including mock binary PATH.
+    ///
+    /// HOME/XDG_CONFIG_HOME are NOT set here — `build_pty_command` handles them
+    /// via its `home_dir` parameter.
+    fn plugin_env_vars(repo: &TestRepo) -> Vec<(String, String)> {
+        let mut vars = repo.test_env_vars();
+
+        // Add mock binary PATH if configured
+        if let Some(mock_bin) = repo.mock_bin_path() {
+            vars.push((
+                "MOCK_CONFIG_DIR".to_string(),
+                mock_bin.display().to_string(),
+            ));
+
+            // Prepend mock bin to PATH
+            let current_path =
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+            let mut paths: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
+            paths.insert(0, mock_bin.to_path_buf());
+            let new_path = std::env::join_paths(&paths).unwrap();
+            vars.retain(|(k, _)| k != "PATH");
+            vars.push(("PATH".to_string(), new_path.to_string_lossy().to_string()));
+        }
+
+        // Mark claude as installed
+        vars.push((
+            "WORKTRUNK_TEST_CLAUDE_INSTALLED".to_string(),
+            "1".to_string(),
+        ));
+
+        vars
+    }
+
+    // --- install-statusline prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_accept(repo: TestRepo, temp_home: TempDir) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Configure statusline"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_preview_then_accept(
+        repo: TestRepo,
+        temp_home: TempDir,
+    ) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Send "?" to trigger preview, then "y" on the re-prompted prompt
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("statusLine"),
+            "Should show preview with statusLine JSON. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration after preview. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_decline(repo: TestRepo, temp_home: TempDir) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Configure statusline"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Statusline configured"),
+            "Should NOT configure when declined. Output:\n{output}"
+        );
+
+        // Verify the file was NOT written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        assert!(
+            !settings_path.exists(),
+            "settings.json should not exist after declining"
+        );
+    }
+
+    // --- install prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_install_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Install Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Plugin installed"),
+            "Should confirm installation. Output:\n{output}"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Install Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Plugin installed"),
+            "Should NOT install when declined. Output:\n{output}"
+        );
+    }
+
+    // --- uninstall prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_uninstall_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+        TestRepo::setup_plugin_installed(temp_home.path());
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "uninstall"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Uninstall Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Plugin uninstalled"),
+            "Should confirm uninstallation. Output:\n{output}"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_uninstall_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+        TestRepo::setup_plugin_installed(temp_home.path());
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "uninstall"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Uninstall Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Plugin uninstalled"),
+            "Should NOT uninstall when declined. Output:\n{output}"
+        );
+    }
+}

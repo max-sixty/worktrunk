@@ -1174,6 +1174,72 @@ fn test_config_docs_include_all_sections() {
     }
 }
 
+/// Verify that all project config struct fields are documented in the project config example.
+///
+/// When a new field is added to `ProjectConfig` (e.g., a `[ci]` section), this test
+/// ensures it also appears in the project config docs in `src/cli/mod.rs`. Without
+/// this, new project config sections can ship undocumented.
+#[test]
+fn test_project_config_docs_include_all_sections() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
+    let project_config_content =
+        extract_config_section(&cli_mod_content, &PROJECT_CONFIG_PATTERN, "PROJECT_CONFIG");
+
+    // Section headers that MUST appear in the project config docs.
+    // When adding a new project config section, add it here — the test will fail
+    // if it's missing from the docs.
+    let required_sections = ["list", "forge", "step.copy-ignored", "aliases"];
+
+    // Deprecated sections — should NOT appear in docs
+    let deprecated_sections = ["ci"];
+
+    // Check required sections appear as TOML headers
+    for section in &required_sections {
+        let header = format!("[{section}]");
+        assert!(
+            project_config_content.contains(&header),
+            "Config section `{header}` is missing from project config docs in src/cli/mod.rs.\n\
+             All config sections must be documented between PROJECT_CONFIG_START/END markers."
+        );
+    }
+
+    // Check deprecated sections do NOT appear as TOML headers
+    for section in &deprecated_sections {
+        let header = format!("[{section}]");
+        assert!(
+            !project_config_content.contains(&header),
+            "Deprecated section `{header}` should not appear in project config docs.\n\
+             Use the new section name instead."
+        );
+    }
+
+    // Hooks are flattened (not a [hooks] table), so verify at least one hook type
+    // appears as a bare key
+    let hook_keys = [
+        "pre-switch",
+        "post-switch",
+        "pre-start",
+        "post-start",
+        "pre-commit",
+        "post-commit",
+        "pre-merge",
+        "post-merge",
+        "pre-remove",
+        "post-remove",
+    ];
+    let has_hook = hook_keys
+        .iter()
+        .any(|key| project_config_content.contains(key));
+    assert!(
+        has_hook,
+        "No hook keys found in project config docs. Expected at least one of: {hook_keys:?}\n\
+         Hooks should appear as bare keys (not under a [hooks] table) between \
+         PROJECT_CONFIG_START/END markers."
+    );
+}
+
 /// Verify that LLM tool commands in docs/content/llm-commits.md match
 /// the examples in config.example.toml (the single source of truth).
 #[test]
