@@ -1049,7 +1049,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             commit: flag_pair(commit, no_commit),
             rebase: flag_pair(rebase, no_rebase),
             remove: flag_pair(remove, no_remove),
-            no_ff: flag_pair(no_ff, ff),
+            ff: flag_pair(ff, no_ff),
             verify: flag_pair(verify, no_verify),
             yes,
             stage,

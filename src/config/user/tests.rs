@@ -462,7 +462,8 @@ fn test_merge_config_serde() {
         rebase: Some(false),
         remove: Some(true),
         verify: Some(true),
-        no_ff: None,
+        ff: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
@@ -670,7 +671,8 @@ fn test_merge_merge_config() {
         rebase: Some(true),
         remove: Some(true),
         verify: Some(true),
-        no_ff: Some(false),
+        ff: Some(true),
+        ..Default::default()
     };
     let override_config = MergeConfig {
         squash: Some(false), // Override
@@ -678,7 +680,8 @@ fn test_merge_merge_config() {
         rebase: None,        // Fall back to base
         remove: Some(false), // Override
         verify: None,        // Fall back to base
-        no_ff: Some(true),   // Override
+        ff: Some(false),     // Override
+        ..Default::default()
     };
 
     let merged = base.merge_with(&override_config);
@@ -687,7 +690,7 @@ fn test_merge_merge_config() {
     assert_eq!(merged.rebase, Some(true));
     assert_eq!(merged.remove, Some(false));
     assert_eq!(merged.verify, Some(true));
-    assert_eq!(merged.no_ff, Some(true));
+    assert_eq!(merged.ff, Some(false));
 }
 
 #[test]
@@ -871,7 +874,8 @@ fn test_effective_merge_with_partial_override() {
                 rebase: Some(true),
                 remove: Some(true),
                 verify: Some(true),
-                no_ff: Some(false),
+                ff: Some(true),
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -888,7 +892,8 @@ fn test_effective_merge_with_partial_override() {
                     rebase: None,
                     remove: None,
                     verify: None,
-                    no_ff: None,
+                    ff: None,
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -1028,13 +1033,13 @@ fn test_list_config_accessor_methods_with_values() {
 #[test]
 fn test_merge_config_accessor_methods_defaults() {
     let config = MergeConfig::default();
-    // MergeConfig defaults are all true except no_ff (false)
+    // MergeConfig defaults are all true (including ff)
     assert!(config.squash());
     assert!(config.commit());
     assert!(config.rebase());
     assert!(config.remove());
     assert!(config.verify());
-    assert!(!config.no_ff());
+    assert!(config.ff());
 }
 
 #[test]
@@ -1045,14 +1050,28 @@ fn test_merge_config_accessor_methods_with_values() {
         rebase: Some(false),
         remove: Some(false),
         verify: Some(false),
-        no_ff: Some(true),
+        ff: Some(false),
+        ..Default::default()
     };
     assert!(!config.squash());
     assert!(!config.commit());
     assert!(!config.rebase());
     assert!(!config.remove());
     assert!(!config.verify());
-    assert!(config.no_ff());
+    assert!(!config.ff());
+}
+
+#[test]
+fn test_deprecated_no_ff_migrated_to_ff() {
+    let config = UserConfig::load_from_str("[merge]\nno-ff = true\n").unwrap();
+    assert!(!config.configs.merge.unwrap().ff());
+}
+
+#[test]
+fn test_deprecated_no_ff_does_not_override_explicit_ff() {
+    // If both `ff` and `no-ff` are set, `ff` wins (no-ff is ignored)
+    let config = UserConfig::load_from_str("[merge]\nff = true\nno-ff = true\n").unwrap();
+    assert!(config.configs.merge.unwrap().ff());
 }
 
 #[test]

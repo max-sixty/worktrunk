@@ -1764,7 +1764,7 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
-no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
+ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
 ### Switch
@@ -1943,6 +1943,12 @@ Location: `.config/wt.toml` (checked into version control and shared with the te
 ## Hooks
 
 Project hooks apply to this repository only. Format is the same as [user hooks](@/config.md#hooks); see `wt hook --help` for hook types, execution order, and examples.
+
+```toml
+pre-start = "npm ci"
+post-start = "npm run dev"
+pre-merge = "npm test"
+```
 
 ## Dev server URL
 

@@ -92,14 +92,14 @@ pub use expansion::{
 pub use hooks::HooksConfig;
 pub use project::{
     ProjectCiConfig, ProjectConfig, ProjectListConfig,
-    find_unknown_keys as find_unknown_project_keys,
+    find_unknown_keys as find_unknown_project_keys, valid_project_config_keys,
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
     OverridableConfig, ResolvedConfig, SelectConfig, StageMode, StepConfig, SwitchConfig,
     SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, default_config_path,
     default_system_config_path, find_unknown_keys as find_unknown_user_keys, set_config_path,
-    system_config_path,
+    system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]

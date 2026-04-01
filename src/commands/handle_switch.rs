@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template, validate_template};
+use worktrunk::config::{UserConfig, expand_template, template_references_var, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
@@ -482,6 +482,12 @@ fn validate_switch_templates(
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
+                    // Skip full validation for lazy templates ({{ vars.X }}) —
+                    // they're expanded at runtime after prior pipeline steps set
+                    // the vars. Syntax is still checked by expand_commands.
+                    if template_references_var(&cmd.template, "vars") {
+                        continue;
+                    }
                     let name = match &cmd.name {
                         Some(n) => format!("{source} {hook_type}:{n}"),
                         None => format!("{source} {hook_type} hook"),

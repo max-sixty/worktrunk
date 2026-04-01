@@ -272,7 +272,15 @@ fn spawn_detached_unix(
         None => command.to_string(),
     };
 
-    let shell_cmd = format!("{} &", full_command);
+    // Wrap in braces so `&` backgrounds the entire compound command.
+    // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
+    // `cmd1 && cmd2` (foreground) then `cmd3 &` (background) — the semicolon
+    // has lower precedence than `&`, so only the last segment is backgrounded.
+    let shell_cmd = format!(
+        "{{ {}{} }} &",
+        full_command,
+        posix_command_separator(&full_command)
+    );
 
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.

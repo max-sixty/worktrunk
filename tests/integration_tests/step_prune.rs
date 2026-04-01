@@ -73,7 +73,7 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
         .parent()
         .unwrap()
         .join("repo.merged-branch");
-    assert!(!worktree_path.exists(), "Merged worktree should be removed");
+    crate::common::assert_worktree_removed(&worktree_path);
 }
 
 /// Prune skips worktrees with unique commits (not merged)
@@ -96,7 +96,7 @@ fn test_prune_skips_unmerged(mut repo: TestRepo) {
 
     // Merged worktree removed
     let merged_path = repo.root_path().parent().unwrap().join("repo.merged-one");
-    assert!(!merged_path.exists(), "Merged worktree should be removed");
+    crate::common::assert_worktree_removed(&merged_path);
 
     // Unmerged worktree still exists
     let unmerged_path = repo.root_path().parent().unwrap().join("repo.unmerged");
@@ -146,9 +146,9 @@ fn test_prune_multiple(mut repo: TestRepo) {
 
     // All merged worktrees removed
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-a").exists());
-    assert!(!parent.join("repo.merged-b").exists());
-    assert!(!parent.join("repo.merged-c").exists());
+    crate::common::assert_worktree_removed(&parent.join("repo.merged-a"));
+    crate::common::assert_worktree_removed(&parent.join("repo.merged-b"));
+    crate::common::assert_worktree_removed(&parent.join("repo.merged-c"));
 }
 
 /// Prune skips unmerged detached HEAD worktrees
@@ -194,10 +194,7 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
 
     // Worktree was removed
     let parent = repo.root_path().parent().unwrap();
-    assert!(
-        !parent.join("repo.detached-integrated").exists(),
-        "Integrated detached worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&parent.join("repo.detached-integrated"));
 }
 
 /// Prune removes multiple integrated detached HEAD worktrees (exercises plural "worktrees")
@@ -219,8 +216,8 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
     ));
 
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.detached-a").exists());
-    assert!(!parent.join("repo.detached-b").exists());
+    crate::common::assert_worktree_removed(&parent.join("repo.detached-a"));
+    crate::common::assert_worktree_removed(&parent.join("repo.detached-b"));
 }
 
 /// Prune skips locked worktrees
@@ -244,7 +241,7 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
 
     // Merged removed, locked remains
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-branch").exists());
+    crate::common::assert_worktree_removed(&parent.join("repo.merged-branch"));
     assert!(
         parent.join("repo.locked-branch").exists(),
         "Locked worktree should be skipped"
@@ -312,10 +309,7 @@ fn test_prune_mixed_worktree_and_orphan_branch(mut repo: TestRepo) {
     ));
 
     let parent = repo.root_path().parent().unwrap();
-    assert!(
-        !parent.join("repo.merged-mixed").exists(),
-        "Merged worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&parent.join("repo.merged-mixed"));
 }
 
 /// Prune from a merged worktree removes it last (CandidateKind::Current).
@@ -338,10 +332,7 @@ fn test_prune_current_worktree(mut repo: TestRepo) {
     ));
 
     // Current worktree was removed
-    assert!(
-        !wt_path.exists(),
-        "Current merged worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&wt_path);
 }
 
 /// Prune handles stale/prunable worktrees (directory deleted but git metadata remains)
@@ -403,10 +394,7 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
 
     // Clean worktree removed
     let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
-    assert!(
-        !clean_path.exists(),
-        "Clean merged worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&clean_path);
 }
 
 /// Dry-run with mixed worktrees + orphan branches shows both counts.

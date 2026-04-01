@@ -2739,6 +2739,30 @@ fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    // Write invalid JSON to the plugins file — is_plugin_installed() should
+    // treat this as "not installed" and the install command should proceed
+    let plugins_dir = temp_home.path().join(".claude/plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(plugins_dir.join("installed_plugins.json"), "not valid json").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
     repo.setup_mock_claude_with_plugins();
@@ -3047,6 +3071,43 @@ mod plugin_prompt_pty {
         assert!(
             output.contains("Statusline configured"),
             "Should confirm configuration. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_preview_then_accept(
+        repo: TestRepo,
+        temp_home: TempDir,
+    ) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Send "?" to trigger preview, then "y" on the re-prompted prompt
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("statusLine"),
+            "Should show preview with statusLine JSON. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration after preview. Output:\n{output}"
         );
 
         // Verify the file was actually written

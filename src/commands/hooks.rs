@@ -325,7 +325,7 @@ fn format_cmd(cmd: &PreparedCommand, wt_bin: &str, env_vars: &mut Vec<(String, S
         Some(template) => {
             let var_name = format!("__WT_TPL_{}", env_vars.len());
             env_vars.push((var_name.clone(), template.clone()));
-            format!(r#"eval "$({wt_bin} step eval --shell-escape "${var_name}")"#)
+            format!(r#"eval "$({wt_bin} step eval --shell-escape "${var_name}")""#)
         }
         None => cmd.expanded.clone(),
     }
@@ -898,18 +898,15 @@ mod tests {
         ];
         let (cmd, env) = build_pipeline_command(&steps);
 
-        // Lazy step uses eval wrapping with env var reference
+        // Lazy step uses eval wrapping with properly quoted env var reference.
+        // The closing ")" must be outside $() — a missing " produces broken shell.
         assert!(
             cmd.contains("eval \"$("),
             "should contain eval wrapping: {cmd}"
         );
         assert!(
-            cmd.contains("step eval --shell-escape"),
-            "should reference step eval: {cmd}"
-        );
-        assert!(
-            cmd.contains("$__WT_TPL_0"),
-            "should reference env var: {cmd}"
+            cmd.contains("\"$__WT_TPL_0\")\""),
+            "should close with proper quoting (var quote, paren, outer quote): {cmd}"
         );
 
         // Env var contains the raw template
@@ -934,7 +931,10 @@ mod tests {
 
         // Concurrent group has one lazy and one eager
         assert!(cmd.contains("npm run lint"), "eager concurrent cmd: {cmd}");
-        assert!(cmd.contains("$__WT_TPL_0"), "lazy concurrent cmd: {cmd}");
+        assert!(
+            cmd.contains("\"$__WT_TPL_0\")\""),
+            "lazy concurrent cmd should have proper quoting: {cmd}"
+        );
 
         // Only one env var (for the lazy command)
         assert_eq!(env.len(), 1);
@@ -954,11 +954,19 @@ mod tests {
                 "echo {{ vars.b }}",
             ))),
         ];
-        let (_, env) = build_pipeline_command(&steps);
+        let (cmd, env) = build_pipeline_command(&steps);
 
-        // Each lazy step gets its own numbered env var
+        // Each lazy step gets its own numbered env var with proper quoting
         assert_eq!(env.len(), 2);
         assert_eq!(env[0].0, "__WT_TPL_0");
         assert_eq!(env[1].0, "__WT_TPL_1");
+        assert!(
+            cmd.contains("\"$__WT_TPL_0\")\""),
+            "first lazy step should have proper quoting: {cmd}"
+        );
+        assert!(
+            cmd.contains("\"$__WT_TPL_1\")\""),
+            "second lazy step should have proper quoting: {cmd}"
+        );
     }
 }

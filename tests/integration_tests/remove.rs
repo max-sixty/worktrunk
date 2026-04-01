@@ -2171,16 +2171,9 @@ fn test_remove_background_path_gone_immediately(mut repo: TestRepo) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The original worktree path should be gone IMMEDIATELY (before background rm completes)
-    // This is the key behavior of the move-then-delete optimization
-    assert!(
-        !worktree_path.exists(),
-        "Worktree path should be gone immediately after wt remove returns"
-    );
-
-    // Note: The staging directory in .git/wt/trash/ might already be deleted by the
-    // background process, or it might still exist. Both are valid outcomes.
-    // The key assertion above is that the original path is gone immediately.
+    // The worktree contents should be gone IMMEDIATELY (moved to .git/wt/trash/).
+    // An empty placeholder directory may remain briefly (for shell PWD validity).
+    crate::common::assert_worktree_removed(&worktree_path);
 }
 
 /// Background removal should prune git worktree metadata synchronously.

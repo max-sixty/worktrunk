@@ -3114,6 +3114,25 @@ fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
 
+/// Assert that a worktree's contents have been removed.
+///
+/// After background removal, the path may briefly exist as an empty placeholder
+/// directory (for shell PWD validity). This asserts the contents are gone —
+/// either the path doesn't exist, or it's an empty directory.
+pub fn assert_worktree_removed(path: &Path) {
+    // Use read_dir as the single check to avoid a TOCTOU race where the
+    // background process removes the placeholder between exists() and read_dir().
+    let is_empty_or_gone = match path.read_dir() {
+        Ok(mut entries) => entries.next().is_none(), // empty placeholder
+        Err(_) => true,                              // already gone (NotFound or other)
+    };
+    assert!(
+        is_empty_or_gone,
+        "Worktree contents should be removed (empty placeholder OK): {}",
+        path.display()
+    );
+}
+
 /// Wait for a file to exist, polling with exponential backoff.
 /// Use this instead of fixed sleeps for background commands to avoid flaky tests.
 pub fn wait_for_file(path: &Path) {
