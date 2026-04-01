@@ -152,7 +152,7 @@ WITH status_times AS (
 ),
 trees_times AS (
   SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%rev-parse%tree%'
+  FROM slice WHERE name LIKE '%rev-parse%{tree}%'
 )
 SELECT
   s.start_us/1e6 as status_start_ms, s.end_us/1e6 as status_end_ms,
