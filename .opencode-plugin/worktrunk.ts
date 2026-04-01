@@ -4,7 +4,7 @@
 //   🤖 — agent is working
 //   💬 — agent is waiting for input
 //
-// Installed globally via: wt config opencode install
+// Installed globally via: wt config plugins opencode install
 // Or manually: copy to ~/.config/opencode/plugins/worktrunk.ts
 
 import type { Plugin } from "@opencode-ai/plugin";

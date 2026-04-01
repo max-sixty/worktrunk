@@ -2260,7 +2260,7 @@ fn test_opencode_install_creates_plugin(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.args(["config", "opencode", "install", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2289,7 +2289,7 @@ fn test_opencode_install_already_installed(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.args(["config", "opencode", "install", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2309,7 +2309,7 @@ fn test_opencode_install_updates_outdated(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.args(["config", "opencode", "install", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2336,7 +2336,7 @@ fn test_opencode_uninstall_removes_plugin(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.args(["config", "opencode", "uninstall", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "uninstall", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2354,7 +2354,7 @@ fn test_opencode_uninstall_not_installed(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.args(["config", "opencode", "uninstall", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "uninstall", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2380,7 +2380,7 @@ fn test_opencode_install_uses_dirs_fallback(temp_home: TempDir) {
         set_temp_home_env(&mut cmd, temp_home.path());
         // Remove OPENCODE_CONFIG_DIR so the code falls through to dirs::config_dir()
         cmd.env_remove("OPENCODE_CONFIG_DIR");
-        cmd.args(["config", "opencode", "install", "--yes"]);
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2405,7 +2405,7 @@ fn test_opencode_install_prompt_declined(temp_home: TempDir) {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
         // No --yes, piped stdin sends empty → prompt declines
-        cmd.args(["config", "opencode", "install"]);
+        cmd.args(["config", "plugins", "opencode", "install"]);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2435,7 +2435,7 @@ fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
         // No --yes, piped stdin sends empty → prompt declines
-        cmd.args(["config", "opencode", "uninstall"]);
+        cmd.args(["config", "plugins", "opencode", "uninstall"]);
 
         assert_cmd_snapshot!(cmd);
     });

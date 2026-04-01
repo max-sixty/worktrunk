@@ -156,21 +156,16 @@ Detects various forms of the integration pattern regardless of:
 }
 
 #[derive(Subcommand)]
-pub enum ConfigOpencodeCommand {
-    /// Install the OpenCode activity tracking plugin
+pub enum ConfigPluginsOpencodeCommand {
+    /// Install the activity tracking plugin
     #[command(
         after_long_help = r#"Writes the worktrunk plugin to the OpenCode plugins directory.
 
 ## Examples
 
-Install with confirmation:
 ```console
-wt config opencode install
-```
-
-Install without confirmation:
-```console
-wt config opencode install --yes
+$ wt config plugins opencode install
+$ wt config plugins opencode install --yes
 ```
 
 ## Plugin location
@@ -184,14 +179,14 @@ Override with the `OPENCODE_CONFIG_DIR` environment variable."#
         yes: bool,
     },
 
-    /// Remove the OpenCode activity tracking plugin
+    /// Remove the activity tracking plugin
     #[command(
         after_long_help = r#"Removes the worktrunk plugin from the OpenCode plugins directory.
 
 ## Examples
 
 ```console
-wt config opencode uninstall
+$ wt config plugins opencode uninstall
 ```"#
     )]
     Uninstall {
@@ -252,6 +247,28 @@ $ wt config plugins claude install-statusline
     Claude {
         #[command(subcommand)]
         action: ConfigPluginsClaudeCommand,
+    },
+
+    /// OpenCode plugin
+    #[command(
+        after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+## Examples
+
+```console
+$ wt config plugins opencode install
+$ wt config plugins opencode uninstall
+```
+
+## Plugin location
+
+Written to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts`)."#
+    )]
+    Opencode {
+        #[command(subcommand)]
+        action: ConfigPluginsOpencodeCommand,
     },
 }
 
@@ -314,28 +331,6 @@ pub enum ConfigCommand {
     Shell {
         #[command(subcommand)]
         action: ConfigShellCommand,
-    },
-
-    /// OpenCode plugin setup
-    #[command(
-        after_long_help = r#"Manages the worktrunk activity tracking plugin for OpenCode.
-
-The plugin tracks OpenCode session activity per branch, showing status markers in `wt list`:
-- 🤖 — agent is working
-- 💬 — agent is waiting for input
-
-## Installation
-
-```console
-wt config opencode install
-```
-
-This writes the plugin to `~/.config/opencode/plugins/worktrunk.ts`
-(or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts` if set)."#
-    )]
-    Opencode {
-        #[command(subcommand)]
-        action: ConfigOpencodeCommand,
     },
 
     /// Create configuration file
@@ -412,13 +407,14 @@ $ wt config update --yes
 
 ## Supported tools
 
-- **claude** — Claude Code plugin
+- **claude** — Claude Code plugin (activity tracking + statusline)
+- **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
-$ wt config plugins claude uninstall
+$ wt config plugins opencode install
 ```"#
     )]
     Plugins {

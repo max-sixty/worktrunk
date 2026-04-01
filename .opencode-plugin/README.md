@@ -5,7 +5,7 @@ Activity tracking integration for `wt list`.
 ## Installation
 
 ```bash
-wt config opencode install
+wt config plugins opencode install
 ```
 
 This copies the plugin to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts`).

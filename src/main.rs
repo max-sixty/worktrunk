@@ -61,8 +61,8 @@ use commands::{
 use output::handle_remove_output;
 
 use cli::{
-    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigOpencodeCommand,
-    ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction,
+    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
+    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction,
     StateCommand, StepCommand, VarsAction,
 };
@@ -472,19 +472,11 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
 fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
     match action {
         ConfigCommand::Shell { action } => handle_config_shell_command(action),
-        ConfigCommand::Opencode { action } => handle_config_opencode_command(action),
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full } => handle_config_show(full),
         ConfigCommand::Update { yes } => handle_config_update(yes),
         ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
-    }
-}
-
-fn handle_config_opencode_command(action: ConfigOpencodeCommand) -> anyhow::Result<()> {
-    match action {
-        ConfigOpencodeCommand::Install { yes } => handle_opencode_install(yes),
-        ConfigOpencodeCommand::Uninstall { yes } => handle_opencode_uninstall(yes),
     }
 }
 
@@ -496,6 +488,10 @@ fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
             ConfigPluginsClaudeCommand::InstallStatusline { yes } => {
                 handle_claude_install_statusline(yes)
             }
+        },
+        ConfigPluginsCommand::Opencode { action } => match action {
+            ConfigPluginsOpencodeCommand::Install { yes } => handle_opencode_install(yes),
+            ConfigPluginsOpencodeCommand::Uninstall { yes } => handle_opencode_uninstall(yes),
         },
     }
 }

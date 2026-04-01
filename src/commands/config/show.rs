@@ -245,22 +245,20 @@ fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
     if plugin_installed {
         writeln!(out, "{}", success_message("Plugin installed"))?;
     } else if plugin_exists {
-        writeln!(out, "{}", hint_message("Plugin outdated. To update, run:"))?;
         writeln!(
             out,
             "{}",
-            format_bash_with_gutter("wt config opencode install")
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
+            ))
         )?;
     } else {
         writeln!(
             out,
             "{}",
-            hint_message("Plugin not installed. To install, run:")
-        )?;
-        writeln!(
-            out,
-            "{}",
-            format_bash_with_gutter("wt config opencode install")
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
+            ))
         )?;
     }
 

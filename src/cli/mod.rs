@@ -4,8 +4,8 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigOpencodeCommand,
-    ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction,
+    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigPluginsClaudeCommand,
+    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::HookCommand;

@@ -61,8 +61,7 @@ exit_code: 0
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOPENCODE[39m
-[2m↳[22m [2mPlugin not installed. To install, run:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config opencode install
+[2m↳[22m [2mPlugin not installed. To install, run [4mwt config plugins opencode install[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

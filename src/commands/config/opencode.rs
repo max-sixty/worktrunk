@@ -53,7 +53,7 @@ fn confirm_or_yes(yes: bool, prompt: &str, preview: impl Fn()) -> Result<bool> {
     Ok(yes || prompt_yes_no_preview(prompt, preview)? == PromptResponse::Accepted)
 }
 
-/// Handle `wt config opencode install`.
+/// Handle `wt config plugins opencode install`.
 pub fn handle_opencode_install(yes: bool) -> Result<()> {
     let target = plugin_path()?;
     let target_display = format_path_for_display(&target);
@@ -110,7 +110,7 @@ pub fn handle_opencode_install(yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Handle `wt config opencode uninstall`.
+/// Handle `wt config plugins opencode uninstall`.
 pub fn handle_opencode_uninstall(yes: bool) -> Result<()> {
     let target = plugin_path()?;
     let target_display = format_path_for_display(&target);
