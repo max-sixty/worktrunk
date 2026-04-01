@@ -962,14 +962,8 @@ pub fn write_migration_file(
     };
 
     // Parse once for all structural migrations
-    let new_content = if let Ok(mut doc) = new_content.parse::<toml_edit::DocumentMut>() {
-        let has_structural = !deprecations.commit_gen.is_empty()
-            || deprecations.approved_commands
-            || deprecations.select
-            || deprecations.post_create
-            || deprecations.ci_section;
-
-        if has_structural {
+    let new_content = match new_content.parse::<toml_edit::DocumentMut>() {
+        Ok(mut doc) => {
             let mut modified = false;
             if !deprecations.commit_gen.is_empty() {
                 modified |= migrate_commit_generation_doc(&mut doc);
@@ -991,11 +985,8 @@ pub fn write_migration_file(
             } else {
                 new_content
             }
-        } else {
-            new_content
         }
-    } else {
-        new_content
+        Err(_) => new_content,
     };
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
@@ -1558,6 +1549,17 @@ post-create = "echo hello"
     }
 
     // Tests for approved-commands array handling
+
+    #[test]
+    fn test_find_deprecated_vars_in_array_of_tables() {
+        // Exercises the ArrayOfTables arm in collect_strings_from_edit_item
+        let content = r#"
+[[hooks]]
+command = "ln -sf {{ repo_root }}/node_modules"
+"#;
+        let found = find_deprecated_vars(content);
+        assert_eq!(found, vec![("repo_root", "repo_path")]);
+    }
 
     #[test]
     fn test_find_deprecated_vars_in_approved_commands() {
