@@ -244,6 +244,7 @@ pub fn spawn_background_hooks(
             ctx.branch_or_head(),
             &hook_log,
             Some(&cmd.prepared.context_json),
+            &[],
         ) {
             let err_msg = err.to_string();
             let message = match &cmd.prepared.name {
@@ -276,33 +277,58 @@ pub struct SourcedStep {
     pub display_path: Option<PathBuf>,
 }
 
-/// Build a compound shell command from pipeline steps.
+/// Build a compound shell command from pipeline steps, collecting env vars for
+/// lazy template expansion.
 ///
 /// Serial steps are chained with `&&`. Concurrent groups use background
-/// processes with `wait`. The entire result is one shell command string
-/// suitable for `spawn_detached`.
+/// processes with `wait`. Commands referencing `vars.` are wrapped in
+/// `eval "$(wt step eval --shell-escape ...)"` and their raw templates are
+/// returned as env vars for the spawned process.
 ///
-/// Example output: `cmd1 && cmd2 && { cmd3 & cmd4 & wait; }`
-fn build_pipeline_command(steps: &[SourcedStep]) -> String {
+/// Returns `(shell_command, env_vars)`.
+fn build_pipeline_command(steps: &[SourcedStep]) -> (String, Vec<(String, String)>) {
+    let wt_bin = std::env::current_exe()
+        .ok()
+        .map(|p| shell_escape::escape(p.to_string_lossy()).into_owned())
+        .unwrap_or_else(|| "wt".to_string());
+
     let mut parts = Vec::new();
+    let mut env_vars: Vec<(String, String)> = Vec::new();
+
     for step in steps {
         match &step.step {
             PreparedStep::Single(cmd) => {
                 // Wrap in braces to prevent operator interaction between steps.
                 // Without this, `false || echo fallback && echo next` would
                 // parse as `false || (echo fallback && echo next)`.
-                parts.push(format!("{{ {}; }}", cmd.expanded));
+                parts.push(format!(
+                    "{{ {}; }}",
+                    format_cmd(cmd, &wt_bin, &mut env_vars)
+                ));
             }
             PreparedStep::Concurrent(cmds) => {
                 let bg: Vec<String> = cmds
                     .iter()
-                    .map(|c| format!("{{ {}; }} &", c.expanded))
+                    .map(|c| format!("{{ {}; }} &", format_cmd(c, &wt_bin, &mut env_vars)))
                     .collect();
                 parts.push(format!("{{ {} wait; }}", bg.join(" ")));
             }
         }
     }
-    parts.join(" && ")
+    (parts.join(" && "), env_vars)
+}
+
+/// Format a single command for the pipeline, using lazy eval wrapping for commands
+/// with `lazy_template`.
+fn format_cmd(cmd: &PreparedCommand, wt_bin: &str, env_vars: &mut Vec<(String, String)>) -> String {
+    match &cmd.lazy_template {
+        Some(template) => {
+            let var_name = format!("__WT_TPL_{}", env_vars.len());
+            env_vars.push((var_name.clone(), template.clone()));
+            format!(r#"eval "$({wt_bin} step eval --shell-escape "${var_name}")"#)
+        }
+        None => cmd.expanded.clone(),
+    }
 }
 
 /// Format a summary description of a pipeline for display.
@@ -371,7 +397,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     };
     eprintln!("{}", progress_message(message));
 
-    let pipeline_cmd = build_pipeline_command(&steps);
+    let (pipeline_cmd, lazy_env) = build_pipeline_command(&steps);
     let hook_log = HookLog::hook(source, hook_type, "pipeline");
     let log_label = format!("{hook_type} {source} pipeline");
 
@@ -382,6 +408,11 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         PreparedStep::Concurrent(cmds) => cmds.first().map(|c| c.context_json.as_str()),
     });
 
+    let extra_env: Vec<(&str, &str)> = lazy_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
     if let Err(err) = spawn_detached(
         ctx.repo,
         ctx.worktree_path,
@@ -389,6 +420,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         ctx.branch_or_head(),
         &hook_log,
         context_json,
+        &extra_env,
     ) {
         eprintln!(
             "{}",
@@ -525,10 +557,26 @@ pub fn run_hook_with_filter(
     for cmd in commands {
         cmd.announce()?;
 
+        // Lazy commands (referencing vars.) are expanded just before execution
+        // so that vars set by earlier commands in the pipeline are available.
+        let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
+            let context_map: std::collections::HashMap<String, String> =
+                serde_json::from_str(&cmd.prepared.context_json)
+                    .expect("context_json round-trip should never fail");
+            let vars: std::collections::HashMap<&str, &str> = context_map
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let name = cmd.summary_name();
+            worktrunk::config::expand_template(template, &vars, true, ctx.repo, &name)?
+        } else {
+            cmd.prepared.expanded.clone()
+        };
+
         let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = execute_command_in_worktree(
             ctx.worktree_path,
-            &cmd.prepared.expanded,
+            &expanded,
             Some(&cmd.prepared.context_json),
             Some(&log_label),
         ) {
@@ -745,6 +793,7 @@ mod tests {
             name: name.map(String::from),
             expanded: expanded.to_string(),
             context_json: "{}".to_string(),
+            lazy_template: None,
         }
     }
 
@@ -757,8 +806,9 @@ mod tests {
                 "npm run build",
             ))),
         ];
-        let cmd = build_pipeline_command(&steps);
+        let (cmd, env) = build_pipeline_command(&steps);
         assert_eq!(cmd, "{ npm install; } && { npm run build; }");
+        assert!(env.is_empty());
     }
 
     #[test]
@@ -770,11 +820,12 @@ mod tests {
                 make_cmd(Some("lint"), "npm run lint"),
             ])),
         ];
-        let cmd = build_pipeline_command(&steps);
+        let (cmd, env) = build_pipeline_command(&steps);
         assert_eq!(
             cmd,
             "{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }"
         );
+        assert!(env.is_empty());
     }
 
     #[test]
@@ -783,8 +834,9 @@ mod tests {
             Some("only"),
             "echo hi",
         )]))];
-        let cmd = build_pipeline_command(&steps);
+        let (cmd, env) = build_pipeline_command(&steps);
         assert_eq!(cmd, "{ { echo hi; } & wait; }");
+        assert!(env.is_empty());
     }
 
     #[test]
@@ -824,5 +876,89 @@ mod tests {
 
         let single = CommandConfig::single("npm install");
         assert!(!single.is_pipeline());
+    }
+
+    fn make_lazy_cmd(name: Option<&str>, template: &str) -> PreparedCommand {
+        PreparedCommand {
+            name: name.map(String::from),
+            expanded: template.to_string(),
+            context_json: "{}".to_string(),
+            lazy_template: Some(template.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_build_pipeline_command_lazy_step() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
+            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
+                Some("db"),
+                "docker run --name {{ vars.container }}",
+            ))),
+        ];
+        let (cmd, env) = build_pipeline_command(&steps);
+
+        // Lazy step uses eval wrapping with env var reference
+        assert!(
+            cmd.contains("eval \"$("),
+            "should contain eval wrapping: {cmd}"
+        );
+        assert!(
+            cmd.contains("step eval --shell-escape"),
+            "should reference step eval: {cmd}"
+        );
+        assert!(
+            cmd.contains("$__WT_TPL_0"),
+            "should reference env var: {cmd}"
+        );
+
+        // Env var contains the raw template
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "__WT_TPL_0");
+        assert_eq!(env[0].1, "docker run --name {{ vars.container }}");
+    }
+
+    #[test]
+    fn test_build_pipeline_command_mixed_lazy_and_eager() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_lazy_cmd(Some("db"), "docker run {{ vars.name }}"),
+                make_cmd(Some("lint"), "npm run lint"),
+            ])),
+        ];
+        let (cmd, env) = build_pipeline_command(&steps);
+
+        // First step is eager (no eval wrapping)
+        assert!(cmd.starts_with("{ echo setup; }"), "eager step: {cmd}");
+
+        // Concurrent group has one lazy and one eager
+        assert!(cmd.contains("npm run lint"), "eager concurrent cmd: {cmd}");
+        assert!(cmd.contains("$__WT_TPL_0"), "lazy concurrent cmd: {cmd}");
+
+        // Only one env var (for the lazy command)
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].1, "docker run {{ vars.name }}");
+    }
+
+    #[test]
+    fn test_build_pipeline_command_multiple_lazy_steps() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "echo setup"))),
+            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
+                None,
+                "echo {{ vars.a }}",
+            ))),
+            make_sourced_step(PreparedStep::Single(make_lazy_cmd(
+                None,
+                "echo {{ vars.b }}",
+            ))),
+        ];
+        let (_, env) = build_pipeline_command(&steps);
+
+        // Each lazy step gets its own numbered env var
+        assert_eq!(env.len(), 2);
+        assert_eq!(env[0].0, "__WT_TPL_0");
+        assert_eq!(env[1].0, "__WT_TPL_1");
     }
 }

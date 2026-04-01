@@ -72,6 +72,7 @@ fn spawn_background_removal(
         log_label,
         &HookLog::internal(InternalOp::Remove),
         None,
+        &[],
     )?;
     Ok(())
 }

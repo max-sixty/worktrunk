@@ -190,24 +190,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Aliases defined here apply to all projects. For project-specific aliases, use the project config (https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### Hooks[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# See `wt hook --help` for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# # Single command[0m
-[107m [0m [2m# pre-start = "npm ci"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# # Multiple named commands (concurrent for post-*, sequential for pre-*)[0m
-[107m [0m [2m# [pre-merge][0m
-[107m [0m [2m# test = "npm test"[0m
-[107m [0m [2m# build = "npm run build"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# # Pipeline — list of maps, run in order (each map concurrent)[0m
-[107m [0m [2m# post-start = [[0m
-[107m [0m [2m#     { install = "npm ci" },[0m
-[107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
-[107m [0m [2m# ][0m
-[107m [0m [2m#[0m
 [107m [0m [2m# ### User project-specific settings[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# For context:[0m
@@ -216,11 +198,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - User configs generally apply to all projects.[0m
 [107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# #### Setting overrides [experimental][0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -326,30 +304,50 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 
 [107m [0m [2m# # Project Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create --project`.[0m
+[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Project hooks apply to this repository only. Format is the same as user hooks (https://worktrunk.dev/config/#hooks); see `wt hook --help` for hook types, execution order, and examples.[0m
+[107m [0m [2m# See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Single command:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# pre-start = "npm ci"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [pre-merge][0m
+[107m [0m [2m# test = "npm test"[0m
+[107m [0m [2m# build = "npm run build"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# post-start = [[0m
+[107m [0m [2m#     { install = "npm ci" },[0m
+[107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
+[107m [0m [2m# ][0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # URL column in wt list (dimmed when port not listening)[0m
+[107m [0m [2m# URL column in `wt list` (dimmed when port not listening):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [list][0m
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Forge platform override[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Override platform detection for SSH aliases or self-hosted instances[0m
+[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
 [107m [0m [2m# platform = "github"  # or "gitlab"[0m
-[107m [0m [2m# # hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)[0m
+[107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Add more gitignored excludes for wt step copy-ignored[0m
+[107m [0m [2m# Additional excludes for `wt step copy-ignored`:[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# [step.copy-ignored][0m
 [107m [0m [2m# exclude = [".cache/", ".turbo/"][0m
 [107m [0m [2m#[0m

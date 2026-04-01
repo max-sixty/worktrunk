@@ -2809,6 +2809,110 @@ fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: Te
     });
 }
 
+// ==================== Plugin Install-Statusline Tests ====================
+
+#[rstest]
+fn test_plugins_claude_install_statusline(repo: TestRepo, temp_home: TempDir) {
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify the file was written correctly
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_already_configured(repo: TestRepo, temp_home: TempDir) {
+    TestRepo::setup_statusline_configured(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, temp_home: TempDir) {
+    // Write existing settings with other keys
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        r#"{"existingKey":"existingValue"}"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify existing keys are preserved
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["existingKey"], "existingValue");
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_empty_file(repo: TestRepo, temp_home: TempDir) {
+    // Write an empty settings.json (edge case: file exists but is empty)
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(claude_dir.join("settings.json"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify the file was written correctly despite starting empty
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+// ==================== Plugin Command Failure Tests ====================
+
 #[rstest]
 fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();

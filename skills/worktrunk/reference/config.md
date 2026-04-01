@@ -222,26 +222,6 @@ url = "echo http://localhost:{{ branch | hash_port }}"
 
 Aliases defined here apply to all projects. For project-specific aliases, use the [project config](https://worktrunk.dev/config/#project-configuration) `[aliases]` section instead.
 
-### Hooks
-
-See `wt hook --help` for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](https://worktrunk.dev/config/#project-configuration) apply only to that repository.
-
-```toml
-# Single command
-pre-start = "npm ci"
-
-# Multiple named commands (concurrent for post-*, sequential for pre-*)
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-
-# Pipeline — list of maps, run in order (each map concurrent)
-post-start = [
-    { install = "npm ci" },
-    { build = "npm run build", server = "npm run dev" }
-]
-```
-
 ### User project-specific settings
 
 For context:
@@ -250,11 +230,7 @@ For context:
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
-Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-
-#### Setting overrides [experimental]
-
-Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -363,35 +339,61 @@ squash-template = """
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Create with `wt config create --project`.
+Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
 
 Location: `.config/wt.toml` (checked into version control and shared with the team).
 
 ## Hooks
 
-Project hooks apply to this repository only. Format is the same as [user hooks](https://worktrunk.dev/config/#hooks); see `wt hook --help` for hook types, execution order, and examples.
+See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.
+
+Single command:
+
+```toml
+pre-start = "npm ci"
+```
+
+Multiple named commands (concurrent for post-*, sequential for pre-*):
+
+```toml
+[pre-merge]
+test = "npm test"
+build = "npm run build"
+```
+
+Pipeline — list of maps, run in order (each map concurrent):
+
+```toml
+post-start = [
+    { install = "npm ci" },
+    { build = "npm run build", server = "npm run dev" }
+]
+```
 
 ## Dev server URL
 
+URL column in `wt list` (dimmed when port not listening):
+
 ```toml
-# URL column in wt list (dimmed when port not listening)
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
 ## Forge platform override
 
+Override platform detection for SSH aliases or self-hosted instances:
+
 ```toml
-# Override platform detection for SSH aliases or self-hosted instances
 [forge]
 platform = "github"  # or "gitlab"
-# hostname = "github.example.com"  # API host (GHE / self-hosted GitLab)
+hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
 ## Copy-ignored excludes
 
+Additional excludes for `wt step copy-ignored`:
+
 ```toml
-# Add more gitignored excludes for wt step copy-ignored
 [step.copy-ignored]
 exclude = [".cache/", ".turbo/"]
 ```

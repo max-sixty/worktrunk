@@ -334,12 +334,8 @@ const BARE_REPO_WORKTREE_PATH: &str = "{{ repo_path }}/../{{ branch | sanitize }
 
 /// Check whether a template string references `{{ repo }}` or `{{ main_worktree }}`.
 fn template_references_repo_name(template: &str) -> bool {
-    let env = minijinja::Environment::new();
-    let Ok(tmpl) = env.template_from_str(template) else {
-        return false;
-    };
-    let vars = tmpl.undeclared_variables(false);
-    vars.contains("repo") || vars.contains("main_worktree")
+    worktrunk::config::template_references_var(template, "repo")
+        || worktrunk::config::template_references_var(template, "main_worktree")
 }
 
 /// Offer to set a project-level `worktree-path` for bare repos with hidden directory names.
