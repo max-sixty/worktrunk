@@ -150,11 +150,6 @@ impl UserConfig {
 
                 Self::sync_serialized_section(
                     project_table,
-                    "commit-generation",
-                    project_config.commit_generation.as_ref(),
-                );
-                Self::sync_serialized_section(
-                    project_table,
                     "list",
                     project_config.overrides.list.as_ref(),
                 );
@@ -172,11 +167,6 @@ impl UserConfig {
                     project_table,
                     "switch",
                     project_config.overrides.switch.as_ref(),
-                );
-                Self::sync_serialized_section(
-                    project_table,
-                    "select",
-                    project_config.overrides.select.as_ref(),
                 );
             }
         }

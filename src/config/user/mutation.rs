@@ -100,14 +100,14 @@ impl UserConfig {
             ))
         })?;
 
-        let mut disk_config: UserConfig = toml::from_str(&content).map_err(|e| {
+        let migrated = crate::config::deprecation::migrate_content(&content);
+        let disk_config: UserConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError::Message(format!(
                 "Failed to parse config file {}: {}",
                 format_path_for_display(&path),
                 e
             ))
         })?;
-        disk_config.normalize_deprecated_sections();
 
         // Replace in-memory projects with disk state (disk is authoritative)
         self.projects = disk_config.projects;

@@ -85,14 +85,14 @@ fn test_find_unknown_keys_known_sections() {
     let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
-command = "llm"
-
 [list]
 full = true
 
 [commit]
 stage = "all"
+
+[commit.generation]
+command = "llm"
 
 [merge]
 squash = true
@@ -189,7 +189,6 @@ fn test_user_project_config_with_worktree_path_serde() {
             ..Default::default()
         },
         approved_commands: vec!["npm install".to_string()],
-        ..Default::default()
     };
     let toml = toml::to_string(&config).unwrap();
     insta::assert_snapshot!(toml, @r#"
@@ -216,7 +215,6 @@ fn test_worktree_path_for_project_uses_project_specific() {
                 ..Default::default()
             },
             approved_commands: vec![],
-            ..Default::default()
         },
     );
 
@@ -244,7 +242,6 @@ fn test_worktree_path_for_project_falls_back_to_global() {
                 ..Default::default()
             },
             approved_commands: vec!["npm install".to_string()],
-            ..Default::default()
         },
     );
 
@@ -284,7 +281,6 @@ fn test_format_path_with_project_override() {
                 ..Default::default()
             },
             approved_commands: vec![],
-            ..Default::default()
         },
     );
 
@@ -345,7 +341,6 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.list.is_none());
     assert!(config.configs.commit.is_none());
     assert!(config.configs.merge.is_none());
-    assert!(config.commit_generation.is_none());
     assert!(!config.skip_shell_integration_prompt);
 }
 
@@ -463,7 +458,6 @@ fn test_merge_config_serde() {
         remove: Some(true),
         verify: Some(true),
         ff: None,
-        ..Default::default()
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
@@ -672,7 +666,6 @@ fn test_merge_merge_config() {
         remove: Some(true),
         verify: Some(true),
         ff: Some(true),
-        ..Default::default()
     };
     let override_config = MergeConfig {
         squash: Some(false), // Override
@@ -681,7 +674,6 @@ fn test_merge_merge_config() {
         remove: Some(false), // Override
         verify: None,        // Fall back to base
         ff: Some(false),     // Override
-        ..Default::default()
     };
 
     let merged = base.merge_with(&override_config);
@@ -875,7 +867,6 @@ fn test_effective_merge_with_partial_override() {
                 remove: Some(true),
                 verify: Some(true),
                 ff: Some(true),
-                ..Default::default()
             }),
             ..Default::default()
         },
@@ -893,7 +884,6 @@ fn test_effective_merge_with_partial_override() {
                     remove: None,
                     verify: None,
                     ff: None,
-                    ..Default::default()
                 }),
                 ..Default::default()
             },
@@ -933,45 +923,6 @@ fn test_effective_list_project_only() {
 
     // No global, no matching project = None
     assert!(config.list(Some("github.com/other/repo")).is_none());
-}
-
-#[test]
-fn test_effective_select_with_project_override() {
-    // Test that OverridableConfig merge works correctly for select
-    let mut config = UserConfig {
-        configs: OverridableConfig {
-            select: Some(SelectConfig {
-                pager: Some("delta".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            overrides: OverridableConfig {
-                select: Some(SelectConfig {
-                    pager: Some("bat".to_string()),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
-
-    // Project override takes precedence
-    let effective = config.select(Some("github.com/user/repo")).unwrap();
-    assert_eq!(effective.pager, Some("bat".to_string()));
-
-    // No project override = use global
-    let effective = config.select(Some("github.com/other/repo")).unwrap();
-    assert_eq!(effective.pager, Some("delta".to_string()));
-
-    // No project = use global
-    let effective = config.select(None).unwrap();
-    assert_eq!(effective.pager, Some("delta".to_string()));
 }
 
 #[test]
@@ -1051,7 +1002,6 @@ fn test_merge_config_accessor_methods_with_values() {
         remove: Some(false),
         verify: Some(false),
         ff: Some(false),
-        ..Default::default()
     };
     assert!(!config.squash());
     assert!(!config.commit());
@@ -1084,17 +1034,6 @@ fn test_commit_config_accessor_methods() {
         generation: None,
     };
     assert_eq!(config.stage(), StageMode::Tracked);
-}
-
-#[test]
-fn test_select_config_fields() {
-    let config = SelectConfig::default();
-    assert!(config.pager.is_none());
-
-    let config = SelectConfig {
-        pager: Some("delta --paging=never".to_string()),
-    };
-    assert_eq!(config.pager.as_deref(), Some("delta --paging=never"));
 }
 
 // =========================================================================
@@ -1321,7 +1260,7 @@ pager = "bat"
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("bat"));
-    assert!(config.configs.select.is_none());
+    // [select] is migrated to [switch.picker] at the TOML level before parsing
     assert_eq!(
         config
             .configs
@@ -1356,7 +1295,6 @@ pager = "bat"
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("delta"));
     assert_eq!(picker.timeout_ms, Some(100));
-    assert!(config.configs.select.is_none());
 }
 
 #[test]
@@ -1416,14 +1354,19 @@ pager = "bat"
     let picker = config.switch_picker(Some("github.com/user/repo"));
     assert_eq!(picker.pager.as_deref(), Some("bat"));
     assert_eq!(picker.timeout_ms, Some(300));
+    // [select] is migrated to [switch.picker] at the TOML level before parsing,
+    // so it ends up in the switch.picker field, not select
     assert!(
         config
             .projects
             .get("github.com/user/repo")
             .unwrap()
             .overrides
-            .select
-            .is_none()
+            .switch
+            .as_ref()
+            .and_then(|s| s.picker.as_ref())
+            .and_then(|p| p.pager.as_deref())
+            == Some("bat")
     );
 }
 
@@ -1479,7 +1422,6 @@ fn test_resolved_config_for_project() {
 fn test_user_project_config_with_nested_configs_serde() {
     let config = UserProjectOverrides {
         approved_commands: vec!["npm install".to_string()],
-        commit_generation: None, // Deprecated field, use commit.generation instead
         overrides: OverridableConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             list: Some(ListConfig {
@@ -1643,34 +1585,9 @@ exclude = [".repo-local/", ".entire/"]
 }
 
 #[test]
-fn test_deprecated_commit_generation_format_serde() {
-    // Raw serde still accepts the old shape for backward compatibility.
-    let content = r#"
-[commit-generation]
-command = "llm -m claude-haiku-4.5"
-
-[projects."github.com/user/repo".commit-generation]
-command = "claude -p --model opus"
-"#;
-
-    let config: UserConfig = toml::from_str(content).unwrap();
-
-    // Old format parsed into commit_generation field
-    assert_eq!(
-        config.commit_generation.as_ref().unwrap().command,
-        Some("llm -m claude-haiku-4.5".to_string())
-    );
-
-    // Project override uses deprecated field
-    let project = config.projects.get("github.com/user/repo").unwrap();
-    assert_eq!(
-        project.commit_generation.as_ref().unwrap().command,
-        Some("claude -p --model opus".to_string())
-    );
-}
-
-#[test]
-fn test_load_normalizes_deprecated_commit_generation_sections() {
+fn test_deprecated_commit_generation_migrated_on_load() {
+    // [commit-generation] is migrated to [commit.generation] at the TOML level
+    // before serde parsing, so it lands in configs.commit.generation
     let content = r#"
 [commit-generation]
 command = "llm -m claude-haiku-4.5"
@@ -1681,7 +1598,6 @@ command = "claude -p --model opus"
 
     let config = UserConfig::load_from_str(content).unwrap();
 
-    assert!(config.commit_generation.is_none());
     assert_eq!(
         config
             .configs
@@ -1693,7 +1609,6 @@ command = "claude -p --model opus"
     );
 
     let project = config.projects.get("github.com/user/repo").unwrap();
-    assert!(project.commit_generation.is_none());
     assert_eq!(
         project
             .overrides
@@ -1713,26 +1628,23 @@ command = "claude -p --model opus"
 
 #[test]
 fn test_deprecated_commit_generation_with_args_field() {
-    // Test that old format with args field still parses (args is ignored)
-    // This ensures backward compatibility for users who haven't migrated yet
+    // Test that old format with args field is migrated: args merged into command
     let content = r#"
 [commit-generation]
 command = "llm"
 args = ["-m", "claude-haiku-4.5"]
 "#;
 
-    let result: Result<UserConfig, _> = toml::from_str(content);
-    assert!(
-        result.is_ok(),
-        "Old format with args field should parse (args is ignored): {:?}",
-        result.err()
-    );
-
-    let config = result.unwrap();
-    // Command is parsed, args is ignored (struct no longer has args field)
+    let config = UserConfig::load_from_str(content).unwrap();
+    // Migration merges args into command and renames section
     assert_eq!(
-        config.commit_generation.as_ref().unwrap().command,
-        Some("llm".to_string())
+        config
+            .configs
+            .commit
+            .as_ref()
+            .and_then(|c| c.generation.as_ref())
+            .and_then(|g| g.command.as_deref()),
+        Some("llm -m claude-haiku-4.5")
     );
 }
 
@@ -1893,34 +1805,6 @@ fn test_save_to_new_file_commit_with_stage_and_generation() {
     assert!(
         saved.contains("[commit.generation]"),
         "Should have generation section: {saved}"
-    );
-}
-
-#[test]
-fn test_save_to_new_file_with_deprecated_commit_generation() {
-    // Test that save_to() serializes deprecated commit_generation field
-    // (for backward compat when loading old configs and re-saving)
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        commit_generation: Some(CommitGenerationConfig {
-            command: Some("old-llm".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("[commit-generation]"),
-        "Should use deprecated format: {saved}"
-    );
-    assert!(
-        saved.contains("command = \"old-llm\""),
-        "Should contain command: {saved}"
     );
 }
 

@@ -15,7 +15,7 @@
 
 pub mod approvals;
 mod commands;
-mod deprecation;
+pub(crate) mod deprecation;
 mod expansion;
 mod hooks;
 mod project;
@@ -81,6 +81,7 @@ pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::format_deprecation_warnings;
 pub use deprecation::format_migration_diff;
+pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
@@ -96,10 +97,10 @@ pub use project::{
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, ResolvedConfig, SelectConfig, StageMode, StepConfig, SwitchConfig,
-    SwitchPickerConfig, UserConfig, UserProjectOverrides, config_path, default_config_path,
-    default_system_config_path, find_unknown_keys as find_unknown_user_keys, set_config_path,
-    system_config_path, valid_user_config_keys,
+    OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    UserConfig, UserProjectOverrides, config_path, default_config_path, default_system_config_path,
+    find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
+    valid_user_config_keys,
 };
 
 #[cfg(test)]
@@ -162,8 +163,6 @@ mod tests {
             config.worktree_path(),
             "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
-        // commit_generation is None by default
-        assert!(config.commit_generation.is_none());
         assert!(config.projects.is_empty());
     }
 
@@ -662,7 +661,7 @@ squash-template-file = "~/file.txt"
 
     #[test]
     fn test_find_unknown_user_keys_valid() {
-        let toml_str = "worktree-path = \"../test\"\n\n[commit-generation]\ncommand = \"llm\"\n\n[list]\nfull = true";
+        let toml_str = "worktree-path = \"../test\"\n\n[commit.generation]\ncommand = \"llm\"\n\n[list]\nfull = true";
         let unknown = find_unknown_user_keys(toml_str);
         assert!(unknown.is_empty());
     }
@@ -750,22 +749,19 @@ test = "cargo test"
 
     #[test]
     fn test_user_config_key_in_project_config_is_detected() {
-        // commit-generation is a user-config-only key
-        let toml_str = r#"
-[commit-generation]
-command = "claude"
-"#;
+        // skip-shell-integration-prompt is a user-config-only key
+        let toml_str = "skip-shell-integration-prompt = true\n";
         let unknown = find_unknown_project_keys(toml_str);
         assert!(
-            unknown.contains_key("commit-generation"),
-            "commit-generation should be unknown in project config"
+            unknown.contains_key("skip-shell-integration-prompt"),
+            "skip-shell-integration-prompt should be unknown in project config"
         );
 
         // Verify it's valid in user config
         let unknown_in_user = find_unknown_user_keys(toml_str);
         assert!(
             unknown_in_user.is_empty(),
-            "commit-generation should be valid in user config"
+            "skip-shell-integration-prompt should be valid in user config"
         );
     }
 

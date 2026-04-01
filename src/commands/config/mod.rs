@@ -147,15 +147,13 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
-        // commit-generation in project config should suggest user config
+        // skip-shell-integration-prompt in project config should suggest user config
         let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "command".to_string(),
-            toml::Value::String("claude".to_string()),
+        unknown.insert(
+            "skip-shell-integration-prompt".to_string(),
+            toml::Value::Boolean(true),
         );
-        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
         // ci in user config should suggest project config
         let mut unknown = HashMap::new();

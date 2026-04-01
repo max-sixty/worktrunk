@@ -270,30 +270,9 @@ pub struct MergeConfig {
     /// Fast-forward merge instead of creating a merge commit (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ff: Option<bool>,
-
-    /// Deprecated: use `ff` instead. Kept for backward-compatible deserialization.
-    #[serde(rename = "no-ff", skip_serializing, default)]
-    #[schemars(skip)]
-    pub(crate) no_ff_deprecated: Option<bool>,
 }
 
 impl MergeConfig {
-    /// Migrate deprecated `no-ff` field to `ff` (inverted). Warns on use.
-    pub fn normalize_deprecated_fields(&mut self) {
-        if let Some(no_ff) = self.no_ff_deprecated.take()
-            && self.ff.is_none()
-        {
-            self.ff = Some(!no_ff);
-            eprintln!(
-                "{}",
-                crate::styling::warning_message(format!(
-                    "`no-ff` in [merge] is deprecated; use `ff = {}` instead",
-                    !no_ff
-                ))
-            );
-        }
-    }
-
     /// Squash commits when merging (default: true)
     pub fn squash(&self) -> bool {
         self.squash.unwrap_or(true)
@@ -334,26 +313,6 @@ impl Merge for MergeConfig {
             remove: other.remove.or(self.remove),
             verify: other.verify.or(self.verify),
             ff: other.ff.or(self.ff),
-            no_ff_deprecated: None,
-        }
-    }
-}
-
-/// **DEPRECATED**: Use `[switch.picker]` instead.
-///
-/// Configuration for the `wt switch` interactive picker (old format).
-/// Kept for backward-compatible deserialization of `[select]` sections.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
-pub struct SelectConfig {
-    /// Pager command with flags for diff preview
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pager: Option<String>,
-}
-
-impl Merge for SelectConfig {
-    fn merge_with(&self, other: &Self) -> Self {
-        Self {
-            pager: other.pager.clone().or_else(|| self.pager.clone()),
         }
     }
 }
@@ -422,33 +381,12 @@ pub struct SwitchConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cd: Option<bool>,
 
-    /// Deprecated: use `cd` instead. Kept for backward-compatible deserialization.
-    #[serde(rename = "no-cd", skip_serializing, default)]
-    #[schemars(skip)]
-    pub(crate) no_cd_deprecated: Option<bool>,
-
     /// Picker settings for the interactive selector
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picker: Option<SwitchPickerConfig>,
 }
 
 impl SwitchConfig {
-    /// Migrate deprecated `no-cd` field to `cd` (inverted). Warns on use.
-    pub fn normalize_deprecated_fields(&mut self) {
-        if let Some(no_cd) = self.no_cd_deprecated.take()
-            && self.cd.is_none()
-        {
-            self.cd = Some(!no_cd);
-            eprintln!(
-                "{}",
-                crate::styling::warning_message(format!(
-                    "`no-cd` in [switch] is deprecated; use `cd = {}` instead",
-                    !no_cd
-                ))
-            );
-        }
-    }
-
     /// Change directory after switch (default: true)
     pub fn cd(&self) -> bool {
         self.cd.unwrap_or(true)
@@ -459,7 +397,6 @@ impl Merge for SwitchConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             cd: other.cd.or(self.cd),
-            no_cd_deprecated: None,
             picker: match (&self.picker, &other.picker) {
                 (None, None) => None,
                 (Some(s), None) => Some(s.clone()),
@@ -570,10 +507,6 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<StepConfig>,
 
-    /// **DEPRECATED**: Use `[switch.picker]` instead.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub select: Option<SelectConfig>,
-
     /// \[experimental\] Command aliases for `wt step <name>`.
     ///
     /// Each alias maps a name to one or more command templates. All hook
@@ -607,7 +540,6 @@ impl OverridableConfig {
             && self.merge.is_none()
             && self.switch.is_none()
             && self.step.is_none()
-            && self.select.is_none()
             && self.aliases.is_none()
     }
 }
@@ -627,7 +559,6 @@ impl Merge for OverridableConfig {
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
             switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
             step: merge_optional(self.step.as_ref(), other.step.as_ref()),
-            select: merge_optional(self.select.as_ref(), other.select.as_ref()),
             aliases: merge_alias_maps(&self.aliases, &other.aliases), // Append semantics
         }
     }
@@ -684,17 +615,7 @@ pub struct UserProjectOverrides {
     )]
     pub approved_commands: Vec<String>,
 
-    /// **DEPRECATED**: Use `commit.generation` instead.
-    ///
-    /// Per-project commit generation settings (overrides global `[commit.generation]`)
-    #[serde(
-        default,
-        rename = "commit-generation",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commit_generation: Option<CommitGenerationConfig>,
-
-    /// Per-project overrides (worktree-path, list, commit, merge, switch, step, select)
+    /// Per-project overrides (worktree-path, list, commit, merge, switch, step)
     #[serde(flatten, default)]
     pub overrides: OverridableConfig,
 }
@@ -705,7 +626,7 @@ impl UserProjectOverrides {
     /// Approvals are stored in `approvals.toml`, so `approved_commands` is only
     /// kept here for backward-compatible parsing and migration — not checked.
     pub fn is_empty(&self) -> bool {
-        self.commit_generation.is_none() && self.overrides.is_empty()
+        self.overrides.is_empty()
     }
 }
 

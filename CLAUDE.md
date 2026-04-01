@@ -373,44 +373,34 @@ if worktree.is_dirty() {
 
 ## Config Deprecation
 
-Config deprecation has two layers, both required for a complete migration.
+All config deprecation is handled by a single layer: pre-deserialization TOML migration in `src/config/deprecation.rs`.
 
-### Layer 1: Pre-deserialization scanning (`src/config/deprecation.rs`)
+### How it works
 
-`check_and_migrate()` scans raw TOML text before serde parses it. It detects deprecated template variables, renamed sections, and removed fields, then generates a migration file (e.g., `config.deprecated.toml`) with upgrade instructions. Warnings are deduplicated per-process via `WARNED_DEPRECATED_PATHS`.
+`migrate_content()` transforms raw TOML text before serde parses it, rewriting deprecated patterns into their canonical form. All load paths (`load()`, `load_from_str()`, `mutation.rs` reloads) call `migrate_content()` on the TOML before passing it to serde.
 
-To register a new deprecation at this layer:
+Separately, `check_and_migrate()` detects deprecated patterns, emits warnings, and generates a `.new` migration file (which additionally renames deprecated template variables and removes `approved-commands`). Warnings are deduplicated per-process via `WARNED_DEPRECATED_PATHS`.
 
-1. Add detection logic to `detect_deprecations()` and extend the `Deprecations` struct
-2. Add the migration instructions to `write_migration_file()`
-3. If it's a top-level section, add the key to `DEPRECATED_SECTION_KEYS` (this prevents `warn_unknown_fields` from also flagging it)
+### Adding a new deprecation
 
-### Layer 2: Post-deserialization normalization (`src/config/user/mod.rs`)
-
-After serde parses the config, `normalize_deprecated_sections()` moves deprecated values to their canonical locations. This runs on every load path (`load()`, `load_from_str()`, and `mutation.rs` reloads). Existing examples: `[commit-generation]` → `[commit.generation]`, `[select]` → `[switch.picker]`.
+1. Add a detection function and extend the `Deprecations` struct + `detect_deprecations()`
+2. Add a migration function (idempotent: no-op if pattern is absent or already migrated)
+3. Call the migration function from `migrate_content()`
+4. Add a warning message in `format_deprecation_warnings()`
+5. Update `Deprecations::is_empty()` to include the new field
+6. If it's a top-level section being removed from the struct, add the key to `DEPRECATED_SECTION_KEYS` (prevents `warn_unknown_fields` from also flagging it)
 
 ### Renaming a field within a section
 
-This is the most common case. Serde's `#[serde(deny_unknown_fields)]` is not used on config sections, so unrecognized fields inside a section like `[merge]` are silently ignored — they won't trigger `warn_unknown_fields`, which only checks top-level keys. The serde-level approach below is the only way to catch and migrate inner-section fields.
+Recipe for renaming `old-name` → `new-name` inside an existing section (e.g., `[merge]`):
 
-Recipe for renaming `old-name` → `new-name` inside an existing section:
+1. **Add a TOML-level migration function** (see `migrate_negated_bool_in_section` for the pattern). The function should rename the field in the TOML document, applying any transformation (e.g., boolean inversion).
 
-1. **Keep the old field in the struct** so serde still deserializes it:
+2. **Call it from `migrate_content()`** so all load paths get the fix.
 
-   ```rust
-   /// **DEPRECATED**: Use `new-name` instead.
-   #[serde(rename = "old-name", skip_serializing, default)]
-   #[schemars(skip)]
-   pub old_name: Option<bool>,
-   ```
+3. **Add detection** in `detect_deprecations()` and a warning in `format_deprecation_warnings()`.
 
-   `skip_serializing` prevents writing the old name back. `schemars(skip)` hides it from the JSON schema.
-
-2. **Add a normalization method** on the section struct that transfers the old value to the new field, applying any inversion or transformation needed, and emits a deprecation warning via `warning_message()`.
-
-3. **Call it from `normalize_deprecated_sections()`** in `src/config/user/mod.rs`, alongside the existing normalizations.
-
-Do not silently drop old config keys — this causes silent behavior changes for users.
+The struct does not need the old field — migration happens before serde sees the TOML. Do not silently drop old config keys — this causes silent behavior changes for users.
 
 ## Adding CLI Commands
 

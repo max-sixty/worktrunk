@@ -202,6 +202,10 @@ pub struct Deprecations {
     pub post_create: bool,
     /// Has `[ci]` section (moved to `[forge]`)
     pub ci_section: bool,
+    /// Has `no-ff` in `[merge]` section (use `ff` instead)
+    pub no_ff: bool,
+    /// Has `no-cd` in `[switch]` section (use `cd` instead)
+    pub no_cd: bool,
 }
 
 impl Deprecations {
@@ -213,6 +217,8 @@ impl Deprecations {
             && !self.select
             && !self.post_create
             && !self.ci_section
+            && !self.no_ff
+            && !self.no_cd
     }
 }
 
@@ -228,6 +234,8 @@ pub fn detect_deprecations(content: &str) -> Deprecations {
         select: find_select_deprecation(content),
         post_create: find_post_create_deprecation(content),
         ci_section: find_ci_section_deprecation(content),
+        no_ff: find_negated_bool_deprecation(content, "merge", "no-ff", "ff"),
+        no_cd: find_negated_bool_deprecation(content, "switch", "no-cd", "cd"),
     }
 }
 
@@ -488,14 +496,35 @@ pub fn remove_approved_commands_from_config(content: &str) -> String {
 
 /// Check if config has a deprecated `[select]` section without a corresponding `[switch.picker]`.
 ///
-/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist.
+/// Checks both top-level and project-level sections.
+/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist
+/// at the same level.
 pub fn find_select_deprecation(content: &str) -> bool {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return false;
     };
 
-    // Check if new [switch.picker] already exists
-    let has_new_section = doc
+    if has_select_without_picker(&doc) {
+        return true;
+    }
+
+    // Check project-level sections
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && has_select_without_picker(project_table)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a table has a non-empty `select` section without `switch.picker`.
+fn has_select_without_picker(table: &toml_edit::Table) -> bool {
+    let has_new_section = table
         .get("switch")
         .and_then(|s| s.as_table())
         .and_then(|t| t.get("picker"))
@@ -505,13 +534,12 @@ pub fn find_select_deprecation(content: &str) -> bool {
         return false;
     }
 
-    // Check if [select] exists and is non-empty
-    if let Some(section) = doc.get("select") {
-        if let Some(table) = section.as_table() {
-            return !table.is_empty();
+    if let Some(section) = table.get("select") {
+        if let Some(t) = section.as_table() {
+            return !t.is_empty();
         }
-        if let Some(inline) = section.as_inline_table() {
-            return !inline.is_empty();
+        if let Some(t) = section.as_inline_table() {
+            return !t.is_empty();
         }
     }
 
@@ -620,26 +648,51 @@ pub fn migrate_post_create_to_pre_start(content: &str) -> String {
 /// Migrate `[select]` section to `[switch.picker]`.
 ///
 /// Renames `[select]` to `[switch.picker]`, preserving all fields.
-/// Skips migration if `[switch.picker]` already exists.
+/// Also handles project-level `[projects."...".select]` sections.
+/// Skips each migration if `[switch.picker]` already exists at that level.
 pub fn migrate_select_to_switch_picker(content: &str) -> String {
     let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
         return content.to_string();
     };
 
-    // Check if [switch.picker] already exists
-    let has_new_section = doc
+    let mut modified = false;
+
+    // Migrate top-level [select] → [switch.picker]
+    migrate_select_table(&mut doc, &mut modified);
+
+    // Migrate project-level [projects."...".select] → [projects."...".switch.picker]
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut() {
+                migrate_select_table(project_table, &mut modified);
+            }
+        }
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Migrate a `select` key to `switch.picker` within a table.
+///
+/// Works for both the top-level document and project-level tables.
+fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
+    // Check if [switch.picker] already exists at this level
+    let has_new_section = table
         .get("switch")
         .and_then(|s| s.as_table())
         .and_then(|t| t.get("picker"))
         .is_some_and(|p| p.is_table() || p.is_inline_table());
 
     if has_new_section {
-        return content.to_string();
+        return;
     }
 
-    // Remove [select] and migrate to [switch.picker]
-    let Some(old_section) = doc.remove("select") else {
-        return content.to_string();
+    let Some(old_section) = table.remove("select") else {
+        return;
     };
 
     let table_opt = match old_section {
@@ -648,23 +701,22 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
         _ => None,
     };
 
-    let Some(table) = table_opt else {
-        return content.to_string();
+    let Some(select_table) = table_opt else {
+        return;
     };
 
     // Ensure [switch] section exists (implicit so only [switch.picker] renders)
-    if !doc.contains_key("switch") {
+    if !table.contains_key("switch") {
         let mut switch_table = toml_edit::Table::new();
         switch_table.set_implicit(true);
-        doc.insert("switch", toml_edit::Item::Table(switch_table));
+        table.insert("switch", toml_edit::Item::Table(switch_table));
     }
 
-    // Move to [switch.picker]
-    if let Some(switch_table) = doc["switch"].as_table_mut() {
-        switch_table.insert("picker", toml_edit::Item::Table(table));
+    if let Some(switch_table) = table["switch"].as_table_mut() {
+        switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
-    doc.to_string()
+    *modified = true;
 }
 
 /// Check if config has a deprecated `[ci]` section without a corresponding `[forge]`.
@@ -729,6 +781,144 @@ pub fn migrate_ci_to_forge(content: &str) -> String {
     doc.insert("forge", toml_edit::Item::Table(forge_table));
 
     doc.to_string()
+}
+
+/// Check if a section has a deprecated negated boolean field (e.g., `no-ff` without `ff`).
+///
+/// Checks both the top-level section and project-level sections.
+fn find_negated_bool_deprecation(
+    content: &str,
+    section: &str,
+    old_key: &str,
+    new_key: &str,
+) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    // Check top-level section
+    if let Some(table) = doc.get(section).and_then(|s| s.as_table())
+        && !table.contains_key(new_key)
+        && table.contains_key(old_key)
+    {
+        return true;
+    }
+
+    // Check project-level sections
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(table) = project_value
+                .as_table()
+                .and_then(|t| t.get(section))
+                .and_then(|s| s.as_table())
+                && !table.contains_key(new_key)
+                && table.contains_key(old_key)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Migrate a negated boolean field within a table (e.g., `no-ff = true` → `ff = false`).
+///
+/// Returns true if a migration was performed.
+fn migrate_negated_bool(table: &mut toml_edit::Table, old_key: &str, new_key: &str) -> bool {
+    if table.contains_key(new_key) {
+        // New key takes precedence; remove the old one if present
+        return table.remove(old_key).is_some();
+    }
+    let Some(old_item) = table.remove(old_key) else {
+        return false;
+    };
+    if let Some(bool_val) = old_item.as_value().and_then(|v| v.as_bool()) {
+        table.insert(new_key, toml_edit::value(!bool_val));
+        true
+    } else {
+        // Put it back if we can't parse it
+        table.insert(old_key, old_item);
+        false
+    }
+}
+
+/// Migrate `no-ff` to `ff` (inverted) in `[merge]` sections.
+pub fn migrate_no_ff_to_ff(content: &str) -> String {
+    migrate_negated_bool_in_section(content, "merge", "no-ff", "ff")
+}
+
+/// Migrate `no-cd` to `cd` (inverted) in `[switch]` sections.
+pub fn migrate_no_cd_to_cd(content: &str) -> String {
+    migrate_negated_bool_in_section(content, "switch", "no-cd", "cd")
+}
+
+/// Migrate a negated boolean field in a section and its project-level counterparts.
+fn migrate_negated_bool_in_section(
+    content: &str,
+    section: &str,
+    old_key: &str,
+    new_key: &str,
+) -> String {
+    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+
+    let mut modified = false;
+
+    // Top-level section
+    if let Some(table) = doc.get_mut(section).and_then(|s| s.as_table_mut())
+        && migrate_negated_bool(table, old_key, new_key)
+    {
+        modified = true;
+    }
+
+    // Project-level sections
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(table) = project_value
+                .as_table_mut()
+                .and_then(|t| t.get_mut(section))
+                .and_then(|s| s.as_table_mut())
+                && migrate_negated_bool(table, old_key, new_key)
+            {
+                modified = true;
+            }
+        }
+    }
+
+    if modified {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Apply all TOML-level migrations to config content.
+///
+/// Transforms deprecated config patterns into their canonical form so that
+/// serde can parse the content into the current struct layout. Each migration
+/// is idempotent — already-canonical content passes through unchanged.
+///
+/// This is the single source of truth for config migration. Both config loading
+/// (to feed corrected TOML to serde) and `write_migration_file()` (to generate
+/// the `.new` file) use this function.
+///
+/// Note: `remove_approved_commands_from_config` is NOT included here because
+/// `approved-commands` is still a valid serde field. That removal is only
+/// applied when generating the `.new` migration file.
+pub fn migrate_content(content: &str) -> String {
+    // Note: replace_deprecated_vars is NOT included here. Template variable
+    // renaming (e.g., main_worktree → repo) is cosmetic — it doesn't affect
+    // serde parsing and would break --var overrides using the old names.
+    // It's only applied when generating the .new migration file.
+    let mut result = migrate_commit_generation_sections(content);
+    result = migrate_select_to_switch_picker(&result);
+    result = migrate_post_create_to_pre_start(&result);
+    result = migrate_ci_to_forge(&result);
+    result = migrate_no_ff_to_ff(&result);
+    result = migrate_no_cd_to_cd(&result);
+    result
 }
 
 /// Copy approved-commands from config.toml to approvals.toml.
@@ -1006,25 +1196,17 @@ pub fn write_migration_file(
 ) -> Option<PathBuf> {
     let new_path = migration_path(path);
 
-    // Apply all migrations to generate new content
-    let mut new_content = content.to_string();
+    // Apply all migrations for the .new file
+    let mut new_content = migrate_content(content);
+    // Template variable renaming is cosmetic (not needed for serde parsing),
+    // so it's only applied here, not in migrate_content()
     if !deprecations.vars.is_empty() {
         new_content = replace_deprecated_vars(&new_content);
     }
-    if !deprecations.commit_gen.is_empty() {
-        new_content = migrate_commit_generation_sections(&new_content);
-    }
+    // Remove approved-commands for the .new file (not part of
+    // migrate_content because approved-commands is still a valid serde field)
     if deprecations.approved_commands {
         new_content = remove_approved_commands_from_config(&new_content);
-    }
-    if deprecations.select {
-        new_content = migrate_select_to_switch_picker(&new_content);
-    }
-    if deprecations.post_create {
-        new_content = migrate_post_create_to_pre_start(&new_content);
-    }
-    if deprecations.ci_section {
-        new_content = migrate_ci_to_forge(&new_content);
     }
 
     if let Err(e) = std::fs::write(&new_path, &new_content) {
@@ -1167,6 +1349,28 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         );
     }
 
+    if info.deprecations.no_ff {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated field: [merge] no-ff → ff (inverted)",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.no_cd {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(format!(
+                "{} uses deprecated field: [switch] no-cd → cd (inverted)",
+                info.label
+            ))
+        );
+    }
+
     out
 }
 
@@ -1204,8 +1408,8 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 /// Generic over `C`, the config type where the key was found. If the key would
 /// be valid in `C::Other`, returns that config's description.
 ///
-/// For example, `key_belongs_in::<ProjectConfig>("commit-generation")` returns
-/// `Some("user config")`.
+/// For example, `key_belongs_in::<ProjectConfig>("skip-shell-integration-prompt")`
+/// returns `Some("user config")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
 pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
     C::Other::is_valid_key(key).then(C::Other::description)
@@ -2207,6 +2411,8 @@ approved-commands = ["npm install"]
                 select: false,
                 post_create: false,
                 ci_section: false,
+                no_ff: false,
+                no_cd: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2237,6 +2443,8 @@ approved-commands = ["npm install"]
                 select: false,
                 post_create: false,
                 ci_section: false,
+                no_ff: false,
+                no_cd: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2268,6 +2476,8 @@ approved-commands = ["npm install"]
             select: false,
             post_create: false,
             ci_section: false,
+            no_ff: false,
+            no_cd: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(
@@ -2528,6 +2738,8 @@ branches = true
                 select: true,
                 post_create: false,
                 ci_section: false,
+                no_ff: false,
+                no_cd: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2562,6 +2774,8 @@ pager = "delta --paging=never"
             select: true,
             post_create: false,
             ci_section: false,
+            no_ff: false,
+            no_cd: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(result.is_some(), "Should write migration file for select");
@@ -2810,6 +3024,8 @@ server = "npm run dev"
                 select: false,
                 post_create: true,
                 ci_section: false,
+                no_ff: false,
+                no_cd: false,
             },
             label: "Project config".to_string(),
             main_worktree_path: None,
@@ -2844,6 +3060,8 @@ server = "npm run dev"
             select: false,
             post_create: true,
             ci_section: false,
+            no_ff: false,
+            no_cd: false,
         };
         let result = write_migration_file(&config_path, content, &deprecations, None);
         assert!(

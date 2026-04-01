@@ -27,7 +27,7 @@ pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, SelectConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
     UserProjectOverrides,
 };
 
@@ -72,23 +72,12 @@ pub use sections::{
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
-    /// **DEPRECATED**: Use `[commit.generation]` instead.
-    ///
-    /// This field is kept for backward compatibility. When both are set,
-    /// `commit.generation` takes precedence.
-    #[serde(
-        default,
-        rename = "commit-generation",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commit_generation: Option<CommitGenerationConfig>,
-
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
-    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, step, select, hooks)
+    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, step, hooks)
     #[serde(flatten, default)]
     pub configs: OverridableConfig,
 
@@ -110,76 +99,6 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
-    fn normalize_deprecated_sections(&mut self) {
-        Self::normalize_commit_generation_section(
-            &mut self.commit_generation,
-            &mut self.configs.commit,
-        );
-        Self::normalize_select_section(&mut self.configs.select, &mut self.configs.switch);
-        if let Some(merge) = &mut self.configs.merge {
-            merge.normalize_deprecated_fields();
-        }
-        if let Some(switch) = &mut self.configs.switch {
-            switch.normalize_deprecated_fields();
-        }
-
-        for project in self.projects.values_mut() {
-            Self::normalize_commit_generation_section(
-                &mut project.commit_generation,
-                &mut project.overrides.commit,
-            );
-            Self::normalize_select_section(
-                &mut project.overrides.select,
-                &mut project.overrides.switch,
-            );
-            if let Some(merge) = &mut project.overrides.merge {
-                merge.normalize_deprecated_fields();
-            }
-            if let Some(switch) = &mut project.overrides.switch {
-                switch.normalize_deprecated_fields();
-            }
-        }
-    }
-
-    fn normalize_commit_generation_section(
-        deprecated: &mut Option<CommitGenerationConfig>,
-        commit: &mut Option<CommitConfig>,
-    ) {
-        let Some(deprecated_config) = deprecated.take() else {
-            return;
-        };
-
-        if deprecated_config == CommitGenerationConfig::default() {
-            return;
-        }
-
-        let commit_config = commit.get_or_insert_with(CommitConfig::default);
-        if commit_config.generation.is_none() {
-            commit_config.generation = Some(deprecated_config);
-        }
-    }
-
-    fn normalize_select_section(
-        deprecated: &mut Option<SelectConfig>,
-        switch: &mut Option<SwitchConfig>,
-    ) {
-        let Some(select_config) = deprecated.take() else {
-            return;
-        };
-
-        if select_config == SelectConfig::default() {
-            return;
-        }
-
-        let switch_config = switch.get_or_insert_with(SwitchConfig::default);
-        if switch_config.picker.is_none() {
-            switch_config.picker = Some(SwitchPickerConfig {
-                pager: select_config.pager,
-                timeout_ms: None,
-            });
-        }
-    }
-
     /// Load configuration from system config, user config, and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
@@ -194,22 +113,23 @@ impl UserConfig {
         let mut builder = Config::builder();
 
         // Add system config if it exists (lowest priority file source)
-        if let Some(system_path) = path::system_config_path() {
-            if let Ok(content) = std::fs::read_to_string(&system_path) {
-                // Warn about unknown fields in system config
-                let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
-                    .into_iter()
-                    .filter(|(k, _)| {
-                        !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str())
-                    })
-                    .collect();
-                super::deprecation::warn_unknown_fields::<UserConfig>(
-                    &system_path,
-                    &unknown_keys,
-                    "System config",
-                );
-            }
-            builder = builder.add_source(File::from(system_path));
+        if let Some(system_path) = path::system_config_path()
+            && let Ok(content) = std::fs::read_to_string(&system_path)
+        {
+            // Warn about unknown fields in system config
+            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
+                .into_iter()
+                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+                .collect();
+            super::deprecation::warn_unknown_fields::<UserConfig>(
+                &system_path,
+                &unknown_keys,
+                "System config",
+            );
+
+            // Feed migrated content to serde so deprecated patterns parse correctly
+            let migrated = super::deprecation::migrate_content(&content);
+            builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
         }
 
         // Add user config file if it exists (overrides system config)
@@ -245,9 +165,11 @@ impl UserConfig {
                     &unknown_keys,
                     "User config",
                 );
-            }
 
-            builder = builder.add_source(File::from(config_path.clone()));
+                // Feed migrated content to serde so deprecated patterns parse correctly
+                let migrated = super::deprecation::migrate_content(&content);
+                builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
+            }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
         {
@@ -276,8 +198,7 @@ impl UserConfig {
         // The config crate's `preserve_order` feature ensures TOML insertion order
         // is preserved (uses IndexMap instead of HashMap internally).
         // See: https://github.com/max-sixty/worktrunk/issues/737
-        let mut config: Self = builder.build()?.try_deserialize()?;
-        config.normalize_deprecated_sections();
+        let config: Self = builder.build()?.try_deserialize()?;
         config.validate()?;
 
         Ok(config)
@@ -286,9 +207,9 @@ impl UserConfig {
     /// Load configuration from a TOML string for testing.
     #[cfg(test)]
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
-        let mut config: Self =
-            toml::from_str(content).map_err(|e| ConfigError::Message(e.to_string()))?;
-        config.normalize_deprecated_sections();
+        let migrated = crate::config::deprecation::migrate_content(content);
+        let config: Self =
+            toml::from_str(&migrated).map_err(|e| ConfigError::Message(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }
