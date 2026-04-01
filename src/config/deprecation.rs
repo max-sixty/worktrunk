@@ -3105,4 +3105,155 @@ server = "npm run dev"
             "Migrated content should not have post-create: {migrated}"
         );
     }
+
+    // ==================== negated bool migration tests ====================
+
+    #[test]
+    fn test_detect_no_ff_deprecation() {
+        let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
+        assert!(deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_detect_no_ff_not_flagged_when_ff_exists() {
+        let deprecations = detect_deprecations("[merge]\nff = true\nno-ff = true\n");
+        assert!(!deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_detect_no_cd_deprecation() {
+        let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
+        assert!(deprecations.no_cd);
+    }
+
+    #[test]
+    fn test_detect_no_ff_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".merge]
+no-ff = true
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_migrate_no_ff_to_ff() {
+        let content = "[merge]\nno-ff = true\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "Should invert: {result}");
+        assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_cd_to_cd() {
+        let content = "[switch]\nno-cd = false\n";
+        let result = migrate_content(content);
+        assert!(result.contains("cd = true"), "Should invert: {result}");
+        assert!(!result.contains("no-cd"), "Should remove no-cd: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_ff_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "Should migrate: {result}");
+        assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_negated_bool_non_boolean_value_preserved() {
+        // Non-boolean `no-ff` value should be left alone
+        let content = "[merge]\nno-ff = \"not-a-bool\"\n";
+        let result = migrate_content(content);
+        assert!(
+            result.contains("no-ff"),
+            "Non-boolean value should be preserved: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_no_ff_skips_when_ff_exists() {
+        let content = "[merge]\nff = true\nno-ff = true\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = true"), "ff should be kept: {result}");
+        assert!(
+            !result.contains("no-ff"),
+            "no-ff should be removed: {result}"
+        );
+    }
+
+    // ==================== project-level select migration tests ====================
+
+    #[test]
+    fn test_detect_select_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.select);
+    }
+
+    #[test]
+    fn test_migrate_select_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[projects.\"github.com/user/repo\".switch.picker]"),
+            "Should migrate project select: {result}"
+        );
+        assert!(
+            !result.contains("[projects.\"github.com/user/repo\".select]"),
+            "Should remove project select: {result}"
+        );
+    }
+
+    // ==================== migrate_content tests ====================
+
+    #[test]
+    fn test_migrate_content_applies_all_structural_migrations() {
+        let content = r#"
+[commit-generation]
+command = "llm"
+
+[select]
+pager = "delta"
+
+[merge]
+no-ff = true
+
+[switch]
+no-cd = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[commit.generation]"),
+            "commit-generation: {result}"
+        );
+        assert!(
+            result.contains("[switch.picker]"),
+            "select to switch.picker: {result}"
+        );
+        assert!(result.contains("ff = false"), "no-ff to ff: {result}");
+        assert!(result.contains("cd = false"), "no-cd to cd: {result}");
+    }
+
+    #[test]
+    fn test_migrate_content_is_no_op_for_canonical_config() {
+        let content = r#"
+[commit.generation]
+command = "llm"
+
+[merge]
+ff = true
+"#;
+        let result = migrate_content(content);
+        assert_eq!(result, content);
+    }
 }
