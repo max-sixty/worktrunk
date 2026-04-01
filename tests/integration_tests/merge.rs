@@ -2273,8 +2273,8 @@ fn test_merge_no_ff_with_squash(repo_with_multi_commit_feature: TestRepo) {
 fn test_merge_no_ff_from_config(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
-    // Write user config with no-ff = true
-    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+    // Write user config with ff = false
+    fs::write(repo.test_config_path(), "[merge]\nff = false\n").unwrap();
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -2296,13 +2296,13 @@ fn test_merge_no_ff_from_config(merge_scenario: (TestRepo, PathBuf)) {
     );
 }
 
-/// --ff CLI flag overrides config no-ff = true.
+/// --ff CLI flag overrides config ff = false.
 #[rstest]
 fn test_merge_ff_flag_overrides_config(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
-    // Write user config with no-ff = true
-    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+    // Write user config with ff = false
+    fs::write(repo.test_config_path(), "[merge]\nff = false\n").unwrap();
 
     // --ff should override config and do a fast-forward
     assert_cmd_snapshot!(make_snapshot_cmd(
