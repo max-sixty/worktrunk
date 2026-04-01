@@ -367,6 +367,10 @@ Location: [2m.config/wt.toml[0m (checked into version control and shared with 
 
 Project hooks apply to this repository only. Format is the same as user hooks; see [2mwt hook --help[0m for hook types, execution order, and examples.
 
+[107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
+[107m [0m [2mpost-start = [0m[2m[32m"npm run dev"[0m
+[107m [0m [2mpre-merge = [0m[2m[32m"npm test"[0m
+
 [1m[32mDev server URL[0m
 
 URL column in [2mwt list[0m (dimmed when port not listening):

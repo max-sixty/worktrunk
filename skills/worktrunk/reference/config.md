@@ -367,6 +367,12 @@ Location: `.config/wt.toml` (checked into version control and shared with the te
 
 Project hooks apply to this repository only. Format is the same as [user hooks](https://worktrunk.dev/config/#hooks); see `wt hook --help` for hook types, execution order, and examples.
 
+```toml
+pre-start = "npm ci"
+post-start = "npm run dev"
+pre-merge = "npm test"
+```
+
 ## Dev server URL
 
 URL column in `wt list` (dimmed when port not listening):
