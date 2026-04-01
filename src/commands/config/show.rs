@@ -116,8 +116,13 @@ pub(super) fn is_plugin_installed() -> bool {
         return false;
     };
 
-    // Look for "worktrunk@worktrunk" in the plugins object
-    content.contains("\"worktrunk@worktrunk\"")
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("plugins")
+        .and_then(|p| p.get("worktrunk@worktrunk"))
+        .is_some()
 }
 
 /// Check if the statusline is configured in Claude Code settings
@@ -131,11 +136,14 @@ pub(super) fn is_statusline_configured() -> bool {
         return false;
     };
 
-    // Check if statusLine is configured with a wt command
-    // Match "wt " at a word boundary in command context to avoid false positives
-    // from unrelated JSON keys containing "wt" (e.g., "fontWeight", "tabWidth")
-    content.contains("\"statusLine\"")
-        && (content.contains("\"wt ") || content.contains(": \"wt ") || content.contains(":\"wt "))
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("statusLine")
+        .and_then(|s| s.get("command"))
+        .and_then(|c| c.as_str())
+        .is_some_and(|cmd| cmd.contains("wt "))
 }
 
 /// Get the git version string (e.g., "2.47.1")

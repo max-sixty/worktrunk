@@ -342,12 +342,12 @@ fn test_switch_no_cd_config_suppresses_directive(#[from(repo_with_remote)] mut r
     let _feature_wt = repo.add_worktree("feature");
     let (directive_path, _guard) = directive_file();
 
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 

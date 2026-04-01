@@ -363,6 +363,30 @@ fn test_switch_nonexistent_branch(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_nonexistent_branch_with_fetch_time(repo: TestRepo) {
+    // When FETCH_HEAD exists, the hint should include "last fetched X ago".
+    let git_dir = repo.root_path().join(".git");
+    fs::write(git_dir.join("FETCH_HEAD"), "").unwrap();
+
+    // Set TEST_EPOCH to 3 hours after the real mtime so the file appears "3h ago"
+    let mtime = fs::metadata(git_dir.join("FETCH_HEAD"))
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let epoch_3h_later = mtime + 3 * 3600;
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["nonexistent-branch"], None);
+        cmd.env("WORKTRUNK_TEST_EPOCH", epoch_3h_later.to_string());
+        assert_cmd_snapshot!("switch_nonexistent_with_fetch_time", cmd);
+    });
+}
+
+#[rstest]
 fn test_switch_base_accepts_commitish(repo: TestRepo) {
     // Issue #630: --base should accept any commit-ish, not just branch names
     // Test HEAD as base (common use case: branch from current HEAD)
@@ -3531,15 +3555,15 @@ fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
     );
 }
 
-/// Test that `--cd` flag overrides `[switch] no-cd = true` config
+/// Test that `--cd` flag overrides `[switch] cd = false` config
 #[rstest]
 fn test_switch_cd_flag_overrides_no_cd_config(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 
@@ -3613,15 +3637,15 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
-/// Test that `[switch] no-cd = true` config is respected when no flags provided
+/// Test that `[switch] cd = false` config is respected when no flags provided
 #[rstest]
 fn test_switch_no_cd_config_default(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 

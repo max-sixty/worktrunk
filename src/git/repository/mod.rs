@@ -377,6 +377,20 @@ impl Repository {
         &self.git_common_dir
     }
 
+    /// Get the epoch timestamp of the last `git fetch`, if available.
+    ///
+    /// Checks the modification time of `FETCH_HEAD` in the git common directory.
+    /// Returns `None` if the file doesn't exist (never fetched) or on any I/O error.
+    pub fn last_fetch_epoch(&self) -> Option<u64> {
+        let fetch_head = self.git_common_dir().join("FETCH_HEAD");
+        let metadata = std::fs::metadata(fetch_head).ok()?;
+        let modified = metadata.modified().ok()?;
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    }
+
     /// Get the worktrunk data directory inside the git directory.
     ///
     /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).

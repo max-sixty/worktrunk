@@ -336,6 +336,18 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env
 }
 
+/// Check if a template references a specific top-level variable.
+///
+/// Uses minijinja's AST analysis rather than string matching, avoiding false
+/// positives from literal text like `template_vars.txt`.
+pub fn template_references_var(template: &str, var: &str) -> bool {
+    let env = minijinja::Environment::new();
+    let Ok(tmpl) = env.template_from_str(template) else {
+        return false;
+    };
+    tmpl.undeclared_variables(false).contains(var)
+}
+
 /// Validate that a template can be expanded without errors.
 ///
 /// Performs a trial expansion with placeholder values for all known template variables
@@ -350,19 +362,6 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
 /// would be fragile and context-dependent.
 ///
 /// No verbose logging is performed — this is a pre-flight check, not the real expansion.
-///
-/// Check if a template references a specific top-level variable.
-///
-/// Uses minijinja's AST analysis rather than string matching, avoiding false
-/// positives from literal text like `template_vars.txt`.
-pub fn template_references_var(template: &str, var: &str) -> bool {
-    let env = minijinja::Environment::new();
-    let Ok(tmpl) = env.template_from_str(template) else {
-        return false;
-    };
-    tmpl.undeclared_variables(false).contains(var)
-}
-
 pub fn validate_template(
     template: &str,
     repo: &Repository,

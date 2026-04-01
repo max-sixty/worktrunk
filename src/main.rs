@@ -15,7 +15,7 @@ use worktrunk::styling::{
 };
 
 use commands::command_approval::approve_hooks;
-use commands::context::CommandEnv;
+use commands::command_executor::CommandContext;
 use commands::list::progressive::RenderMode;
 use commands::worktree::RemoveResult;
 
@@ -742,11 +742,23 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
 
             let repo = Repository::current().context("Failed to remove worktree")?;
 
+            // Resolve current worktree context for hook approval
+            let current_wt = repo.current_worktree();
+            let approve_worktree_path = current_wt.root()?;
+            let approve_branch = current_wt
+                .branch()
+                .context("Failed to determine current branch")?;
+
             // Helper: approve remove hooks using current worktree context
             // Returns true if hooks should run (user approved)
             let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-                let env = CommandEnv::for_action_branchless()?;
-                let ctx = env.context(yes);
+                let ctx = CommandContext::new(
+                    &repo,
+                    &config,
+                    approve_branch.as_deref(),
+                    &approve_worktree_path,
+                    yes,
+                );
                 let approved = approve_hooks(
                     &ctx,
                     &[
@@ -1054,7 +1066,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             commit: flag_pair(commit, no_commit),
             rebase: flag_pair(rebase, no_rebase),
             remove: flag_pair(remove, no_remove),
-            no_ff: flag_pair(no_ff, ff),
+            ff: flag_pair(ff, no_ff),
             verify: flag_pair(verify, no_verify),
             yes,
             stage,

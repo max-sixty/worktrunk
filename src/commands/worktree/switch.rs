@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::display::format_relative_time_short;
 use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
@@ -434,6 +435,7 @@ fn validate_worktree_creation(
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
             show_create_hint: true,
+            last_fetch_ago: format_last_fetch_ago(repo),
         }
         .into());
     }
@@ -910,5 +912,19 @@ fn worktree_creation_error(
         base_branch,
         error: output,
         command,
+    }
+}
+
+/// Format the last fetch time as a self-contained phrase for error hint parentheticals.
+///
+/// Returns e.g. "last fetched 3h ago" or "last fetched just now".
+/// Returns `None` if FETCH_HEAD doesn't exist (never fetched).
+fn format_last_fetch_ago(repo: &Repository) -> Option<String> {
+    let epoch = repo.last_fetch_epoch()?;
+    let relative = format_relative_time_short(epoch as i64);
+    if relative == "now" || relative == "future" {
+        Some("last fetched just now".to_string())
+    } else {
+        Some(format!("last fetched {relative} ago"))
     }
 }

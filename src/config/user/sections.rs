@@ -267,12 +267,33 @@ pub struct MergeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<bool>,
 
-    /// Create a merge commit instead of fast-forwarding (default: false)
-    #[serde(rename = "no-ff", skip_serializing_if = "Option::is_none")]
-    pub no_ff: Option<bool>,
+    /// Fast-forward merge instead of creating a merge commit (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ff: Option<bool>,
+
+    /// Deprecated: use `ff` instead. Kept for backward-compatible deserialization.
+    #[serde(rename = "no-ff", skip_serializing, default)]
+    #[schemars(skip)]
+    pub(crate) no_ff_deprecated: Option<bool>,
 }
 
 impl MergeConfig {
+    /// Migrate deprecated `no-ff` field to `ff` (inverted). Warns on use.
+    pub fn normalize_deprecated_fields(&mut self) {
+        if let Some(no_ff) = self.no_ff_deprecated.take()
+            && self.ff.is_none()
+        {
+            self.ff = Some(!no_ff);
+            eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "`no-ff` in [merge] is deprecated; use `ff = {}` instead",
+                    !no_ff
+                ))
+            );
+        }
+    }
+
     /// Squash commits when merging (default: true)
     pub fn squash(&self) -> bool {
         self.squash.unwrap_or(true)
@@ -298,9 +319,9 @@ impl MergeConfig {
         self.verify.unwrap_or(true)
     }
 
-    /// Create a merge commit instead of fast-forwarding (default: false)
-    pub fn no_ff(&self) -> bool {
-        self.no_ff.unwrap_or(false)
+    /// Fast-forward merge instead of creating a merge commit (default: true)
+    pub fn ff(&self) -> bool {
+        self.ff.unwrap_or(true)
     }
 }
 
@@ -312,7 +333,8 @@ impl Merge for MergeConfig {
             rebase: other.rebase.or(self.rebase),
             remove: other.remove.or(self.remove),
             verify: other.verify.or(self.verify),
-            no_ff: other.no_ff.or(self.no_ff),
+            ff: other.ff.or(self.ff),
+            no_ff_deprecated: None,
         }
     }
 }
@@ -396,9 +418,14 @@ impl Merge for SwitchPickerConfig {
 /// Configuration for the `wt switch` command
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
 pub struct SwitchConfig {
-    /// Skip directory change after switch (equivalent to --no-cd)
-    #[serde(rename = "no-cd", default, skip_serializing_if = "Option::is_none")]
-    pub no_cd: Option<bool>,
+    /// Change directory after switch (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cd: Option<bool>,
+
+    /// Deprecated: use `cd` instead. Kept for backward-compatible deserialization.
+    #[serde(rename = "no-cd", skip_serializing, default)]
+    #[schemars(skip)]
+    pub(crate) no_cd_deprecated: Option<bool>,
 
     /// Picker settings for the interactive selector
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -406,16 +433,33 @@ pub struct SwitchConfig {
 }
 
 impl SwitchConfig {
-    /// Skip directory change (default: false)
-    pub fn no_cd(&self) -> bool {
-        self.no_cd.unwrap_or(false)
+    /// Migrate deprecated `no-cd` field to `cd` (inverted). Warns on use.
+    pub fn normalize_deprecated_fields(&mut self) {
+        if let Some(no_cd) = self.no_cd_deprecated.take()
+            && self.cd.is_none()
+        {
+            self.cd = Some(!no_cd);
+            eprintln!(
+                "{}",
+                crate::styling::warning_message(format!(
+                    "`no-cd` in [switch] is deprecated; use `cd = {}` instead",
+                    !no_cd
+                ))
+            );
+        }
+    }
+
+    /// Change directory after switch (default: true)
+    pub fn cd(&self) -> bool {
+        self.cd.unwrap_or(true)
     }
 }
 
 impl Merge for SwitchConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
-            no_cd: other.no_cd.or(self.no_cd),
+            cd: other.cd.or(self.cd),
+            no_cd_deprecated: None,
             picker: match (&self.picker, &other.picker) {
                 (None, None) => None,
                 (Some(s), None) => Some(s.clone()),

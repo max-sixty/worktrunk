@@ -103,12 +103,12 @@
 # rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 # remove = true      # Remove worktree after merge (--no-remove to keep)
 # verify = true      # Run project hooks (--no-verify to skip)
-# no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
+# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
 # ### Switch
 #
 # [switch]
-# no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)
+# cd = true          # Change directory after switching (--no-cd to skip)
 #
 # [switch.picker]
 # pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
@@ -238,3 +238,24 @@
 #
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+#
+# ## Hooks
+#
+# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.
+#
+# Single command:
+#
+# pre-start = "npm ci"
+#
+# Multiple named commands (concurrent for post-*, sequential for pre-*):
+#
+# [pre-merge]
+# test = "npm test"
+# build = "npm run build"
+#
+# Pipeline — list of maps, run in order (each map concurrent):
+#
+# post-start = [
+#     { install = "npm ci" },
+#     { build = "npm run build", server = "npm run dev" }
+# ]

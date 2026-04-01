@@ -209,12 +209,12 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2mrebase = [0m[2m[33mtrue[0m[2m      [0m[2m# Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2mremove = [0m[2m[33mtrue[0m[2m      [0m[2m# Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-verify to skip)[0m
-[107m [0m [2mno-ff = [0m[2m[33mfalse[0m[2m      [0m[2m# Create a merge commit even when fast-forward is possible (--no-ff)[0m
+[107m [0m [2mff = [0m[2m[33mtrue[0m[2m          [0m[2m# Fast-forward merge (--no-ff to create a merge commit instead)[0m
 
 [32mSwitch[0m
 
 [107m [0m [2m[36m[switch][0m
-[107m [0m [2mno-cd = [0m[2m[33mfalse[0m[2m      [0m[2m# Skip directory change after switching (--no-cd; --cd to override)[0m
+[107m [0m [2mcd = [0m[2m[33mtrue[0m[2m          [0m[2m# Change directory after switching (--no-cd to skip)[0m
 [107m [0m 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never"[0m[2m   [0m[2m# Example: override git's core.pager for diff preview[0m
@@ -340,15 +340,10 @@ Default template:
 [107m [0m [2m[32m</diff>[0m
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
-[32mPROJECT CONFIGURATION[0m
-
-Create with [2mwt config create --project[0m. Examples shown — uncomment and customize for your project.
-
-Location: [2m.config/wt.toml[0m (checked into version control and shared with the team).
 
 [1m[32mHooks[0m
 
-See [2mwt hook --help[0m for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.
+See [2mwt hook[0m for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks apply only to that repository.
 
 Single command:
 
@@ -366,6 +361,19 @@ Pipeline — list of maps, run in order (each map concurrent):
 [107m [0m [2m    { install = [0m[2m[32m"npm ci"[0m[2m },[0m
 [107m [0m [2m    { build = [0m[2m[32m"npm run build"[0m[2m, server = [0m[2m[32m"npm run dev"[0m[2m }[0m
 [107m [0m [2m][0m
+[32mPROJECT CONFIGURATION[0m
+
+Create with [2mwt config create --project[0m. Examples shown — uncomment and customize for your project.
+
+Location: [2m.config/wt.toml[0m (checked into version control and shared with the team).
+
+[1m[32mHooks[0m
+
+Project hooks apply to this repository only. See [2mwt hook[0m for hook types, execution order, and examples.
+
+[107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
+[107m [0m [2mpost-start = [0m[2m[32m"npm run dev"[0m
+[107m [0m [2mpre-merge = [0m[2m[32m"npm test"[0m
 
 [1m[32mDev server URL[0m
 

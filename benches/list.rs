@@ -2,7 +2,7 @@
 //
 // Benchmark groups:
 //   - skeleton: Time until skeleton appears (1, 4, 8 worktrees; warm + cold)
-//   - complete: Full execution time (1, 4, 8 worktrees; warm + cold)
+//   - full: Full execution time (1, 4, 8 worktrees; warm + cold)
 //   - worktree_scaling: Worktree count scaling (1, 4, 8 worktrees; warm + cold)
 //   - real_repo: rust-lang/rust clone (1, 4, 8 worktrees; warm + cold)
 //   - many_branches: 100 branches (warm + cold)
@@ -131,8 +131,8 @@ fn bench_skeleton(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_complete(c: &mut Criterion) {
-    let mut group = c.benchmark_group("complete");
+fn bench_full(c: &mut Criterion) {
+    let mut group = c.benchmark_group("full");
     let binary = release_binary();
 
     for worktrees in [1, 4, 8] {
@@ -378,6 +378,6 @@ criterion_group! {
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
+    targets = bench_skeleton, bench_full, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

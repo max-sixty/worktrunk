@@ -166,12 +166,12 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
-[107m [0m [2m# no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)[0m
+[107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch][0m
-[107m [0m [2m# no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)[0m
+[107m [0m [2m# cd = true          # Change directory after switching (--no-cd to skip)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
 [107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m
@@ -301,20 +301,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
-
-[1m[32mProject config[0m
-
-With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repository:
-
-[107m [0m [2m# # Project Configuration[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.[0m
+[107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Single command:[0m
 [107m [0m [2m#[0m
@@ -332,6 +322,24 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#     { install = "npm ci" },[0m
 [107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
 [107m [0m [2m# ][0m
+
+[1m[32mProject config[0m
+
+With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repository:
+
+[107m [0m [2m# # Project Configuration[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ## Hooks[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# pre-start = "npm ci"[0m
+[107m [0m [2m# post-start = "npm run dev"[0m
+[107m [0m [2m# pre-merge = "npm test"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m

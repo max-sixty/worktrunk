@@ -187,14 +187,14 @@ commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-verify to skip)
-no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
+ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
 ### Switch
 
 ```toml
 [switch]
-no-cd = false      # Skip directory change after switching (--no-cd; --cd to override)
+cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
@@ -335,17 +335,10 @@ squash-template = """
 """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
-<!-- USER_CONFIG_END -->
-<!-- PROJECT_CONFIG_START -->
-# Project Configuration
-
-Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
-
-Location: `.config/wt.toml` (checked into version control and shared with the team).
 
 ## Hooks
 
-See `wt hook --help` for hook types, execution order, template variables, and examples. Both project and user configs support hooks in the same format.
+See [`wt hook`](https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](https://worktrunk.dev/config/#project-configuration) apply only to that repository.
 
 Single command:
 
@@ -368,6 +361,23 @@ post-start = [
     { install = "npm ci" },
     { build = "npm run build", server = "npm run dev" }
 ]
+```
+<!-- USER_CONFIG_END -->
+<!-- PROJECT_CONFIG_START -->
+# Project Configuration
+
+Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
+
+Location: `.config/wt.toml` (checked into version control and shared with the team).
+
+## Hooks
+
+Project hooks apply to this repository only. See [`wt hook`](https://worktrunk.dev/hook/) for hook types, execution order, and examples.
+
+```toml
+pre-start = "npm ci"
+post-start = "npm run dev"
+pre-merge = "npm test"
 ```
 
 ## Dev server URL

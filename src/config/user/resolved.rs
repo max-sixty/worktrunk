@@ -23,7 +23,7 @@ use super::sections::{
 /// let stage = resolved.commit.stage();                      // StageMode, default applied
 /// let pager = resolved.switch_picker.pager();               // Option<&str>
 /// let timeout = resolved.switch_picker.timeout();               // Option<Duration>
-/// let no_cd = resolved.switch.no_cd();                       // bool, default applied
+/// let cd = resolved.switch.cd();                              // bool, default applied
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {

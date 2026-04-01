@@ -55,6 +55,7 @@ fn spawn_background_removal(
     branch_to_delete: Option<&str>,
     force_worktree: bool,
     log_label: &str,
+    changed_directory: bool,
 ) -> anyhow::Result<()> {
     // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
     // Best effort — prevents zombie daemons from accumulating.
@@ -62,8 +63,13 @@ fn spawn_background_removal(
         .worktree_at(worktree_path)
         .run_command(&["fsmonitor--daemon", "stop"]);
 
-    let remove_command =
-        execute_instant_removal_or_fallback(repo, worktree_path, branch_to_delete, force_worktree);
+    let remove_command = execute_instant_removal_or_fallback(
+        repo,
+        worktree_path,
+        branch_to_delete,
+        force_worktree,
+        changed_directory,
+    );
 
     spawn_detached(
         repo,
@@ -91,6 +97,7 @@ fn execute_instant_removal_or_fallback(
     worktree_path: &Path,
     branch_to_delete: Option<&str>,
     force_worktree: bool,
+    changed_directory: bool,
 ) -> String {
     // Fast path: rename worktree into .git/wt/trash/ (instant on same filesystem),
     // prune git metadata, then background process just does `rm -rf`.
@@ -104,14 +111,16 @@ fn execute_instant_removal_or_fallback(
         {
             log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
         }
-        // Create an empty placeholder at the original path so the shell's working
-        // directory ($env.PWD) remains valid until the wrapper has cd'd away.
-        // Without this, shells that validate PWD (notably Nushell) emit errors
-        // between binary exit and the cd directive executing.
-        // Best-effort: if create_dir fails (permissions, race), the only effect
-        // is that Nushell may still emit PWD errors — not a correctness issue.
-        let _ = std::fs::create_dir(worktree_path);
-        build_remove_command_staged(&staged_path, worktree_path)
+        if changed_directory {
+            // Create an empty placeholder at the original path so the shell's working
+            // directory ($env.PWD) remains valid until the wrapper has cd'd away.
+            // Without this, shells that validate PWD (notably Nushell) emit errors
+            // between binary exit and the cd directive executing.
+            // Best-effort: if create_dir fails (permissions, race), the only effect
+            // is that Nushell may still emit PWD errors — not a correctness issue.
+            let _ = std::fs::create_dir(worktree_path);
+        }
+        build_remove_command_staged(&staged_path, worktree_path, changed_directory)
     } else {
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
         // Use legacy git worktree remove which handles these cases.
@@ -128,7 +137,7 @@ fn execute_instant_removal_or_fallback(
         // small check-vs-use window where newly introduced changes could be
         // removed. See remove_worktree() docs for the detailed safety analysis.
         let force = force_worktree || worktree_path.join(".gitmodules").exists();
-        build_remove_command(worktree_path, branch_to_delete, force)
+        build_remove_command(worktree_path, branch_to_delete, force, changed_directory)
     }
 }
 
@@ -1184,6 +1193,7 @@ fn handle_detached_removed_worktree_output(
             None,
             ctx.force_worktree,
             "detached",
+            ctx.changed_directory,
         )?;
     }
 
@@ -1291,6 +1301,7 @@ fn handle_named_removed_worktree_background(
         display_info.branch_deleted().then_some(branch_name),
         ctx.force_worktree,
         branch_name,
+        ctx.changed_directory,
     )?;
 
     spawn_hooks_after_remove(

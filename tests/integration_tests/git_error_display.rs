@@ -109,9 +109,21 @@ fn branch_not_found() {
     let err = GitError::BranchNotFound {
         branch: "nonexistent".into(),
         show_create_hint: true,
+        last_fetch_ago: None,
     };
 
     assert_snapshot!("branch_not_found", err.to_string());
+}
+
+#[test]
+fn branch_not_found_with_fetch_time() {
+    let err = GitError::BranchNotFound {
+        branch: "nonexistent".into(),
+        show_create_hint: true,
+        last_fetch_ago: Some("last fetched 3h ago".into()),
+    };
+
+    assert_snapshot!("branch_not_found_with_fetch_time", err.to_string());
 }
 
 #[test]
@@ -119,6 +131,7 @@ fn branch_not_found_no_create_hint() {
     let err = GitError::BranchNotFound {
         branch: "nonexistent".into(),
         show_create_hint: false,
+        last_fetch_ago: None,
     };
 
     assert_snapshot!("branch_not_found_no_create_hint", err.to_string());
