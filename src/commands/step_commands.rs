@@ -1554,7 +1554,10 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         let wt = &worktrees[wt_idx];
 
         if is_prunable {
-            let branch = wt.branch.as_ref().expect("prunable items always have a branch");
+            let branch = wt
+                .branch
+                .as_ref()
+                .expect("prunable items always have a branch");
             let candidate = Candidate {
                 label: branch.clone(),
                 branch: Some(branch.clone()),
@@ -1641,8 +1644,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         .all_branches()?
         .into_iter()
         .filter(|branch| {
-            !seen_branches.contains(branch)
-                && default_branch.as_deref() != Some(branch.as_str())
+            !seen_branches.contains(branch) && default_branch.as_deref() != Some(branch.as_str())
         })
         .collect();
 
@@ -1663,8 +1665,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         // Apply min-age guard: check reflog creation timestamp
         if min_age_duration > Duration::ZERO {
             let ref_name = format!("refs/heads/{branch}");
-            if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
-            {
+            if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name]) {
                 // Last reflog entry is the branch creation event
                 if let Some(created_epoch) = stdout
                     .trim()
