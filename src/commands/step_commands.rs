@@ -25,7 +25,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{MAX_COPY_THREADS, copy_dir_recursive, create_symlink, remove_if_exists};
-use worktrunk::git::Repository;
+use worktrunk::git::{IntegrationReason, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
@@ -1472,7 +1472,20 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         Ok(true)
     }
 
-    for wt in &worktrees {
+    // Classify worktrees into those needing integration checks vs skipped,
+    // collecting branch refs for parallel integration checking.
+    struct WorktreeCheckItem {
+        /// Index into `worktrees`
+        wt_idx: usize,
+        /// The ref to check (branch name or commit SHA for detached)
+        integration_ref: String,
+        /// Whether this is a prunable entry (directory gone)
+        is_prunable: bool,
+    }
+
+    let mut wt_check_items: Vec<WorktreeCheckItem> = Vec::new();
+
+    for (idx, wt) in worktrees.iter().enumerate() {
         // Track branches so the orphan scan doesn't re-discover them
         if let Some(branch) = &wt.branch {
             seen_branches.insert(branch.clone());
@@ -1490,33 +1503,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             continue;
         }
 
-        // Prunable entries (directory gone): check integration, include as branch-only
+        // Prunable entries (directory gone): check integration for branch
         if wt.is_prunable() {
             if let Some(branch) = &wt.branch {
-                let (effective_target, reason) =
-                    repo.integration_reason(branch, &integration_target)?;
-                if let Some(reason) = reason {
-                    let candidate = Candidate {
-                        label: branch.clone(),
-                        branch: Some(branch.clone()),
-                        path: None,
-                        kind: CandidateKind::BranchOnly,
-                    };
-                    if dry_run {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!(
-                                "<bold>{}</> (stale) — {} {}",
-                                branch,
-                                reason.description(),
-                                effective_target
-                            ))
-                        );
-                        candidates.push(candidate);
-                    } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-                        removed.push(candidate);
-                    }
-                }
+                wt_check_items.push(WorktreeCheckItem {
+                    wt_idx: idx,
+                    integration_ref: branch.clone(),
+                    is_prunable: true,
+                });
             }
             continue;
         }
@@ -1530,16 +1524,60 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
         // For integration check: use branch name, or commit SHA for detached
         let integration_ref = match &wt.branch {
-            Some(b) if !wt.detached => b.as_str(),
-            _ => &wt.head,
+            Some(b) if !wt.detached => b.clone(),
+            _ => wt.head.clone(),
         };
 
-        // Check integration first — only apply age guard to integrated worktrees
-        let (effective_target, reason) =
-            repo.integration_reason(integration_ref, &integration_target)?;
+        wt_check_items.push(WorktreeCheckItem {
+            wt_idx: idx,
+            integration_ref,
+            is_prunable: false,
+        });
+    }
+
+    // Check integration for all worktrees in parallel
+    let wt_integration_results: Vec<anyhow::Result<(usize, String, Option<IntegrationReason>, bool)>> =
+        wt_check_items
+            .par_iter()
+            .map(|item| {
+                let (effective_target, reason) =
+                    repo.integration_reason(&item.integration_ref, &integration_target)?;
+                Ok((item.wt_idx, effective_target, reason, item.is_prunable))
+            })
+            .collect();
+
+    // Process worktree integration results sequentially (removals must be serial)
+    for result in wt_integration_results {
+        let (wt_idx, effective_target, reason, is_prunable) = result?;
         let Some(reason) = reason else {
             continue;
         };
+        let wt = &worktrees[wt_idx];
+
+        if is_prunable {
+            let branch = wt.branch.as_ref().expect("prunable items always have a branch");
+            let candidate = Candidate {
+                label: branch.clone(),
+                branch: Some(branch.clone()),
+                path: None,
+                kind: CandidateKind::BranchOnly,
+            };
+            if dry_run {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "<bold>{}</> (stale) — {} {}",
+                        branch,
+                        reason.description(),
+                        effective_target
+                    ))
+                );
+                candidates.push(candidate);
+            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+                removed.push(candidate);
+            }
+            continue;
+        }
 
         let label = wt
             .branch
@@ -1549,6 +1587,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         // Check age: skip recently-created worktrees that look "merged" because
         // they were just created from the default branch
         if min_age_duration > Duration::ZERO {
+            let wt_tree = repo.worktree_at(&wt.path);
             let git_dir = wt_tree.git_dir()?;
             let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
             let created = metadata.created().or_else(|_| {
@@ -1596,58 +1635,72 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         }
     }
 
-    // Also scan local branches that don't have a worktree entry
-    for branch in repo.all_branches()? {
-        if seen_branches.contains(&branch) {
+    // Also scan local branches that don't have a worktree entry.
+    // Check integration in parallel — this is the main performance win for
+    // repos with many local branches (e.g. 100+).
+    let orphan_branches: Vec<String> = repo
+        .all_branches()?
+        .into_iter()
+        .filter(|branch| {
+            !seen_branches.contains(branch)
+                && default_branch.as_deref() != Some(branch.as_str())
+        })
+        .collect();
+
+    let orphan_integration_results: Vec<anyhow::Result<(String, String, Option<IntegrationReason>)>> =
+        orphan_branches
+            .par_iter()
+            .map(|branch| {
+                let (effective_target, reason) =
+                    repo.integration_reason(branch, &integration_target)?;
+                Ok((branch.clone(), effective_target, reason))
+            })
+            .collect();
+
+    for result in orphan_integration_results {
+        let (branch, effective_target, reason) = result?;
+        let Some(reason) = reason else {
             continue;
-        }
-        // Never prune the default branch — it's trivially "integrated" into
-        // itself, which would cause a tautological deletion.
-        if default_branch.as_deref() == Some(branch.as_str()) {
-            continue;
-        }
-        let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
-        if let Some(reason) = reason {
-            // Apply min-age guard: check reflog creation timestamp
-            if min_age_duration > Duration::ZERO {
-                let ref_name = format!("refs/heads/{branch}");
-                if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+        };
+        // Apply min-age guard: check reflog creation timestamp
+        if min_age_duration > Duration::ZERO {
+            let ref_name = format!("refs/heads/{branch}");
+            if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+            {
+                // Last reflog entry is the branch creation event
+                if let Some(created_epoch) = stdout
+                    .trim()
+                    .lines()
+                    .last()
+                    .and_then(|s| s.parse::<u64>().ok())
                 {
-                    // Last reflog entry is the branch creation event
-                    if let Some(created_epoch) = stdout
-                        .trim()
-                        .lines()
-                        .last()
-                        .and_then(|s| s.parse::<u64>().ok())
-                    {
-                        let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
-                        if age < min_age_duration {
-                            skipped_young.push(branch.clone());
-                            continue;
-                        }
+                    let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
+                    if age < min_age_duration {
+                        skipped_young.push(branch.clone());
+                        continue;
                     }
                 }
             }
-            let candidate = Candidate {
-                label: branch.clone(),
-                branch: Some(branch),
-                path: None,
-                kind: CandidateKind::BranchOnly,
-            };
-            if dry_run {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "<bold>{}</> (branch only) — {} {}",
-                        candidate.label,
-                        reason.description(),
-                        effective_target
-                    ))
-                );
-                candidates.push(candidate);
-            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-                removed.push(candidate);
-            }
+        }
+        let candidate = Candidate {
+            label: branch.clone(),
+            branch: Some(branch),
+            path: None,
+            kind: CandidateKind::BranchOnly,
+        };
+        if dry_run {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "<bold>{}</> (branch only) — {} {}",
+                    candidate.label,
+                    reason.description(),
+                    effective_target
+                ))
+            );
+            candidates.push(candidate);
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            removed.push(candidate);
         }
     }
 
