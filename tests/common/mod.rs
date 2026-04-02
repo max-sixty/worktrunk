@@ -1972,7 +1972,7 @@ impl TestRepo {
         std::fs::create_dir_all(&plugins_dir).unwrap();
         std::fs::write(
             plugins_dir.join("worktrunk.ts"),
-            include_str!("../../.opencode-plugin/worktrunk.ts"),
+            include_str!("../../dev/opencode-plugin.ts"),
         )
         .unwrap();
     }

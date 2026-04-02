@@ -128,7 +128,7 @@ Then `wt step mc` opens an editor for the commit message while plain `wt merge` 
 
 ## Track agent status
 
-Custom emoji markers show agent state in `wt list`. The [Claude Code](https://worktrunk.dev/claude-code/) plugin and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/.opencode-plugin) set these automatically:
+Custom emoji markers show agent state in `wt list`. The [Claude Code](https://worktrunk.dev/claude-code/) plugin and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin.ts) set these automatically:
 
 ```
 + feature-api      ↑  🤖              ↑1      ./repo.feature-api

@@ -1,8 +1,8 @@
 //! OpenCode plugin installation.
 //!
 //! Installs the worktrunk activity tracking plugin for OpenCode.
-//! The plugin is embedded in the binary via `include_str!()` and written
-//! to `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/plugins/worktrunk.ts`.
+//! The plugin source (`dev/opencode-plugin.ts`) is embedded in the binary via
+//! `include_str!()` and written to `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/plugins/worktrunk.ts`.
 
 use std::path::PathBuf;
 
@@ -14,7 +14,7 @@ use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 /// The plugin source, embedded at compile time.
-const PLUGIN_SOURCE: &str = include_str!("../../../.opencode-plugin/worktrunk.ts");
+const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 
 /// Resolve the OpenCode plugins directory.
 ///

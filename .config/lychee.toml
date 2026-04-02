@@ -75,6 +75,6 @@ exclude = [
     "127\\.0\\.0\\.1",
     "localhost",
 
-    # Not yet on main (remove after first release with .opencode-plugin/)
-    "github\\.com/max-sixty/worktrunk/tree/main/\\.opencode-plugin",
+    # Not yet on main (remove after first release with dev/opencode-plugin.ts)
+    "github\\.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin\\.ts",
 ]
