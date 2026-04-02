@@ -144,29 +144,20 @@ impl Repository {
 
     /// Check if merging a branch into target would add anything (not already integrated).
     ///
-    /// Uses `git merge-tree` to simulate merging the branch into the target. If the
-    /// resulting tree matches the target's tree, then merging would add nothing,
-    /// meaning the branch's content is already integrated.
-    ///
-    /// This handles cases that simple tree comparison misses:
-    /// - Squash-merged branches where main has advanced with additional commits
-    /// - Rebased branches where the base has moved forward
+    /// Caller must pass resolved refs (via `resolve_preferring_branch`).
     ///
     /// Returns:
-    /// - `Ok(Some(true))` if merging would change the target (branch has unintegrated changes)
+    /// - `Ok(Some(true))` if merging would change the target
     /// - `Ok(Some(false))` if merging would NOT change target (branch is already integrated)
     /// - `Ok(None)` if merge-tree conflicted (caller should try patch-id fallback)
-    /// - `Err` if git commands fail unexpectedly
     fn would_merge_add_to_target(
         &self,
         branch: &str,
         target: &str,
     ) -> anyhow::Result<Option<bool>> {
-        let branch = self.resolve_preferring_branch(branch);
-        let target = self.resolve_preferring_branch(target);
         // Simulate merging branch into target
         // On conflict, merge-tree exits non-zero and we can't get a clean tree
-        let merge_result = self.run_command(&["merge-tree", "--write-tree", &target, &branch]);
+        let merge_result = self.run_command(&["merge-tree", "--write-tree", target, branch]);
 
         let Ok(merge_tree) = merge_result else {
             // merge-tree failed (likely conflicts) — caller should try patch-id fallback
@@ -249,7 +240,9 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<MergeProbeResult> {
-        let merge_result = self.would_merge_add_to_target(branch, target)?;
+        let branch = self.resolve_preferring_branch(branch);
+        let target = self.resolve_preferring_branch(target);
+        let merge_result = self.would_merge_add_to_target(&branch, &target)?;
         match merge_result {
             Some(would_add) => Ok(MergeProbeResult {
                 would_merge_add: would_add,
@@ -260,7 +253,7 @@ impl Repository {
                 // Patch-id errors are non-fatal: if we can't compute patch-ids,
                 // conservatively report no match (branch appears not integrated).
                 let matched = self
-                    .is_squash_merged_via_patch_id(branch, target)
+                    .is_squash_merged_via_patch_id(&branch, &target)
                     .unwrap_or(false);
                 Ok(MergeProbeResult {
                     would_merge_add: true,
