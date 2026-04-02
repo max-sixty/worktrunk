@@ -19,7 +19,7 @@ use rayon::prelude::*;
 /// contention causes performance to regress (benchmarked on APFS and ext4).
 /// The global rayon pool is sized for network I/O (2x cores) which is too
 /// many for local filesystem work.
-const MAX_COPY_THREADS: usize = 4;
+pub const MAX_COPY_THREADS: usize = 4;
 
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
@@ -31,8 +31,19 @@ const MAX_COPY_THREADS: usize = 4;
 /// removed before copying.
 ///
 /// Uses a dedicated rayon thread pool capped at `MAX_COPY_THREADS` to avoid
-/// SSD I/O contention from the larger global pool.
+/// SSD I/O contention from the larger global pool. When called from within an
+/// existing rayon pool context (e.g. via `pool.install()`), that pool is reused
+/// rather than creating a new one — this prevents concurrent callers from each
+/// spawning their own pool and exhausting OS file-descriptor limits on large
+/// trees (EMFILE / "too many open files").
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    // If we are already executing inside a rayon worker thread, reuse that
+    // pool rather than creating a new one. This avoids concurrent callers
+    // (e.g. from an outer par_iter) each allocating their own pool.
+    if rayon::current_thread_index().is_some() {
+        return copy_dir_recursive_inner(src, dest, force);
+    }
+
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(MAX_COPY_THREADS)
         .build()
