@@ -25,7 +25,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{MAX_COPY_THREADS, copy_dir_recursive, create_symlink, remove_if_exists};
-use worktrunk::git::{IntegrationReason, Repository};
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
@@ -1536,15 +1536,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     }
 
     // Check integration for all worktrees in parallel
-    let wt_integration_results: Vec<anyhow::Result<(usize, String, Option<IntegrationReason>, bool)>> =
-        wt_check_items
-            .par_iter()
-            .map(|item| {
-                let (effective_target, reason) =
-                    repo.integration_reason(&item.integration_ref, &integration_target)?;
-                Ok((item.wt_idx, effective_target, reason, item.is_prunable))
-            })
-            .collect();
+    let wt_integration_results: Vec<anyhow::Result<_>> = wt_check_items
+        .par_iter()
+        .map(|item| {
+            let (effective_target, reason) =
+                repo.integration_reason(&item.integration_ref, &integration_target)?;
+            Ok((item.wt_idx, effective_target, reason, item.is_prunable))
+        })
+        .collect();
 
     // Process worktree integration results sequentially (removals must be serial)
     for result in wt_integration_results {
@@ -1647,15 +1646,14 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         })
         .collect();
 
-    let orphan_integration_results: Vec<anyhow::Result<(String, String, Option<IntegrationReason>)>> =
-        orphan_branches
-            .par_iter()
-            .map(|branch| {
-                let (effective_target, reason) =
-                    repo.integration_reason(branch, &integration_target)?;
-                Ok((branch.clone(), effective_target, reason))
-            })
-            .collect();
+    let orphan_integration_results: Vec<anyhow::Result<_>> = orphan_branches
+        .par_iter()
+        .map(|branch| {
+            let (effective_target, reason) =
+                repo.integration_reason(branch, &integration_target)?;
+            Ok((branch.clone(), effective_target, reason))
+        })
+        .collect();
 
     for result in orphan_integration_results {
         let (branch, effective_target, reason) = result?;
