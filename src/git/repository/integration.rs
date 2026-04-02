@@ -9,6 +9,21 @@ use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
 use crate::shell_exec::Cmd;
 
+/// Result of the combined merge-tree + patch-id integration probe.
+///
+/// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
+/// check if merging would add anything, then fall back to patch-id matching
+/// when merge-tree conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeProbeResult {
+    /// Whether merging the branch into target would change the target's tree.
+    /// Always `true` when merge-tree conflicts (conservative).
+    pub would_merge_add: bool,
+    /// Whether patch-id matching found the branch's squashed diff in a target commit.
+    /// Only `true` when merge-tree conflicted AND patch-id found a match.
+    pub is_patch_id_match: bool,
+}
+
 impl Repository {
     /// Resolve a ref, preferring branches over tags when names collide.
     ///
@@ -142,7 +157,7 @@ impl Repository {
     /// - `Ok(Some(false))` if merging would NOT change target (branch is already integrated)
     /// - `Ok(None)` if merge-tree conflicted (caller should try patch-id fallback)
     /// - `Err` if git commands fail unexpectedly
-    pub fn would_merge_add_to_target(
+    fn would_merge_add_to_target(
         &self,
         branch: &str,
         target: &str,
@@ -184,11 +199,7 @@ impl Repository {
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
     /// `Ok(false)` otherwise (including when patch-id computation fails — conservative).
-    pub fn is_squash_merged_via_patch_id(
-        &self,
-        branch: &str,
-        target: &str,
-    ) -> anyhow::Result<bool> {
+    fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
         };
@@ -226,6 +237,37 @@ impl Repository {
             .run()
             .context("Failed to compute patch-id")?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Combined merge-tree + patch-id integration probe.
+    ///
+    /// Single implementation of the merge-tree → patch-id fallback sequence,
+    /// used by both `wt list` (parallel tasks) and `wt remove`/`wt merge`
+    /// (sequential via [`compute_integration_lazy`]).
+    pub fn merge_integration_probe(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<MergeProbeResult> {
+        let merge_result = self.would_merge_add_to_target(branch, target)?;
+        match merge_result {
+            Some(would_add) => Ok(MergeProbeResult {
+                would_merge_add: would_add,
+                is_patch_id_match: false,
+            }),
+            None => {
+                // merge-tree conflicted — try patch-id fallback.
+                // Patch-id errors are non-fatal: if we can't compute patch-ids,
+                // conservatively report no match (branch appears not integrated).
+                let matched = self
+                    .is_squash_merged_via_patch_id(branch, target)
+                    .unwrap_or(false);
+                Ok(MergeProbeResult {
+                    would_merge_add: true,
+                    is_patch_id_match: matched,
+                })
+            }
+        }
     }
 
     /// Determine the effective target for integration checks.

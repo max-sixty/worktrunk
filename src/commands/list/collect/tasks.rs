@@ -256,7 +256,7 @@ impl Task for HasFileChangesTask {
 
 /// Task 3b: Merge simulation + patch-id fallback
 ///
-/// Runs two integration checks sequentially within one task:
+/// Delegates to [`Repository::merge_integration_probe()`], which runs:
 ///
 /// 1. `merge-tree --write-tree` — simulates merging branch into target. If the
 ///    result tree equals target's tree, the branch is integrated (`MergeAddsNothing`).
@@ -291,24 +291,14 @@ impl Task for WouldMergeAddTask {
                 is_patch_id_match: false,
             });
         };
-        let repo = &ctx.repo;
-        let merge_result = repo
-            .would_merge_add_to_target(branch, &base)
+        let probe = ctx
+            .repo
+            .merge_integration_probe(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
-        let (would_merge_add, is_patch_id_match) = match merge_result {
-            Some(would_add) => (would_add, false),
-            None => {
-                // merge-tree conflicted — try patch-id fallback
-                let matched = repo
-                    .is_squash_merged_via_patch_id(branch, &base)
-                    .unwrap_or(false);
-                (true, matched)
-            }
-        };
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
-            would_merge_add,
-            is_patch_id_match,
+            would_merge_add: probe.would_merge_add,
+            is_patch_id_match: probe.is_patch_id_match,
         })
     }
 }
