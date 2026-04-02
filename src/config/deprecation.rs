@@ -1060,7 +1060,9 @@ pub fn check_and_migrate(
     // Deduplicate warnings per path per process
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
-        let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
+        let mut guard = WARNED_DEPRECATED_PATHS
+            .lock()
+            .map_err(|e| anyhow::anyhow!("failed to lock deprecation warning tracker: {e}"))?;
         if guard.contains(&canonical_path) {
             // Already warned, but still set migration_path if file exists
             if new_path.exists() {
