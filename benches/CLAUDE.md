@@ -110,7 +110,7 @@ Three questions drive `wt list` performance work:
 
 2. **How parallel are we?** Total subprocess time divided by wall time gives a parallelism factor. A factor of 4.0 means 4 commands running concurrently on average. Close to 1.0 means mostly serial execution with headroom to parallelize.
 
-3. **What's on the critical path?** The critical path passes through serial phases (setup, finalization) plus the slowest work item in the parallel phase. Phase durations show where serial overhead is; the per-worktree breakdown identifies the parallel bottleneck.
+3. **What's on the critical path?** The critical path passes through serial phases (setup, finalization) plus the slowest work item in the parallel phase. We don't have good queries for this yet — the trace format doesn't capture task dependencies, and rayon's work-stealing means thread IDs don't map to worktrees. The queries below are a starting point (phase boundaries from milestones, per-worktree time from args) but don't give a real critical path answer. Visualizing the trace in Perfetto is more useful here.
 
 ### Queries
 
