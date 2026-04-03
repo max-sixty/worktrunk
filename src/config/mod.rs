@@ -86,7 +86,8 @@ pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
 pub use deprecation::{
-    DEPRECATED_SECTION_KEYS, DeprecatedSection, key_belongs_in, warn_unknown_fields,
+    DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
+    key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,

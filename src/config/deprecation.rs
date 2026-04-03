@@ -1424,6 +1424,41 @@ pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
     C::Other::is_valid_key(key).then(C::Other::description)
 }
 
+/// Classification of an unknown config key for warning purposes.
+pub enum UnknownKeyKind {
+    /// Deprecated key in its correct config type — deprecation system handles it
+    DeprecatedHandled,
+    /// Deprecated key in the wrong config type
+    DeprecatedWrongConfig {
+        other_description: &'static str,
+        canonical_display: &'static str,
+    },
+    /// Non-deprecated key that belongs in the other config type
+    WrongConfig { other_description: &'static str },
+    /// Truly unknown key (not valid in either config type)
+    Unknown,
+}
+
+/// Classify an unknown config key: deprecated (right/wrong file), misplaced, or unknown.
+pub fn classify_unknown_key<C: WorktrunkConfig>(key: &str) -> UnknownKeyKind {
+    if let Some(dep) = DEPRECATED_SECTION_KEYS.iter().find(|d| d.key == key) {
+        return if C::is_valid_key(dep.canonical_top_key) {
+            UnknownKeyKind::DeprecatedHandled
+        } else {
+            UnknownKeyKind::DeprecatedWrongConfig {
+                other_description: C::Other::description(),
+                canonical_display: dep.canonical_display,
+            }
+        };
+    }
+    match key_belongs_in::<C>(key) {
+        Some(other) => UnknownKeyKind::WrongConfig {
+            other_description: other,
+        },
+        None => UnknownKeyKind::Unknown,
+    }
+}
+
 /// Warn about unknown fields in config file
 ///
 /// Generic over `C`, the config type being loaded. Emits a warning for each
@@ -1456,42 +1491,22 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     keys.sort();
 
     for key in keys {
-        // Check if this is a deprecated section key
-        if let Some(dep) = DEPRECATED_SECTION_KEYS
-            .iter()
-            .find(|d| d.key == key.as_str())
-        {
-            if C::is_valid_key(dep.canonical_top_key) {
-                // Canonical form belongs to this config type — deprecation system handles it
-                continue;
+        let msg = match classify_unknown_key::<C>(key) {
+            UnknownKeyKind::DeprecatedHandled => continue,
+            UnknownKeyKind::DeprecatedWrongConfig {
+                other_description,
+                canonical_display,
+            } => cformat!(
+                "{label} has key <bold>{key}</> which belongs in {other_description} as {canonical_display}"
+            ),
+            UnknownKeyKind::WrongConfig { other_description } => cformat!(
+                "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+            ),
+            UnknownKeyKind::Unknown => {
+                cformat!("{label} has unknown field <bold>{key}</> (will be ignored)")
             }
-            // Deprecated key in wrong config file — point to the correct config
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "{label} has key <bold>{key}</> which belongs in {} as {}",
-                    C::Other::description(),
-                    dep.canonical_display,
-                ))
-            );
-            continue;
-        }
-
-        if let Some(other_location) = key_belongs_in::<C>(key) {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "{label} has key <bold>{key}</> which belongs in {other_location} (will be ignored)"
-                ))
-            );
-        } else {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "{label} has unknown field <bold>{key}</> (will be ignored)"
-                ))
-            );
-        }
+        };
+        eprintln!("{}", warning_message(msg));
     }
 
     // Flush stderr to ensure output appears before any subsequent messages

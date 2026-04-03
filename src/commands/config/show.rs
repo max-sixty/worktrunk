@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, WorktrunkConfig as _, default_system_config_path,
-    find_unknown_project_keys, find_unknown_user_keys, system_config_path,
+    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
+    find_unknown_user_keys, system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -494,30 +494,20 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
     keys.sort();
 
     for key in keys {
-        // Check if this is a deprecated section key
-        if let Some(dep) = worktrunk::config::DEPRECATED_SECTION_KEYS
-            .iter()
-            .find(|d| d.key == key.as_str())
-        {
-            if C::is_valid_key(dep.canonical_top_key) {
-                // Canonical form belongs to this config type — deprecation system handles it
-                continue;
+        let msg = match worktrunk::config::classify_unknown_key::<C>(key) {
+            worktrunk::config::UnknownKeyKind::DeprecatedHandled => continue,
+            worktrunk::config::UnknownKeyKind::DeprecatedWrongConfig {
+                other_description,
+                canonical_display,
+            } => {
+                cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}")
             }
-            // Deprecated key in wrong config file — point to the correct config
-            let msg = cformat!(
-                "Key <bold>{key}</> belongs in {} as {}",
-                C::Other::description(),
-                dep.canonical_display,
-            );
-            let _ = writeln!(out, "{}", warning_message(msg));
-            continue;
-        }
-
-        let msg = match worktrunk::config::key_belongs_in::<C>(key) {
-            Some(location) => {
-                cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
+            worktrunk::config::UnknownKeyKind::WrongConfig { other_description } => {
+                cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)")
             }
-            None => cformat!("Unknown key <bold>{key}</> will be ignored"),
+            worktrunk::config::UnknownKeyKind::Unknown => {
+                cformat!("Unknown key <bold>{key}</> will be ignored")
+            }
         };
         let _ = writeln!(out, "{}", warning_message(msg));
     }
