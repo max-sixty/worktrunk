@@ -185,10 +185,6 @@ impl Repository {
         // Clean merge — first line of stdout is the resulting tree SHA
         let merge_tree = String::from_utf8_lossy(&output.stdout);
         let merge_tree = merge_tree.lines().next().unwrap_or("").trim();
-        if merge_tree.is_empty() {
-            // Empty output is unexpected - treat as having changes
-            return Ok(Some(true));
-        }
 
         // Get target's tree for comparison
         let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
