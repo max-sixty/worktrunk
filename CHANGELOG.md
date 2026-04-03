@@ -72,6 +72,16 @@
 
 - `wt remove` approval path reuses already-loaded repo/config (~50ms savings). ([#1875](https://github.com/max-sixty/worktrunk/pull/1875))
 
+### Deprecated
+
+| Old | New | Action |
+|-----|-----|--------|
+| `[ci]` section | `[forge]` section | `wt config show` warns and generates `.new` migration file |
+| `no-ff` in `[merge]` | `ff` (reversed) | `wt config show` warns and generates `.new` migration file |
+| `no-cd` in `[switch]` | `cd` (reversed) | `wt config show` warns and generates `.new` migration file |
+
+All deprecated fields continue to work. Run `wt config show` and rename the generated `.new` file to migrate.
+
 ## 0.33.0
 
 ### Improved
