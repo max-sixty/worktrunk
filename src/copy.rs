@@ -4,43 +4,15 @@
 //! copy-on-write clones where the filesystem supports them (APFS, btrfs, XFS),
 //! falling back to regular copies otherwise.
 //!
-//! Parallelism is achieved with rayon's `par_iter` at each directory level,
-//! so sibling entries are copied concurrently while the tree is walked
-//! depth-first.
+//! Parallelism uses rayon's global thread pool. `par_iter` at each directory
+//! level copies siblings concurrently while the tree is walked depth-first.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::sync::LazyLock;
 
 use anyhow::Context;
 use rayon::prelude::*;
-
-// TODO: benchmark thread count for the shared pool — the old per-call pool
-// was tuned to 4 threads for single-directory copies (#1721), but the shared
-// pool workload is different. Using rayon default (num cores) for now.
-/// Shared thread pool for all filesystem copy operations, created once on first
-/// use. Callers that batch many copies (e.g. `step_copy_ignored`) should wrap
-/// the entire batch in `in_copy_pool()` so all work — including nested
-/// `copy_dir_recursive` calls — shares this pool rather than each spawning its
-/// own (which would exhaust file-descriptor limits on large trees).
-static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new()
-        .build()
-        .expect("failed to build copy thread pool")
-});
-
-/// Run a closure in the shared copy thread pool.
-///
-/// When already inside the copy pool (e.g. from a nested `copy_dir_recursive`
-/// call), this is a no-op — the closure runs inline on the current thread.
-pub fn in_copy_pool<F, T>(f: F) -> T
-where
-    F: FnOnce() -> T + Send,
-    T: Send,
-{
-    COPY_POOL.install(f)
-}
 
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
@@ -50,14 +22,7 @@ where
 ///
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
-///
-/// Uses the shared copy pool (capped at 4 threads) to avoid SSD I/O contention
-/// from the larger global rayon pool.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
-    in_copy_pool(|| copy_dir_recursive_inner(src, dest, force))
-}
-
-fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
     let entries: Vec<_> = fs::read_dir(src)?.collect::<Result<Vec<_>, _>>()?;
@@ -79,7 +44,7 @@ fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Res
                 create_symlink(&target, &src_path, &dest_path)?;
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive_inner(&src_path, &dest_path, force)?;
+            copy_dir_recursive(&src_path, &dest_path, force)?;
         } else if !file_type.is_file() {
             log::debug!("skipping non-regular file: {}", src_path.display());
         } else {
