@@ -67,8 +67,13 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("main_worktree_path", "primary_worktree_path"),
 ];
 
-/// Top-level section keys that are deprecated and handled separately.
-/// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
+/// Top-level section keys that are deprecated and handled by the deprecation system.
+/// `warn_unknown_fields` skips these automatically.
+///
+/// TODO: When a deprecated key appears in the wrong config file (e.g., `[commit-generation]`
+/// in project config), the deprecation system suggests renaming it — but the renamed key
+/// isn't valid in that config either. Ideally we'd detect "deprecated + wrong file" and
+/// suggest moving to the correct config instead of just renaming.
 pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select", "ci"];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
@@ -1418,8 +1423,12 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
         guard.insert(canonical_path);
     }
 
-    // Sort keys for deterministic output order
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    // Sort keys for deterministic output order, skipping deprecated keys
+    // (the deprecation system handles those with better messaging)
+    let mut keys: Vec<_> = unknown_keys
+        .keys()
+        .filter(|k| !DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+        .collect();
     keys.sort();
 
     for key in keys {

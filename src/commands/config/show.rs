@@ -374,11 +374,9 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
-            .into_iter()
-            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
-            .collect();
-        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Display TOML with syntax highlighting
@@ -449,11 +447,9 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         // Only check for unknown keys if config is valid.
         // Filter deprecated section keys to avoid duplicate warnings
         // (deprecation system already warns about these).
-        let unknown_keys: std::collections::HashMap<_, _> = find_unknown_user_keys(&contents)
-            .into_iter()
-            .filter(|(k, _)| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
-            .collect();
-        out.push_str(&warn_unknown_keys::<UserConfig>(&unknown_keys));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
+            &contents,
+        )));
     }
 
     // Add "Current config" label when deprecations shown (to separate from diff)
@@ -494,8 +490,12 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 ) -> String {
     let mut out = String::new();
 
-    // Sort keys for deterministic output order
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
+    // Sort keys for deterministic output order, skipping deprecated keys
+    // (the deprecation system handles those with better messaging)
+    let mut keys: Vec<_> = unknown_keys
+        .keys()
+        .filter(|k| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
+        .collect();
     keys.sort();
 
     for key in keys {
