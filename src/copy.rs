@@ -16,10 +16,9 @@ use std::sync::LazyLock;
 use anyhow::Context;
 use rayon::prelude::*;
 
-/// Maximum threads for filesystem copy operations. Beyond this, SSD I/O
-/// contention causes performance to regress (benchmarked on APFS and ext4).
-/// The global rayon pool is sized for network I/O (2x cores) which is too
-/// many for local filesystem work.
+/// Maximum threads for filesystem copy operations. The global rayon pool is
+/// sized for network I/O (2× cores) which is too many for local filesystem
+/// work where SSD I/O contention dominates.
 const MAX_COPY_THREADS: usize = 4;
 
 /// Shared thread pool for all filesystem copy operations, created once on first
