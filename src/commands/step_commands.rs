@@ -24,7 +24,7 @@ use ignore::gitignore::GitignoreBuilder;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
-use worktrunk::copy::{copy_dir_recursive, create_symlink, remove_if_exists};
+use worktrunk::copy::{copy_dir_recursive, create_symlink, in_copy_pool, remove_if_exists};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -801,68 +801,71 @@ pub fn step_copy_ignored(
         }
     }
 
-    // Copy entries in parallel — each entry has a distinct destination path
-    entries_to_copy
-        .par_iter()
-        .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
-            // Paths from git ls-files are always under source_path
-            let relative = src_entry
-                .strip_prefix(&source_path)
-                .expect("git ls-files path under worktree");
-            let dest_entry = dest_path.join(relative);
+    // Run all copies in the shared copy pool so that the outer par_iter and
+    // inner copy_dir_recursive calls share the same bounded thread pool.
+    in_copy_pool(|| {
+        entries_to_copy
+            .par_iter()
+            .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
+                // Paths from git ls-files are always under source_path
+                let relative = src_entry
+                    .strip_prefix(&source_path)
+                    .expect("git ls-files path under worktree");
+                let dest_entry = dest_path.join(relative);
 
-            if *is_dir {
-                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
-                    format!("copying directory {}", format_path_for_display(relative))
-                })?;
-                copied_count.fetch_add(1, Ordering::Relaxed);
-            } else {
-                if let Some(parent) = dest_entry.parent() {
-                    fs::create_dir_all(parent).with_context(|| {
-                        format!(
-                            "creating directory for {}",
-                            format_path_for_display(relative)
-                        )
+                if *is_dir {
+                    copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                        format!("copying directory {}", format_path_for_display(relative))
                     })?;
-                }
-                if force {
-                    remove_if_exists(&dest_entry)?;
-                }
-                // Check if source is a symlink — preserve it instead of following it
-                let display_path = format_path_for_display(relative);
-                let source_is_symlink = fs::symlink_metadata(src_entry)
-                    .context(format!("reading metadata for {display_path}"))?
-                    .file_type()
-                    .is_symlink();
-                if source_is_symlink {
-                    // Skip existing symlinks for idempotent hook usage
-                    if dest_entry.symlink_metadata().is_err() {
-                        let target = fs::read_link(src_entry)
-                            .context(format!("reading symlink {display_path}"))?;
-                        create_symlink(&target, src_entry, &dest_entry)?;
-                        copied_count.fetch_add(1, Ordering::Relaxed);
-                    }
+                    copied_count.fetch_add(1, Ordering::Relaxed);
                 } else {
-                    // Skip existing entries (files or symlinks) for idempotent hook usage.
-                    // Check symlink_metadata (not exists()) because exists() follows symlinks
-                    // and returns false for broken ones, which would cause reflink_or_copy to
-                    // fail with ENOENT on some platforms when copying through the broken symlink.
-                    if dest_entry.symlink_metadata().is_err() {
-                        match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                            Ok(_) => {
-                                copied_count.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                            Err(e) => {
-                                return Err(anyhow::Error::from(e)
-                                    .context(format!("copying {display_path}")));
+                    if let Some(parent) = dest_entry.parent() {
+                        fs::create_dir_all(parent).with_context(|| {
+                            format!(
+                                "creating directory for {}",
+                                format_path_for_display(relative)
+                            )
+                        })?;
+                    }
+                    if force {
+                        remove_if_exists(&dest_entry)?;
+                    }
+                    // Check if source is a symlink — preserve it instead of following it
+                    let display_path = format_path_for_display(relative);
+                    let source_is_symlink = fs::symlink_metadata(src_entry)
+                        .context(format!("reading metadata for {display_path}"))?
+                        .file_type()
+                        .is_symlink();
+                    if source_is_symlink {
+                        // Skip existing symlinks for idempotent hook usage
+                        if dest_entry.symlink_metadata().is_err() {
+                            let target = fs::read_link(src_entry)
+                                .context(format!("reading symlink {display_path}"))?;
+                            create_symlink(&target, src_entry, &dest_entry)?;
+                            copied_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                    } else {
+                        // Skip existing entries (files or symlinks) for idempotent hook usage.
+                        // Check symlink_metadata (not exists()) because exists() follows symlinks
+                        // and returns false for broken ones, which would cause reflink_or_copy to
+                        // fail with ENOENT on some platforms when copying through the broken symlink.
+                        if dest_entry.symlink_metadata().is_err() {
+                            match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                                Ok(_) => {
+                                    copied_count.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                                Err(e) => {
+                                    return Err(anyhow::Error::from(e)
+                                        .context(format!("copying {display_path}")));
+                                }
                             }
                         }
                     }
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })
+    })?;
 
     // Show summary
     let copied_count = copied_count.load(Ordering::Relaxed);

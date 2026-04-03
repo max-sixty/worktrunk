@@ -11,6 +11,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -21,6 +22,30 @@ use rayon::prelude::*;
 /// many for local filesystem work.
 const MAX_COPY_THREADS: usize = 4;
 
+/// Shared thread pool for all filesystem copy operations, created once on first
+/// use. Callers that batch many copies (e.g. `step_copy_ignored`) should wrap
+/// the entire batch in `in_copy_pool()` so all work — including nested
+/// `copy_dir_recursive` calls — shares this pool rather than each spawning its
+/// own (which would exhaust file-descriptor limits on large trees).
+static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(MAX_COPY_THREADS)
+        .build()
+        .expect("failed to build copy thread pool")
+});
+
+/// Run a closure in the shared copy thread pool.
+///
+/// When already inside the copy pool (e.g. from a nested `copy_dir_recursive`
+/// call), this is a no-op — the closure runs inline on the current thread.
+pub fn in_copy_pool<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    COPY_POOL.install(f)
+}
+
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
 /// Handles regular files, directories, and symlinks. Non-regular files (sockets,
@@ -30,15 +55,10 @@ const MAX_COPY_THREADS: usize = 4;
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
 ///
-/// Uses a dedicated rayon thread pool capped at `MAX_COPY_THREADS` to avoid
-/// SSD I/O contention from the larger global pool.
+/// Uses the shared copy pool (capped at 4 threads) to avoid SSD I/O contention
+/// from the larger global rayon pool.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(MAX_COPY_THREADS)
-        .build()
-        .context("building copy thread pool")?;
-
-    pool.install(|| copy_dir_recursive_inner(src, dest, force))
+    in_copy_pool(|| copy_dir_recursive_inner(src, dest, force))
 }
 
 fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
