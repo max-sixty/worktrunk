@@ -67,14 +67,41 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("main_worktree_path", "primary_worktree_path"),
 ];
 
+/// Metadata for a deprecated top-level section key.
+#[derive(Debug)]
+pub struct DeprecatedSection {
+    /// The deprecated key name (e.g., "commit-generation")
+    pub key: &'static str,
+    /// The canonical top-level key that replaces this, for determining which config type
+    /// it belongs to via `WorktrunkConfig::is_valid_key()` (e.g., "commit")
+    pub canonical_top_key: &'static str,
+    /// Human-readable canonical form for display (e.g., "[commit.generation]")
+    pub canonical_display: &'static str,
+}
+
 /// Top-level section keys that are deprecated and handled by the deprecation system.
-/// `warn_unknown_fields` skips these automatically.
 ///
-/// TODO: When a deprecated key appears in the wrong config file (e.g., `[commit-generation]`
-/// in project config), the deprecation system suggests renaming it — but the renamed key
-/// isn't valid in that config either. Ideally we'd detect "deprecated + wrong file" and
-/// suggest moving to the correct config instead of just renaming.
-pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select", "ci"];
+/// When a deprecated key appears in the config type where its canonical replacement
+/// is valid, `warn_unknown_fields` skips it (the deprecation system provides better
+/// messaging). When it appears in the wrong config type, `warn_unknown_fields`
+/// warns that it belongs in the other config with the canonical form.
+pub const DEPRECATED_SECTION_KEYS: &[DeprecatedSection] = &[
+    DeprecatedSection {
+        key: "commit-generation",
+        canonical_top_key: "commit",
+        canonical_display: "[commit.generation]",
+    },
+    DeprecatedSection {
+        key: "select",
+        canonical_top_key: "switch",
+        canonical_display: "[switch.picker]",
+    },
+    DeprecatedSection {
+        key: "ci",
+        canonical_top_key: "forge",
+        canonical_display: "[forge]",
+    },
+];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -1425,15 +1452,31 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
         guard.insert(canonical_path);
     }
 
-    // Sort keys for deterministic output order, skipping deprecated keys
-    // (the deprecation system handles those with better messaging)
-    let mut keys: Vec<_> = unknown_keys
-        .keys()
-        .filter(|k| !DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
-        .collect();
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
     keys.sort();
 
     for key in keys {
+        // Check if this is a deprecated section key
+        if let Some(dep) = DEPRECATED_SECTION_KEYS
+            .iter()
+            .find(|d| d.key == key.as_str())
+        {
+            if C::is_valid_key(dep.canonical_top_key) {
+                // Canonical form belongs to this config type — deprecation system handles it
+                continue;
+            }
+            // Deprecated key in wrong config file — point to the correct config
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "{label} has key <bold>{key}</> which belongs in {} as {}",
+                    C::Other::description(),
+                    dep.canonical_display,
+                ))
+            );
+            continue;
+        }
+
         if let Some(other_location) = key_belongs_in::<C>(key) {
             eprintln!(
                 "{}",

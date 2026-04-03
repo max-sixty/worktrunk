@@ -166,6 +166,52 @@ mod tests {
         assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
     }
 
+    #[test]
+    fn test_warn_unknown_keys_deprecated_in_wrong_config() {
+        // commit-generation in project config should suggest user config with canonical form
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "command".to_string(),
+            toml::Value::String("llm".to_string()),
+        );
+        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown));
+
+        // ci in user config should suggest project config with canonical form
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("ci".to_string(), toml::Value::Table(inner));
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown));
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_deprecated_in_right_config_is_skipped() {
+        // commit-generation in user config should be skipped (deprecation system handles it)
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "command".to_string(),
+            toml::Value::String("llm".to_string()),
+        );
+        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
+        assert!(warn_unknown_keys::<UserConfig>(&unknown).is_empty());
+
+        // ci in project config should be skipped (deprecation system handles it)
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("ci".to_string(), toml::Value::Table(inner));
+        assert!(warn_unknown_keys::<ProjectConfig>(&unknown).is_empty());
+    }
+
     // ==================== render_ci_tool_status tests ====================
 
     #[test]

@@ -388,7 +388,7 @@ Separately, `check_and_migrate()` detects deprecated patterns, emits warnings, a
 3. Call the migration function from `migrate_content()`
 4. Add a warning message in `format_deprecation_warnings()`
 5. Update `Deprecations::is_empty()` to include the new field
-6. If it's a top-level section being removed from the struct, add the key to `DEPRECATED_SECTION_KEYS` (prevents `warn_unknown_fields` from also flagging it)
+6. If it's a top-level section being removed from the struct, add a `DeprecatedSection` entry to `DEPRECATED_SECTION_KEYS` with the canonical top-level key and display form. This tells `warn_unknown_fields` to skip the key when it appears in the correct config type (the deprecation system provides better messaging) and to suggest the correct config when it appears in the wrong file.
 
 ### Renaming a field within a section
 

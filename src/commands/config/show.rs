@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
-    find_unknown_user_keys, system_config_path,
+    ProjectConfig, UserConfig, WorktrunkConfig as _, default_system_config_path,
+    find_unknown_project_keys, find_unknown_user_keys, system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -490,15 +490,29 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 ) -> String {
     let mut out = String::new();
 
-    // Sort keys for deterministic output order, skipping deprecated keys
-    // (the deprecation system handles those with better messaging)
-    let mut keys: Vec<_> = unknown_keys
-        .keys()
-        .filter(|k| !worktrunk::config::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
-        .collect();
+    let mut keys: Vec<_> = unknown_keys.keys().collect();
     keys.sort();
 
     for key in keys {
+        // Check if this is a deprecated section key
+        if let Some(dep) = worktrunk::config::DEPRECATED_SECTION_KEYS
+            .iter()
+            .find(|d| d.key == key.as_str())
+        {
+            if C::is_valid_key(dep.canonical_top_key) {
+                // Canonical form belongs to this config type — deprecation system handles it
+                continue;
+            }
+            // Deprecated key in wrong config file — point to the correct config
+            let msg = cformat!(
+                "Key <bold>{key}</> belongs in {} as {}",
+                C::Other::description(),
+                dep.canonical_display,
+            );
+            let _ = writeln!(out, "{}", warning_message(msg));
+            continue;
+        }
+
         let msg = match worktrunk::config::key_belongs_in::<C>(key) {
             Some(location) => {
                 cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")

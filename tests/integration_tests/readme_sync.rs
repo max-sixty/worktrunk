@@ -1176,7 +1176,10 @@ fn test_config_docs_include_all_sections() {
 
     // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
     for key in &section_keys {
-        if DEPRECATED_SECTION_KEYS.contains(&key.as_str()) {
+        if DEPRECATED_SECTION_KEYS
+            .iter()
+            .any(|d| d.key == key.as_str())
+        {
             let header = format!("[{key}]");
             assert!(
                 !user_config_content.contains(&header),
@@ -1229,7 +1232,10 @@ fn test_project_config_docs_include_all_sections() {
 
     // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
     for key in &section_keys {
-        if DEPRECATED_SECTION_KEYS.contains(&key.as_str()) {
+        if DEPRECATED_SECTION_KEYS
+            .iter()
+            .any(|d| d.key == key.as_str())
+        {
             let header = format!("[{key}]");
             assert!(
                 !project_config_content.contains(&header),
