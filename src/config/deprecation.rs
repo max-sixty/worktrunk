@@ -3424,10 +3424,7 @@ ff = true
 
         // ci in user config → should warn "belongs in project config"
         let mut unknown = HashMap::new();
-        unknown.insert(
-            "ci".to_string(),
-            toml::Value::Table(toml::map::Map::new()),
-        );
+        unknown.insert("ci".to_string(), toml::Value::Table(toml::map::Map::new()));
         let path = std::env::temp_dir().join("test-deprecated-wrong-config-user.toml");
         warn_unknown_fields::<UserConfig>(&path, &unknown, "User config");
     }
