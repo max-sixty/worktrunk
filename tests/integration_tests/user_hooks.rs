@@ -2463,8 +2463,14 @@ fn test_user_post_start_pipeline_concurrent_all_run(repo: TestRepo) {
 
     let a = fs::read_to_string(&file_a).unwrap();
     let b = fs::read_to_string(&file_b).unwrap();
-    assert!(a.contains("AAA"), "concurrent command 'a' should run, got: {a}");
-    assert!(b.contains("BBB"), "concurrent command 'b' should run, got: {b}");
+    assert!(
+        a.contains("AAA"),
+        "concurrent command 'a' should run, got: {a}"
+    );
+    assert!(
+        b.contains("BBB"),
+        "concurrent command 'b' should run, got: {b}"
+    );
 }
 
 #[rstest]
