@@ -1575,7 +1575,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 let branch = wt
                     .branch
                     .as_ref()
-                    .expect("prunable items always have a branch");
+                    .context("prunable item missing branch")?;
                 let candidate = Candidate {
                     label: branch.clone(),
                     branch: Some(branch.clone()),
