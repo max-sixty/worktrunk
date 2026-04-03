@@ -16,9 +16,11 @@ use std::sync::LazyLock;
 use anyhow::Context;
 use rayon::prelude::*;
 
-/// Maximum threads for filesystem copy operations. Benchmarking 1/2/4/8
-/// threads showed performance peaks at 2–4 and regresses at 8+ due to SSD
-/// I/O contention (#1721). The global rayon pool (2× cores) is too many.
+/// Maximum threads for filesystem copy operations. #1721 benchmarked
+/// 1/2/4/8 threads for single-directory copies and found 2–4 optimal;
+/// 8+ regressed from SSD I/O contention. The shared pool serves a
+/// different workload (many directories concurrently) but the I/O
+/// contention ceiling is the same.
 const MAX_COPY_THREADS: usize = 4;
 
 /// Shared thread pool for all filesystem copy operations, created once on first
