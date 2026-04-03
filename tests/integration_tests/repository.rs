@@ -545,6 +545,115 @@ fn test_integration_functions_handle_remote_refs() {
 }
 
 // =============================================================================
+// merge-tree exit code handling tests
+// =============================================================================
+
+/// has_merge_conflicts returns false for clean merges (exit 0)
+/// and true for conflicts (exit 1).
+#[test]
+fn test_has_merge_conflicts_clean_vs_conflicting() {
+    let repo = TestRepo::new();
+    fs::write(repo.root_path().join("base.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Base"]);
+
+    // Clean merge: feature adds a new file (no overlap with main)
+    repo.run_git(&["checkout", "-b", "clean-feature"]);
+    fs::write(repo.root_path().join("new.txt"), "new\n").unwrap();
+    repo.run_git(&["add", "new.txt"]);
+    repo.run_git(&["commit", "-m", "Add new file"]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Conflicting merge: feature edits the same file differently
+    repo.run_git(&["checkout", "-b", "conflict-feature"]);
+    fs::write(repo.root_path().join("base.txt"), "conflict\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Edit base"]);
+    repo.run_git(&["checkout", "main"]);
+    fs::write(repo.root_path().join("base.txt"), "main-edit\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Edit base on main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(
+        !repository
+            .has_merge_conflicts("main", "clean-feature")
+            .unwrap()
+    );
+    assert!(
+        repository
+            .has_merge_conflicts("main", "conflict-feature")
+            .unwrap()
+    );
+}
+
+/// has_merge_conflicts returns true (not Err) for orphan branches,
+/// since unrelated histories can't be cleanly merged.
+#[test]
+fn test_has_merge_conflicts_orphan_branch() {
+    let repo = TestRepo::new();
+
+    repo.run_git(&["checkout", "--orphan", "orphan"]);
+    repo.run_git(&["rm", "-rf", "."]);
+    fs::write(repo.root_path().join("orphan.txt"), "orphan\n").unwrap();
+    repo.run_git(&["add", "orphan.txt"]);
+    repo.run_git(&["commit", "-m", "Orphan commit"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Orphan branches have no merge base — treated as conflicting, not as an error
+    assert!(repository.has_merge_conflicts("main", "orphan").unwrap());
+}
+
+/// merge_integration_probe short-circuits for orphan branches:
+/// would_merge_add=true, is_patch_id_match=false.
+#[test]
+fn test_merge_integration_probe_orphan_branch() {
+    let repo = TestRepo::new();
+
+    repo.run_git(&["checkout", "--orphan", "orphan"]);
+    repo.run_git(&["rm", "-rf", "."]);
+    fs::write(repo.root_path().join("orphan.txt"), "orphan\n").unwrap();
+    repo.run_git(&["add", "orphan.txt"]);
+    repo.run_git(&["commit", "-m", "Orphan commit"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let probe = repository
+        .merge_integration_probe("orphan", "main")
+        .unwrap();
+
+    assert!(probe.would_merge_add, "orphan branch always has changes");
+    assert!(
+        !probe.is_patch_id_match,
+        "no patch-id match possible without merge base"
+    );
+}
+
+/// merge_integration_probe correctly detects already-integrated branches
+/// (clean merge that doesn't change target tree).
+#[test]
+fn test_merge_integration_probe_already_integrated() {
+    let repo = TestRepo::new();
+
+    // Create feature, then merge it into main via fast-forward
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(repo.root_path().join("feature.txt"), "content\n").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Feature"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["merge", "feature"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let probe = repository
+        .merge_integration_probe("feature", "main")
+        .unwrap();
+
+    assert!(!probe.would_merge_add, "already-merged branch adds nothing");
+}
+
+// =============================================================================
 // Bug: repo_path() inside git submodules
 // =============================================================================
 

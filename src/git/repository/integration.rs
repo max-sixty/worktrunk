@@ -135,11 +135,23 @@ impl Repository {
     pub fn has_merge_conflicts(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         let base = self.resolve_preferring_branch(base);
         let head = self.resolve_preferring_branch(head);
-        // Use modern merge-tree --write-tree mode which exits with 1 when conflicts exist
-        // (the old 3-argument deprecated mode always exits with 0)
-        // run_command_check returns true for exit 0, false otherwise
-        let clean_merge = self.run_command_check(&["merge-tree", "--write-tree", &base, &head])?;
-        Ok(!clean_merge)
+
+        // Unrelated histories (no common ancestor) can't be merged — that's a conflict.
+        if self.merge_base(&base, &head)?.is_none() {
+            return Ok(true);
+        }
+
+        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
+        let output = self.run_command_output(&["merge-tree", "--write-tree", &base, &head])?;
+
+        if output.status.code() == Some(1) {
+            return Ok(true);
+        }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git merge-tree failed for {base} {head}: {}", stderr.trim());
+        }
+        Ok(false)
     }
 
     /// Check if merging a branch into target would add anything (not already integrated).
@@ -155,16 +167,24 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<Option<bool>> {
-        // Simulate merging branch into target
-        // On conflict, merge-tree exits non-zero and we can't get a clean tree
-        let merge_result = self.run_command(&["merge-tree", "--write-tree", target, branch]);
+        // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
+        let output = self.run_command_output(&["merge-tree", "--write-tree", target, branch])?;
 
-        let Ok(merge_tree) = merge_result else {
-            // merge-tree failed (likely conflicts) — caller should try patch-id fallback
+        if output.status.code() == Some(1) {
+            // Conflicts — caller should try patch-id fallback
             return Ok(None);
-        };
+        }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "git merge-tree failed for {target} {branch}: {}",
+                stderr.trim()
+            );
+        }
 
-        let merge_tree = merge_tree.trim();
+        // Clean merge — first line of stdout is the resulting tree SHA
+        let merge_tree = String::from_utf8_lossy(&output.stdout);
+        let merge_tree = merge_tree.lines().next().unwrap_or("").trim();
         if merge_tree.is_empty() {
             // Empty output is unexpected - treat as having changes
             return Ok(Some(true));
@@ -242,6 +262,17 @@ impl Repository {
     ) -> anyhow::Result<MergeProbeResult> {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
+
+        // Orphan branches (no common ancestor) can't be merge-tree simulated
+        // (git exits 128 with "refusing to merge unrelated histories") and have
+        // no merge-base for patch-id either. Short-circuit: they always have changes.
+        if self.merge_base(&target, &branch)?.is_none() {
+            return Ok(MergeProbeResult {
+                would_merge_add: true,
+                is_patch_id_match: false,
+            });
+        }
+
         let merge_result = self.would_merge_add_to_target(&branch, &target)?;
         match merge_result {
             Some(would_add) => Ok(MergeProbeResult {
