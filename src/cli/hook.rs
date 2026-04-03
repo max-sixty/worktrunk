@@ -273,6 +273,10 @@ pub enum HookCommand {
         vars: Vec<(String, String)>,
     },
 
+    /// Internal: run a serialized pipeline from stdin
+    #[command(hide = true, name = "run-pipeline")]
+    RunPipeline,
+
     /// Manage command approvals
     #[command(
         after_long_help = r#"Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.

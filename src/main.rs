@@ -247,6 +247,7 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             name.as_deref(),
             &vars,
         ),
+        HookCommand::RunPipeline => commands::run_pipeline(),
         HookCommand::Approvals { action } => match action {
             ApprovalsCommand::Add { all } => add_approvals(all),
             ApprovalsCommand::Clear { global } => clear_approvals(global),
@@ -961,7 +962,6 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
-        Commands::RunPipeline { spec_file } => commands::run_pipeline(spec_file),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List {
             subcommand,

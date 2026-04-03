@@ -253,13 +253,7 @@ In summary:
 
 ## How it works
 
-Steps are chained with `&&` in a compound shell command, so a failing step skips all later steps. A multi-entry map spawns its commands as background processes and waits for all to complete before the next step.
-
-For the example above, the generated command is:
-
-```
-{ npm install; } && { { npm run build; } & { npm run lint; } & wait; }
-```
+Steps run in order. A failing step aborts the pipeline — later steps don't run. A multi-entry map spawns its commands concurrently and waits for all to complete before the next step.
 
 Pre-* hooks ignore pipeline structure — all commands run serially regardless, since pre-* hooks are blocking by nature.
 

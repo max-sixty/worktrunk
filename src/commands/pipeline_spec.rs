@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 /// Serialized specification for a background pipeline.
 ///
-/// Written to a temp file by the parent process, read and executed by
-/// `wt _run-pipeline`. Contains raw templates — expansion happens at
-/// execution time in the background process.
+/// Serialized to JSON and piped to stdin of `wt hook run-pipeline`.
+/// Contains raw templates — expansion happens at execution time in
+/// the background process.
 #[derive(Serialize, Deserialize)]
 pub struct PipelineSpec {
     pub worktree_path: PathBuf,

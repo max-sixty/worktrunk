@@ -1,14 +1,14 @@
 //! Pipeline runner for background hook execution.
 //!
-//! The parent `wt` process serializes a [`PipelineSpec`] to a JSON temp file
-//! and spawns `wt _run-pipeline --spec-file <path>` as a detached process
-//! (via `spawn_detached`, which redirects stdout/stderr to a log file and
-//! puts the process in its own process group). This module is that background
+//! The parent `wt` process serializes a [`PipelineSpec`] to JSON and spawns
+//! `wt hook run-pipeline` as a detached process (via `spawn_detached_exec`, which
+//! pipes the JSON to stdin, redirects stdout/stderr to a log file, and puts
+//! the process in its own process group). This module is that background
 //! process.
 //!
 //! ## Lifecycle
 //!
-//! 1. Read and deserialize the spec file, then delete it immediately.
+//! 1. Read and deserialize the spec from stdin.
 //! 2. Open a [`Repository`] from the worktree path in the spec.
 //! 3. Walk steps in order. For each step, expand templates and spawn shell
 //!    children (see Execution model). Abort on the first serial step failure.
@@ -53,7 +53,8 @@
 //! since the expanded string is passed to a shell for interpretation.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::io::Read as _;
+use std::path::Path;
 use std::process::{Child, Stdio};
 
 use anyhow::{Context, bail};
@@ -64,17 +65,16 @@ use worktrunk::shell_exec::ShellConfig;
 
 use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
 
-/// Run a serialized pipeline from a spec file.
+/// Run a serialized pipeline from stdin.
 ///
-/// This is the entry point for `wt _run-pipeline --spec-file <path>`.
+/// This is the entry point for `wt hook run-pipeline`.
 /// The orchestrator is a long-lived background process spawned by
-/// `spawn_detached`; stdout/stderr are already redirected to a log file.
-pub fn run_pipeline(spec_file: PathBuf) -> anyhow::Result<()> {
-    let contents = std::fs::read_to_string(&spec_file)
-        .with_context(|| format!("failed to read pipeline spec from {}", spec_file.display()))?;
-
-    // Delete the spec file immediately — we have the contents in memory.
-    let _ = std::fs::remove_file(&spec_file);
+/// `spawn_detached_exec`; stdout/stderr are already redirected to a log file.
+pub fn run_pipeline() -> anyhow::Result<()> {
+    let mut contents = String::new();
+    std::io::stdin()
+        .read_to_string(&mut contents)
+        .context("failed to read pipeline spec from stdin")?;
 
     let spec: PipelineSpec =
         serde_json::from_str(&contents).context("failed to deserialize pipeline spec")?;

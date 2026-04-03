@@ -67,7 +67,7 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
-        // Pipeline configs (list form) use compound shell command path.
+        // Pipeline configs (list form) use the background pipeline runner.
         // Name filtering falls through to the flat path (individual command execution).
         let has_pipeline = [user_config, project_config]
             .iter()

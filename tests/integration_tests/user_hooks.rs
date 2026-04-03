@@ -2310,8 +2310,8 @@ check = "test -d {{ cwd }} && echo 'cwd_exists=true' > ../cwd_check.txt || echo 
 #[rstest]
 fn test_user_post_start_pipeline_serial_ordering(repo: TestRepo) {
     // Pipeline: serial step creates a marker, concurrent step reads it.
-    // The compound shell command chains them with &&, so the marker
-    // exists when the concurrent step runs.
+    // Serial steps run in order, so the marker exists when the
+    // concurrent step runs.
     repo.write_test_config(
         r#"post-start = [
     "echo SETUP_DONE > pipeline_marker.txt",
@@ -2339,7 +2339,7 @@ fn test_user_post_start_pipeline_serial_ordering(repo: TestRepo) {
 
 #[rstest]
 fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
-    // First step fails → second step should not run (chained with &&).
+    // First step fails → second step should not run (pipeline aborts on failure).
     repo.write_test_config(
         r#"post-start = [
     "exit 1",
@@ -2411,11 +2411,9 @@ fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
 #[rstest]
 fn test_user_post_start_pipeline_lazy_vars_background(repo: TestRepo) {
     // Pipeline step 1 sets a var via git config (not `wt config` — bare `wt`
-    // isn't on PATH in the detached background shell). Step 2 references
-    // {{ vars.name }}, which triggers the lazy expansion path where
-    // build_pipeline_command() wraps it in
-    //   eval "$(path/to/wt step eval --shell-escape ...)"
-    // The absolute binary path comes from std::env::current_exe().
+    // isn't on PATH in the detached background process). Step 2 references
+    // {{ vars.name }}, which is expanded just-in-time by the background
+    // pipeline runner reading fresh vars from git config.
     repo.write_test_config(
         r#"post-start = [
     "git config worktrunk.state.{{ branch }}.vars.name '{{ branch | sanitize }}-postgres'",

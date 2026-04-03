@@ -13,7 +13,7 @@ use worktrunk::styling::{
 use super::command_executor::{
     CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
 };
-use crate::commands::process::{HookLog, spawn_detached};
+use crate::commands::process::{HookLog, spawn_detached, spawn_detached_exec};
 use crate::output::execute_command_in_worktree;
 
 /// A prepared command with its source information.
@@ -265,7 +265,7 @@ pub fn spawn_background_hooks(
 pub(crate) enum PreparedHooks {
     /// Traditional flat commands (string or map config) — spawned independently.
     Flat(Vec<SourcedCommand>),
-    /// Pipeline steps (list config) — spawned as `wt _run-pipeline`.
+    /// Pipeline steps (list config) — spawned as `wt hook run-pipeline`.
     Pipeline(Vec<SourcedStep>),
 }
 
@@ -316,17 +316,16 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     parts.join(" → ")
 }
 
-/// Spawn a hook pipeline as a background `wt _run-pipeline` process.
+/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
 ///
-/// Serializes the pipeline steps to a JSON spec file and spawns
-/// `wt _run-pipeline --spec-file <path>` as a detached process.
-/// The background process expands templates just-in-time and executes
-/// each step via the detected shell.
+/// Serializes the pipeline steps to JSON and spawns `wt hook run-pipeline`
+/// as a detached process, piping the spec to stdin. The background
+/// process expands templates just-in-time and executes each step via
+/// the detected shell.
 ///
 /// Used for post-* hooks when the config uses a pipeline (list form).
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
-    use std::io::Write;
 
     if steps.is_empty() {
         return Ok(());
@@ -354,7 +353,8 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
             PreparedStep::Single(cmd) => Some(&cmd.context_json),
             PreparedStep::Concurrent(cmds) => cmds.first().map(|c| &c.context_json),
         })
-        .map(|json| serde_json::from_str(json).expect("context_json round-trip should never fail"))
+        .map(|json| serde_json::from_str(json).context("failed to deserialize context_json"))
+        .transpose()?
         .unwrap_or_default();
 
     // Build pipeline spec from prepared steps. Use the raw template for lazy
@@ -387,47 +387,29 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         steps: spec_steps,
     };
 
-    // Write spec to a temp file. Use `.keep()` so the file persists after the
-    // parent exits — the background child reads and deletes it.
-    let mut temp = tempfile::Builder::new()
-        .prefix("wt-pipeline-")
-        .suffix(".json")
-        .tempfile()
-        .context("failed to create pipeline spec temp file")?;
-    serde_json::to_writer(&mut temp, &spec).context("failed to write pipeline spec")?;
-    temp.flush().context("failed to flush pipeline spec")?;
-    let spec_path = temp
-        .into_temp_path()
-        .keep()
-        .context("failed to persist pipeline spec temp file")?;
+    let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
 
-    // Build shell command: /path/to/wt _run-pipeline --spec-file /tmp/wt-pipeline-XXXX.json
     let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
-    let shell_cmd = format!(
-        "{} _run-pipeline --spec-file {}",
-        shell_escape::escape(wt_bin.to_string_lossy()),
-        shell_escape::escape(spec_path.to_string_lossy()),
-    );
 
     let hook_log = HookLog::hook(source, hook_type, "pipeline");
     let log_label = format!("{hook_type} {source} pipeline");
 
-    if let Err(err) = spawn_detached(
+    if let Err(err) = spawn_detached_exec(
         ctx.repo,
         ctx.worktree_path,
-        &shell_cmd,
+        &wt_bin,
+        &["hook", "run-pipeline"],
         ctx.branch_or_head(),
         &hook_log,
-        None,
+        &spec_json,
     ) {
-        // Clean up spec file on spawn failure
-        let _ = std::fs::remove_file(&spec_path);
         eprintln!(
             "{}",
             warning_message(format!("Failed to spawn pipeline: {err}"))
         );
     } else {
-        worktrunk::command_log::log_command(&log_label, &shell_cmd, None, None);
+        let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
+        worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
     }
 
     Ok(())
