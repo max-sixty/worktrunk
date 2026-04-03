@@ -3408,4 +3408,27 @@ ff = true
         let result = migrate_content(content);
         assert_eq!(result, content);
     }
+
+    #[test]
+    fn test_warn_unknown_fields_deprecated_key_in_wrong_config() {
+        use crate::config::{ProjectConfig, UserConfig};
+
+        // commit-generation in project config → should warn "belongs in user config"
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "commit-generation".to_string(),
+            toml::Value::Table(toml::map::Map::new()),
+        );
+        let path = std::env::temp_dir().join("test-deprecated-wrong-config-project.toml");
+        warn_unknown_fields::<ProjectConfig>(&path, &unknown, "Project config");
+
+        // ci in user config → should warn "belongs in project config"
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "ci".to_string(),
+            toml::Value::Table(toml::map::Map::new()),
+        );
+        let path = std::env::temp_dir().join("test-deprecated-wrong-config-user.toml");
+        warn_unknown_fields::<UserConfig>(&path, &unknown, "User config");
+    }
 }
