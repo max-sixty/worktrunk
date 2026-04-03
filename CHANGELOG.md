@@ -76,11 +76,11 @@
 
 | Old | New | Action |
 |-----|-----|--------|
-| `[ci]` section | `[forge]` section | `wt config show` warns and generates `.new` migration file |
-| `no-ff` in `[merge]` | `ff` (reversed) | `wt config show` warns and generates `.new` migration file |
-| `no-cd` in `[switch]` | `cd` (reversed) | `wt config show` warns and generates `.new` migration file |
+| `[ci]` section | `[forge]` section | `wt config update` migrates; `wt config show` warns |
+| `no-ff` in `[merge]` | `ff` (reversed) | `wt config update` migrates; `wt config show` warns |
+| `no-cd` in `[switch]` | `cd` (reversed) | `wt config update` migrates; `wt config show` warns |
 
-All deprecated fields continue to work. Run `wt config show` and rename the generated `.new` file to migrate.
+All deprecated fields continue to work. Run `wt config update` to migrate, or `wt config show` for details.
 
 ## 0.33.0
 
