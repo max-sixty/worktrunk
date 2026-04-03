@@ -1372,3 +1372,57 @@ fn test_copy_ignored_skips_nested_worktrees(mut repo: TestRepo) {
         ".worktrees directory should NOT be copied (contains nested worktree)"
     );
 }
+
+/// Regression test for EMFILE ("too many open files") when copying many ignored
+/// directories concurrently. The fix ensures step_copy_ignored creates a single
+/// shared thread pool that copy_dir_recursive reuses, rather than each directory
+/// spawning its own pool.
+#[rstest]
+fn test_copy_ignored_many_directories_no_emfile(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create enough ignored directories to trigger concurrent pool pressure.
+    // 200 directories × 10 files = 2000 files exercises the parallel copy path.
+    let mut gitignore_entries = String::new();
+    let mut worktreeinclude_entries = String::new();
+    for i in 0..200 {
+        let dir_name = format!("ignored-dir-{i}/");
+        let dir = repo.root_path().join(format!("ignored-dir-{i}"));
+        fs::create_dir_all(&dir).unwrap();
+        for j in 0..10 {
+            fs::write(
+                dir.join(format!("file-{j}.txt")),
+                format!("content {i}-{j}"),
+            )
+            .unwrap();
+        }
+        gitignore_entries.push_str(&dir_name);
+        gitignore_entries.push('\n');
+        worktreeinclude_entries.push_str(&dir_name);
+        worktreeinclude_entries.push('\n');
+    }
+    fs::write(repo.root_path().join(".gitignore"), &gitignore_entries).unwrap();
+    fs::write(
+        repo.root_path().join(".worktreeinclude"),
+        &worktreeinclude_entries,
+    )
+    .unwrap();
+
+    run_copy_ignored(&repo, &feature_path);
+
+    // Spot-check a sample of copied directories
+    for i in [0, 99, 199] {
+        for j in [0, 5, 9] {
+            let dst_file = feature_path.join(format!("ignored-dir-{i}/file-{j}.txt"));
+            assert!(
+                dst_file.exists(),
+                "ignored-dir-{i}/file-{j}.txt should be copied"
+            );
+            assert_eq!(
+                fs::read_to_string(&dst_file).unwrap(),
+                format!("content {i}-{j}"),
+                "ignored-dir-{i}/file-{j}.txt content should match"
+            );
+        }
+    }
+}
