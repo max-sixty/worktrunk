@@ -51,8 +51,8 @@ where
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
 ///
-/// Uses the shared copy pool (capped at 4 threads) to avoid SSD I/O contention
-/// from the larger global rayon pool.
+/// Uses the shared copy pool to avoid SSD I/O contention from the larger
+/// global rayon pool.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     in_copy_pool(|| copy_dir_recursive_inner(src, dest, force))
 }
