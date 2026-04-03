@@ -155,15 +155,15 @@ mod tests {
         );
         assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
-        // ci in user config should suggest project config
+        // forge in user config should suggest project config
         let mut unknown = HashMap::new();
         let mut inner = toml::map::Map::new();
         inner.insert(
             "platform".to_string(),
             toml::Value::String("github".to_string()),
         );
-        unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m");
+        unknown.insert("forge".to_string(), toml::Value::Table(inner));
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
     }
 
     // ==================== render_ci_tool_status tests ====================
