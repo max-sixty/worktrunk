@@ -102,7 +102,7 @@ fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["worktree", "list", "--porcelain"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

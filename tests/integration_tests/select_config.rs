@@ -1,43 +1,26 @@
 use worktrunk::config::UserConfig;
+use worktrunk::config::migrate_content;
 
 #[test]
-fn test_select_pager_config_deserialization() {
-    // Verify that SelectConfig with pager field deserializes correctly
-    let config_content = r#"
+fn test_select_pager_config_migrated_to_switch_picker() {
+    // [select] is migrated to [switch.picker] at the TOML level before parsing
+    let content = r#"
 [select]
 pager = "test-pager --custom-flag"
 "#;
-
-    let config: UserConfig = toml::from_str(config_content).unwrap();
-
-    assert!(config.configs.select.is_some());
-    let select = config.configs.select.unwrap();
-    assert_eq!(select.pager, Some("test-pager --custom-flag".to_string()));
-}
-
-#[test]
-fn test_select_pager_config_empty_string() {
-    // Verify that empty string is valid TOML and deserializes
-    let config_content = r#"
-[select]
-pager = ""
-"#;
-
-    let config: UserConfig = toml::from_str(config_content).unwrap();
-
-    assert!(config.configs.select.is_some());
-    let select = config.configs.select.unwrap();
-    assert_eq!(select.pager, Some("".to_string()));
+    let migrated = migrate_content(content);
+    let config: UserConfig = toml::from_str(&migrated).unwrap();
+    let picker = config.switch_picker(None);
+    assert_eq!(picker.pager.as_deref(), Some("test-pager --custom-flag"));
 }
 
 #[test]
 fn test_select_config_optional() {
-    // Verify that config without [select] section is still valid
-    let config_content = r#"
+    // Config without [select] section is still valid
+    let content = r#"
 [list]
 full = true
 "#;
-
-    let config: UserConfig = toml::from_str(config_content).unwrap();
-    assert!(config.configs.select.is_none());
+    let config: UserConfig = toml::from_str(content).unwrap();
+    assert!(config.configs.switch.is_none());
 }

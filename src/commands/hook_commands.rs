@@ -28,7 +28,8 @@ use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_hook_commands,
-    run_hook_with_filter, spawn_background_hooks,
+    prepare_pipeline_hooks_with_configs, run_hook_with_filter, spawn_background_hooks,
+    spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -66,6 +67,24 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
+        // Pipeline configs (list form) use the background pipeline runner.
+        // Name filtering falls through to the flat path (individual command execution).
+        let has_pipeline = [user_config, project_config]
+            .iter()
+            .any(|c| c.is_some_and(CommandConfig::is_pipeline));
+
+        if has_pipeline && name_filter.is_none() {
+            let steps = prepare_pipeline_hooks_with_configs(
+                ctx,
+                user_config,
+                project_config,
+                hook_type,
+                extra_vars,
+                None,
+            )?;
+            return spawn_hook_pipeline(ctx, steps);
+        }
+
         let commands = prepare_hook_commands(
             ctx,
             HookCommandSpec {
@@ -300,10 +319,8 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
 
     // Load project config (error if missing - this command requires it)
     let config_path = repo
-        .current_worktree()
-        .root()?
-        .join(".config")
-        .join("wt.toml");
+        .project_config_path()?
+        .context("Cannot determine project config location — no worktree found")?;
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
@@ -415,7 +432,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current()?;
+    let repo = Repository::current().context("Failed to show hooks")?;
     let config = UserConfig::load().context("Failed to load user config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_config = repo.load_project_config()?;
@@ -532,8 +549,9 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let repo_root = repo.current_worktree().root()?;
-    let config_path = repo_root.join(".config").join("wt.toml");
+    let config_path = repo
+        .project_config_path()?
+        .context("Cannot determine project config location — no worktree found")?;
 
     writeln!(
         out,
@@ -583,7 +601,7 @@ fn render_hook_commands(
     approval_context: Option<(&Approvals, Option<&str>)>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let commands = config.commands();
+    let commands: Vec<_> = config.commands().collect();
     if commands.is_empty() {
         return Ok(());
     }

@@ -1,14 +1,13 @@
 ---
-source: tests/integration_tests/step_alias.rs
+source: tests/integration_tests/spacing_edge_cases.rs
 info:
   program: wt
   args:
-    - step
-    - deploy
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "500"
+    COLUMNS: "50"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -40,7 +39,15 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+  [1mBranch[0m                 [1mStatus[0m        [1mHEAD±[0m  [1mAge
+@ main                       [2m^[22m[2m|[22m               [2m16h
++ [2mchore/update-deps[0m          [2m_[22m                [2m16h
++ feature-a                  [2m↑[22m                [2m16h
++ feature/auth-redesign    [36m?[39m [2m–[22m                [2m16h
++ feature-b                  [2m↑[22m                [2m16h
++ feature-c                  [2m↑[22m                [2m16h
++ [2mfix/login-timeout[0m          [2m_[22m                [2m16h
+
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 5 columns hidden
 
 ----- stderr -----
-[36m◎[39m [36mRunning alias [1mdeploy[22m[39m
-trusted user deploy

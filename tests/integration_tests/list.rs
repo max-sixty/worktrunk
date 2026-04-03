@@ -35,7 +35,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
             .env("GIT_COMMITTER_DATE", time)
             .args(["add", "."])
             .current_dir(path)
-            .output()
+            .run()
             .unwrap();
 
         repo.git_command()
@@ -43,7 +43,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
             .env("GIT_COMMITTER_DATE", time)
             .args(["commit", "-m", &format!("Commit at {}", time_short)])
             .current_dir(path)
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -428,13 +428,12 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 
 #[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a remote-tracking ref for a non-existent remote to exercise the
-    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
-    // This simulates a ref that remains after a remote is deleted
+    // Create a remote-tracking ref for a non-existent remote.
+    // This simulates a ref that remains after a remote is deleted.
     let head_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap()
         .stdout;
     let head_sha = String::from_utf8_lossy(&head_sha);
@@ -446,17 +445,15 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     ]);
 
     // Verify the ref exists but the remote doesn't
-    let remotes = repo.git_command().args(["remote"]).output().unwrap().stdout;
+    let remotes = repo.git_command().args(["remote"]).run().unwrap().stdout;
     let remotes = String::from_utf8_lossy(&remotes);
     assert!(
         !remotes.contains("deleted-remote"),
         "deleted-remote should not exist"
     );
 
-    // Run with --remotes --full to trigger the fallback path
-    // The orphaned ref should be parsed using split_once('/') as fallback
-    // Note: We don't use snapshot testing here because the spinner character
-    // in stderr is non-deterministic (timing-dependent)
+    // The orphaned ref should still appear — split_once('/') parses it correctly
+    // even though the remote no longer exists.
     let output = repo
         .wt_command()
         .args(["list", "--remotes", "--full"])
@@ -468,12 +465,6 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     assert!(
         stdout.contains("deleted-remote/orphaned-branch"),
         "should show orphaned remote branch in output: {stdout}"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown remote 'deleted-remote'"),
-        "should warn about unknown remote: {stderr}"
     );
 }
 
@@ -619,10 +610,10 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
         // Delete the branch after removing the worktree
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 
     repo.commit_with_age("Initial commit", DAY);
@@ -710,7 +701,7 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
         .git_command()
         .current_dir(&feature)
         .args(["rebase", "main"])
-        .output()
+        .run()
         .unwrap();
 
     // Rebase should fail with conflicts - verify we're in rebase state
@@ -785,9 +776,9 @@ fn remove_fixture_worktrees(repo: &mut TestRepo) {
                     "--force",
                     worktree_path.to_str().unwrap(),
                 ])
-                .output();
+                .run();
         }
-        let _ = repo.git_command().args(["branch", "-D", branch]).output();
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
     }
 }
 
@@ -840,9 +831,12 @@ mod tests {
 
 /// Set up a Quick Start example repo with main + feature-auth.
 ///
-/// Creates a simple scenario:
-/// - main: Initial codebase
-/// - feature-auth: Uncommitted changes adding authentication (WIP state)
+/// Creates a scenario with a committed feature branch plus staged WIP:
+/// - main: Initial codebase (1 commit behind remote)
+/// - feature-auth: 1 commit ahead of main + staged WIP changes (adds + removes)
+///
+/// The staged WIP extends auth.rs and restructures lib.rs, producing both
+/// additions and deletions in HEAD± to showcase more of `wt list`.
 ///
 /// Returns the feature-auth worktree path.
 fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
@@ -851,7 +845,55 @@ fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // Create feature-auth worktree
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (not committed - realistic WIP state)
+    // === Commit: Add authentication module (1 commit ahead of main) ===
+    std::fs::write(
+        feature_auth.join("auth.rs"),
+        r#"//! Authentication module for user session management.
+
+use std::time::{Duration, SystemTime};
+
+/// A user session with token and expiry.
+pub struct Session {
+    token: String,
+    expires_at: SystemTime,
+}
+
+impl Session {
+    /// Creates a new session with the given token and TTL.
+    pub fn new(token: String, ttl: Duration) -> Self {
+        Self {
+            token,
+            expires_at: SystemTime::now() + ttl,
+        }
+    }
+
+    /// Returns true if the session has not expired.
+    pub fn is_valid(&self) -> bool {
+        SystemTime::now() < self.expires_at
+    }
+
+    /// Validates the token format.
+    pub fn validate_token(token: &str) -> bool {
+        token.len() >= 32 && token.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    std::fs::write(
+        feature_auth.join("lib.rs"),
+        format!("mod auth;\n\n{}", lib_content),
+    )
+    .unwrap();
+
+    repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
+    repo.commit_staged_with_age("Add authentication module", 2 * HOUR, &feature_auth);
+
+    // === Staged WIP: extend auth + restructure lib (produces both +N and -N in HEAD±) ===
+
+    // Extend auth.rs with is_authenticated and tests
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
@@ -909,15 +951,26 @@ mod tests {
     )
     .unwrap();
 
-    // Update lib.rs to include the new module
-    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    // Restructure lib.rs: remove test module, add pub use + init
     std::fs::write(
         feature_auth.join("lib.rs"),
-        format!("mod auth;\n\n{}", lib_content),
+        r#"mod auth;
+
+pub use auth::Session;
+
+/// Adds two numbers.
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+/// Initializes the application with default settings.
+pub fn init() -> bool {
+    true
+}
+"#,
     )
     .unwrap();
 
-    // Stage all changes (but don't commit - WIP state for wt list demo)
     repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
 
     feature_auth
@@ -1651,7 +1704,7 @@ impl SubscriptionRoot {
         let output = repo
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -1714,6 +1767,13 @@ TODO: Add request/response examples for each endpoint
     // Remove the worktree but keep the branch
     repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
+    // === Create fix-typos worktree (already merged — shows dimmed as removable) ===
+    // Story: A quick typo fix that was already squash-merged into main.
+    // The worktree is still around and can be removed. Shows dimmed in list output.
+    let fix_typos = repo.add_worktree("fix-typos");
+    repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
+    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
@@ -1721,6 +1781,33 @@ TODO: Add request/response examples for each endpoint
     mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
     mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+
+    // === Mock LLM summaries ===
+    // Summary requires --full + [list] summary = true + [commit.generation] command
+    // Pre-populate the cache so tests don't need a real LLM
+    repo.write_test_config(
+        r#"
+[list]
+summary = true
+
+[commit.generation]
+command = "echo unused"
+"#,
+    );
+    mock_summary_cache(
+        repo,
+        "fix-auth",
+        Some(&fix_auth),
+        "Harden auth with constant-time token validation",
+    );
+    mock_summary_cache(
+        repo,
+        "feature-api",
+        Some(&feature_api),
+        "Refactor API to REST architecture with middleware",
+    );
+    mock_summary_cache(repo, "exp", None, "Explore GraphQL schema and resolvers");
+    mock_summary_cache(repo, "wip", None, "Start API documentation");
 
     feature_api
 }
@@ -1731,7 +1818,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let output = repo
         .git_command()
         .args(["rev-parse", branch])
-        .output()
+        .run()
         .unwrap();
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -1753,7 +1840,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     let output = repo
         .git_command()
         .args(["rev-parse", "--git-common-dir"])
-        .output()
+        .run()
         .unwrap();
     let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -1769,6 +1856,82 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     std::fs::create_dir_all(&cache_dir).unwrap();
 
     // Use the same sanitization as production code for cache filenames
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    std::fs::write(&cache_file, &cache_json).unwrap();
+}
+
+/// Mock summary cache by computing the real diff hash and writing a cache entry.
+///
+/// Mirrors `summary::generate_summary_core` — computes the combined diff
+/// (branch + working tree), hashes it, and writes a CachedSummary JSON file.
+fn mock_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    worktree_path: Option<&std::path::Path>,
+    summary: &str,
+) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Compute combined diff (matching compute_combined_diff in summary.rs)
+    let mut diff = String::new();
+
+    // Branch diff: main...<branch>
+    let head_output = repo
+        .git_command()
+        .args(["rev-parse", branch])
+        .run()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    let merge_base = format!("main...{}", head);
+    if let Ok(output) = repo.git_command().args(["diff", &merge_base]).run() {
+        let branch_diff = String::from_utf8_lossy(&output.stdout);
+        diff.push_str(&branch_diff);
+    }
+
+    // Working tree diff (only if worktree exists)
+    if let Some(wt_path) = worktree_path {
+        let wt_str = wt_path.display().to_string();
+        if let Ok(output) = repo
+            .git_command()
+            .args(["-C", &wt_str, "diff", "HEAD"])
+            .run()
+        {
+            let wt_diff = String::from_utf8_lossy(&output.stdout);
+            if !wt_diff.trim().is_empty() {
+                diff.push_str(&wt_diff);
+            }
+        }
+    }
+
+    // Hash the diff (matches summary::hash_diff)
+    let mut hasher = DefaultHasher::new();
+    diff.hash(&mut hasher);
+    let diff_hash = hasher.finish();
+
+    // Write cache file
+    let cache_json = format!(
+        r#"{{"summary":"{}","diff_hash":{},"branch":"{}"}}"#,
+        summary, diff_hash, branch
+    );
+
+    let output = repo
+        .git_command()
+        .args(["rev-parse", "--git-common-dir"])
+        .run()
+        .unwrap();
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+
+    let cache_dir = git_path.join("wt").join("cache").join("summaries");
+    std::fs::create_dir_all(&cache_dir).unwrap();
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
@@ -1831,7 +1994,7 @@ fn test_quickstart_merge(mut repo: TestRepo) {
     // Create feature-auth worktree with one commit
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (same as setup_quickstart_repo)
+    // Add authentication module (full WIP version — all staged, no commit, for wt merge)
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
@@ -1952,8 +2115,8 @@ fn test_readme_example_list(mut repo: TestRepo) {
 
 /// Generate README example: `wt list --full` output
 ///
-/// Shows additional columns: main…± (line diffs in commits) and CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -1961,6 +2124,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
@@ -1968,7 +2132,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -1976,6 +2140,7 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
@@ -2449,7 +2614,7 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
         .git_command()
         .args(["rebase", "main"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Rebase should fail with conflicts - verify we're in rebase state
@@ -2516,7 +2681,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -2526,19 +2691,19 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "remote-file.txt"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Remote commit"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     let remote_sha = {
         let output = repo
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
-            .output()
+            .run()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
@@ -2547,7 +2712,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["reset", "--hard", &base_sha])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Local-only commit (divergence on the local side)
@@ -2555,24 +2720,24 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "local-file.txt"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Local commit"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Wire up upstream tracking deterministically: point origin/feature at the remote-only commit
     repo.git_command()
         .args(["update-ref", "refs/remotes/origin/feature", &remote_sha])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
-        .output()
+        .run()
         .unwrap();
 
     // Make main advance with conflicting change (so feature is behind with conflicts)
@@ -2722,32 +2887,26 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
     // Create an orphan branch (no common ancestor with main)
     repo.git_command()
         .args(["checkout", "--orphan", "assets"])
-        .output()
+        .run()
         .unwrap();
 
     // Clear working tree and create new content
-    repo.git_command()
-        .args(["rm", "-rf", "."])
-        .output()
-        .unwrap();
+    repo.git_command().args(["rm", "-rf", "."]).run().unwrap();
     std::fs::write(repo.root_path().join("asset.txt"), "asset content\n").unwrap();
-    repo.git_command().args(["add", "."]).output().unwrap();
+    repo.git_command().args(["add", "."]).run().unwrap();
     repo.git_command()
         .args(["commit", "-m", "Add asset"])
-        .output()
+        .run()
         .unwrap();
 
     // Go back to main
-    repo.git_command()
-        .args(["checkout", "main"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["checkout", "main"]).run().unwrap();
 
     // Verify no merge base exists (this confirms we have a true orphan branch)
     let output = repo
         .git_command()
         .args(["merge-base", "main", "assets"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         !output.status.success(),
@@ -2776,7 +2935,7 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["worktree", "list", "--porcelain"])
-        .output()
+        .run()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2807,12 +2966,12 @@ fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
     repo.git_command()
         .args(["add", "feature.txt"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["commit", "-m", "Feature work"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
 
     // With threshold=1, feature branch (2 behind) should skip expensive tasks

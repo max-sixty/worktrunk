@@ -14,17 +14,14 @@ The worktrunk Claude Code plugin provides two features:
 
 ## Installation
 
-```bash
-$ claude plugin marketplace add max-sixty/worktrunk
-$ claude plugin install worktrunk@worktrunk
-```
+{{ terminal(cmd="claude plugin marketplace add max-sixty/worktrunk|||claude plugin install worktrunk@worktrunk") }}
 
 ## Configuration skill
 
 The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
 
 - Setting up LLM-generated commit messages
-- Adding project hooks (post-create, pre-merge, pre-commit)
+- Adding project hooks (pre-start, pre-merge, pre-commit)
 - Configuring worktree path templates
 - Fixing shell integration issues
 
@@ -56,11 +53,11 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 
 Set status markers manually for any workflow:
 
-```bash
-$ wt config state marker set "🚧"                   # Current branch
-$ wt config state marker set "✅" --branch feature  # Specific branch
-$ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
-```
+{% terminal() %}
+<span class="cmd">wt config state marker set "🚧"                   # Current branch</span>
+<span class="cmd">wt config state marker set "✅" --branch feature  # Specific branch</span>
+<span class="cmd">git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct</span>
+{% end %}
 
 ## Statusline
 

@@ -1,7 +1,8 @@
 //! README and config synchronization tests
 //!
 //! Verifies that README.md examples stay in sync with their source snapshots and help output.
-//! Also syncs default templates from src/llm.rs to dev/config.example.toml.
+//! Also syncs default templates from src/llm.rs to dev/config.example.toml
+//! and generates dev/wt.example.toml from the project config section.
 //! Automatically updates sections when out of sync.
 //!
 //! Run with: `cargo test --test integration readme_sync`
@@ -74,6 +75,12 @@ static REPO_UNDERSCORE_REGEX: LazyLock<Regex> =
 /// Matches content between USER_CONFIG_START and USER_CONFIG_END markers
 static USER_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?s)<!-- USER_CONFIG_START -->\n(.*?)\n<!-- USER_CONFIG_END -->").unwrap()
+});
+
+/// Regex to extract project config section from src/cli/mod.rs
+/// Matches content between PROJECT_CONFIG_START and PROJECT_CONFIG_END markers
+static PROJECT_CONFIG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- PROJECT_CONFIG_START -->\n(.*?)\n<!-- PROJECT_CONFIG_END -->").unwrap()
 });
 
 /// Regex to find DEFAULT_TEMPLATE marker in user config section (markdown format)
@@ -365,11 +372,11 @@ fn update_section(
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages
-/// Matches: <!-- wt <args> -->\n```bash\n$ wt <args>\n```
+/// Matches: <!-- wt <args> -->\n```bash\nwt <args>\n```
 /// The HTML comment triggers expansion, the code block shows in terminal help
 /// Note: Pattern expects ```bash``` because --help-page converts ```console``` first
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n\$ wt [^\n]+\n```").unwrap());
+    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\nwt [^\n]+\n```").unwrap());
 
 /// Map commands to their snapshot files for help page expansion
 fn command_to_snapshot(command: &str) -> Option<&'static str> {
@@ -420,7 +427,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
         let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = trim_lines(&html);
+        let normalized = encode_leading_spaces(&trim_lines(&html));
 
         // Build the terminal shortcode with standard template markers
         // cmd= parameter enables giallo syntax highlighting on the command line
@@ -466,6 +473,19 @@ fn trim_lines(content: &str) -> String {
         .to_string()
 }
 
+/// Encode leading spaces on the first line as `&#32;` HTML entities.
+/// Zola trims leading whitespace from shortcode bodies, stripping the
+/// two-space gutter that aligns table headers with data rows in `wt list`.
+/// HTML entities survive the trim and render as spaces in `<pre>` blocks.
+fn encode_leading_spaces(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("");
+    let leading = first_line.len() - first_line.trim_start().len();
+    if leading == 0 {
+        return content.to_string();
+    }
+    format!("{}{}", "&#32;".repeat(leading), &content[leading..])
+}
+
 /// Parse snapshot content for docs (with ANSI to HTML conversion)
 fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
     let content = parse_snapshot_raw(content);
@@ -484,19 +504,57 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
 /// the ansi-to-html library will carry styles across lines (e.g., `<b>text\nmore</b>`).
 /// By adding a reset at the end of each line, we ensure proper HTML tag closure.
 fn ensure_line_resets(ansi: &str) -> String {
-    const RESET: &str = "\x1b[0m";
+    ensure_line_resets_impl(ansi, false)
+}
 
-    ansi.lines()
-        .map(|line| {
-            // Add reset at end of line if it doesn't already end with one
-            if line.ends_with(RESET) {
-                line.to_string()
+/// Like `ensure_line_resets`, but also carries active styles to the next line
+///
+/// Clap resets styles at line breaks when wrapping, so a bold span that wraps across
+/// lines loses its bold on the continuation. This variant tracks active SGR styles
+/// and re-opens them at the start of each continuation line, producing clean per-line
+/// HTML like `<b>first part</b>\n<b>second part</b>` instead of `<b>first part</b>\nsecond part`.
+fn ensure_line_resets_with_carry(ansi: &str) -> String {
+    ensure_line_resets_impl(ansi, true)
+}
+
+fn ensure_line_resets_impl(ansi: &str, carry_styles: bool) -> String {
+    const RESET: &str = "\x1b[0m";
+    // Match SGR sequences: ESC [ <params> m
+    static SGR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
+
+    let lines: Vec<&str> = ansi.lines().collect();
+    let mut result = Vec::with_capacity(lines.len());
+    let mut active_styles: Vec<String> = Vec::new();
+
+    for line in lines {
+        // Prepend active styles from previous line (only when carrying)
+        let line = if !carry_styles || active_styles.is_empty() {
+            line.to_string()
+        } else {
+            let prefix: String = active_styles.iter().map(|s| s.as_str()).collect();
+            format!("{prefix}{line}")
+        };
+
+        // Track which styles are active at end of this line
+        active_styles.clear();
+        for cap in SGR_RE.captures_iter(&line) {
+            let params = &cap[1];
+            if params.is_empty() || params == "0" {
+                active_styles.clear();
             } else {
-                format!("{}{}", line, RESET)
+                active_styles.push(format!("\x1b[{params}m"));
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        }
+
+        // Ensure line ends with reset
+        if line.ends_with(RESET) {
+            result.push(line);
+        } else {
+            result.push(format!("{line}{RESET}"));
+        }
+    }
+
+    result.join("\n")
 }
 
 /// Clean up HTML output from ansi-to-html conversion
@@ -546,7 +604,7 @@ fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
 
     for (start, end, header, code_content) in matches.into_iter().rev() {
         // Convert ANSI to HTML
-        let with_resets = ensure_line_resets(code_content);
+        let with_resets = ensure_line_resets_with_carry(code_content);
         let html =
             ansi_to_html(&with_resets).map_err(|e| format!("ANSI conversion failed: {e}"))?;
         let clean_html = clean_ansi_html(&html);
@@ -781,6 +839,7 @@ fn strip_html(content: &str) -> String {
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
 /// - AUTO-GENERATED-HTML terminal markers → plain code blocks
+/// - `{{ terminal(cmd="...") }}` → ```bash code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
     let content = ZOLA_LINK_PATTERN
@@ -807,6 +866,14 @@ fn transform_zola_to_github(content: &str) -> String {
             // Strip HTML, converting .cmd spans to "$ ..." (adds prompt)
             let plain = strip_html(inner);
             format!("```console\n{}\n```", plain)
+        })
+        .into_owned();
+
+    // Transform self-closing terminal shortcodes to bash code blocks for README
+    // These are `{{ terminal(cmd="...") }}` shortcodes without body content
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
         })
         .into_owned();
 
@@ -924,8 +991,8 @@ fn sync_readme_markers(
 ///
 /// The generated file (`dev/config.example.toml`) is the entire source with every line
 /// `# ` prefixed and code fence markers stripped. This creates a fully-commented config
-/// file that serves as inline documentation — users read through, find what they want,
-/// and uncomment the relevant `key = value` line.
+/// file that serves as inline documentation. Code blocks show default values (single `#`
+/// prefix in the output); users uncomment the relevant `key = value` line to customize.
 ///
 /// # Transform Rules
 ///
@@ -1004,104 +1071,211 @@ fn convert_markdown_links_for_config(line: &str) -> String {
         .to_string()
 }
 
-/// Extract user config documentation from src/cli/mod.rs
-///
-/// The user config section is embedded in mod.rs between USER_CONFIG_START
-/// and USER_CONFIG_END markers. This function extracts that content for
-/// transforming into config.example.toml.
-fn extract_user_config_from_cli(cli_mod_content: &str) -> String {
-    USER_CONFIG_PATTERN
+/// Extract a config section from src/cli/mod.rs by marker pattern.
+fn extract_config_section(cli_mod_content: &str, pattern: &Regex, label: &str) -> String {
+    pattern
         .captures(cli_mod_content)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())
-        .expect("USER_CONFIG_START/END markers not found in src/cli/mod.rs")
+        .unwrap_or_else(|| panic!("{label} markers not found in src/cli/mod.rs"))
+}
+
+/// Verify a config example file is in sync with its source section in mod.rs.
+///
+/// If out of sync, overwrites the file and panics so CI fails.
+fn assert_config_example_in_sync(
+    cli_mod_content: &str,
+    pattern: &Regex,
+    marker_label: &str,
+    example_path: &Path,
+) {
+    let source = extract_config_section(cli_mod_content, pattern, marker_label);
+    let expected = trim_lines(&transform_config_source_to_toml(&source));
+
+    let current = fs::read_to_string(example_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", example_path.display(), e));
+    let current = trim_lines(&current);
+
+    if current != expected {
+        fs::write(example_path, format!("{}\n", expected)).unwrap();
+        panic!(
+            "{} out of sync with {} section in src/cli/mod.rs. \
+             Run tests locally and commit the changes.",
+            example_path.file_name().unwrap().to_string_lossy(),
+            marker_label,
+        );
+    }
 }
 
 #[test]
 fn test_config_source_generates_example_toml() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cli_mod_path = project_root.join("src/cli/mod.rs");
-    let config_path = project_root.join("dev/config.example.toml");
+    let cli_mod_content = fs::read_to_string(project_root.join("src/cli/mod.rs"))
+        .unwrap_or_else(|e| panic!("Failed to read src/cli/mod.rs: {e}"));
 
-    let cli_mod_content = fs::read_to_string(&cli_mod_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", cli_mod_path.display(), e));
-
-    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
-    let expected = transform_config_source_to_toml(&user_config_content);
-    let expected = trim_lines(&expected);
-
-    let current = fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
-    let current = trim_lines(&current);
-
-    if current != expected {
-        fs::write(&config_path, format!("{}\n", expected)).unwrap();
-        panic!(
-            "config.example.toml out of sync with user config section in src/cli/mod.rs. \
-             Run tests locally and commit the changes."
-        );
-    }
+    assert_config_example_in_sync(
+        &cli_mod_content,
+        &USER_CONFIG_PATTERN,
+        "USER_CONFIG_START/END",
+        &project_root.join("dev/config.example.toml"),
+    );
 }
 
-/// Verify that all config section keys appear in the user config documentation.
+#[test]
+fn test_project_config_source_generates_example_toml() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_content = fs::read_to_string(project_root.join("src/cli/mod.rs"))
+        .unwrap_or_else(|e| panic!("Failed to read src/cli/mod.rs: {e}"));
+
+    assert_config_example_in_sync(
+        &cli_mod_content,
+        &PROJECT_CONFIG_PATTERN,
+        "PROJECT_CONFIG_START/END",
+        &project_root.join("dev/wt.example.toml"),
+    );
+}
+
+/// Verify that all user config struct fields are documented in the user config example.
 ///
-/// When a new config section is added (e.g., `[switch.picker]`), this test ensures
-/// it also appears in the user config docs in `src/cli/mod.rs`. Without this, new
-/// config sections can ship undocumented.
+/// Section names are derived from `UserConfig`'s JsonSchema, so adding a new field
+/// to the struct automatically fails this test if the docs aren't updated.
 #[test]
 fn test_config_docs_include_all_sections() {
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{DEPRECATED_SECTION_KEYS, valid_user_config_keys};
+    use worktrunk::git::HookType;
+
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let cli_mod_path = project_root.join("src/cli/mod.rs");
     let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
-    let user_config_content = extract_user_config_from_cli(&cli_mod_content);
+    let user_config_content =
+        extract_config_section(&cli_mod_content, &USER_CONFIG_PATTERN, "USER_CONFIG");
 
-    // Config sections that MUST be documented (non-deprecated, non-hook table sections).
-    // When adding a new config section, add it here — the test will fail if it's
-    // missing from the docs.
-    let required_sections = [
-        "list",
-        "commit",
-        "commit.generation",
-        "merge",
-        "switch.picker",
-    ];
+    let all_keys = valid_user_config_keys();
 
-    // Deprecated sections — should NOT appear in docs (old users get migration guidance)
-    let deprecated_sections = ["select", "commit-generation"];
+    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    let hook_keys: HashSet<String> = HookType::iter()
+        .map(|h| h.to_string())
+        .chain(std::iter::once("post-create".to_string()))
+        .collect();
 
-    // Check required sections appear as TOML headers in code blocks
-    for section in &required_sections {
-        let header = format!("[{section}]");
-        assert!(
-            user_config_content.contains(&header),
-            "Config section `{header}` is missing from user config docs in src/cli/mod.rs.\n\
-             All config sections must be documented between USER_CONFIG_START/END markers."
-        );
-    }
+    // Keys that are bare scalars or internal flags, not TOML section headers
+    let non_section_keys: HashSet<&str> = [
+        "worktree-path",
+        "skip-shell-integration-prompt",
+        "skip-commit-generation-prompt",
+    ]
+    .into();
 
-    // Check deprecated sections do NOT appear as TOML headers
-    for section in &deprecated_sections {
-        let header = format!("[{section}]");
-        assert!(
-            !user_config_content.contains(&header),
-            "Deprecated section `{header}` should not appear in user config docs.\n\
-             Use the new section name instead."
-        );
+    // Separate schema keys into section keys (excluding hooks and bare scalars)
+    let section_keys: Vec<&String> = all_keys
+        .iter()
+        .filter(|k| !hook_keys.contains(*k) && !non_section_keys.contains(k.as_str()))
+        .collect();
+
+    // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
+    for key in &section_keys {
+        if DEPRECATED_SECTION_KEYS
+            .iter()
+            .any(|d| d.key == key.as_str())
+        {
+            let header = format!("[{key}]");
+            assert!(
+                !user_config_content.contains(&header),
+                "Deprecated section `{header}` should not appear in user config docs.\n\
+                 Use the new section name instead."
+            );
+        } else {
+            let header = format!("[{key}]");
+            let nested = format!("[{key}.");
+            assert!(
+                user_config_content.contains(&header) || user_config_content.contains(&nested),
+                "Config section `[{key}]` (from UserConfig schema) is missing from user \
+                 config docs in src/cli/mod.rs.\nAll config sections must be documented between \
+                 USER_CONFIG_START/END markers."
+            );
+        }
     }
 }
 
+/// Verify that all project config struct fields are documented in the project config example.
+///
+/// Section names are derived from `ProjectConfig`'s JsonSchema, so adding a new field
+/// to the struct automatically fails this test if the docs aren't updated.
+#[test]
+fn test_project_config_docs_include_all_sections() {
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{DEPRECATED_SECTION_KEYS, valid_project_config_keys};
+    use worktrunk::git::HookType;
+
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let cli_mod_content = fs::read_to_string(&cli_mod_path).unwrap();
+    let project_config_content =
+        extract_config_section(&cli_mod_content, &PROJECT_CONFIG_PATTERN, "PROJECT_CONFIG");
+
+    let all_keys = valid_project_config_keys();
+
+    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    let hook_keys: HashSet<String> = HookType::iter()
+        .map(|h| h.to_string())
+        .chain(std::iter::once("post-create".to_string()))
+        .collect();
+
+    // Separate schema keys into section keys and hook keys
+    let section_keys: Vec<&String> = all_keys
+        .iter()
+        .filter(|k| !hook_keys.contains(*k))
+        .collect();
+
+    // Check non-deprecated sections appear as TOML headers ([key] or [key.something])
+    for key in &section_keys {
+        if DEPRECATED_SECTION_KEYS
+            .iter()
+            .any(|d| d.key == key.as_str())
+        {
+            let header = format!("[{key}]");
+            assert!(
+                !project_config_content.contains(&header),
+                "Deprecated section `{header}` should not appear in project config docs.\n\
+                 Use the new section name instead."
+            );
+        } else {
+            let header = format!("[{key}]");
+            let nested = format!("[{key}.");
+            assert!(
+                project_config_content.contains(&header)
+                    || project_config_content.contains(&nested),
+                "Config section `[{key}]` (from ProjectConfig schema) is missing from project \
+                 config docs in src/cli/mod.rs.\nAll config sections must be documented between \
+                 PROJECT_CONFIG_START/END markers."
+            );
+        }
+    }
+
+    // Hooks section should exist (individual hook keys are documented in user config
+    // and cross-referenced from project config)
+    assert!(
+        project_config_content.contains("## Hooks"),
+        "Hooks section heading missing from project config docs.\n\
+         Expected `## Hooks` between PROJECT_CONFIG_START/END markers."
+    );
+}
+
 /// Verify that LLM tool commands in docs/content/llm-commits.md match
-/// the double-commented examples in config.example.toml (the single source of truth).
+/// the examples in config.example.toml (the single source of truth).
 #[test]
 fn test_llm_docs_commands_match_config_example() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_example = fs::read_to_string(project_root.join("dev/config.example.toml")).unwrap();
     let llm_docs = fs::read_to_string(project_root.join("docs/content/llm-commits.md")).unwrap();
 
-    // Extract commands from config example: "# # command = ..." lines
+    // Extract commands from config example: "# command = ..." lines
     let config_commands: Vec<String> = config_example
         .lines()
-        .filter_map(|line| line.strip_prefix("# # "))
+        .filter_map(|line| line.strip_prefix("# "))
         .filter(|line| line.starts_with("command = "))
         .filter_map(|line| {
             let table: toml::Table = toml::from_str(line).ok()?;
@@ -1136,7 +1310,7 @@ fn test_llm_docs_commands_match_config_example() {
 }
 
 /// Verify that LLM tool commands in Taskfile.yaml bench-llm-commits match
-/// the double-commented examples in config.example.toml (the single source of truth).
+/// the examples in config.example.toml (the single source of truth).
 /// Only compares tools present in both files — either side may have tools the other lacks.
 #[test]
 fn test_taskfile_llm_commands_match_config_example() {
@@ -1145,13 +1319,13 @@ fn test_taskfile_llm_commands_match_config_example() {
     let taskfile = fs::read_to_string(project_root.join("Taskfile.yaml")).unwrap();
 
     // Extract tool -> command from config example using h3 headings for tool names
-    // e.g. "# ### Claude Code" heading followed by '# # command = "..."' line
+    // e.g. "# ### Claude Code" heading followed by '# command = "..."' line
     let mut config_commands = std::collections::HashMap::new();
     let mut current_tool: Option<String> = None;
     for line in config_example.lines() {
         if let Some(heading) = line.strip_prefix("# ### ") {
             current_tool = heading.split_whitespace().next().map(|s| s.to_lowercase());
-        } else if let Some(cmd_line) = line.strip_prefix("# # ")
+        } else if let Some(cmd_line) = line.strip_prefix("# ")
             && cmd_line.starts_with("command = ")
             && let Some(ref tool) = current_tool
             && let Ok(table) = toml::from_str::<toml::Table>(cmd_line)
@@ -1554,7 +1728,7 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             continue;
         }
 
-        // Expand command placeholders ($ wt list -> terminal shortcode with snapshot output)
+        // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
         let snapshots_dir = project_root.join("tests/snapshots");
         let generated = match expand_command_placeholders(&generated, &snapshots_dir) {
             Ok(expanded) => expanded,
@@ -1642,9 +1816,16 @@ static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
 static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
 
-/// Regex to strip Zola terminal shortcodes ({% terminal() %}...{% end %})
-static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
+/// Regex to strip body-form terminal shortcodes ({% terminal(...) %}...{% end %}).
+/// Optionally captures the cmd parameter value (group 1) and body (group 2).
+static ZOLA_TERMINAL_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)\{%\s*terminal\((?:cmd="([^"]*)"\s*)?\)\s*%\}\n?(.*?)\{%\s*end\s*%\}"#)
+        .unwrap()
+});
+
+/// Regex to strip self-closing terminal shortcodes ({{ terminal(cmd="...") }}).
+static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\{\{ terminal\(cmd="([^"]*)"\) \}\}"#).unwrap());
 
 /// Regex to replace Zola experimental shortcode with plain text for skill files
 static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
@@ -1658,6 +1839,43 @@ static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex to strip HTML figure/picture elements (demo GIFs)
 static HTML_FIGURE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
+
+/// Regex to strip `<span class="cmd">...</span>` lines from shortcode bodies.
+/// These duplicate the cmd parameter content (the template uses `clean_body` for this).
+static SPAN_CMD_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">[^<]*</span>\n?"#).unwrap());
+
+/// Regex to convert `<span class="cmd">X</span>` → `$ X` for no-cmd body shortcodes.
+static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
+
+/// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
+/// Each cmd line gets `$ ` prefix; comment lines (`#`) and blank lines pass through.
+fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
+    let mut result = String::from("```bash\n");
+    for line in cmd.split("|||") {
+        if line.is_empty() {
+            result.push('\n');
+        } else if line.starts_with('#') {
+            result.push_str(line);
+            result.push('\n');
+        } else {
+            result.push_str("$ ");
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    // Strip <span class="cmd"> lines that duplicate the cmd parameter
+    let clean_body = SPAN_CMD_PATTERN.replace_all(body, "");
+    if !clean_body.is_empty() {
+        result.push_str(&clean_body);
+        if !clean_body.ends_with('\n') {
+            result.push('\n');
+        }
+    }
+    result.push_str("```");
+    result
+}
 
 /// Transform docs content for skill file consumption
 ///
@@ -1681,8 +1899,35 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes, keeping inner content
-    let content = ZOLA_TERMINAL_PATTERN.replace_all(&content, "$1");
+    // Strip terminal shortcodes, converting cmd parameters back to `$ command` blocks.
+    // Commands joined by `|||` are split into separate lines.
+    let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
+        let body = caps.get(2).map_or("", |m| m.as_str());
+        match caps.get(1) {
+            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body),
+            None if body.contains(r#"<span class="cmd">"#) => {
+                // Old-style body shortcode with <span class="cmd"> — convert to $ lines
+                let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
+                format!("```bash\n{converted}```")
+            }
+            // Terminal bodies without cmd are styled CLI output demos (colored
+            // spans, bold text). Strip HTML to plain text for skill files.
+            None => strip_html(body),
+        }
+    });
+    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+        });
+
+    // Strip rawcode shortcodes (keep content)
+    let content = ZOLA_RAWCODE_PATTERN.replace_all(&content, "$1");
+
+    // Replace placeholders used to escape Tera template syntax in cmd parameters
+    let content = content
+        .replace("__WT_OPEN2__", "{{")
+        .replace("__WT_CLOSE2__", "}}")
+        .replace("__WT_QUOT__", "\"");
 
     // Strip AUTO-GENERATED marker comments (keep content)
     let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");
@@ -1697,38 +1942,15 @@ fn transform_docs_for_skill(content: &str) -> String {
         "[experimental]",
     );
 
-    // Transform Zola internal links to full URLs
-    let content = ZOLA_LINK_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            let text = caps.get(1).unwrap().as_str();
-            let page = caps.get(2).unwrap().as_str();
-            let anchor = caps.get(3).map_or("", |m| m.as_str());
-            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
-        })
-        .into_owned();
-
-    // Remove "See also" section (just contains links to other pages)
-    let content = remove_section(&content, "## See also");
-
-    // Clean up multiple consecutive blank lines
-    let content = content
-        .lines()
-        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
-            let is_blank = line.trim().is_empty();
-            if !(is_blank && prev_blank) {
-                acc.push(line);
-            }
-            (acc, is_blank)
-        })
-        .0
-        .join("\n");
-
     // Prepend title as H1 if extracted
-    if let Some(title) = title {
+    let content = if let Some(title) = title {
         format!("# {}\n\n{}", title, content.trim())
     } else {
         content.trim().to_string()
-    }
+    };
+
+    // Apply shared finalization: Zola links, See also removal, blank line cleanup
+    finalize_skill_content(&content)
 }
 
 /// Remove a section from markdown content (from heading to next same-level heading)
@@ -1756,6 +1978,32 @@ fn remove_section(content: &str, heading: &str) -> String {
     }
 }
 
+/// Convert ```console blocks with $ to terminal shortcodes in all docs files.
+///
+/// Command pages already have this conversion via --help-page, but hand-written
+/// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
+/// and get the same treatment.
+fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
+    let docs_dir = project_root.join("docs/content");
+    let mut updated_files = Vec::new();
+
+    for entry in fs::read_dir(&docs_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let content = fs::read_to_string(&path).unwrap();
+            let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
+            if converted != content {
+                fs::write(&path, &converted).unwrap();
+                let rel = path.strip_prefix(project_root).unwrap_or(&path);
+                updated_files.push(rel.display().to_string());
+            }
+        }
+    }
+
+    updated_files
+}
+
 /// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
 /// (excluding _index.md which is a Zola template)
 /// Returns (errors, updated_files)
@@ -1781,19 +2029,29 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     entries.sort();
 
     for name in &entries {
-        let docs_file = docs_dir.join(name);
         let skill_file = skill_dir.join(name);
+        let cmd_name = name.trim_end_matches(".md");
 
-        if !docs_file.exists() {
-            errors.push(format!("Missing docs file: {}", docs_file.display()));
-            continue;
-        }
-
-        let docs_content = fs::read_to_string(&docs_file)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
-
-        // Transform and use content directly (docs already have proper H1 titles)
-        let expected = transform_docs_for_skill(&docs_content);
+        let expected = if COMMAND_PAGES.contains(&cmd_name) {
+            // Command pages: generate directly from --help-page --plain (no HTML)
+            match generate_skill_from_help(cmd_name, project_root) {
+                Ok(content) => content,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            }
+        } else {
+            // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
+            let docs_file = docs_dir.join(name);
+            if !docs_file.exists() {
+                errors.push(format!("Missing docs file: {}", docs_file.display()));
+                continue;
+            }
+            let docs_content = fs::read_to_string(&docs_file)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
+            transform_docs_for_skill(&docs_content)
+        };
         let expected = trim_lines(&expected);
 
         let current = if skill_file.exists() {
@@ -1820,7 +2078,148 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     (errors, updated_files)
 }
 
+/// Generate a skill reference file directly from `--help-page --plain` output.
+///
+/// For command pages, this produces clean markdown without HTML. The only
+/// post-processing needed is Zola link transformation and section cleanup.
+fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, String> {
+    let output = wt_command()
+        .args([cmd, "--help-page", "--plain"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt --help-page --plain");
+
+    if !output.status.success() {
+        return Err(format!(
+            "'wt {} --help-page --plain' failed (exit {}): {}",
+            cmd,
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    if content.trim().is_empty() {
+        return Err(format!(
+            "Empty output from 'wt {} --help-page --plain': {}",
+            cmd,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(finalize_skill_content(&content))
+}
+
+/// Apply final transforms shared between command and non-command skill files:
+/// Zola internal links → full URLs, remove "See also" section, collapse blank lines.
+fn finalize_skill_content(content: &str) -> String {
+    // Transform Zola internal links to full URLs
+    let content = ZOLA_LINK_PATTERN
+        .replace_all(content, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            let page = caps.get(2).unwrap().as_str();
+            let anchor = caps.get(3).map_or("", |m| m.as_str());
+            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
+        })
+        .into_owned();
+
+    // Remove "See also" section (just contains links to other pages)
+    let content = remove_section(&content, "## See also");
+
+    // Clean up multiple consecutive blank lines
+    content
+        .lines()
+        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
+            let is_blank = line.trim().is_empty();
+            if !(is_blank && prev_blank) {
+                acc.push(line);
+            }
+            (acc, is_blank)
+        })
+        .0
+        .join("\n")
+}
+
+/// Sync .well-known/agent-skills/ index.json and verify symlink.
+///
+/// The skill files are served via a symlink:
+///   docs/static/.well-known/agent-skills/worktrunk → ../../../../skills/worktrunk
+///
+/// This function verifies the symlink is correct and generates index.json
+/// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
+fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
+    let mut updated_files = Vec::new();
+
+    let well_known_dir = project_root.join("docs/static/.well-known/agent-skills");
+    let symlink_path = well_known_dir.join("worktrunk");
+
+    // Verify the symlink exists and points to the right place
+    let expected_target = Path::new("../../../../skills/worktrunk");
+    match fs::read_link(&symlink_path) {
+        Ok(target) => {
+            assert_eq!(
+                target,
+                expected_target,
+                "Symlink at {} points to {:?}, expected {:?}",
+                symlink_path.display(),
+                target,
+                expected_target
+            );
+        }
+        Err(_) => {
+            panic!(
+                "Expected symlink at {} → {:?}, but it doesn't exist or isn't a symlink",
+                symlink_path.display(),
+                expected_target
+            );
+        }
+    }
+
+    // Read SKILL.md (through the symlink) for digest and description
+    let skill_md_path = symlink_path.join("SKILL.md");
+    let skill_md_content = fs::read_to_string(&skill_md_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+
+    // Generate index.json with SHA-256 digest of SKILL.md
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let file_bytes = fs::read(&skill_md_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+        let hash = Sha256::digest(&file_bytes);
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        format!("sha256:{hex}")
+    };
+
+    // Parse the description from SKILL.md frontmatter
+    let description = skill_md_content
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---"))
+        .and_then(|(frontmatter, _)| {
+            frontmatter
+                .lines()
+                .find(|line| line.starts_with("description:"))
+                .map(|line| line.trim_start_matches("description:").trim().to_string())
+        })
+        .unwrap_or_default();
+
+    let index_json = format!(
+        "{{\n  \"$schema\": \"https://schemas.agentskills.io/discovery/0.2.0/schema.json\",\n  \"skills\": [\n    {{\n      \"name\": \"worktrunk\",\n      \"type\": \"skill-md\",\n      \"description\": {description},\n      \"url\": \"./worktrunk/SKILL.md\",\n      \"digest\": \"{digest}\"\n    }}\n  ]\n}}\n",
+        description = serde_json::to_string(&description).unwrap(),
+    );
+
+    let index_dst = well_known_dir.join("index.json");
+    let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
+    if current_index != index_json {
+        fs::write(&index_dst, &index_json)
+            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
+        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+    }
+
+    updated_files
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
+/// then .well-known/agent-skills/ (skills → docs/static).
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
@@ -1829,13 +2228,26 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
 
+    // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
+    // (command pages already converted via --help-page; this catches hand-written docs)
+    let console_files = convert_console_blocks_in_docs(project_root);
+
     // Step 2: Sync skill files (docs/content/*.md → skills/*)
     // This reads the freshly-written docs from step 1
     let (skill_errors, skill_files) = sync_skill_files(project_root);
 
+    // Step 3: Sync .well-known/agent-skills/ (skills/ → docs/static/)
+    // This reads the freshly-written skills from step 2
+    let well_known_files = sync_well_known_skills(project_root);
+
     // Aggregate results
     let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files.into_iter().chain(skill_files).collect();
+    let all_files: Vec<_> = cmd_files
+        .into_iter()
+        .chain(console_files)
+        .chain(skill_files)
+        .chain(well_known_files)
+        .collect();
 
     if !all_errors.is_empty() {
         panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));
@@ -1847,4 +2259,25 @@ fn test_command_pages_and_skill_files_are_in_sync() {
             all_files.join("\n  ")
         );
     }
+}
+
+/// Verify that post_process_for_html() transforms the approval prompt code block
+/// into a styled terminal shortcode. If the source text in cli/mod.rs changes
+/// without updating the replacement in help.rs, the .replace() silently stops
+/// matching and the web docs fall back to a plain code block.
+#[test]
+fn test_approval_prompt_styled_in_hook_page() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = wt_command()
+        .args(["hook", "--help-page"])
+        .current_dir(project_root)
+        .output()
+        .expect("Failed to run wt hook --help-page");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#"class="y""#),
+        "hook --help-page should contain styled approval prompt (class=\"y\" for yellow ▲). \
+         If cli/mod.rs approval example changed, update the replacement in help.rs post_process_for_html()."
+    );
 }

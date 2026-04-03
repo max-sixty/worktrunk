@@ -1,15 +1,13 @@
 ---
-source: tests/integration_tests/step_alias.rs
+source: tests/integration_tests/spacing_edge_cases.rs
 info:
   program: wt
   args:
-    - step
-    - shared
-    - "--dry-run"
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "500"
+    COLUMNS: "60"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -41,7 +39,15 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+  [1mBranch[0m                                   [1mStatus[0m      [1mmain↕
+@ main                                         [2m^[22m[2m|[22m    
++ feature-a                                    [2m↑[22m      [32m↑1[0m    
++ feature-b                                    [2m↑[22m      [32m↑1[0m    
++ feature-c                                    [2m↑[22m      [32m↑1[0m    
++ feature/implement-oauth2-social-login      [36m?[39m [2m–[22m     
++ [2mfix/database-connection-pool-exhaustion[0m      [2m_[22m     
++ [2mshort[0m                                        [2m_[22m     
+
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 3 ahead, 6 columns hidden
 
 ----- stderr -----
-[2m○[22m Alias [1mshared[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m user-version

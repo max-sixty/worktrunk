@@ -104,10 +104,10 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
     // Rename main to something non-standard so default branch can't be determined
     repo.git_command()
         .args(["branch", "-m", "main", "xyz"])
-        .status()
+        .run()
         .unwrap();
-    repo.git_command().args(["branch", "abc"]).status().unwrap();
-    repo.git_command().args(["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).run().unwrap();
+    repo.git_command().args(["branch", "def"]).run().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // wt config state default-branch get should fail with an error
@@ -138,7 +138,7 @@ fn test_state_set_default_branch(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "develop");
 }
@@ -163,7 +163,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.default-branch"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -257,7 +257,7 @@ fn test_state_get_ci_status(repo: TestRepo) {
 fn test_state_get_ci_status_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Without any CI configured, should return "no-ci"
@@ -296,7 +296,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
         "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
@@ -342,7 +342,7 @@ fn test_state_get_marker_empty(repo: TestRepo) {
 fn test_state_get_marker_specific_branch(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set a marker for feature branch (using JSON format)
@@ -373,7 +373,7 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
 fn test_state_set_marker_branch_specific(repo: TestRepo) {
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "set", &["🔧", "--branch", "feature"])
@@ -404,7 +404,7 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.main.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -424,7 +424,7 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.state.feature.marker"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success());
 }
@@ -446,7 +446,7 @@ fn test_state_clear_marker_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .output()
+        .run()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
@@ -608,7 +608,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Marker (using JSON format)
@@ -620,6 +620,12 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         "feature",
         r#"{"checked_at":1704067200,"head":"abc123","branch":"feature"}"#,
     );
+
+    // Vars data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
+        .run()
+        .unwrap();
 
     // Logs
     let git_dir = repo.root_path().join(".git");
@@ -635,7 +641,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.history"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
@@ -644,11 +650,21 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.state.main.marker"])
-            .output()
+            .run()
             .unwrap()
             .status
             .code()
             == Some(1)
+    );
+    assert!(
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.state.main.vars.env"])
+            .run()
+            .unwrap()
+            .status
+            .code()
+            == Some(1),
+        "Vars data should be cleared"
     );
     // CI cache is now file-based, verify the cache file is cleared
     let ci_cache_dir = git_dir.join("wt").join("cache").join("ci-status");
@@ -687,6 +703,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mBRANCH MARKERS[39m
+        [107m [0m (none)
+
+        [36mVARS[39m
         [107m [0m (none)
 
         [36mCI STATUS CACHE[39m
@@ -743,7 +762,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps for deterministic age)
@@ -753,7 +772,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args([
@@ -761,7 +780,17 @@ fn test_state_get_comprehensive(repo: TestRepo) {
             "worktrunk.state.bugfix.marker",
             &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
+        .unwrap();
+
+    // Set up vars data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.vars.port", "3000"])
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -809,7 +838,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up previous branch
     repo.git_command()
         .args(["config", "worktrunk.history", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps)
@@ -819,7 +848,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
             "worktrunk.state.feature.marker",
             &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
         ])
-        .status()
+        .run()
+        .unwrap();
+
+    // Set up vars data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
+        .run()
         .unwrap();
 
     // Set up CI cache (file-based)
@@ -846,6 +881,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     assert_eq!(markers[0]["branch"], "feature");
     assert_eq!(markers[0]["marker"], "🚧 WIP");
     assert_eq!(markers[0]["set_at"], TEST_EPOCH);
+
+    // Check vars data
+    let vars = json["vars"].as_array().unwrap();
+    assert_eq!(vars.len(), 1);
+    assert_eq!(vars[0]["branch"], "main");
+    assert_eq!(vars[0]["key"], "env");
+    assert_eq!(vars[0]["value"], "staging");
 
     // Check CI status
     let ci_status = json["ci_status"].as_array().unwrap();
@@ -947,7 +989,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
     // Create a feature branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     // Add CI cache via git config for the specific branch
@@ -956,7 +998,7 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
-    .status()
+    .run()
     .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -971,7 +1013,7 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
     // Create a feature branch without any CI cache
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
@@ -986,7 +1028,7 @@ fn test_state_clear_marker_specific_branch(repo: TestRepo) {
     // Create a feature branch and set marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
     repo.set_marker("feature", "🔧");
 
@@ -1002,7 +1044,7 @@ fn test_state_clear_marker_specific_branch_not_set(repo: TestRepo) {
     // Create a feature branch without any marker
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
@@ -1050,11 +1092,11 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
     // Set hints via git config (as the code stores them)
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
@@ -1077,11 +1119,11 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1092,7 +1134,7 @@ fn test_state_hints_clear_all(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get-regexp", r"^worktrunk\.hints\."])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // No matches
 }
@@ -1102,7 +1144,7 @@ fn test_state_hints_clear_single(repo: TestRepo) {
     // Set a single hint
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
@@ -1115,11 +1157,11 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     // Set hints
     repo.git_command()
         .args(["config", "worktrunk.hints.worktree-path", "true"])
-        .status()
+        .run()
         .unwrap();
     repo.git_command()
         .args(["config", "worktrunk.hints.another-hint", "true"])
-        .status()
+        .run()
         .unwrap();
 
     let output = wt_state_cmd(&repo, "hints", "clear", &["worktree-path"])
@@ -1132,14 +1174,14 @@ fn test_state_hints_clear_specific(repo: TestRepo) {
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.worktree-path"])
-        .output()
+        .run()
         .unwrap();
     assert!(!output.status.success()); // Cleared
 
     let output = repo
         .git_command()
         .args(["config", "--get", "worktrunk.hints.another-hint"])
-        .output()
+        .run()
         .unwrap();
     assert!(output.status.success()); // Still there
 }
@@ -1304,7 +1346,7 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     // Create log file for a different branch
     repo.git_command()
         .args(["branch", "feature"])
-        .status()
+        .run()
         .unwrap();
 
     let git_dir = repo.root_path().join(".git");
@@ -1388,5 +1430,424 @@ fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
         stderr.contains("Unknown hook type"),
         "Expected 'Unknown hook type' error: {}",
         stderr
+    );
+}
+
+// ============================================================================
+// vars
+// ============================================================================
+
+#[rstest]
+fn test_vars_set_and_get(repo: TestRepo) {
+    // Set a value
+    let output = wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Set"), "Expected success message: {stderr}");
+
+    // Get the value
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "staging");
+}
+
+#[rstest]
+fn test_vars_set_json_value(repo: TestRepo) {
+    let json = r#"{"port":3000,"debug":true}"#;
+    let output = wt_state_cmd(&repo, "vars", "set", &[&format!("config={json}")])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["config"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), json);
+}
+
+#[rstest]
+fn test_vars_get_missing_key(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "get", &["nonexistent"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    // Empty output for missing keys
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_list(repo: TestRepo) {
+    // Set multiple values
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    wt_state_cmd(&repo, "vars", "set", &["port=3000"])
+        .output()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("env\tstaging"),
+        "Expected env key: {stdout}"
+    );
+    assert!(stdout.contains("port\t3000"), "Expected port key: {stdout}");
+}
+
+#[rstest]
+fn test_vars_list_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No variables"),
+        "Expected empty message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_vars_clear_single_key(repo: TestRepo) {
+    // Set and clear
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    let output = wt_state_cmd(&repo, "vars", "clear", &["env"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cleared"),
+        "Expected clear message: {stderr}"
+    );
+
+    // Verify it's gone
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_clear_all(repo: TestRepo) {
+    // Set multiple values
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    wt_state_cmd(&repo, "vars", "set", &["port=3000"])
+        .output()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cleared") && stderr.contains("2"),
+        "Expected clear 2 entries: {stderr}"
+    );
+
+    // Verify all gone
+    let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No variables"));
+}
+
+#[rstest]
+fn test_vars_invalid_key(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["foo.bar=value"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid key"),
+        "Expected invalid key error: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_vars_branch_flag(repo: TestRepo) {
+    // Create a branch
+    repo.run_git(&["branch", "feature"]);
+
+    // Set vars on a different branch
+    let output = wt_state_cmd(
+        &repo,
+        "vars",
+        "set",
+        &["env=production", "--branch=feature"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+
+    // Get from that branch
+    let output = wt_state_cmd(&repo, "vars", "get", &["env", "--branch=feature"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "production");
+
+    // Current branch should not have the value
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_value_with_spaces(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["note=hello world foo"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["note"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "hello world foo"
+    );
+}
+
+#[rstest]
+fn test_vars_value_containing_equals(repo: TestRepo) {
+    let url = "postgres://user:pass@host/db?sslmode=require";
+    let output = wt_state_cmd(&repo, "vars", "set", &[&format!("db-url={url}")])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["db-url"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), url);
+}
+
+#[rstest]
+fn test_vars_empty_value(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "set", &["key="])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["key"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_overwrite(repo: TestRepo) {
+    wt_state_cmd(&repo, "vars", "set", &["env=staging"])
+        .output()
+        .unwrap();
+    wt_state_cmd(&repo, "vars", "set", &["env=production"])
+        .output()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "production");
+}
+
+#[rstest]
+fn test_vars_in_json_output(repo: TestRepo) {
+    // Set vars data
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.env", "staging"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.state.main.vars.port", "3000"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    let main_item = &items[0];
+    assert_eq!(main_item["vars"]["env"], "staging");
+    assert_eq!(main_item["vars"]["port"], "3000");
+}
+
+#[rstest]
+fn test_vars_absent_in_json_when_empty(repo: TestRepo) {
+    // No vars data set — vars field should be absent from JSON
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    // vars should not be present when empty (skip_serializing_if)
+    assert!(items[0].get("vars").is_none());
+}
+
+#[rstest]
+fn test_vars_clear_nonexistent_key(repo: TestRepo) {
+    // Clear a key that was never set
+    let output = wt_state_cmd(&repo, "vars", "clear", &["nonexistent"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No variable"),
+        "Expected 'No variable' message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_vars_clear_all_empty(repo: TestRepo) {
+    // Clear --all when no vars data exists
+    let output = wt_state_cmd(&repo, "vars", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No variables"),
+        "Expected 'No variables' message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_vars_list_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set vars data
+    repo.run_git(&["branch", "feature"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.vars.env", "production"])
+        .run()
+        .unwrap();
+
+    // List vars for specific branch
+    let output = wt_state_cmd(&repo, "vars", "list", &["--branch=feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("env\tproduction"),
+        "Expected vars entry: {stdout}"
+    );
+}
+
+#[rstest]
+fn test_vars_clear_with_branch_flag(repo: TestRepo) {
+    // Create a branch and set vars data
+    repo.run_git(&["branch", "feature"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.feature.vars.env", "production"])
+        .run()
+        .unwrap();
+
+    // Clear vars for specific branch
+    let output = wt_state_cmd(&repo, "vars", "clear", &["env", "--branch=feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cleared"),
+        "Expected clear message: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_vars_branch_with_dots_in_name(repo: TestRepo) {
+    // Branch names with dots are common (e.g., "feature.auth") and contain
+    // regex metacharacters. Vars must round-trip correctly despite the dots.
+    repo.run_git(&["branch", "feature.auth"]);
+
+    let output = wt_state_cmd(
+        &repo,
+        "vars",
+        "set",
+        &["port=4000", "--branch=feature.auth"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["port", "--branch=feature.auth"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4000");
+
+    // Also verify the branch doesn't bleed into a similarly-named branch.
+    // "feature.auth" unescaped in regex would match "featurexauth" too.
+    repo.run_git(&["branch", "featurexauth"]);
+    repo.git_command()
+        .args(["config", "worktrunk.state.featurexauth.vars.port", "9999"])
+        .run()
+        .unwrap();
+
+    // feature.auth should still return 4000, not 9999
+    let output = wt_state_cmd(&repo, "vars", "get", &["port", "--branch=feature.auth"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4000");
+}
+
+#[rstest]
+fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
+    // Regression: branch names containing ".vars." must not confuse the
+    // all_vars_entries parser (which splits on ".vars." to find the separator).
+    let wt_path = repo.root_path().join("..").join("fix-vars-cleanup-wt");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "fix.vars.cleanup",
+        wt_path.to_str().unwrap(),
+    ]);
+    repo.git_command()
+        .args([
+            "config",
+            "worktrunk.state.fix.vars.cleanup.vars.port",
+            "5000",
+        ])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+
+    let branch_item = items
+        .iter()
+        .find(|item| item["branch"] == "fix.vars.cleanup")
+        .expect("branch fix.vars.cleanup should be in JSON output");
+
+    assert_eq!(
+        branch_item["vars"]["port"], "5000",
+        "vars key should be 'port', not a mangled key from bad split"
     );
 }

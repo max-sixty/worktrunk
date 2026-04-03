@@ -116,6 +116,7 @@ use worktrunk::styling::{
 use crate::commands::is_worktree_at_expected_path;
 
 use super::model::{DisplayFields, ItemKind, ListItem, WorktreeData};
+use super::progressive_table::ProgressiveTable;
 
 // Re-exports for sibling modules (columns.rs, render.rs, layout.rs)
 pub(crate) use tasks::parse_port_from_url;
@@ -127,6 +128,37 @@ use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
 use types::{DrainOutcome, StatusContext};
 use types::{TaskError, TaskResult};
+
+struct TableRenderPlan {
+    progressive_table: Option<ProgressiveTable>,
+    header: String,
+    rows: Vec<String>,
+    summary: String,
+}
+
+impl TableRenderPlan {
+    fn render(mut self) -> anyhow::Result<()> {
+        if let Some(mut table) = self.progressive_table.take() {
+            if table.is_tty() {
+                table.finalize(self.rows, self.summary)?;
+            } else {
+                print_buffered_table(&self.header, &self.rows, &self.summary);
+            }
+        } else {
+            print_buffered_table(&self.header, &self.rows, &self.summary);
+        }
+        Ok(())
+    }
+}
+
+fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
+    println!("{header}");
+    for row in rows {
+        println!("{row}");
+    }
+    println!();
+    println!("{summary}");
+}
 
 /// Options for controlling what data to collect.
 ///
@@ -241,7 +273,6 @@ pub fn collect(
     render_table: bool,
     skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
-    use super::progressive_table::ProgressiveTable;
     worktrunk::shell_exec::trace_instant("List collect started");
 
     // Determine what to fetch speculatively in the parallel phase.
@@ -604,6 +635,7 @@ pub fn collect(
                 committed_trees_match: None,
                 has_file_changes: None,
                 would_merge_add: None,
+                is_patch_id_match: None,
                 is_ancestor: None,
                 is_orphan: None,
                 upstream: None,
@@ -980,13 +1012,14 @@ pub fn collect(
             items_with_missing,
         } = drain_outcome
     {
-        // Warning: what happened + gutter showing which results are missing
+        // Warning: what happened + gutter showing which tasks blocked
         let mut diag = format!(
             "wt list timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
 
         if !items_with_missing.is_empty() {
+            diag.push_str("\nBlocked tasks:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .map(|result| {
@@ -1006,7 +1039,7 @@ pub fn collect(
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "A git command likely hung; run with <underline>-v</> for details, <underline>-vv</> to create a diagnostic file"
+                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
             ))
         );
     }
@@ -1028,52 +1061,25 @@ pub fn collect(
     let error_count = errors.len();
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
-    // Finalize progressive table or render buffered output
-    if let Some(mut table) = progressive_table {
-        // Build final summary string
-        let final_msg = super::format_summary_message(
+    let table_render = render_table.then(|| TableRenderPlan {
+        progressive_table,
+        header: layout.format_header_line(),
+        rows: all_items
+            .iter()
+            .map(|item| layout.format_list_item_line(item))
+            .collect(),
+        summary: super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
             total_ignored,
             error_count,
             timed_out_count,
-        );
+        ),
+    });
 
-        if table.is_tty() {
-            // Interactive: do final render pass and update footer to summary
-            let rows: Vec<String> = all_items
-                .iter()
-                .map(|item| layout.format_list_item_line(item))
-                .collect();
-            table.finalize(rows, final_msg)?;
-        } else {
-            // Non-TTY: output to stdout (same as buffered mode)
-            // Progressive skeleton was suppressed; now output the final table
-            println!("{}", layout.format_header_line());
-            for item in &all_items {
-                println!("{}", layout.format_list_item_line(item));
-            }
-            println!();
-            println!("{}", final_msg);
-        }
-    } else if render_table {
-        // Buffered mode: render final table
-        let final_msg = super::format_summary_message(
-            &all_items,
-            show_branches || show_remotes,
-            layout.hidden_column_count,
-            total_ignored,
-            error_count,
-            timed_out_count,
-        );
-
-        println!("{}", layout.format_header_line());
-        for item in &all_items {
-            println!("{}", layout.format_list_item_line(item));
-        }
-        println!();
-        println!("{}", final_msg);
+    if let Some(table_render) = table_render {
+        table_render.render()?;
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
@@ -1216,6 +1222,7 @@ pub fn build_worktree_item(
         committed_trees_match: None,
         has_file_changes: None,
         would_merge_add: None,
+        is_patch_id_match: None,
         is_ancestor: None,
         is_orphan: None,
         upstream: None,

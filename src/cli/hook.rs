@@ -10,7 +10,7 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = ["pre-switch", "pre-start", "post-create", "post-start", "post-switch", "pre-commit", "post-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
+        #[arg(value_parser = ["pre-switch", "post-switch", "pre-start", "post-start", "pre-commit", "post-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables
@@ -36,6 +36,34 @@ pub enum HookCommand {
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
+    },
+
+    /// Run post-switch hooks
+    ///
+    /// Background by default. Use `--foreground` to run in foreground for debugging.
+    PostSwitch {
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
+        /// Skip approval prompts
+        #[arg(short, long, help_heading = "Automation")]
+        yes: bool,
+
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Run in foreground (block until complete)
+        #[arg(long)]
+        foreground: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
@@ -71,34 +99,6 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostStart {
-        /// Filter by command name
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Override built-in template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-switch hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostSwitch {
         /// Filter by command name
         ///
         /// Supports `user:name` or `project:name` to filter by source.
@@ -273,6 +273,10 @@ pub enum HookCommand {
         vars: Vec<(String, String)>,
     },
 
+    /// Internal: run a serialized pipeline from stdin
+    #[command(hide = true, name = "run-pipeline")]
+    RunPipeline,
+
     /// Manage command approvals
     #[command(
         after_long_help = r#"Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
@@ -281,17 +285,17 @@ pub enum HookCommand {
 
 Pre-approve all commands for current project:
 ```console
-wt hook approvals add
+$ wt hook approvals add
 ```
 
 Clear approvals for current project:
 ```console
-wt hook approvals clear
+$ wt hook approvals clear
 ```
 
 Clear global approvals:
 ```console
-wt hook approvals clear --global
+$ wt hook approvals clear --global
 ```
 
 ## How approvals work

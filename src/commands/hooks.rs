@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommandConfig;
@@ -9,8 +10,10 @@ use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, progress_message, verbosity, warning_message,
 };
 
-use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
-use crate::commands::process::{HookLog, spawn_detached};
+use super::command_executor::{
+    CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
+};
+use crate::commands::process::{HookLog, spawn_detached, spawn_detached_exec};
 use crate::output::execute_command_in_worktree;
 
 /// A prepared command with its source information.
@@ -258,6 +261,193 @@ pub fn spawn_background_hooks(
     Ok(())
 }
 
+/// Prepared hooks ready for background spawning — either flat commands or a pipeline.
+pub(crate) enum PreparedHooks {
+    /// Traditional flat commands (string or map config) — spawned independently.
+    Flat(Vec<SourcedCommand>),
+    /// Pipeline steps (list config) — spawned as `wt hook run-pipeline`.
+    Pipeline(Vec<SourcedStep>),
+}
+
+/// A pipeline step with source information, for pipeline-aware execution.
+pub struct SourcedStep {
+    pub step: PreparedStep,
+    pub source: HookSource,
+    pub hook_type: HookType,
+    pub display_path: Option<PathBuf>,
+}
+
+/// Format a summary description of a pipeline for display.
+///
+/// Shows step names/counts with `→` separating serial steps.
+/// Example: "install → build, lint"
+fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
+    let mut unnamed_idx = 0usize;
+    let mut parts = Vec::new();
+    for step in steps {
+        match &step.step {
+            PreparedStep::Single(cmd) => {
+                let name = match &cmd.name {
+                    Some(n) => cformat!("<bold>{}</>", n),
+                    None => {
+                        let label = format!("cmd-{unnamed_idx}");
+                        unnamed_idx += 1;
+                        cformat!("<bold>{}</>", label)
+                    }
+                };
+                parts.push(name);
+            }
+            PreparedStep::Concurrent(cmds) => {
+                let names: Vec<String> = cmds
+                    .iter()
+                    .map(|c| match &c.name {
+                        Some(n) => cformat!("<bold>{}</>", n),
+                        None => {
+                            let label = format!("cmd-{unnamed_idx}");
+                            unnamed_idx += 1;
+                            cformat!("<bold>{}</>", label)
+                        }
+                    })
+                    .collect();
+                parts.push(names.join(", "));
+            }
+        }
+    }
+    parts.join(" → ")
+}
+
+/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
+///
+/// Serializes the pipeline steps to JSON and spawns `wt hook run-pipeline`
+/// as a detached process, piping the spec to stdin. The background
+/// process expands templates just-in-time and executes each step via
+/// the detected shell.
+///
+/// Used for post-* hooks when the config uses a pipeline (list form).
+pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
+
+    if steps.is_empty() {
+        return Ok(());
+    }
+
+    let hook_type = steps[0].hook_type;
+    let source = steps[0].source;
+    let display_path = steps[0].display_path.as_ref();
+
+    // Show summary: "Running post-start: install → build, lint"
+    let summary = format_pipeline_summary(&steps);
+    let message = match display_path {
+        Some(path) => {
+            let path_display = format_path_for_display(path);
+            cformat!("Running {hook_type}: {summary} @ <bold>{path_display}</>")
+        }
+        None => format!("Running {hook_type}: {summary}"),
+    };
+    eprintln!("{}", progress_message(message));
+
+    // Extract context from the first command. All steps share the same base context.
+    let context: std::collections::HashMap<String, String> = steps
+        .iter()
+        .find_map(|s| match &s.step {
+            PreparedStep::Single(cmd) => Some(&cmd.context_json),
+            PreparedStep::Concurrent(cmds) => cmds.first().map(|c| &c.context_json),
+        })
+        .map(|json| serde_json::from_str(json).context("failed to deserialize context_json"))
+        .transpose()?
+        .unwrap_or_default();
+
+    // Build pipeline spec from prepared steps. Use the raw template for lazy
+    // steps (vars-referencing) and the expanded command for eager steps.
+    let spec_steps: Vec<PipelineStepSpec> = steps
+        .iter()
+        .map(|s| match &s.step {
+            PreparedStep::Single(cmd) => PipelineStepSpec::Single {
+                name: cmd.name.clone(),
+                template: cmd.lazy_template.as_ref().unwrap_or(&cmd.expanded).clone(),
+            },
+            PreparedStep::Concurrent(cmds) => PipelineStepSpec::Concurrent {
+                commands: cmds
+                    .iter()
+                    .map(|c| PipelineCommandSpec {
+                        name: c.name.clone(),
+                        template: c.lazy_template.as_ref().unwrap_or(&c.expanded).clone(),
+                    })
+                    .collect(),
+            },
+        })
+        .collect();
+
+    let spec = PipelineSpec {
+        worktree_path: ctx.worktree_path.to_path_buf(),
+        branch: ctx.branch_or_head().to_string(),
+        hook_type: hook_type.to_string(),
+        source: source.to_string(),
+        context,
+        steps: spec_steps,
+    };
+
+    let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
+
+    let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
+
+    let hook_log = HookLog::hook(source, hook_type, "pipeline");
+    let log_label = format!("{hook_type} {source} pipeline");
+
+    if let Err(err) = spawn_detached_exec(
+        ctx.repo,
+        ctx.worktree_path,
+        &wt_bin,
+        &["hook", "run-pipeline"],
+        ctx.branch_or_head(),
+        &hook_log,
+        &spec_json,
+    ) {
+        eprintln!(
+            "{}",
+            warning_message(format!("Failed to spawn pipeline: {err}"))
+        );
+    } else {
+        let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
+        worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
+    }
+
+    Ok(())
+}
+
+/// Prepare hook steps as a pipeline, preserving serial/concurrent structure.
+///
+/// Accepts pre-looked-up configs to avoid redundant loading.
+pub(crate) fn prepare_pipeline_hooks_with_configs(
+    ctx: &CommandContext,
+    user_config: Option<&CommandConfig>,
+    proj_config: Option<&CommandConfig>,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    display_path: Option<&Path>,
+) -> anyhow::Result<Vec<SourcedStep>> {
+    let display_path = display_path.map(|p| p.to_path_buf());
+    let mut all_steps = Vec::new();
+
+    let sources = [
+        (HookSource::User, user_config),
+        (HookSource::Project, proj_config),
+    ];
+
+    for (source, config) in sources {
+        let Some(config) = config else { continue };
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
+        all_steps.extend(steps.into_iter().map(|step| SourcedStep {
+            step,
+            source,
+            hook_type,
+            display_path: display_path.clone(),
+        }));
+    }
+
+    Ok(all_steps)
+}
+
 /// Group commands by hook type, preserving insertion order.
 ///
 /// Returns a vector of (HookType, Vec<&SourcedCommand>) tuples.
@@ -304,7 +494,6 @@ pub(crate) fn check_name_filter_matched(
             available.extend(
                 config
                     .commands()
-                    .iter()
                     .filter_map(|c| c.name.as_ref().map(|n| format!("{source}:{n}"))),
             );
         }
@@ -350,10 +539,26 @@ pub fn run_hook_with_filter(
     for cmd in commands {
         cmd.announce()?;
 
+        // Lazy commands (referencing vars.) are expanded just before execution
+        // so that vars set by earlier commands in the pipeline are available.
+        let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
+            let context_map: std::collections::HashMap<String, String> =
+                serde_json::from_str(&cmd.prepared.context_json)
+                    .expect("context_json round-trip should never fail");
+            let vars: std::collections::HashMap<&str, &str> = context_map
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let name = cmd.summary_name();
+            worktrunk::config::expand_template(template, &vars, true, ctx.repo, &name)?
+        } else {
+            cmd.prepared.expanded.clone()
+        };
+
         let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = execute_command_in_worktree(
             ctx.worktree_path,
-            &cmd.prepared.expanded,
+            &expanded,
             Some(&cmd.prepared.context_json),
             Some(&log_label),
         ) {
@@ -444,35 +649,58 @@ pub fn execute_hook(
 
 /// Prepare background hooks with automatic config lookup.
 ///
-/// This is a convenience wrapper that:
-/// 1. Loads project config from the repository
-/// 2. Looks up user hooks from the config
-/// 3. Prepares commands ready for spawning
-///
-/// Use this to collect hooks from multiple types, then call `spawn_background_hooks`
-/// once to spawn them all with a unified message.
+/// Returns `PreparedHooks::Pipeline` when any source uses a list config,
+/// or `PreparedHooks::Flat` for traditional string/map configs.
+/// Callers should use `spawn_prepared_hooks` to execute the result.
 pub(crate) fn prepare_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
-) -> anyhow::Result<Vec<SourcedCommand>> {
+) -> anyhow::Result<PreparedHooks> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
 
-    prepare_hook_commands(
+    if [user_config, proj_config]
+        .iter()
+        .any(|c| c.is_some_and(CommandConfig::is_pipeline))
+    {
+        let steps = prepare_pipeline_hooks_with_configs(
+            ctx,
+            user_config,
+            proj_config,
+            hook_type,
+            extra_vars,
+            display_path,
+        )?;
+        return Ok(PreparedHooks::Pipeline(steps));
+    }
+
+    let commands = prepare_hook_commands(
         ctx,
         HookCommandSpec {
             user_config,
             project_config: proj_config,
             hook_type,
             extra_vars,
-            name_filter: None, // no filter for automatic background hooks
+            name_filter: None,
             display_path,
         },
-    )
+    )?;
+    Ok(PreparedHooks::Flat(commands))
+}
+
+/// Spawn prepared hooks (either flat or pipeline).
+pub(crate) fn spawn_prepared_hooks(
+    ctx: &CommandContext,
+    hooks: PreparedHooks,
+) -> anyhow::Result<()> {
+    match hooks {
+        PreparedHooks::Flat(commands) => spawn_background_hooks(ctx, commands),
+        PreparedHooks::Pipeline(steps) => spawn_hook_pipeline(ctx, steps),
+    }
 }
 
 #[cfg(test)]
@@ -531,5 +759,62 @@ mod tests {
         let f = ParsedFilter::parse("project:");
         assert_eq!(f.source, Some(HookSource::Project));
         assert_eq!(f.name, "");
+    }
+
+    fn make_sourced_step(step: PreparedStep) -> SourcedStep {
+        SourcedStep {
+            step,
+            source: HookSource::User,
+            hook_type: worktrunk::HookType::PostStart,
+            display_path: None,
+        }
+    }
+
+    fn make_cmd(name: Option<&str>, expanded: &str) -> PreparedCommand {
+        PreparedCommand {
+            name: name.map(String::from),
+            expanded: expanded.to_string(),
+            context_json: "{}".to_string(),
+            lazy_template: None,
+        }
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_named() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(
+                Some("install"),
+                "npm install",
+            ))),
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_cmd(Some("build"), "npm run build"),
+                make_cmd(Some("lint"), "npm run lint"),
+            ])),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        // Contains arrow and names (stripped of ANSI for assertion)
+        assert!(summary.contains("→"));
+        assert!(summary.contains("install"));
+        assert!(summary.contains("build"));
+        assert!(summary.contains("lint"));
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_unnamed() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm run build"))),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        assert!(summary.contains("cmd-0"));
+        assert!(summary.contains("cmd-1"));
+    }
+
+    #[test]
+    fn test_is_pipeline() {
+        use worktrunk::config::CommandConfig;
+
+        let single = CommandConfig::single("npm install");
+        assert!(!single.is_pipeline());
     }
 }

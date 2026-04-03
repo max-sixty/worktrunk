@@ -170,7 +170,7 @@ fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -226,7 +226,7 @@ fn test_merge_rebase_conflict(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1182,7 +1182,7 @@ command = "{llm_path_str}"
     );
 }
 
-// NOTE: test_readme_example_hooks_post_create and test_readme_example_hooks_pre_merge
+// NOTE: test_readme_example_hooks_pre_start and test_readme_example_hooks_pre_merge
 // were removed - they're covered by PTY-based tests in shell_wrapper.rs that capture
 // combined stdout/stderr for README examples.
 
@@ -1395,7 +1395,7 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1455,7 +1455,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "-d", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     // Verify the deletion failed (non-zero exit code)
@@ -1476,7 +1476,7 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let output = repo
         .git_command()
         .args(["branch", "--list", "feature"])
-        .output()
+        .run()
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1499,7 +1499,7 @@ fn test_merge_to_non_default_target(repo: TestRepo) {
         &repo
             .git_command()
             .args(["rev-parse", "HEAD~1"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1585,7 +1585,7 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
     let output = repo
         .git_command()
         .args(["reflog", "show", "refs/wt-backup/feature"])
-        .output()
+        .run()
         .unwrap();
 
     let reflog = String::from_utf8_lossy(&output.stdout);
@@ -1627,7 +1627,7 @@ fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, 
     let after = repo
         .git_command()
         .args(["config", "receive.denyCurrentBranch"])
-        .output()
+        .run()
         .unwrap();
     let after_value = String::from_utf8_lossy(&after.stdout).trim().to_string();
 
@@ -1849,6 +1849,90 @@ fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     });
 }
 
+#[rstest]
+fn test_step_commit_branch_flag(mut repo: TestRepo) {
+    // Create a feature worktree and add a dirty file there
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature_file.txt"), "feature content")
+        .expect("Failed to write file");
+
+    // Run step commit from the main worktree, targeting the feature branch
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None); // cwd = main worktree
+        cmd.arg("commit")
+            .args(["--branch", "feature", "--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add feature file'",
+        );
+        cmd
+    });
+
+    // Verify the commit happened in the feature worktree
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("feat: add feature file"),
+        "Commit should appear in feature worktree, got: {log_output}"
+    );
+}
+
+#[rstest]
+fn test_step_commit_branch_flag_nonexistent(repo: TestRepo) {
+    // Try to commit on a branch that has no worktree
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--branch", "nonexistent"]);
+        cmd
+    });
+}
+
+#[rstest]
+fn test_step_commit_detached_head(mut repo: TestRepo) {
+    // Detach HEAD in a worktree, then commit — should work since commit
+    // only needs a worktree path, not a branch name.
+    let feature_wt = repo.add_worktree("feature");
+
+    // Detach HEAD in the feature worktree
+    repo.detach_head_in_worktree("feature");
+
+    // Create a file to commit
+    fs::write(feature_wt.join("detached_file.txt"), "detached content")
+        .expect("Failed to write file");
+
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("commit").args(["--no-verify"]);
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'chore: commit in detached state'",
+        );
+        cmd
+    });
+
+    // Verify the commit actually landed
+    let log_output = {
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&feature_wt)
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    assert!(
+        log_output.contains("chore: commit in detached state"),
+        "Commit should appear in detached worktree, got: {log_output}"
+    );
+}
+
 // =============================================================================
 // Error message snapshot tests
 // =============================================================================
@@ -1982,7 +2066,7 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
         .git_command()
         .current_dir(&feature_wt)
         .args(["merge", "main", "-m", "Merge main into feature"])
-        .output()
+        .run()
         .unwrap();
     assert!(
         output.status.success(),
@@ -2189,8 +2273,8 @@ fn test_merge_no_ff_with_squash(repo_with_multi_commit_feature: TestRepo) {
 fn test_merge_no_ff_from_config(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
-    // Write user config with no-ff = true
-    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+    // Write user config with ff = false
+    fs::write(repo.test_config_path(), "[merge]\nff = false\n").unwrap();
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -2212,13 +2296,13 @@ fn test_merge_no_ff_from_config(merge_scenario: (TestRepo, PathBuf)) {
     );
 }
 
-/// --ff CLI flag overrides config no-ff = true.
+/// --ff CLI flag overrides config ff = false.
 #[rstest]
 fn test_merge_ff_flag_overrides_config(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
-    // Write user config with no-ff = true
-    fs::write(repo.test_config_path(), "[merge]\nno-ff = true\n").unwrap();
+    // Write user config with ff = false
+    fs::write(repo.test_config_path(), "[merge]\nff = false\n").unwrap();
 
     // --ff should override config and do a fast-forward
     assert_cmd_snapshot!(make_snapshot_cmd(
@@ -2359,7 +2443,7 @@ fn test_merge_no_ff_syncs_target_worktree(mut repo_with_main_worktree: TestRepo)
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&main_wt)
-        .output()
+        .run()
         .unwrap();
     let wt_head = String::from_utf8_lossy(&wt_head_output.stdout)
         .trim()
@@ -2401,7 +2485,7 @@ fn test_merge_no_ff_dirty_target_autostash(mut repo_with_main_worktree: TestRepo
     );
 
     // Verify autostash cleaned up (no leftover stash entries)
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -2450,7 +2534,7 @@ fn test_merge_no_ff_dirty_target_conflict(mut repo_with_main_worktree: TestRepo)
     );
 
     // Verify no stash was created
-    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).run().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()

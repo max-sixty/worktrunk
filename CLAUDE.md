@@ -114,6 +114,7 @@ When changing:
 - Detection logic
 - CLI flags or their defaults
 - Error conditions or messages
+- Config fields or sections — also update `dev/*.example.toml` (these are embedded in CLI help via `include_str!`, so stale examples propagate to docs and snapshots)
 
 Ask: "Does `--help` still describe what the code does?" If not, update `src/cli/mod.rs` first.
 
@@ -123,6 +124,8 @@ Documentation has three categories:
 
 1. **Command pages** (config, hook, list, merge, remove, step, switch):
    ```
+   dev/*.example.toml (included via include_str!)
+       ↓
    src/cli/mod.rs (PRIMARY SOURCE)
        ↓ test_command_pages_and_skill_files_are_in_sync
    docs/content/{command}.md → skills/worktrunk/reference/{command}.md
@@ -140,6 +143,16 @@ Documentation has three categories:
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
 
+### Help text authoring
+
+Help text renders in three contexts — check all three when editing:
+
+1. **Terminal** (`wt step X --help`): `about` and `subtitle` appear at the top, `after_long_help` appears below the Options block — separated by distance.
+2. **Web docs** (`docs/content/`): `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` — they appear as consecutive paragraphs.
+3. **Skill reference** (`skills/worktrunk/reference/`): mirrors web docs.
+
+Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
+
 After any doc changes, run tests to sync:
 
 ```bash
@@ -151,6 +164,10 @@ After editing `after_long_help` text, also update the help snapshots:
 ```bash
 cargo insta test --accept -- --test integration "test_help"
 ```
+
+### Config doc TOML blocks
+
+Config docs (`USER_CONFIG_START`/`PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is commented out with `#`. TOML comments inside code blocks become double-commented (`# # comment`). Use plain text descriptions ending with colons before each code block instead — inline end-of-line comments (e.g., `key = "value"  # explanation`) are fine.
 
 ## Data Safety
 
@@ -321,6 +338,10 @@ Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or
 fn validate_config() { ... }
 ```
 
+### System Docstrings
+
+Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves.
+
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
@@ -349,6 +370,37 @@ if worktree.is_dirty() {
 - **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error. Panics in fallible code bypass error handling.
 - **Don't `logger.error` before raising** — include context in the error message itself
 - **Let errors propagate** — don't catch and re-raise without adding information
+
+## Config Deprecation
+
+All config deprecation is handled by a single layer: pre-deserialization TOML migration in `src/config/deprecation.rs`.
+
+### How it works
+
+`migrate_content()` is the structural TOML migration entry point before serde parses config, rewriting deprecated patterns into their canonical form. Load paths that only need migration call it directly; `check_and_migrate()` reuses the same migration path and returns the migrated TOML so callers don't reparse the file just to load it.
+
+Separately, `check_and_migrate()` detects deprecated patterns, emits warnings, and generates a `.new` migration file (which additionally renames deprecated template variables and removes `approved-commands`). Warnings are deduplicated per-process via `WARNED_DEPRECATED_PATHS`.
+
+### Adding a new deprecation
+
+1. Add a detection function and extend the `Deprecations` struct + `detect_deprecations()`
+2. Add a migration function (idempotent: no-op if pattern is absent or already migrated)
+3. Call the migration function from `migrate_content()`
+4. Add a warning message in `format_deprecation_warnings()`
+5. Update `Deprecations::is_empty()` to include the new field
+6. If it's a top-level section being removed from the struct, add a `DeprecatedSection` entry to `DEPRECATED_SECTION_KEYS` with the canonical top-level key and display form. This tells `warn_unknown_fields` to skip the key when it appears in the correct config type (the deprecation system provides better messaging) and to suggest the correct config when it appears in the wrong file.
+
+### Renaming a field within a section
+
+Recipe for renaming `old-name` → `new-name` inside an existing section (e.g., `[merge]`):
+
+1. **Add a TOML-level migration function** (see `migrate_negated_bool_in_section` for the pattern). The function should rename the field in the TOML document, applying any transformation (e.g., boolean inversion).
+
+2. **Call it from `migrate_content()`** so all load paths get the fix.
+
+3. **Add detection** in `detect_deprecations()` and a warning in `format_deprecation_warnings()`.
+
+The struct does not need the old field — migration happens before serde sees the TOML. Do not silently drop old config keys — this causes silent behavior changes for users.
 
 ## Adding CLI Commands
 

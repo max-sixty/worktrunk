@@ -738,7 +738,13 @@ fn test_config_show_fish_without_completions(mut repo: TestRepo, temp_home: Temp
     });
 }
 
-/// Test that config show displays "Outdated" when fish wrapper exists but has different code
+/// Test that config show displays "Outdated" when fish wrapper exists but has different code.
+///
+/// The wrapper file contains `function wt` which matches the command name at a word boundary,
+/// but `is_shell_integration_line()` won't match it (it looks for eval/source patterns).
+/// This should NOT trigger a "Found wt ... but not detected as integration" warning because
+/// the wrapper file IS the integration — `scan_shell_configs` already identified it (as
+/// outdated). Only the "Outdated shell extension" warning should appear.
 #[rstest]
 fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -769,7 +775,12 @@ fn test_config_show_fish_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir
     });
 }
 
-/// Test that config show displays "Outdated" when nushell wrapper exists but has different code
+/// Test that config show displays "Outdated" when nushell wrapper exists but has different code.
+///
+/// Same false-positive suppression as the fish variant: the wrapper file contains `def --wrapped wt`
+/// which matches the command name, but `scan_shell_configs` already recognized the file as
+/// integration (outdated). Only the "Outdated" warning should appear, not the generic
+/// "not detected as integration" warning.
 #[rstest]
 fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
@@ -1304,7 +1315,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://github.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config
@@ -1343,7 +1354,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
             "origin",
             "https://gitlab.com/example/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     // Create fake global config
@@ -1476,6 +1487,52 @@ fn test_config_show_unmatched_candidate_warning(mut repo: TestRepo, temp_home: T
         temp_home.path().join(".bashrc"),
         r#"# Some bash config
 export PATH="$HOME/bin:$PATH"
+alias wt="git worktree"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Verify that the unmatched candidate warning fires for a bash alias while being suppressed
+/// for a Fish wrapper file in the same `config show` run. This ensures wrapper-file suppression
+/// is path-specific and doesn't accidentally silence all unmatched candidate warnings.
+#[rstest]
+fn test_config_show_unmatched_candidate_not_suppressed_by_wrapper(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Fish wrapper (outdated) — should NOT trigger "not detected" warning
+    let functions = temp_home.path().join(".config/fish/functions");
+    fs::create_dir_all(&functions).unwrap();
+    fs::write(
+        functions.join("wt.fish"),
+        "# worktrunk shell integration for fish\nfunction wt\n    command wt-old $argv\nend\n",
+    )
+    .unwrap();
+
+    // Bash alias — SHOULD trigger "not detected" warning
+    fs::write(
+        temp_home.path().join(".bashrc"),
+        r#"# Some bash config
 alias wt="git worktree"
 "#,
     )
@@ -2659,4 +2716,548 @@ fn test_explicit_config_path_not_found_shows_warning(repo: TestRepo) {
         // Should show warning about missing config file but still succeed
         assert_cmd_snapshot!(cmd);
     });
+}
+
+// ==================== Plugin Install/Uninstall Tests ====================
+
+#[rstest]
+fn test_plugins_claude_install(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_invalid_plugins_json(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+
+    // Write invalid JSON to the plugins file — is_plugin_installed() should
+    // treat this as "not installed" and the install command should proceed
+    let plugins_dir = temp_home.path().join(".claude/plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(plugins_dir.join("installed_plugins.json"), "not valid json").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_already_installed(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+    TestRepo::setup_plugin_installed(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_claude_not_found(repo: TestRepo) {
+    // Don't call setup_mock_claude_installed — claude CLI not available
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_uninstall(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+    TestRepo::setup_plugin_installed(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins();
+    // Don't setup plugin as installed
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// ==================== Plugin Install-Statusline Tests ====================
+
+#[rstest]
+fn test_plugins_claude_install_statusline(repo: TestRepo, temp_home: TempDir) {
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify the file was written correctly
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_already_configured(repo: TestRepo, temp_home: TempDir) {
+    TestRepo::setup_statusline_configured(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_preserves_existing(repo: TestRepo, temp_home: TempDir) {
+    // Write existing settings with other keys
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(
+        claude_dir.join("settings.json"),
+        r#"{"existingKey":"existingValue"}"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify existing keys are preserved
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["existingKey"], "existingValue");
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_statusline_empty_file(repo: TestRepo, temp_home: TempDir) {
+    // Write an empty settings.json (edge case: file exists but is empty)
+    let claude_dir = temp_home.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(claude_dir.join("settings.json"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install-statusline", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify the file was written correctly despite starting empty
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    });
+}
+
+// ==================== Plugin Command Failure Tests ====================
+
+#[rstest]
+fn test_plugins_claude_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins_failing();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_install_second_step_fails(mut repo: TestRepo, temp_home: TempDir) {
+    use crate::common::mock_commands::{MockConfig, MockResponse};
+
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_installed();
+
+    // Marketplace add succeeds but plugin install fails
+    let mock_bin = repo
+        .mock_bin_path()
+        .expect("setup_mock_ci_tools_unauthenticated creates mock-bin");
+    MockConfig::new("claude")
+        .command("plugin marketplace", MockResponse::exit(0))
+        .command(
+            "plugin install",
+            MockResponse::exit(1).with_stderr("error: install failed\n"),
+        )
+        .write(mock_bin);
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_claude_uninstall_command_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_claude_with_plugins_failing();
+    TestRepo::setup_plugin_installed(temp_home.path());
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "claude", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// ==================== Plugin Prompt PTY Tests ====================
+
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod plugin_prompt_pty {
+    use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+    use crate::common::{TestRepo, repo, temp_home, wt_bin};
+    use rstest::rstest;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Build env vars for plugin PTY tests, including mock binary PATH.
+    ///
+    /// HOME/XDG_CONFIG_HOME are NOT set here — `build_pty_command` handles them
+    /// via its `home_dir` parameter.
+    fn plugin_env_vars(repo: &TestRepo) -> Vec<(String, String)> {
+        let mut vars = repo.test_env_vars();
+
+        // Add mock binary PATH if configured
+        if let Some(mock_bin) = repo.mock_bin_path() {
+            vars.push((
+                "MOCK_CONFIG_DIR".to_string(),
+                mock_bin.display().to_string(),
+            ));
+
+            // Prepend mock bin to PATH
+            let current_path =
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+            let mut paths: Vec<PathBuf> = std::env::split_paths(&current_path).collect();
+            paths.insert(0, mock_bin.to_path_buf());
+            let new_path = std::env::join_paths(&paths).unwrap();
+            vars.retain(|(k, _)| k != "PATH");
+            vars.push(("PATH".to_string(), new_path.to_string_lossy().to_string()));
+        }
+
+        // Mark claude as installed
+        vars.push((
+            "WORKTRUNK_TEST_CLAUDE_INSTALLED".to_string(),
+            "1".to_string(),
+        ));
+
+        vars
+    }
+
+    // --- install-statusline prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_accept(repo: TestRepo, temp_home: TempDir) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Configure statusline"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_preview_then_accept(
+        repo: TestRepo,
+        temp_home: TempDir,
+    ) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        // Send "?" to trigger preview, then "y" on the re-prompted prompt
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["?\n", "y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("statusLine"),
+            "Should show preview with statusLine JSON. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Statusline configured"),
+            "Should confirm configuration after preview. Output:\n{output}"
+        );
+
+        // Verify the file was actually written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        let content = std::fs::read_to_string(&settings_path)
+            .expect("settings.json should exist after accepting prompt");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["statusLine"]["command"],
+            "wt list statusline --format=claude-code"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_statusline_prompt_decline(repo: TestRepo, temp_home: TempDir) {
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install-statusline"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Configure statusline"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Statusline configured"),
+            "Should NOT configure when declined. Output:\n{output}"
+        );
+
+        // Verify the file was NOT written
+        let settings_path = temp_home.path().join(".claude/settings.json");
+        assert!(
+            !settings_path.exists(),
+            "settings.json should not exist after declining"
+        );
+    }
+
+    // --- install prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_install_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Install Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Plugin installed"),
+            "Should confirm installation. Output:\n{output}"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_install_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "install"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Install Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Plugin installed"),
+            "Should NOT install when declined. Output:\n{output}"
+        );
+    }
+
+    // --- uninstall prompt tests ---
+
+    #[rstest]
+    fn test_plugins_claude_uninstall_prompt_accept(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+        TestRepo::setup_plugin_installed(temp_home.path());
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "uninstall"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["y\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Uninstall Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            output.contains("Plugin uninstalled"),
+            "Should confirm uninstallation. Output:\n{output}"
+        );
+    }
+
+    #[rstest]
+    fn test_plugins_claude_uninstall_prompt_decline(mut repo: TestRepo, temp_home: TempDir) {
+        repo.setup_mock_ci_tools_unauthenticated();
+        repo.setup_mock_claude_with_plugins();
+        TestRepo::setup_plugin_installed(temp_home.path());
+
+        let env_vars = plugin_env_vars(&repo);
+        let cmd = build_pty_command(
+            wt_bin().to_str().unwrap(),
+            &["config", "plugins", "claude", "uninstall"],
+            repo.root_path(),
+            &env_vars,
+            Some(temp_home.path()),
+        );
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        assert_eq!(exit_code, 0, "Command should succeed. Output:\n{output}");
+        assert!(
+            output.contains("Uninstall Worktrunk plugin"),
+            "Should show prompt. Output:\n{output}"
+        );
+        assert!(
+            !output.contains("Plugin uninstalled"),
+            "Should NOT uninstall when declined. Output:\n{output}"
+        );
+    }
 }

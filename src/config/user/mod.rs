@@ -26,8 +26,9 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig, SelectConfig,
-    StageMode, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
+    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    UserProjectOverrides,
 };
 
 /// User-level configuration for worktree path formatting and LLM integration.
@@ -71,23 +72,12 @@ pub use sections::{
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
-    /// **DEPRECATED**: Use `[commit.generation]` instead.
-    ///
-    /// This field is kept for backward compatibility. When both are set,
-    /// `commit.generation` takes precedence.
-    #[serde(
-        default,
-        rename = "commit-generation",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commit_generation: Option<CommitGenerationConfig>,
-
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
-    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, select, hooks)
+    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, step, hooks)
     #[serde(flatten, default)]
     pub configs: OverridableConfig,
 
@@ -123,22 +113,19 @@ impl UserConfig {
         let mut builder = Config::builder();
 
         // Add system config if it exists (lowest priority file source)
-        if let Some(system_path) = path::system_config_path() {
-            if let Ok(content) = std::fs::read_to_string(&system_path) {
-                // Warn about unknown fields in system config
-                let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
-                    .into_iter()
-                    .filter(|(k, _)| {
-                        !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str())
-                    })
-                    .collect();
-                super::deprecation::warn_unknown_fields::<UserConfig>(
-                    &system_path,
-                    &unknown_keys,
-                    "System config",
-                );
-            }
-            builder = builder.add_source(File::from(system_path));
+        if let Some(system_path) = path::system_config_path()
+            && let Ok(content) = std::fs::read_to_string(&system_path)
+        {
+            // Warn about unknown fields in system config
+            super::deprecation::warn_unknown_fields::<UserConfig>(
+                &system_path,
+                &find_unknown_keys(&content),
+                "System config",
+            );
+
+            // Feed migrated content to serde so deprecated patterns parse correctly
+            let migrated = super::deprecation::migrate_content(&content);
+            builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
         }
 
         // Add user config file if it exists (overrides system config)
@@ -151,32 +138,30 @@ impl UserConfig {
             // Use show_brief_warning=true to emit a brief pointer to `wt config show`
             // Warning is deduplicated per-process via WARNED_DEPRECATED_PATHS.
             if let Ok(content) = std::fs::read_to_string(config_path) {
-                let _ = super::deprecation::check_and_migrate(
+                let migrated = super::deprecation::check_and_migrate(
                     config_path,
                     &content,
                     true,
                     "User config",
                     None,
                     true, // show_brief_warning
-                );
+                )
+                .map(|result| result.migrated_content)
+                .unwrap_or_else(|_| super::deprecation::migrate_content(&content));
 
                 // Warn about unknown fields in the config file
                 // (must check file content directly, not config.unknown, because
                 // config.unknown includes env vars which shouldn't trigger warnings)
-                let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&content)
-                    .into_iter()
-                    .filter(|(k, _)| {
-                        !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str())
-                    })
-                    .collect();
                 super::deprecation::warn_unknown_fields::<UserConfig>(
                     config_path,
-                    &unknown_keys,
+                    &find_unknown_keys(&content),
                     "User config",
                 );
-            }
 
-            builder = builder.add_source(File::from(config_path.clone()));
+                // Feed migrated content from check_and_migrate to serde so deprecated
+                // patterns parse correctly without reparsing the TOML here.
+                builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
+            }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
         {
@@ -214,8 +199,9 @@ impl UserConfig {
     /// Load configuration from a TOML string for testing.
     #[cfg(test)]
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
+        let migrated = crate::config::deprecation::migrate_content(content);
         let config: Self =
-            toml::from_str(content).map_err(|e| ConfigError::Message(e.to_string()))?;
+            toml::from_str(&migrated).map_err(|e| ConfigError::Message(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }

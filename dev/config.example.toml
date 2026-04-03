@@ -1,6 +1,6 @@
 # # User Configuration
 #
-# Create with `wt config create`.
+# Create with `wt config create`. Values shown are defaults unless noted otherwise.
 #
 # Location:
 #
@@ -21,20 +21,20 @@
 #
 # **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 #
-# # Default — sibling directory
-# # Creates: ~/code/myproject.feature-auth
-# # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
+# Default — sibling directory (`~/code/myproject.feature-auth`):
 #
-# # Inside the repository
-# # Creates: ~/code/myproject/.worktrees/feature-auth
+# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
+#
+# Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
+#
 # worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 #
-# # Centralized worktrees directory
-# # Creates: ~/worktrees/myproject/feature-auth
+# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
+#
 # worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
 #
-# # Bare repository (git clone --bare <url> myproject/.git)
-# # Creates: ~/code/myproject/feature-auth
+# Bare repository (`~/code/myproject/feature-auth`):
+#
 # worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
 #
 # `~` expands to the home directory. Relative paths resolve from `repo_path`.
@@ -45,28 +45,28 @@
 #
 # ### Claude Code
 #
-# # [commit.generation]
-# # command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
+# [commit.generation]
+# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
 #
 # ### Codex
 #
-# # [commit.generation]
-# # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
+# [commit.generation]
+# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 #
 # ### opencode
 #
-# # [commit.generation]
-# # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
+# [commit.generation]
+# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
 #
 # ### llm
 #
-# # [commit.generation]
-# # command = "llm -m claude-haiku-4.5"
+# [commit.generation]
+# command = "llm -m claude-haiku-4.5"
 #
 # ### aichat
 #
-# # [commit.generation]
-# # command = "aichat -m claude:claude-haiku-4.5"
+# [commit.generation]
+# command = "aichat -m claude:claude-haiku-4.5"
 #
 # See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
@@ -103,20 +103,23 @@
 # rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 # remove = true      # Remove worktree after merge (--no-remove to keep)
 # verify = true      # Run project hooks (--no-verify to skip)
-# no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)
+# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
 # ### Switch
 #
 # [switch]
-# no-cd = true       # Skip directory change after switching (--cd to override)
+# cd = true          # Change directory after switching (--no-cd to skip)
 #
 # [switch.picker]
-# # Pager command for diff preview (overrides git's core.pager)
-# # pager = "delta --paging=never"
+# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
+# timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables
 #
-# # Wall-clock budget (ms) for picker data collection (default: 500)
-# # Tasks still running when the budget expires are abandoned; 0 disables
-# # timeout-ms = 500
+# ### Step
+#
+# [step.copy-ignored]
+# exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
+#
+# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
 #
 # ### Aliases
 #
@@ -136,17 +139,14 @@
 # - User configs generally apply to all projects.
 # - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 #
-# Entries are keyed by project identifier (e.g., `github.com/user/repo`).
-#
-# #### Setting overrides [experimental]
-#
-# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value. Hooks append — both global and per-project hooks run. Aliases merge — per-project aliases override global aliases on name collision.
+# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
 # pre-start.env = "cp .env.example .env"
+# step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
 # ### Custom prompt templates
@@ -166,7 +166,7 @@
 # <!-- DEFAULT_TEMPLATE_START -->
 # [commit.generation]
 # template = """
-# Write a commit message for the staged changes below.
+# <task>Write a commit message for the staged changes below.</task>
 #
 # <format>
 # - Subject line under 50 chars
@@ -210,7 +210,7 @@
 # <!-- DEFAULT_SQUASH_TEMPLATE_START -->
 # [commit.generation]
 # squash-template = """
-# Combine these commits into a single commit message.
+# <task>Write a commit message for the combined effect of these commits.</task>
 #
 # <format>
 # - Subject line under 50 chars
@@ -238,3 +238,24 @@
 #
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+#
+# ## Hooks
+#
+# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.
+#
+# Single command:
+#
+# pre-start = "npm ci"
+#
+# Multiple named commands (concurrent for post-*, sequential for pre-*):
+#
+# [pre-merge]
+# test = "npm test"
+# build = "npm run build"
+#
+# Pipeline — list of maps, run in order (each map concurrent):
+#
+# post-start = [
+#     { install = "npm ci" },
+#     { build = "npm run build", server = "npm run dev" }
+# ]

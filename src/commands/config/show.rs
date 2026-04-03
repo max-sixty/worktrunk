@@ -3,9 +3,9 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -52,9 +52,11 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Render shell integration status
     render_shell_status(&mut show_output)?;
 
-    // Render Claude Code status
-    show_output.push('\n');
-    render_claude_code_status(&mut show_output)?;
+    // Render Claude Code status (only when claude CLI is available)
+    if is_claude_available() {
+        show_output.push('\n');
+        render_claude_code_status(&mut show_output)?;
+    }
 
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
@@ -79,7 +81,7 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 // ==================== Helper Functions ====================
 
 /// Check if Claude Code CLI is available
-fn is_claude_available() -> bool {
+pub(super) fn is_claude_available() -> bool {
     // Allow tests to override detection
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
         return val == "1";
@@ -88,7 +90,7 @@ fn is_claude_available() -> bool {
 }
 
 /// Get the home directory for Claude Code config detection
-fn home_dir() -> Option<PathBuf> {
+pub(super) fn home_dir() -> Option<PathBuf> {
     // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -98,7 +100,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// Check if the worktrunk plugin is installed in Claude Code
-fn is_plugin_installed() -> bool {
+pub(super) fn is_plugin_installed() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -108,12 +110,17 @@ fn is_plugin_installed() -> bool {
         return false;
     };
 
-    // Look for "worktrunk@worktrunk" in the plugins object
-    content.contains("\"worktrunk@worktrunk\"")
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("plugins")
+        .and_then(|p| p.get("worktrunk@worktrunk"))
+        .is_some()
 }
 
 /// Check if the statusline is configured in Claude Code settings
-fn is_statusline_configured() -> bool {
+pub(super) fn is_statusline_configured() -> bool {
     let Some(home) = home_dir() else {
         return false;
     };
@@ -123,11 +130,14 @@ fn is_statusline_configured() -> bool {
         return false;
     };
 
-    // Check if statusLine is configured with a wt command
-    // Match "wt " at a word boundary in command context to avoid false positives
-    // from unrelated JSON keys containing "wt" (e.g., "fontWeight", "tabWidth")
-    content.contains("\"statusLine\"")
-        && (content.contains("\"wt ") || content.contains(": \"wt ") || content.contains(":\"wt "))
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("statusLine")
+        .and_then(|s| s.get("command"))
+        .and_then(|c| c.as_str())
+        .is_some_and(|cmd| cmd.contains("wt "))
 }
 
 /// Get the git version string (e.g., "2.47.1")
@@ -181,20 +191,10 @@ fn check_zsh_compinit_missing() -> bool {
 
 // ==================== Render Functions ====================
 
-/// Render CLAUDE CODE section (plugin and statusline status)
+/// Render CLAUDE CODE section (plugin and statusline status).
+/// Caller must check `is_claude_available()` first.
 fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
-    let claude_available = is_claude_available();
-
     writeln!(out, "{}", format_heading("CLAUDE CODE", None))?;
-
-    if !claude_available {
-        writeln!(
-            out,
-            "{}",
-            info_message(cformat!("<bold>claude</> CLI not installed"))
-        )?;
-        return Ok(());
-    }
 
     // Plugin status
     let plugin_installed = is_plugin_installed();
@@ -204,10 +204,10 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message("Plugin not installed. To install, run:")
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins claude install</>"
+            ))
         )?;
-        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
-        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
     }
 
     // Statusline status
@@ -218,9 +218,9 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            hint_message(
-                "Statusline not configured. See https://worktrunk.dev/claude-code/#statusline"
-            )
+            hint_message(cformat!(
+                "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
+            ))
         )?;
     }
 
@@ -271,9 +271,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Check CI tool based on detected platform (with config override support)
     let repo = Repository::current()?;
-    let project_config = repo.load_project_config().ok().flatten();
-    let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = platform_for_repo(&repo, platform_override, None);
+    let platform = platform_for_repo(&repo, None);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -376,7 +374,6 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
         out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
             &contents,
         )));
@@ -422,7 +419,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
 
     // Check for deprecations with show_brief_warning=false (silent mode)
     // User config is global, not tied to any repository
-    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
@@ -430,9 +427,13 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         None,
         false, // silent mode - we'll format the output ourselves
     ) {
-        // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(&info));
-        true
+        if let Some(info) = result.info {
+            // Add deprecation details to the output buffer
+            out.push_str(&worktrunk::config::format_deprecation_details(&info));
+            true
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -443,7 +444,9 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
+        // Only check for unknown keys if config is valid.
+        // Filter deprecated section keys to avoid duplicate warnings
+        // (deprecation system already warns about these).
         out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
             &contents,
         )));
@@ -487,16 +490,24 @@ pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
 ) -> String {
     let mut out = String::new();
 
-    // Sort keys for deterministic output order
     let mut keys: Vec<_> = unknown_keys.keys().collect();
     keys.sort();
 
     for key in keys {
-        let msg = match worktrunk::config::key_belongs_in::<C>(key) {
-            Some(location) => {
-                cformat!("Key <bold>{key}</> belongs in {location} (will be ignored)")
+        let msg = match worktrunk::config::classify_unknown_key::<C>(key) {
+            worktrunk::config::UnknownKeyKind::DeprecatedHandled => continue,
+            worktrunk::config::UnknownKeyKind::DeprecatedWrongConfig {
+                other_description,
+                canonical_display,
+            } => {
+                cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}")
             }
-            None => cformat!("Unknown key <bold>{key}</> will be ignored"),
+            worktrunk::config::UnknownKeyKind::WrongConfig { other_description } => {
+                cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)")
+            }
+            worktrunk::config::UnknownKeyKind::Unknown => {
+                cformat!("Unknown key <bold>{key}</> will be ignored")
+            }
         };
         let _ = writeln!(out, "{}", warning_message(msg));
     }
@@ -519,9 +530,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let repo_root = match repo.current_worktree().root() {
-        Ok(root) => root,
-        Err(_) => {
+    let config_path = match repo.project_config_path() {
+        Ok(Some(path)) => path,
+        _ => {
             writeln!(
                 out,
                 "{}",
@@ -533,7 +544,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(
         out,
@@ -561,7 +571,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Check for deprecations with show_brief_warning=false (silent mode)
     // Only write migration file in main worktree, not linked worktrees
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
-    let has_deprecations = if let Ok(Some(info)) = worktrunk::config::check_and_migrate(
+    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
@@ -569,9 +579,13 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         Some(&repo),
         false, // silent mode - we'll format the output ourselves
     ) {
-        // Add deprecation details to the output buffer
-        out.push_str(&worktrunk::config::format_deprecation_details(&info));
-        true
+        if let Some(info) = result.info {
+            // Add deprecation details to the output buffer
+            out.push_str(&worktrunk::config::format_deprecation_details(&info));
+            true
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -808,7 +822,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
                         ))
                     )?;
-                } else if matches!(shell, Shell::Fish | Shell::Nushell)
+                } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
                     // File exists but has different content (e.g. outdated version)
@@ -886,8 +900,24 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Show potential false negatives (lines containing cmd but not detected)
     // Skip files that have valid integration detected (matched_lines) - those are fine,
     // and the other lines containing cmd are just part of the integration script.
+    // Also skip files already confirmed as integration by scan_shell_configs (e.g., Nushell/Fish
+    // wrapper files that ARE the integration, not config files that source it).
+    let confirmed_paths: HashSet<&Path> = scan_result
+        .configured
+        .iter()
+        .filter(|r| {
+            // For wrapper-based shells, the file at the path IS the integration — any
+            // action means it was recognized. For eval-based shells, only AlreadyExists
+            // means the config line was found.
+            r.shell.is_wrapper_based() || matches!(r.action, ConfigAction::AlreadyExists)
+        })
+        .map(|r| r.path.as_path())
+        .collect();
     for detection in &detection_results {
-        if !detection.unmatched_candidates.is_empty() && detection.matched_lines.is_empty() {
+        if !detection.unmatched_candidates.is_empty()
+            && detection.matched_lines.is_empty()
+            && !confirmed_paths.contains(detection.path.as_path())
+        {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
 
@@ -958,10 +988,15 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     // If we have unmatched candidates but no configured shells, suggest raising an issue
+    // Apply the same confirmed_paths filter used above to avoid including wrapper files
     if has_any_unmatched && !has_any_configured {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
-            .filter(|r| !r.unmatched_candidates.is_empty())
+            .filter(|r| {
+                !r.unmatched_candidates.is_empty()
+                    && r.matched_lines.is_empty()
+                    && !confirmed_paths.contains(r.path.as_path())
+            })
             .flat_map(|r| {
                 r.unmatched_candidates
                     .iter()

@@ -67,13 +67,13 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
         None
     ));
 
-    // Verify worktree was removed
+    // Verify worktree was removed (non-current removal — no placeholder created)
     let worktree_path = repo
         .root_path()
         .parent()
         .unwrap()
         .join("repo.merged-branch");
-    assert!(!worktree_path.exists(), "Merged worktree should be removed");
+    assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
 /// Prune skips worktrees with unique commits (not merged)
@@ -94,9 +94,12 @@ fn test_prune_skips_unmerged(mut repo: TestRepo) {
         None
     ));
 
-    // Merged worktree removed
+    // Merged worktree removed (non-current — no placeholder)
     let merged_path = repo.root_path().parent().unwrap().join("repo.merged-one");
-    assert!(!merged_path.exists(), "Merged worktree should be removed");
+    assert!(
+        !merged_path.exists(),
+        "Merged worktree should be fully removed"
+    );
 
     // Unmerged worktree still exists
     let unmerged_path = repo.root_path().parent().unwrap().join("repo.unmerged");
@@ -144,11 +147,20 @@ fn test_prune_multiple(mut repo: TestRepo) {
         None
     ));
 
-    // All merged worktrees removed
+    // All merged worktrees removed (non-current — no placeholders)
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-a").exists());
-    assert!(!parent.join("repo.merged-b").exists());
-    assert!(!parent.join("repo.merged-c").exists());
+    assert!(
+        !parent.join("repo.merged-a").exists(),
+        "merged-a should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.merged-b").exists(),
+        "merged-b should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.merged-c").exists(),
+        "merged-c should be fully removed"
+    );
 }
 
 /// Prune skips unmerged detached HEAD worktrees
@@ -192,11 +204,11 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
         None
     ));
 
-    // Worktree was removed
+    // Worktree was removed (non-current — no placeholder)
     let parent = repo.root_path().parent().unwrap();
     assert!(
         !parent.join("repo.detached-integrated").exists(),
-        "Integrated detached worktree should be removed"
+        "Worktree should be fully removed"
     );
 }
 
@@ -219,8 +231,14 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
     ));
 
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.detached-a").exists());
-    assert!(!parent.join("repo.detached-b").exists());
+    assert!(
+        !parent.join("repo.detached-a").exists(),
+        "detached-a should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.detached-b").exists(),
+        "detached-b should be fully removed"
+    );
 }
 
 /// Prune skips locked worktrees
@@ -242,9 +260,12 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
         None
     ));
 
-    // Merged removed, locked remains
+    // Merged removed (non-current — no placeholder), locked remains
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-branch").exists());
+    assert!(
+        !parent.join("repo.merged-branch").exists(),
+        "Merged worktree should be fully removed"
+    );
     assert!(
         parent.join("repo.locked-branch").exists(),
         "Locked worktree should be skipped"
@@ -314,7 +335,7 @@ fn test_prune_mixed_worktree_and_orphan_branch(mut repo: TestRepo) {
     let parent = repo.root_path().parent().unwrap();
     assert!(
         !parent.join("repo.merged-mixed").exists(),
-        "Merged worktree should be removed"
+        "Worktree should be fully removed"
     );
 }
 
@@ -338,10 +359,7 @@ fn test_prune_current_worktree(mut repo: TestRepo) {
     ));
 
     // Current worktree was removed
-    assert!(
-        !wt_path.exists(),
-        "Current merged worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&wt_path);
 }
 
 /// Prune handles stale/prunable worktrees (directory deleted but git metadata remains)
@@ -401,11 +419,11 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
     // Dirty worktree still exists
     assert!(wt_path.exists(), "Dirty worktree should be skipped");
 
-    // Clean worktree removed
+    // Clean worktree removed (non-current — no placeholder)
     let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
     assert!(
         !clean_path.exists(),
-        "Clean merged worktree should be removed"
+        "Clean worktree should be fully removed"
     );
 }
 
@@ -455,7 +473,7 @@ fn test_prune_during_rebase(mut repo: TestRepo) {
         .args(["rebase", "-i", "--exec", "false", "main"])
         .current_dir(&feature_path)
         .env("GIT_SEQUENCE_EDITOR", "true")
-        .output()
+        .run()
         .unwrap();
     // The rebase should pause (exec false fails), leaving us in rebase state
     assert!(!git_status.status.success(), "rebase should be paused");
@@ -497,6 +515,41 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     ));
 }
 
+/// Prune detects squash-merged branches when target later modified the same files (#1818).
+///
+/// When `git merge-tree --write-tree` conflicts because the branch and target both
+/// changed the same files, the patch-id fallback detects the squash merge.
+#[rstest]
+fn test_prune_squash_merged_same_files_modified(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree, make changes to a file
+    let wt_path = repo.add_worktree("feature-squash");
+    std::fs::write(wt_path.join("shared.txt"), "feature content").unwrap();
+    repo.run_git_in(&wt_path, &["add", "shared.txt"]);
+    repo.run_git_in(&wt_path, &["commit", "-m", "Add feature"]);
+
+    // Back on main: simulate squash merge (same content), then advance the same file
+    std::fs::write(repo.root_path().join("shared.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Squash merge feature"]);
+
+    std::fs::write(
+        repo.root_path().join("shared.txt"),
+        "feature content\nmore main changes",
+    )
+    .unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Advance same file on main"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--dry-run", "--min-age=0s"],
+        None
+    ));
+}
+
 /// Default branch without a worktree should not be pruned despite being
 /// trivially "integrated" into itself (tautological SameCommit).
 #[test]
@@ -511,7 +564,7 @@ fn test_prune_skips_default_branch_orphan() {
     std::fs::remove_dir_all(&main_wt).unwrap();
     test.git_command(test.bare_repo_path())
         .args(["worktree", "prune"])
-        .output()
+        .run()
         .unwrap();
 
     // Create a feature branch (integrated, at same commit as main)
@@ -532,7 +585,7 @@ fn test_prune_skips_default_branch_orphan() {
     let output = test
         .git_command(test.bare_repo_path())
         .args(["branch", "--list", "main"])
-        .output()
+        .run()
         .unwrap();
     let branches = String::from_utf8_lossy(&output.stdout);
     assert!(

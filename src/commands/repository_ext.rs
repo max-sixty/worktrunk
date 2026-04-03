@@ -34,14 +34,17 @@ pub trait RepositoryCliExt {
     /// Returns a `RemoveResult` describing what will be removed. The actual
     /// removal is performed by the output handler.
     ///
-    /// The `config` parameter is used to compute the expected worktree path
-    /// for path mismatch detection.
+    /// `current_path` overrides process-CWD discovery for determining which
+    /// worktree is "current". Pass `None` for normal CLI usage (discovers from
+    /// CWD). Pass `Some` when calling from a context where CWD may have changed
+    /// (e.g., background threads in the picker).
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
         config: &UserConfig,
+        current_path: Option<PathBuf>,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -77,8 +80,9 @@ impl RepositoryCliExt for Repository {
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
         config: &UserConfig,
+        current_path: Option<PathBuf>,
     ) -> anyhow::Result<RemoveResult> {
-        let current_path = self.current_worktree().root()?.to_path_buf();
+        let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
         let worktrees = self.list_worktrees()?;
         // Primary worktree path: prefer default branch's worktree, fall back to first
         // worktree, then repo base for bare repos with no worktrees.
@@ -143,6 +147,7 @@ impl RepositoryCliExt for Repository {
                             return Err(GitError::BranchNotFound {
                                 branch: branch.into(),
                                 show_create_hint: false,
+                                last_fetch_ago: None,
                             }
                             .into());
                         }
@@ -453,7 +458,7 @@ pub(crate) fn check_not_default_branch(
 }
 
 /// Warn about untracked files that will be auto-staged.
-fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
+pub(crate) fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
     let files = parse_untracked_files(status_output);
     if files.is_empty() {
         return Ok(());

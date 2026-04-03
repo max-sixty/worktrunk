@@ -15,7 +15,7 @@
 
 pub mod approvals;
 mod commands;
-mod deprecation;
+pub(crate) mod deprecation;
 mod expansion;
 mod hooks;
 mod project;
@@ -72,7 +72,8 @@ impl WorktrunkConfig for ProjectConfig {
 
 // Re-export public types
 pub use approvals::{Approvals, approvals_path};
-pub use commands::{Command, CommandConfig};
+pub use commands::{Command, CommandConfig, HookStep, append_aliases};
+pub use deprecation::CheckAndMigrateResult;
 pub use deprecation::DeprecationInfo;
 pub use deprecation::Deprecations;
 pub use deprecation::check_and_migrate;
@@ -81,23 +82,29 @@ pub use deprecation::format_brief_warning;
 pub use deprecation::format_deprecation_details;
 pub use deprecation::format_deprecation_warnings;
 pub use deprecation::format_migration_diff;
+pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
 pub use deprecation::write_migration_file;
-pub use deprecation::{DEPRECATED_SECTION_KEYS, key_belongs_in, warn_unknown_fields};
+pub use deprecation::{
+    DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
+    key_belongs_in, warn_unknown_fields,
+};
 pub use expansion::{
     DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
-    redact_credentials, sanitize_branch_name, sanitize_db, short_hash, validate_template,
+    redact_credentials, sanitize_branch_name, sanitize_db, short_hash, template_references_var,
+    validate_template,
 };
 pub use hooks::HooksConfig;
 pub use project::{
     ProjectCiConfig, ProjectConfig, ProjectListConfig,
-    find_unknown_keys as find_unknown_project_keys,
+    find_unknown_keys as find_unknown_project_keys, valid_project_config_keys,
 };
 pub use user::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, OverridableConfig,
-    ResolvedConfig, SelectConfig, StageMode, SwitchConfig, SwitchPickerConfig, UserConfig,
-    UserProjectOverrides, config_path, default_config_path, default_system_config_path,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
+    OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    UserConfig, UserProjectOverrides, config_path, default_config_path, default_system_config_path,
     find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
+    valid_user_config_keys,
 };
 
 #[cfg(test)]
@@ -106,6 +113,7 @@ mod tests {
 
     use super::*;
     use crate::git::Repository;
+    use crate::shell_exec::Cmd;
 
     /// Test fixture that creates a real temporary git repository.
     struct TestRepo {
@@ -116,10 +124,10 @@ mod tests {
     impl TestRepo {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            std::process::Command::new("git")
+            Cmd::new("git")
                 .args(["init"])
                 .current_dir(dir.path())
-                .output()
+                .run()
                 .unwrap();
             let repo = Repository::at(dir.path()).unwrap();
             Self { _dir: dir, repo }
@@ -159,8 +167,6 @@ mod tests {
             config.worktree_path(),
             "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
         );
-        // commit_generation is None by default
-        assert!(config.commit_generation.is_none());
         assert!(config.projects.is_empty());
     }
 
@@ -302,9 +308,9 @@ mod tests {
         let toml = r#"post-create = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_create.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "npm install".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "npm install".to_string()));
     }
 
     #[test]
@@ -316,15 +322,15 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 2);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(Some("server".to_string()), "npm run dev".to_string())
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("watch".to_string()), "npm run watch".to_string())
         );
     }
@@ -340,7 +346,7 @@ mod tests {
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         // Extract just the names for easier verification
         let names: Vec<_> = commands
@@ -370,7 +376,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_start.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
 
         assert_eq!(commands.len(), 2);
         // Should be in TOML order: task1, task2
@@ -404,9 +410,9 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let toml = r#"pre-merge = "cargo test""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], Command::new(None, "cargo test".to_string()));
+        assert_eq!(*commands[0], Command::new(None, "cargo test".to_string()));
     }
 
     #[test]
@@ -419,22 +425,22 @@ task2 = "echo 'Task 2 running' > task2.txt"
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.pre_merge.unwrap();
-        let commands = cmd_config.commands();
+        let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 3);
         // Preserves TOML insertion order
         assert_eq!(
-            commands[0],
+            *commands[0],
             Command::new(
                 Some("format".to_string()),
                 "cargo fmt -- --check".to_string()
             )
         );
         assert_eq!(
-            commands[1],
+            *commands[1],
             Command::new(Some("lint".to_string()), "cargo clippy".to_string())
         );
         assert_eq!(
-            commands[2],
+            *commands[2],
             Command::new(Some("test".to_string()), "cargo test".to_string())
         );
     }
@@ -659,7 +665,7 @@ squash-template-file = "~/file.txt"
 
     #[test]
     fn test_find_unknown_user_keys_valid() {
-        let toml_str = "worktree-path = \"../test\"\n\n[commit-generation]\ncommand = \"llm\"\n\n[list]\nfull = true";
+        let toml_str = "worktree-path = \"../test\"\n\n[commit.generation]\ncommand = \"llm\"\n\n[list]\nfull = true";
         let unknown = find_unknown_user_keys(toml_str);
         assert!(unknown.is_empty());
     }
@@ -693,7 +699,7 @@ lint = "cargo clippy"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
@@ -703,7 +709,7 @@ lint = "cargo clippy"
             .hooks
             .pre_merge
             .expect("pre-merge should be present");
-        let commands = pre_merge.commands();
+        let commands: Vec<_> = pre_merge.commands().collect();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
         assert_eq!(commands[1].name.as_deref(), Some("lint"));
@@ -722,7 +728,7 @@ post-create = "npm install"
             .hooks
             .post_create
             .expect("post-create should be present");
-        let commands = post_create.commands();
+        let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].name.is_none()); // single command has no name
         assert_eq!(commands[0].template, "npm install");
@@ -747,22 +753,19 @@ test = "cargo test"
 
     #[test]
     fn test_user_config_key_in_project_config_is_detected() {
-        // commit-generation is a user-config-only key
-        let toml_str = r#"
-[commit-generation]
-command = "claude"
-"#;
+        // skip-shell-integration-prompt is a user-config-only key
+        let toml_str = "skip-shell-integration-prompt = true\n";
         let unknown = find_unknown_project_keys(toml_str);
         assert!(
-            unknown.contains_key("commit-generation"),
-            "commit-generation should be unknown in project config"
+            unknown.contains_key("skip-shell-integration-prompt"),
+            "skip-shell-integration-prompt should be unknown in project config"
         );
 
         // Verify it's valid in user config
         let unknown_in_user = find_unknown_user_keys(toml_str);
         assert!(
             unknown_in_user.is_empty(),
-            "commit-generation should be valid in user config"
+            "skip-shell-integration-prompt should be valid in user config"
         );
     }
 

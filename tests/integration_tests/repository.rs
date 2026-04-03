@@ -3,6 +3,7 @@
 use std::fs;
 
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::Cmd;
 
 use crate::common::TestRepo;
 
@@ -143,7 +144,7 @@ fn test_available_branches_some_without_worktrees() {
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -163,14 +164,8 @@ fn test_available_branches_some_without_worktrees() {
 fn test_all_branches() {
     let repo = TestRepo::new();
     // Create some branches
-    repo.git_command()
-        .args(["branch", "alpha"])
-        .output()
-        .unwrap();
-    repo.git_command()
-        .args(["branch", "beta"])
-        .output()
-        .unwrap();
+    repo.git_command().args(["branch", "alpha"]).run().unwrap();
+    repo.git_command().args(["branch", "beta"]).run().unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let branches = repository.all_branches().unwrap();
@@ -196,7 +191,7 @@ fn test_project_identifier_https() {
             "origin",
             "https://github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -216,7 +211,7 @@ fn test_project_identifier_http() {
             "origin",
             "http://gitlab.example.com/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -236,7 +231,7 @@ fn test_project_identifier_ssh_colon() {
             "origin",
             "git@github.com:user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -256,7 +251,7 @@ fn test_project_identifier_ssh_protocol() {
             "origin",
             "ssh://git@github.com/user/repo.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -277,7 +272,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
             "origin",
             "ssh://git@gitlab.example.com:2222/team/project.git",
         ])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -308,7 +303,7 @@ fn test_get_config_exists() {
     let repo = TestRepo::new();
     repo.git_command()
         .args(["config", "test.key", "test-value"])
-        .output()
+        .run()
         .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -550,6 +545,115 @@ fn test_integration_functions_handle_remote_refs() {
 }
 
 // =============================================================================
+// merge-tree exit code handling tests
+// =============================================================================
+
+/// has_merge_conflicts returns false for clean merges (exit 0)
+/// and true for conflicts (exit 1).
+#[test]
+fn test_has_merge_conflicts_clean_vs_conflicting() {
+    let repo = TestRepo::new();
+    fs::write(repo.root_path().join("base.txt"), "base\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Base"]);
+
+    // Clean merge: feature adds a new file (no overlap with main)
+    repo.run_git(&["checkout", "-b", "clean-feature"]);
+    fs::write(repo.root_path().join("new.txt"), "new\n").unwrap();
+    repo.run_git(&["add", "new.txt"]);
+    repo.run_git(&["commit", "-m", "Add new file"]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Conflicting merge: feature edits the same file differently
+    repo.run_git(&["checkout", "-b", "conflict-feature"]);
+    fs::write(repo.root_path().join("base.txt"), "conflict\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Edit base"]);
+    repo.run_git(&["checkout", "main"]);
+    fs::write(repo.root_path().join("base.txt"), "main-edit\n").unwrap();
+    repo.run_git(&["add", "base.txt"]);
+    repo.run_git(&["commit", "-m", "Edit base on main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(
+        !repository
+            .has_merge_conflicts("main", "clean-feature")
+            .unwrap()
+    );
+    assert!(
+        repository
+            .has_merge_conflicts("main", "conflict-feature")
+            .unwrap()
+    );
+}
+
+/// has_merge_conflicts returns true (not Err) for orphan branches,
+/// since unrelated histories can't be cleanly merged.
+#[test]
+fn test_has_merge_conflicts_orphan_branch() {
+    let repo = TestRepo::new();
+
+    repo.run_git(&["checkout", "--orphan", "orphan"]);
+    repo.run_git(&["rm", "-rf", "."]);
+    fs::write(repo.root_path().join("orphan.txt"), "orphan\n").unwrap();
+    repo.run_git(&["add", "orphan.txt"]);
+    repo.run_git(&["commit", "-m", "Orphan commit"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Orphan branches have no merge base — treated as conflicting, not as an error
+    assert!(repository.has_merge_conflicts("main", "orphan").unwrap());
+}
+
+/// merge_integration_probe short-circuits for orphan branches:
+/// would_merge_add=true, is_patch_id_match=false.
+#[test]
+fn test_merge_integration_probe_orphan_branch() {
+    let repo = TestRepo::new();
+
+    repo.run_git(&["checkout", "--orphan", "orphan"]);
+    repo.run_git(&["rm", "-rf", "."]);
+    fs::write(repo.root_path().join("orphan.txt"), "orphan\n").unwrap();
+    repo.run_git(&["add", "orphan.txt"]);
+    repo.run_git(&["commit", "-m", "Orphan commit"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let probe = repository
+        .merge_integration_probe("orphan", "main")
+        .unwrap();
+
+    assert!(probe.would_merge_add, "orphan branch always has changes");
+    assert!(
+        !probe.is_patch_id_match,
+        "no patch-id match possible without merge base"
+    );
+}
+
+/// merge_integration_probe correctly detects already-integrated branches
+/// (clean merge that doesn't change target tree).
+#[test]
+fn test_merge_integration_probe_already_integrated() {
+    let repo = TestRepo::new();
+
+    // Create feature, then merge it into main via fast-forward
+    repo.run_git(&["checkout", "-b", "feature"]);
+    fs::write(repo.root_path().join("feature.txt"), "content\n").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Feature"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["merge", "feature"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let probe = repository
+        .merge_integration_probe("feature", "main")
+        .unwrap();
+
+    assert!(!probe.would_merge_add, "already-merged branch adds nothing");
+}
+
+// =============================================================================
 // Bug: repo_path() inside git submodules
 // =============================================================================
 
@@ -570,37 +674,28 @@ fn test_repo_path_in_submodule() {
     fs::create_dir(&parent_path).unwrap();
 
     // Initialize parent repo with git config
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&parent_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(output.status.success(), "git init failed for parent");
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for commits
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&parent_path)
-        .output()
+    let parent_repo = Repository::at(&parent_path).unwrap();
+    parent_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in parent
     fs::write(parent_path.join("README.md"), "# Parent").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&parent_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo.run_command(&["add", "."]).unwrap();
+    parent_repo
+        .run_command(&["commit", "-m", "Initial commit"])
         .unwrap();
 
     // Create submodule repository (as a separate repo first)
@@ -608,45 +703,33 @@ fn test_repo_path_in_submodule() {
     let sub_origin_path = sub_temp.path().join("submodule-origin");
     fs::create_dir(&sub_origin_path).unwrap();
 
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["init", "-q"])
+    Cmd::new("git")
+        .args(["init", "-q"])
         .current_dir(&sub_origin_path)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "git init failed for submodule origin"
-    );
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .run()
+        .unwrap();
 
     // Configure git user for submodule
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(&sub_origin_path)
-        .output()
+    let sub_repo = Repository::at(&sub_origin_path).unwrap();
+    sub_repo
+        .run_command(&["config", "user.email", "test@example.com"])
         .unwrap();
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo
+        .run_command(&["config", "user.name", "Test User"])
         .unwrap();
 
     // Create initial commit in submodule origin
     fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
-    std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&sub_origin_path)
-        .output()
-        .unwrap();
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Submodule initial commit"])
-        .current_dir(&sub_origin_path)
-        .output()
+    sub_repo.run_command(&["add", "."]).unwrap();
+    sub_repo
+        .run_command(&["commit", "-m", "Submodule initial commit"])
         .unwrap();
 
     // Add submodule to parent (using local path directly, with file transport allowed)
-    let output = std::process::Command::new("git")
-        .args([
+    parent_repo
+        .run_command(&[
             "-c",
             "protocol.file.allow=always",
             "submodule",
@@ -654,20 +737,11 @@ fn test_repo_path_in_submodule() {
             sub_origin_path.to_str().unwrap(),
             "sub",
         ])
-        .current_dir(&parent_path)
-        .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "git submodule add failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 
     // Commit the submodule addition
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Add submodule"])
-        .current_dir(&parent_path)
-        .output()
+    parent_repo
+        .run_command(&["commit", "-m", "Add submodule"])
         .unwrap();
 
     // Now test: create Repository from inside the submodule

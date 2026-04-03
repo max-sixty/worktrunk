@@ -1,8 +1,7 @@
 //! Eval command implementation
 //!
 //! Evaluates a template expression in the current worktree context and prints
-//! the result to stdout. Designed for scripting — output is raw (no shell
-//! escaping, no decoration).
+//! the result to stdout.
 
 use std::collections::HashMap;
 
@@ -34,7 +33,6 @@ pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    // No shell escaping — output is literal for scripting
     let result = expand_template(template, &vars, false, &repo, "eval")?;
 
     if dry_run {

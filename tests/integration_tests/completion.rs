@@ -523,7 +523,7 @@ fn test_complete_excludes_remote_branches(repo: TestRepo) {
     let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
     repo.git_command()
         .args(["init", "--bare", remote_dir.to_str().unwrap()])
-        .output()
+        .run()
         .unwrap();
 
     // Update origin URL to point to our bare repo

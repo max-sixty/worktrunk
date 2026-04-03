@@ -12,21 +12,21 @@ Git's built-in worktree commands work but require manual lifecycle management:
 
 ```bash
 # Plain git worktree workflow
-git worktree add -b feature-branch ../myapp-feature main
-cd ../myapp-feature
+$ git worktree add -b feature-branch ../myapp-feature main
+$ cd ../myapp-feature
 # ...work, commit, push...
-cd ../myapp
-git merge feature-branch
-git worktree remove ../myapp-feature
-git branch -d feature-branch
+$ cd ../myapp
+$ git merge feature-branch
+$ git worktree remove ../myapp-feature
+$ git branch -d feature-branch
 ```
 
 Worktrunk automates the full lifecycle:
 
 ```bash
-wt switch --create feature-branch  # Creates worktree, runs setup hooks
+$ wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
-wt merge                            # Merges into default branch, cleans up
+$ wt merge                            # Merges into default branch, cleans up
 ```
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
@@ -106,7 +106,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
-| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
+| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
 | `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt/logs/*.log` | Background command output | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
@@ -132,9 +132,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-```bash
-git worktree lock ../myproject.feature --reason "Contains local database"
-```
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -162,21 +160,20 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [branch summaries](https://worktrunk.dev/llm-commits/#branch-summaries)
 4. **--execute flag** — Explicitly provided commands
 
-User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
+User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to the approvals file (`approvals.toml`). If a command changes, Worktrunk requires new approval.
 
 ### Example approval prompt
 
-```
 ▲ repo needs approval to execute 3 commands:
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
+○ pre-start install:
+  npm ci
+○ pre-start build:
+  cargo build --release
+○ pre-start env:
+  echo 'PORT={{ branch | hash_port }}' > .env.local
+
 ❯ Allow and remember? [y/N]
-```
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
@@ -188,10 +185,10 @@ View the log with `wt config state logs get`, or query directly:
 
 ```bash
 # Recent commands
-tail -5 .git/wt/logs/commands.jsonl | jq .
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 # Failed commands
-jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
+$ jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
 ```
 
 Clear with `wt config state logs clear`.

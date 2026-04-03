@@ -7,24 +7,24 @@ so demos integrate seamlessly with light/dark mode switching.
 import json
 
 # Light theme - matches the "Warm Workbench" light mode
-# Based on the original "Warm Gold Light" theme with doc site alignment
+# Terminal colors from docs/templates/_variables.html (light mode)
 LIGHT_THEME = {
     "name": "Warm Gold Light",
-    "black": "#8c959f",
-    "red": "#d73a49",
-    "green": "#22863a",
-    "yellow": "#d29922",
-    "blue": "#0969da",
-    "magenta": "#8250df",
-    "cyan": "#1b7c83",
+    "black": "#6b7280",  # --bright-black
+    "red": "#dc2626",  # --red
+    "green": "#357a59",  # --green (desaturated from website's #1b7f4b)
+    "yellow": "#ca8a04",  # --yellow
+    "blue": "#2563eb",  # --blue
+    "magenta": "#9333ea",  # --magenta
+    "cyan": "#3d7f7f",  # --cyan (muted from website's #0a8080)
     "white": "#8c959f",
-    "brightBlack": "#8c959f",
-    "brightRed": "#cb2431",
-    "brightGreen": "#2ea043",
-    "brightYellow": "#f2cc60",
-    "brightBlue": "#218bff",
-    "brightMagenta": "#a475f9",
-    "brightCyan": "#39c5cf",
+    "brightBlack": "#6b7280",  # --bright-black
+    "brightRed": "#ef4444",
+    "brightGreen": "#4a9b76",
+    "brightYellow": "#eab308",
+    "brightBlue": "#3b82f6",
+    "brightMagenta": "#a855f7",
+    "brightCyan": "#5a9e9e",
     "brightWhite": "#8c959f",
     "background": "#FFFBF0",
     "foreground": "#1f2328",

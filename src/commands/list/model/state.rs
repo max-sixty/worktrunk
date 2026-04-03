@@ -487,6 +487,8 @@ mod tests {
         assert_eq!(s, "no-added-changes");
         let s: &'static str = IntegrationReason::MergeAddsNothing.into();
         assert_eq!(s, "merge-adds-nothing");
+        let s: &'static str = IntegrationReason::PatchIdMatch.into();
+        assert_eq!(s, "patch-id-match");
     }
 
     #[test]
@@ -517,6 +519,10 @@ mod tests {
         assert_eq!(
             MainState::Integrated(IntegrationReason::MergeAddsNothing).integration_reason(),
             Some(IntegrationReason::MergeAddsNothing)
+        );
+        assert_eq!(
+            MainState::Integrated(IntegrationReason::PatchIdMatch).integration_reason(),
+            Some(IntegrationReason::PatchIdMatch)
         );
     }
 

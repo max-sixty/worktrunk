@@ -22,7 +22,7 @@
 //!
 //! ## Environment Isolation
 //!
-//! Git commands are run with isolated environments using `Command::env()` to ensure:
+//! Git commands are run with isolated environments using `Cmd::env()` to ensure:
 //! - No interference from global git config
 //! - Deterministic commit timestamps
 //! - Consistent locale settings
@@ -409,6 +409,7 @@ pub fn wt_bin() -> PathBuf {
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
+use worktrunk::shell_exec::Cmd;
 
 /// Path to the standard fixture (relative to crate root).
 /// Contains repo/, repo.feature-a/, repo.feature-b/, repo.feature-c/, origin_git/.
@@ -764,10 +765,25 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
+/// Configure a `Cmd`-based git command with isolated environment for testing.
+///
+/// This is the `Cmd` equivalent of [`configure_git_cmd`]. Use this when building
+/// git commands via the builder pattern (`Cmd::new("git")`).
+pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
+    cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
+        .env("GIT_CONFIG_SYSTEM", NULL_DEVICE)
+        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string())
+        .env("GIT_TERMINAL_PROMPT", "0")
+}
+
 /// Shared interface for test repository fixtures.
 ///
-/// Provides `configure_git_cmd()`, `git_command()`, and `run_git_in()` with consistent
-/// environment isolation.
+/// Provides `configure_git_cmd()` (for `Command`), `git_command()` (returns `Cmd`),
+/// and `run_git_in()` with consistent environment isolation.
 pub trait TestRepoBase {
     /// Path to the git config file for this test.
     fn git_config_path(&self) -> &Path;
@@ -778,16 +794,17 @@ pub trait TestRepoBase {
     }
 
     /// Create a git command for the given directory.
-    fn git_command(&self, dir: &Path) -> Command {
-        let mut cmd = Command::new("git");
-        cmd.current_dir(dir);
-        self.configure_git_cmd(&mut cmd);
-        cmd
+    fn git_command(&self, dir: &Path) -> Cmd {
+        configure_git_env(Cmd::new("git"), self.git_config_path()).current_dir(dir)
     }
 
     /// Run a git command in a specific directory, panicking on failure.
     fn run_git_in(&self, dir: &Path, args: &[&str]) {
-        let output = self.git_command(dir).args(args).output().unwrap();
+        let output = self
+            .git_command(dir)
+            .args(args.iter().copied())
+            .run()
+            .unwrap();
         check_git_status(&output, &args.join(" "));
     }
 
@@ -801,7 +818,7 @@ pub trait TestRepoBase {
         let output = self
             .git_command(dir)
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
 
         if !output.status.success() {
@@ -1010,11 +1027,11 @@ pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
 
 /// Check that a git command succeeded, panicking with diagnostics if not.
 ///
-/// Use this after `git_command().output()` to ensure the command succeeded.
+/// Use this after `git_command().run()` to ensure the command succeeded.
 ///
 /// # Example
 /// ```ignore
-/// let output = repo.git_command().args(["add", "."]).current_dir(&dir).output().unwrap();
+/// let output = repo.git_command().args(["add", "."]).current_dir(&dir).run().unwrap();
 /// check_git_status(&output, "add");
 /// ```
 pub fn check_git_status(output: &std::process::Output, cmd_desc: &str) {
@@ -1207,6 +1224,12 @@ impl TestRepo {
                 "WORKTRUNK_APPROVALS_PATH".to_string(),
                 self.test_approvals_path().display().to_string(),
             ),
+            // Disable picker collect timeout to prevent flaky snapshots on slow
+            // CI runners (especially macOS). Bypasses config file loading.
+            (
+                "WORKTRUNK_TEST_PICKER_NO_TIMEOUT".to_string(),
+                "1".to_string(),
+            ),
         ]);
 
         vars
@@ -1229,28 +1252,25 @@ impl TestRepo {
 
     /// Create a `git` command pre-configured for this test repo.
     ///
-    /// Returns an isolated Command with test-specific git config.
-    /// Chain `.args()` to add arguments.
+    /// Returns an isolated `Cmd` with test-specific git config.
+    /// Chain `.args()` to add arguments, then `.run()` to execute.
     ///
     /// # Example
     /// ```ignore
     /// repo.git_command()
     ///     .args(["status", "--porcelain"])
-    ///     .output()?;
+    ///     .run()?;
     /// ```
     #[must_use]
-    pub fn git_command(&self) -> Command {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.current_dir(&self.root);
-        cmd
+    pub fn git_command(&self) -> Cmd {
+        configure_git_env(Cmd::new("git"), &self.git_config_path).current_dir(&self.root)
     }
 
     /// Run a git command in the repo root, panicking on failure.
     ///
     /// Thin wrapper around `git_command()` that runs the command and checks status.
     pub fn run_git(&self, args: &[&str]) {
-        let output = self.git_command().args(args).output().unwrap();
+        let output = self.git_command().args(args.iter().copied()).run().unwrap();
         check_git_status(&output, &args.join(" "));
     }
 
@@ -1260,9 +1280,9 @@ impl TestRepo {
     pub fn run_git_in(&self, dir: &Path, args: &[&str]) {
         let output = self
             .git_command()
-            .args(args)
+            .args(args.iter().copied())
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, &args.join(" "));
     }
@@ -1271,7 +1291,7 @@ impl TestRepo {
     ///
     /// Thin wrapper around `git_command()` for commands that return output.
     pub fn git_output(&self, args: &[&str]) -> String {
-        let output = self.git_command().args(args).output().unwrap();
+        let output = self.git_command().args(args.iter().copied()).run().unwrap();
         check_git_status(&output, &args.join(" "));
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
@@ -1297,10 +1317,10 @@ impl TestRepo {
                         "--force",
                         worktree_path.to_str().unwrap(),
                     ])
-                    .output();
+                    .run();
             }
             // Delete the branch after removing the worktree
-            let _ = self.git_command().args(["branch", "-D", branch]).output();
+            let _ = self.git_command().args(["branch", "-D", branch]).run();
             // Remove from worktrees map so add_worktree() can recreate if needed
             self.worktrees.remove(*branch);
         }
@@ -1316,7 +1336,7 @@ impl TestRepo {
         let output = self
             .git_command()
             .args(["rev-parse", "HEAD"])
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, "rev-parse HEAD");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -1328,7 +1348,7 @@ impl TestRepo {
             .git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
         check_git_status(&output, "rev-parse HEAD");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -1410,6 +1430,11 @@ impl TestRepo {
         &self.root
     }
 
+    /// Get the mock bin directory path (for custom mock setups)
+    pub fn mock_bin_path(&self) -> Option<&Path> {
+        self.mock_bin_path.as_deref()
+    }
+
     /// Get the path to the bare remote repository, if created.
     pub fn remote_path(&self) -> Option<&Path> {
         self.remote.as_deref()
@@ -1483,11 +1508,11 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         self.git_command()
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1503,11 +1528,11 @@ impl TestRepo {
         let file_path = self.root.join(format!("file-{}.txt", sanitized));
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         self.git_command()
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1535,14 +1560,14 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command().args(["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).run().unwrap();
 
         // Create commit with custom timestamp
         self.git_command()
             .env("GIT_AUTHOR_DATE", &timestamp)
             .env("GIT_COMMITTER_DATE", &timestamp)
             .args(["commit", "-m", message])
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1567,7 +1592,7 @@ impl TestRepo {
             .env("GIT_COMMITTER_DATE", &timestamp)
             .args(["commit", "-m", message])
             .current_dir(dir)
-            .output()
+            .run()
             .unwrap();
     }
 
@@ -1816,7 +1841,7 @@ impl TestRepo {
     pub fn has_origin_head(&self) -> bool {
         self.git_command()
             .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
-            .output()
+            .run()
             .unwrap()
             .status
             .success()
@@ -1919,6 +1944,59 @@ impl TestRepo {
             r#"{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}"#,
         )
         .unwrap();
+    }
+
+    /// Setup mock `claude` CLI with plugin subcommand support
+    ///
+    /// Creates a mock claude binary that handles `plugin marketplace`,
+    /// `plugin install`, and `plugin uninstall` commands. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin directory.
+    pub fn setup_mock_claude_with_plugins(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command("plugin marketplace", MockResponse::exit(0))
+            .command("plugin install", MockResponse::exit(0))
+            .command("plugin uninstall", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.claude_installed = true;
+    }
+
+    /// Setup mock `claude` CLI where plugin commands fail
+    ///
+    /// Creates a mock claude binary where `plugin marketplace`, `plugin install`,
+    /// and `plugin uninstall` all exit with code 1 and print an error.
+    /// Must call `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_claude_with_plugins_failing(&mut self) {
+        use crate::common::mock_commands::{MockConfig, MockResponse};
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("claude")
+            .command(
+                "plugin marketplace",
+                MockResponse::exit(1).with_stderr("error: network timeout\n"),
+            )
+            .command(
+                "plugin install",
+                MockResponse::exit(1).with_stderr("error: install failed\n"),
+            )
+            .command(
+                "plugin uninstall",
+                MockResponse::exit(1).with_stderr("error: uninstall failed\n"),
+            )
+            .write(mock_bin);
+
+        self.claude_installed = true;
     }
 
     /// Setup mock `gh` that returns configurable PR/CI data
@@ -2151,7 +2229,7 @@ impl TestRepo {
         let json_value = format!(r#"{{"marker":"{}","set_at":{}}}"#, marker, TEST_EPOCH);
         self.git_command()
             .args(["config", &config_key, &json_value])
-            .output()
+            .run()
             .unwrap();
     }
 }
@@ -2206,11 +2284,11 @@ impl BareRepoTest {
         };
 
         // Create bare repository
-        let mut cmd = Command::new("git");
-        cmd.args(["init", "--bare", "--initial-branch", "main"])
-            .arg(&test.bare_repo_path);
-        test.configure_git_cmd(&mut cmd);
-        let output = cmd.output().unwrap();
+        let output = configure_git_env(Cmd::new("git"), &test.git_config_path)
+            .args(["init", "--bare", "--initial-branch", "main"])
+            .arg(test.bare_repo_path.to_str().unwrap())
+            .run()
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -2260,7 +2338,7 @@ impl BareRepoTest {
                 branch,
                 worktree_path.to_str().unwrap(),
             ])
-            .output()
+            .run()
             .unwrap();
 
         if !output.status.success() {
@@ -2322,6 +2400,241 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
 }
 
+fn canonical_home_dir() -> Option<PathBuf> {
+    home::home_dir().and_then(|path| canonicalize(&path).ok())
+}
+
+fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
+    // Normalize project root path (for test fixtures)
+    // This must come before repo path filter to avoid partial matches
+    let project_root = std::env::var("CARGO_MANIFEST_DIR")
+        .ok()
+        .and_then(|path| canonicalize(std::path::Path::new(&path)).ok());
+    if let Some(root) = project_root {
+        settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
+    }
+
+    // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
+    settings.add_filter(r"/target/llvm-cov-target/", "/target/");
+
+    // Normalize backslashes FIRST so all subsequent path filters only need forward-slash versions.
+    // This must come before any path replacement filters.
+    settings.add_filter(r"\\", "/");
+}
+
+fn add_repo_and_worktree_path_filters(
+    settings: &mut insta::Settings,
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+) {
+    // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
+    let root_canonical = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root_str = root_canonical.to_str().unwrap();
+    let root_str_normalized = root_str.replace('\\', "/");
+    settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
+    // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
+    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
+
+    // In tests, HOME is set to the temp directory containing the repo. Commands being tested
+    // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
+    // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
+    // The optional suffix matches worktree paths like ~/repo.feature
+    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)?", "_REPO_$1");
+
+    let home_dir = canonical_home_dir();
+
+    // Also handle the case where the real home contains the temp directory (Windows/macOS)
+    if let Some(home) = home_dir.as_ref()
+        && let Ok(relative) = root_canonical.strip_prefix(home)
+    {
+        let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+        settings.add_filter(&regex::escape(&tilde_path), "_REPO_");
+        let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
+        settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
+    }
+
+    for (name, path) in worktrees {
+        let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
+        let path_str = canonical.to_str().unwrap();
+        let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
+        let path_str_normalized = path_str.replace('\\', "/");
+        settings.add_filter(&regex::escape(&path_str_normalized), &replacement);
+        settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
+
+        if let Some(home) = home_dir.as_ref()
+            && let Ok(relative) = canonical.strip_prefix(home)
+        {
+            let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+            settings.add_filter(&regex::escape(&tilde_path), &replacement);
+        }
+    }
+
+    // Windows fallback: use a regex pattern to catch tilde-prefixed Windows temp paths.
+    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "_REPO_");
+    // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
+    settings.add_filter(
+        r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
+        "_REPO_$1",
+    );
+}
+
+fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
+    // Final cleanup: strip any remaining quotes around placeholders.
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_.-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+
+    // Also strip quotes around bracket placeholders like [PROJECT_ID]
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+    settings.add_filter(
+        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
+        "$1",
+    );
+    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
+    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
+
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    settings.add_filter(
+        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
+        "$1 \x1b[1mdiff --git a$2",
+    );
+    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
+    settings.add_filter(
+        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
+        "$1--- a$2$3",
+    );
+
+    // Normalize syntax highlighting around placeholders.
+    settings.add_filter(
+        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
+        "\x1b[2m $1 \x1b[0m",
+    );
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
+        "$1",
+    );
+}
+
+fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
+    settings.add_filter(
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml\.new'?",
+        "[TEST_CONFIG_NEW]",
+    );
+    settings.add_filter(
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
+        "[TEST_CONFIG]",
+    );
+    settings.add_filter(
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-approvals\.toml'?",
+        "[TEST_APPROVALS]",
+    );
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[TEST_(?:CONFIG(?:_NEW)?|APPROVALS)\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
+    settings.add_filter(
+        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
+        "[TEST_GIT_CONFIG]",
+    );
+}
+
+fn add_temp_home_filters(settings: &mut insta::Settings, temp_home: &Path) {
+    // Get both the original path and the canonicalized path - they may differ on Windows
+    // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
+    let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
+    let temp_home_canonical = canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
+    let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
+
+    if temp_home_str.contains(':') {
+        settings.add_filter(
+            &format!("'{}", regex::escape(&temp_home_str)),
+            "'[TEMP_HOME]",
+        );
+        if temp_home_original != temp_home_str {
+            settings.add_filter(
+                &format!("'{}", regex::escape(&temp_home_original)),
+                "'[TEMP_HOME]",
+            );
+        }
+    }
+    settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
+    if temp_home_original != temp_home_str {
+        settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
+    }
+
+    if temp_home_str.starts_with("/private/") {
+        let without_private = &temp_home_str["/private".len()..];
+        settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
+    }
+
+    settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
+    settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
+    settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
+
+    settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
+    settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
+    settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
+
+    settings.add_filter(
+        r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
+        "$1a$2 b$3",
+    );
+    settings.add_filter(
+        r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
+        "$1diff --git a$2 b$3",
+    );
+    settings.add_filter(
+        r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
+        "$1 \x1b[1mdiff --git a$2",
+    );
+    settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
+    settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
+    settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
+    settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
+    settings.add_filter(
+        r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
+        "$1--- a$2$3",
+    );
+}
+
+fn add_project_id_filters(settings: &mut insta::Settings) {
+    settings.add_filter(
+        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    settings.add_filter(
+        r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    settings.add_filter(
+        r"/private/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    settings.add_filter(r"/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
+    settings.add_filter(
+        r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    settings.add_filter(
+        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
+        "[PROJECT_ID]",
+    );
+    settings.add_filter(r"~/([a-zA-Z0-9_-]+)", "_PARENT_/$1");
+    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
+    settings.add_filter(r"HOME: .*/\.tmp[^/\s]+", "HOME: [TEST_HOME]");
+}
+
 /// Create configured insta Settings for snapshot tests
 ///
 /// This extracts the common settings configuration while allowing the
@@ -2365,366 +2678,14 @@ fn setup_snapshot_settings_for_paths_with_home(
         insta::Settings::clone_current()
     };
     settings.set_snapshot_path("../snapshots");
-
-    // Normalize project root path (for test fixtures)
-    // This must come before repo path filter to avoid partial matches
-    let project_root = std::env::var("CARGO_MANIFEST_DIR")
-        .ok()
-        .and_then(|p| canonicalize(std::path::Path::new(&p)).ok());
-    if let Some(root) = project_root {
-        settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
-    }
-    // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
-    settings.add_filter(r"/target/llvm-cov-target/", "/target/");
-
-    // Normalize backslashes FIRST so all subsequent path filters only need forward-slash versions.
-    // This must come before any path replacement filters.
-    settings.add_filter(r"\\", "/");
-
-    // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
-    let root_canonical = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let root_str = root_canonical.to_str().unwrap();
-    // Convert backslashes to forward slashes before escaping (backslash filter already ran)
-    let root_str_normalized = root_str.replace('\\', "/");
-    settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
-    // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
-    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
-
-    // In tests, HOME is set to the temp directory containing the repo. Commands being tested
-    // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
-    // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
-    // The optional suffix matches worktree paths like ~/repo.feature
-    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)?", "_REPO_$1");
-
-    // Also handle the case where the real home contains the temp directory (Windows/macOS)
-    // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
-    // (C:\Users\RUNNER~1) while dunce::canonicalize returns the long path (C:\Users\runneradmin).
-    if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
-        && let Ok(relative) = root_canonical.strip_prefix(&home)
-    {
-        let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
-        settings.add_filter(&regex::escape(&tilde_path), "_REPO_");
-        // Match worktree paths
-        let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
-        settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
-    }
-
-    for (name, path) in worktrees {
-        let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
-        let path_str = canonical.to_str().unwrap();
-        let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
-        // Convert backslashes to forward slashes before escaping (backslash filter already ran)
-        let path_str_normalized = path_str.replace('\\', "/");
-        settings.add_filter(&regex::escape(&path_str_normalized), &replacement);
-        // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
-        settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
-
-        // Also add tilde-prefixed worktree path filter for Windows
-        if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
-            && let Ok(relative) = canonical.strip_prefix(&home)
-        {
-            let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
-            settings.add_filter(&regex::escape(&tilde_path), &replacement);
-        }
-    }
-
-    // Windows fallback: use a regex pattern to catch tilde-prefixed Windows temp paths.
-    // This handles cases where path formats differ between home::home_dir() and the actual
-    // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
-    // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
-    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "_REPO_");
-    // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
-    // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
-    settings.add_filter(
-        r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
-        "_REPO_$1",
-    );
-
-    // Final cleanup: strip any remaining quotes around placeholders.
-    // shell_escape may quote paths containing ~ (Windows short path notation like RUNNER~1).
-    // ANSI codes may appear between quotes and content.
-    // This pattern matches placeholders with optional suffixes and subpaths:
-    // - '_REPO_' -> _REPO_
-    // - '_REPO_.feat' -> _REPO_.feat
-    // - '_REPO_.name.bak.20250102-000000' -> _REPO_.name.bak.20250102-000000
-    // - '_REPO_/.config/wt.toml' -> _REPO_/.config/wt.toml
-    // - '_WORKTREE_A_/subpath' -> _WORKTREE_A_/subpath
-    settings.add_filter(
-        r"'(?:\x1b\[[0-9;]*m)*(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_.-]+)?(?:/[^']*)?)(?:\x1b\[[0-9;]*m)*'",
-        "$1",
-    );
-
-    // Also strip quotes around bracket placeholders like [PROJECT_ID]
-    // NOTE: This filter runs BEFORE PROJECT_ID replacement, so it handles
-    // cases where ANSI codes appear between quotes and placeholders.
-    // A simpler post-replacement filter is added after PROJECT_ID filters.
-    settings.add_filter(
-        r"'(?:\x1b\[[0-9;]*m)*(\[[A-Z_]+\])(?:\x1b\[[0-9;]*m)*'",
-        "$1",
-    );
-    // Also strip quotes around paths that include subdirectories (e.g., '_REPO_/.config/wt.toml')
-    // On Windows, shell_escape quotes paths containing ':' so full paths get quoted.
-    settings.add_filter(
-        r"'(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?/[^']+)'",
-        "$1",
-    );
-    // Normalize git diff header prefixes: a/_REPO_ -> a_REPO_, b/_REPO_ -> b_REPO_
-    // On Windows, git diff --no-index with absolute paths produces a/C:/... which becomes a/_REPO_
-    // On Unix, relative paths produce a/repo/... which becomes a_REPO_
-    // Note: [TEMP_HOME] filters are added later, after TEMP_HOME replacement happens.
-    settings.add_filter(r"(diff --git )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
-    settings.add_filter(r" b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", " b$1");
-    settings.add_filter(r"(--- )a/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1a$2");
-    settings.add_filter(r"(\+\+\+ )b/(_(?:REPO|WORKTREE_[A-Z0-9_]+)_)", "$1b$2");
-
-    // Windows git diff may produce headers without "diff --git a" prefix.
-    // Pattern: _REPO_/path1 b_REPO_/path2 (just paths with b prefix for second)
-    // Match bold ANSI + _REPO_ path + space + b + _REPO_ path
-    settings.add_filter(
-        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+) b(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\s]+)",
-        "$1diff --git a$2 b$3",
-    );
-    // Windows may have "  --git a_REPO_" with leading spaces after ANSI reset (missing "diff" and bold).
-    // Match: ANSI reset + one or more spaces + "--git a" pattern
-    // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
-    settings.add_filter(
-        r"(\x1b\[0m) +--git a(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)",
-        "$1 \x1b[1mdiff --git a$2",
-    );
-    // Windows may also omit --- a prefix on the source file line
-    settings.add_filter(r"(--- )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1a$2");
-    // Windows may also omit +++ b prefix on the destination file line
-    settings.add_filter(r"(\+\+\+ )(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/)", "$1b$2");
-    // Windows may output bare path for --- line: \x1b[1m_REPO_/...\x1b[m (no "--- a")
-    // Add the missing "--- a" prefix.
-    settings.add_filter(
-        r"(\x1b\[1m)(_(?:REPO|WORKTREE_[A-Z0-9_]+)_/[^\x1b]+\.toml)(\x1b\[m)",
-        "$1--- a$2$3",
-    );
-
-    // Normalize syntax highlighting around placeholders.
-    // Bash syntax highlighters may split tokens differently on different platforms.
-    // Linux CI produces: [2m [0m[2m[32m_REPO_[0m[2m [0m (space, green path, space as separate spans)
-    // macOS local produces: [2m _REPO_ [0m (all in one span)
-    // The [32m is green color applied to placeholders which the local highlighter doesn't add.
-    // Normalize CI format to local format by matching the split pattern and merging.
-    settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
-        "\x1b[2m $1 \x1b[0m",
-    );
-
-    // Strip green ANSI highlighting from _REPO_ paths.
-    // On Windows, tree-sitter may highlight paths with green (\x1b[32m) even when not quoted.
-    // Example: \x1b[0m\x1b[2m\x1b[32m_REPO_/.config/wt.toml\x1b[0m\x1b[2m
-    // Strip ANSI codes before/after the path when green highlighting is present.
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)*\x1b\[32m(_(?:REPO|WORKTREE_[A-Z0-9_]+)_(?:/[^\x1b\s]+)?)(?:\x1b\[\d+m)*",
-        "$1",
-    );
-
-    // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
-    // (metadata is handled via redactions below)
-    // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
-    // Handles: Unix paths (/tmp/...), Windows paths (C:\...), and shell-escaped quoted paths ('C:\...')
-    // Use distinct placeholders for config.toml vs config.toml.new for clarity
-    settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml\.new'?",
-        "[TEST_CONFIG_NEW]",
-    );
-    settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
-        "[TEST_CONFIG]",
-    );
-    // Normalize WORKTRUNK_APPROVALS_PATH temp paths in stdout/stderr output
-    settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-approvals\.toml'?",
-        "[TEST_APPROVALS]",
-    );
-    // Strip ANSI codes that may wrap [TEST_CONFIG*] or [TEST_APPROVALS] placeholders.
-    // On Windows, tree-sitter may add ANSI codes around paths even without quotes.
-    // Example: \x1b[0m\x1b[2m[TEST_CONFIG_NEW]\x1b[2m
-    // Match: optional ANSI codes + [TEST_CONFIG...] + optional ANSI codes -> just the placeholder
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)+(\[TEST_(?:CONFIG(?:_NEW)?|APPROVALS)\])(?:\x1b\[\d+m)+",
-        "$1",
-    );
-
-    // Normalize GIT_CONFIG_GLOBAL temp paths
-    // (?:[A-Z]:)? handles Windows drive letters
-    settings.add_filter(
-        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
-        "[TEST_GIT_CONFIG]",
-    );
-
-    // TEMP_HOME filter MUST come before PROJECT_ID filters to take precedence.
-    // Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match
-    // the PROJECT_ID filter first.
-    //
-    // We replace the full temp_home path prefix with [TEMP_HOME], so paths like
-    // /tmp/.tmpABC/.config/worktrunk/config.toml become [TEMP_HOME]/.config/worktrunk/config.toml
+    add_snapshot_path_prelude_filters(&mut settings);
+    add_repo_and_worktree_path_filters(&mut settings, root, worktrees);
+    add_placeholder_cleanup_filters(&mut settings);
+    add_temp_path_placeholder_filters(&mut settings);
     if let Some(temp_home) = temp_home {
-        // Get both the original path and the canonicalized path - they may differ on Windows
-        // due to short path names (e.g., RUNNER~1 vs runneradmin) or other normalization.
-        let temp_home_original = temp_home.to_string_lossy().replace('\\', "/");
-        let temp_home_canonical =
-            canonicalize(temp_home).unwrap_or_else(|_| temp_home.to_path_buf());
-        let temp_home_str = temp_home_canonical.to_string_lossy().replace('\\', "/");
-
-        // On Windows, paths may be quoted by shell_escape due to ':' in drive letters.
-        // Add filters for both quoted and unquoted variants, for both original and canonical paths.
-        if temp_home_str.contains(':') {
-            // Quoted canonical path
-            settings.add_filter(
-                &format!("'{}", regex::escape(&temp_home_str)),
-                "'[TEMP_HOME]",
-            );
-            // Quoted original path (may differ from canonical)
-            if temp_home_original != temp_home_str {
-                settings.add_filter(
-                    &format!("'{}", regex::escape(&temp_home_original)),
-                    "'[TEMP_HOME]",
-                );
-            }
-        }
-        // Unquoted canonical path
-        settings.add_filter(&regex::escape(&temp_home_str), "[TEMP_HOME]");
-        // Unquoted original path (may differ from canonical)
-        if temp_home_original != temp_home_str {
-            settings.add_filter(&regex::escape(&temp_home_original), "[TEMP_HOME]");
-        }
-
-        // On macOS, canonicalize returns /private/var/... but git diff output shows /var/...
-        // Add both variants to catch all cases
-        if temp_home_str.starts_with("/private/") {
-            let without_private = &temp_home_str["/private".len()..];
-            settings.add_filter(&regex::escape(without_private), "[TEMP_HOME]");
-        }
-
-        // [TEMP_HOME] post-processing filters - must run AFTER the replacement above.
-
-        // Strip ANSI sequences immediately before [TEMP_HOME] paths.
-        // On Windows, tree-sitter highlights paths with green (\x1b[32m) inside mv commands.
-        // The output has: ...code (space) code code [TEMP_HOME]/path code code...
-        // We strip ONLY the codes between space and [TEMP_HOME], keeping codes elsewhere.
-        // Pattern: (space)(ANSI codes)(optional quote)([TEMP_HOME]) -> (space)(quote)([TEMP_HOME])
-        // The optional quote handles Windows where paths may be quoted: 'C:/...'
-        settings.add_filter(r"( )(?:\x1b\[[0-9;]*m)+('?)(\[TEMP_HOME\]/)", "$1$2$3");
-        // Strip trailing ANSI codes after [TEMP_HOME] paths.
-        // Match path followed by one or more ANSI codes.
-        settings.add_filter(r"(\[TEMP_HOME\]/[^\x1b\s]+)(?:\x1b\[[0-9;]*m)+", "$1");
-
-        // Strip quotes around [TEMP_HOME] paths (Windows shell_escape quotes paths with ':')
-        // Also handles git diff quoted format which lacks a/b prefixes.
-        settings.add_filter(r"'\[TEMP_HOME\](/[^']+)'", "[TEMP_HOME]$1");
-
-        // Normalize git diff header prefixes for [TEMP_HOME]:
-        // Unix: a/[TEMP_HOME] -> a[TEMP_HOME], b/[TEMP_HOME] -> b[TEMP_HOME]
-        settings.add_filter(r"(diff --git )a/(\[TEMP_HOME\])", "$1a$2");
-        settings.add_filter(r" b/(\[TEMP_HOME\])", " b$1");
-        settings.add_filter(r"(--- )a/(\[TEMP_HOME\])", "$1a$2");
-        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\])", "$1b$2");
-
-        // Windows git diff uses different format for absolute paths.
-        // After quote stripping, the diff header may or may not have "diff --git " prefix,
-        // and may or may not have a/b prefixes. Normalize to Unix format.
-
-        // Pattern 1: Has "diff --git " but no a/b prefixes
-        // diff --git [TEMP_HOME]/a [TEMP_HOME]/b -> diff --git a[TEMP_HOME]/a b[TEMP_HOME]/b
-        settings.add_filter(
-            r"(diff --git )(\[TEMP_HOME\]/[^\s]+) (\[TEMP_HOME\]/)",
-            "$1a$2 b$3",
-        );
-
-        // Pattern 2: Windows git diff header with only b prefix present.
-        // Windows git diff --no-index may produce: path1 bpath2 (without diff --git a)
-        // After path replacement: [TEMP_HOME]/a b[TEMP_HOME]/b
-        // Add the full header format to match Unix.
-        settings.add_filter(
-            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s]+) b(\[TEMP_HOME\]/[^\s]+)",
-            "$1diff --git a$2 b$3",
-        );
-
-        // Pattern 3: Windows may have "  --git a[path]" with leading spaces after ANSI (missing "diff" and bold).
-        // Match: ANSI reset + one or more spaces + "--git a" pattern
-        // Replace with: ANSI reset + space + bold + "diff --git a" to match Unix format
-        settings.add_filter(
-            r"(\x1b\[0m) +--git a(\[TEMP_HOME\]/)",
-            "$1 \x1b[1mdiff --git a$2",
-        );
-
-        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Unix has slash, remove it)
-        settings.add_filter(r"(--- )a/(\[TEMP_HOME\]/)", "$1a$2");
-        // --- [TEMP_HOME]/... -> --- a[TEMP_HOME]/... (Windows: add missing a prefix)
-        settings.add_filter(r"(--- )(\[TEMP_HOME\]/)", "$1a$2");
-
-        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Unix has slash, remove it)
-        settings.add_filter(r"(\+\+\+ )b/(\[TEMP_HOME\]/)", "$1b$2");
-        // +++ [TEMP_HOME]/... -> +++ b[TEMP_HOME]/... (Windows: add missing b prefix)
-        settings.add_filter(r"(\+\+\+ )(\[TEMP_HOME\]/)", "$1b$2");
-
-        // Windows git diff may have bare path without --- prefix at all.
-        // Match: bold ANSI + bare [TEMP_HOME] path that's NOT preceded by diff/---/+++
-        // This catches the case where git outputs just the path on its own line.
-        // Look for standalone [TEMP_HOME]/...config.toml (trailing ANSI codes may be stripped).
-        // Use negative lookbehind (not supported) - instead match newline + gutter + bold.
-        settings.add_filter(
-            r"(\x1b\[1m)(\[TEMP_HOME\]/[^\s\x1b]+\.toml)(\x1b\[m|\n|$)",
-            "$1--- a$2$3",
-        );
+        add_temp_home_filters(&mut settings, temp_home);
     }
-
-    // Normalize temp directory paths in project identifiers (approval prompts)
-    // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
-    // Note: [^)'\s\x1b]+ stops at ), ', whitespace, or ANSI escape to avoid matching too much
-    settings.add_filter(
-        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
-        "[PROJECT_ID]",
-    );
-    // macOS non-canonicalized: /var/folders/.../T/.tmpXXXXXX/path -> [PROJECT_ID]
-    settings.add_filter(
-        r"/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
-        "[PROJECT_ID]",
-    );
-    // macOS nix-shell: /private/tmp/nix-shell.XXX/.tmpYYY/path -> [PROJECT_ID]
-    settings.add_filter(
-        r"/private/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+",
-        "[PROJECT_ID]",
-    );
-    // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
-    // Also handles nix-shell: /tmp/nix-shell.XXX/.tmpYYY/path
-    settings.add_filter(r"/tmp/(?:[^/]+/)*\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
-    // Windows: C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/path -> [PROJECT_ID]
-    // Handles Windows temp paths with drive letters (after backslash normalization)
-    settings.add_filter(
-        r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
-        "[PROJECT_ID]",
-    );
-    // Windows quoted paths: shell_escape quotes paths containing ':' (drive letter)
-    // Example: 'C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/repo/.config/wt.toml' -> [PROJECT_ID]
-    settings.add_filter(
-        r"'[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^']+'",
-        "[PROJECT_ID]",
-    );
-
-    // Generic tilde-prefixed paths that aren't repo or worktree paths.
-    // On CI, HOME is a temp directory, so paths under HOME become ~/something.
-    // This catches paths like ~/wrong-path that don't follow the repo naming convention.
-    // MUST come AFTER specific ~/repo patterns so they match first.
-    // Uses _PARENT_ prefix (matching _REPO_ convention) and preserves directory name.
-    settings.add_filter(r"~/([a-zA-Z0-9_-]+)", "_PARENT_/$1");
-
-    // Strip quotes around [PROJECT_ID] after replacement.
-    // On Windows, paths inside quotes get replaced but quotes remain: 'C:/...' -> '[PROJECT_ID]'
-    // This filter MUST come AFTER PROJECT_ID filters to clean up the result.
-    settings.add_filter(r"'\[PROJECT_ID\]'", "[PROJECT_ID]");
-
-    // Normalize HOME temp directory in snapshots (stdout/stderr content)
-    // Matches any temp directory path (without trailing filename)
-    // Examples:
-    //   macOS: HOME: /var/folders/.../T/.tmpXXX
-    //   Linux: HOME: /tmp/.tmpXXX
-    //   Windows: HOME: C:\Users\...\Temp\.tmpXXX (after backslash normalization)
-    settings.add_filter(r"HOME: .*/\.tmp[^/\s]+", "HOME: [TEST_HOME]");
+    add_project_id_filters(&mut settings);
 
     add_standard_env_redactions(&mut settings);
 
@@ -2895,6 +2856,14 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     settings.add_filter(r"(?m)^.*for powershell .*\n", "");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
+    // Normalize git "not a git repository" messages across environments.
+    // Local:     "fatal: not a git repository (or any parent up to mount point /)\n
+    //             Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+    // CI/Docker: "fatal: not a git repository (or any of the parent directories): .git"
+    settings.add_filter(
+        r"fatal: not a git repository \(or any[^\n]*(?:\n[^\n]*filesystem boundary[^\n]*)?",
+        "fatal: not a git repository [GIT_DISCOVERY_MSG]",
+    );
 
     add_standard_env_redactions(&mut settings);
 
@@ -3145,6 +3114,25 @@ fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
 
+/// Assert that a worktree's contents have been removed.
+///
+/// After background removal, the path may briefly exist as an empty placeholder
+/// directory (for shell PWD validity). This asserts the contents are gone —
+/// either the path doesn't exist, or it's an empty directory.
+pub fn assert_worktree_removed(path: &Path) {
+    // Use read_dir as the single check to avoid a TOCTOU race where the
+    // background process removes the placeholder between exists() and read_dir().
+    let is_empty_or_gone = match path.read_dir() {
+        Ok(mut entries) => entries.next().is_none(), // empty placeholder
+        Err(_) => true,                              // already gone (NotFound or other)
+    };
+    assert!(
+        is_empty_or_gone,
+        "Worktree contents should be removed (empty placeholder OK): {}",
+        path.display()
+    );
+}
+
 /// Wait for a file to exist, polling with exponential backoff.
 /// Use this instead of fixed sleeps for background commands to avoid flaky tests.
 pub fn wait_for_file(path: &Path) {
@@ -3272,7 +3260,7 @@ pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
 /// wait_for("git to detect dirty working tree", || {
 ///     repo.git_command()
 ///         .args(["status", "--porcelain"])
-///         .output()
+///         .run()
 ///         .map(|o| !o.stdout.is_empty())
 ///         .unwrap_or(false)
 /// });
@@ -3374,11 +3362,7 @@ mod tests {
         repo.commit_with_age("Ten minutes ago", 10 * MINUTE);
 
         // Verify commits were created (1 from fixture + 4 = 5 commits)
-        let output = repo
-            .git_command()
-            .args(["log", "--oneline"])
-            .output()
-            .unwrap();
+        let output = repo.git_command().args(["log", "--oneline"]).run().unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);
     }

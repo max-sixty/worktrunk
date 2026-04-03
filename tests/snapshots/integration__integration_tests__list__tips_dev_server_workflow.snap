@@ -18,16 +18,20 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -39,7 +43,8 @@ exit_code: 0
 @ main           [36m?[39m [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  [2mhttp://localhost:12107[0m  [2m41ee0834[0m  [2m4d
 + feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m   [32m⇡3[0m      [2mhttp://localhost:10703[0m  [2m6814f02a[0m  [2m30m
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m     [2m|[0m     [2mhttp://localhost:16460[0m  [2mb772e68b[0m  [2m5h
++ [2mfix-typos[0m        [2m_[22m[2m|[22m                           [2m|[0m     [2mhttp://localhost:14301[0m  [2m41ee0834[0m  [2m4d
 
-[2m○[22m [2mShowing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden
 
 ----- stderr -----

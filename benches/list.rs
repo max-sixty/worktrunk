@@ -2,7 +2,7 @@
 //
 // Benchmark groups:
 //   - skeleton: Time until skeleton appears (1, 4, 8 worktrees; warm + cold)
-//   - complete: Full execution time (1, 4, 8 worktrees; warm + cold)
+//   - full: Full execution time (1, 4, 8 worktrees; warm + cold)
 //   - worktree_scaling: Worktree count scaling (1, 4, 8 worktrees; warm + cold)
 //   - real_repo: rust-lang/rust clone (1, 4, 8 worktrees; warm + cold)
 //   - many_branches: 100 branches (warm + cold)
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use wt_perf::{
     RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_repo,
-    invalidate_caches_auto, run_git, setup_fake_remote,
+    invalidate_caches_auto, isolate_cmd, run_git, setup_fake_remote,
 };
 
 /// Benchmark configuration wrapping RepoConfig with cache state.
@@ -63,10 +63,6 @@ impl BenchConfig {
     }
 }
 
-fn release_binary() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_wt"))
-}
-
 /// Run a benchmark with the given config.
 fn run_benchmark(
     b: &mut criterion::Bencher,
@@ -79,6 +75,7 @@ fn run_benchmark(
     let cmd_factory = || {
         let mut cmd = Command::new(binary);
         cmd.args(args).current_dir(repo_path);
+        isolate_cmd(&mut cmd, None);
         if let Some((key, value)) = env {
             cmd.env(key, value);
         }
@@ -102,7 +99,7 @@ fn run_benchmark(
 
 fn bench_skeleton(c: &mut Criterion) {
     let mut group = c.benchmark_group("skeleton");
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -131,9 +128,9 @@ fn bench_skeleton(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_complete(c: &mut Criterion) {
-    let mut group = c.benchmark_group("complete");
-    let binary = release_binary();
+fn bench_full(c: &mut Criterion) {
+    let mut group = c.benchmark_group("full");
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -157,7 +154,7 @@ fn bench_complete(c: &mut Criterion) {
 
 fn bench_worktree_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("worktree_scaling");
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -181,7 +178,7 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
@@ -197,25 +194,24 @@ fn bench_real_repo(c: &mut Criterion) {
                     add_worktrees(&config, &workspace_main);
                     run_git(&workspace_main, &["status"]);
 
+                    let make_cmd = || {
+                        let mut cmd = Command::new(binary);
+                        cmd.arg("list").current_dir(&workspace_main);
+                        isolate_cmd(&mut cmd, None);
+                        cmd
+                    };
+
                     if cold {
                         b.iter_batched(
                             || invalidate_caches_auto(&workspace_main),
                             |_| {
-                                Command::new(binary)
-                                    .arg("list")
-                                    .current_dir(&workspace_main)
-                                    .output()
-                                    .unwrap();
+                                make_cmd().output().unwrap();
                             },
                             criterion::BatchSize::SmallInput,
                         );
                     } else {
                         b.iter(|| {
-                            Command::new(binary)
-                                .arg("list")
-                                .current_dir(&workspace_main)
-                                .output()
-                                .unwrap();
+                            make_cmd().output().unwrap();
                         });
                     }
                 },
@@ -228,7 +224,7 @@ fn bench_real_repo(c: &mut Criterion) {
 
 fn bench_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("many_branches");
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
@@ -256,7 +252,7 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(30));
     group.sample_size(10);
 
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
@@ -307,7 +303,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(60));
     group.sample_size(10);
 
-    let binary = release_binary();
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     // Setup function - each bench_function creates its own fresh workspace
     // Uses setup_rust_workspace_with_branches plus a worktree for worktrees_only test
@@ -336,11 +332,11 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
+            let mut cmd = Command::new(binary);
+            cmd.args(["list", "--branches"])
+                .current_dir(&workspace_main);
+            isolate_cmd(&mut cmd, None);
+            cmd.output().unwrap();
         });
     });
 
@@ -348,12 +344,12 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm_optimized", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(binary)
-                .args(["list", "--branches"])
-                .env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1")
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
+            let mut cmd = Command::new(binary);
+            cmd.args(["list", "--branches"])
+                .current_dir(&workspace_main);
+            isolate_cmd(&mut cmd, None);
+            cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
+            cmd.output().unwrap();
         });
     });
 
@@ -361,11 +357,10 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     group.bench_function("warm_worktrees_only", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
-            Command::new(binary)
-                .arg("list") // no --branches
-                .current_dir(&workspace_main)
-                .output()
-                .unwrap();
+            let mut cmd = Command::new(binary);
+            cmd.arg("list").current_dir(&workspace_main); // no --branches
+            isolate_cmd(&mut cmd, None);
+            cmd.output().unwrap();
         });
     });
 
@@ -378,6 +373,6 @@ criterion_group! {
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
+    targets = bench_skeleton, bench_full, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

@@ -5,6 +5,7 @@ Require git
 Env CLAUDECODE ""
 Env IS_DEMO "1"
 Env GIT_TERMINAL_PROMPT "0"
+Env GIT_PAGER "{{GIT_PAGER}}"
 Env DEMO_REPO "{{DEMO_REPO}}"
 Env RUSTUP_HOME "{{REAL_HOME}}/.rustup"
 Env CARGO_HOME "{{REAL_HOME}}/.cargo"
@@ -14,6 +15,8 @@ Env STARSHIP_CONFIG "{{STARSHIP_CONFIG}}"
 
 Hide
 Type "set -g fish_autosuggestion_enabled 0"
+Enter
+Type "source $HOME/.config/fish/colors.fish"
 Enter
 Type "set -gx LANG en_US.UTF-8; set -gx LC_ALL en_US.UTF-8"
 Enter

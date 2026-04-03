@@ -187,7 +187,7 @@ Use the appropriate helper function:
 
 2. **Post-hooks** — User will cd to destination if shell integration is active.
    Use `output::post_hook_display_path(destination)`.
-   Examples: post-create, post-switch, post-start, post-merge (after removal).
+   Examples: pre-start, post-switch, post-start, post-merge (after removal).
 
 ```rust
 // Pre-hooks: user is at cwd, no cd happens

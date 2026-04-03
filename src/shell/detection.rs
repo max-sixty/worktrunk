@@ -409,14 +409,17 @@ fn detect_bypass_alias(line: &str, cmd: &str, line_number: usize) -> Option<Bypa
     }
 
     // Check if the target references our command (wt, git-wt, etc.)
-    // We check if target contains the cmd name to catch:
-    // - /usr/bin/wt
-    // - wt.exe
-    // - /path/to/git-wt
-    // - git-wt.exe
-    let target_lower = target.to_ascii_lowercase();
+    // Extract the filename from the path and check if it matches exactly
+    // (with optional .exe suffix). This avoids false positives like
+    // "/path/to/newton.bin" matching "wt" as a substring.
+    let filename = target.rsplit(['/', '\\']).next().unwrap_or(target);
+    let filename_lower = filename.to_ascii_lowercase();
     let cmd_lower = cmd.to_ascii_lowercase();
-    if !target_lower.contains(&cmd_lower) {
+
+    // Match: filename is exactly cmd, or cmd.exe
+    let matches = filename_lower == cmd_lower || filename_lower == format!("{cmd_lower}.exe");
+
+    if !matches {
         return None;
     }
 
@@ -1059,6 +1062,8 @@ mod tests {
     #[case::other_alias(r#"alias ll="ls -la""#, "wt")]
     #[case::not_an_alias("eval \"$(wt config shell init bash)\"", "wt")]
     #[case::commented_alias(r#"# alias gwt="/usr/bin/wt""#, "wt")]
+    #[case::substring_in_path(r#"alias gravity=/path/to/newton.bin"#, "wt")]
+    #[case::substring_in_path_quoted(r#"alias gravity="/path/to/newton.bin""#, "wt")]
     fn test_bypass_alias_not_detected(#[case] line: &str, #[case] cmd: &str) {
         // Note: commented lines are skipped in scan_file, but detect_bypass_alias
         // itself doesn't filter comments - that's done by the caller

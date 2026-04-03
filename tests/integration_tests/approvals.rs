@@ -1,6 +1,9 @@
 //! Integration tests for add-approvals and clear-approvals commands
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{
+    BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, repo, setup_snapshot_settings,
+    setup_temp_snapshot_settings, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use worktrunk::config::Approvals;
@@ -223,4 +226,130 @@ url = "http://localhost:8080"
 
     // Try to add approvals - should show "no commands configured"
     snapshot_add_approvals("add_approvals_no_commands", &repo, &[]);
+}
+
+// ============================================================================
+// bare repository tests
+// ============================================================================
+
+/// Regression test for #1744: `wt hook approvals add` should find project config
+/// in a bare repo's primary worktree. `config create --project` should place it
+/// there (not in the bare repo root), consistent with `ProjectConfig::load`.
+#[test]
+fn test_add_approvals_bare_repo_config_in_primary_worktree() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Write project config in the primary worktree's .config/wt.toml
+    // This is where `config create --project` should place it for bare repos
+    let config_dir = main_worktree.join(".config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-create = "echo 'hello'"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        // Run `wt hook approvals add --all` from the main worktree
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.current_dir(&main_worktree)
+            .args(["hook", "approvals", "add", "--all"]);
+        assert_cmd_snapshot!("add_approvals_bare_repo_config_in_primary_worktree", cmd);
+    });
+}
+
+/// Test that `project_config_path` returns None (and config create errors)
+/// when no linked worktrees exist in a bare repo.
+#[test]
+fn test_config_create_project_bare_repo_no_worktrees_errors() {
+    let test = BareRepoTest::new();
+    // Don't create any worktrees — no config location available
+
+    // Run `wt config create --project` from the bare repo root — should fail
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["config", "create", "--project"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt config create --project should fail with no worktrees"
+    );
+
+    // Config should NOT be created at the bare repo root
+    let bare_root_config = test.bare_repo_path().join(".config").join("wt.toml");
+    assert!(
+        !bare_root_config.exists(),
+        "Config should NOT be created in bare repo root at {:?}",
+        bare_root_config
+    );
+}
+
+/// `hook approvals add` and `hook list` should error in a bare repo with
+/// no linked worktrees (project_config_path returns None).
+#[test]
+fn test_hook_commands_bare_repo_no_worktrees_errors() {
+    let test = BareRepoTest::new();
+
+    // hook approvals add --all should fail
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["hook", "approvals", "add", "--all"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "hook approvals add should fail with no worktrees"
+    );
+
+    // hook show should fail
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["hook", "show"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "hook show should fail with no worktrees"
+    );
+}
+
+/// Regression test for #1744: `wt config create --project` in a bare repo
+/// should create config in the primary worktree, not the bare repo root.
+#[test]
+fn test_config_create_project_bare_repo_uses_primary_worktree() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Run `wt config create --project` from the bare repo root
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.current_dir(test.bare_repo_path())
+        .args(["config", "create", "--project"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt config create --project failed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Config should be in the primary worktree, NOT the bare repo root
+    let primary_config = main_worktree.join(".config").join("wt.toml");
+    let bare_root_config = test.bare_repo_path().join(".config").join("wt.toml");
+    assert!(
+        primary_config.exists(),
+        "Config should be created in primary worktree at {:?}",
+        primary_config
+    );
+    assert!(
+        !bare_root_config.exists(),
+        "Config should NOT be created in bare repo root at {:?}",
+        bare_root_config
+    );
 }

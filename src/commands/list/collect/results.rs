@@ -47,6 +47,7 @@ pub(super) fn apply_default(
         TaskKind::WouldMergeAdd => {
             // Conservative: assume would add changes if we couldn't check
             items[idx].would_merge_add = Some(true);
+            items[idx].is_patch_id_match = Some(false);
         }
         TaskKind::IsAncestor => {
             // Conservative: don't claim merged if we couldn't check
@@ -226,9 +227,12 @@ pub(super) fn drain_results(
                 item.has_file_changes = Some(has_file_changes);
             }
             TaskResult::WouldMergeAdd {
-                would_merge_add, ..
+                would_merge_add,
+                is_patch_id_match,
+                ..
             } => {
                 item.would_merge_add = Some(would_merge_add);
+                item.is_patch_id_match = Some(is_patch_id_match);
             }
             TaskResult::IsAncestor { is_ancestor, .. } => {
                 item.is_ancestor = Some(is_ancestor);

@@ -4,6 +4,7 @@
 
 mod create;
 mod hints;
+mod plugins;
 mod show;
 mod state;
 mod update;
@@ -11,10 +12,14 @@ mod update;
 // Re-export public functions
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
+pub use plugins::{
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+};
 pub use show::handle_config_show;
 pub use state::{
     handle_logs_get, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show,
+    handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list,
+    handle_vars_set,
 };
 pub use update::handle_config_update;
 
@@ -142,17 +147,38 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
-        // commit-generation in project config should suggest user config
+        // skip-shell-integration-prompt in project config should suggest user config
+        let mut unknown = HashMap::new();
+        unknown.insert(
+            "skip-shell-integration-prompt".to_string(),
+            toml::Value::Boolean(true),
+        );
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
+
+        // forge in user config should suggest project config
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("forge".to_string(), toml::Value::Table(inner));
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_deprecated_in_wrong_config() {
+        // commit-generation in project config should suggest user config with canonical form
         let mut unknown = HashMap::new();
         let mut inner = toml::map::Map::new();
         inner.insert(
             "command".to_string(),
-            toml::Value::String("claude".to_string()),
+            toml::Value::String("llm".to_string()),
         );
         unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown));
 
-        // ci in user config should suggest project config
+        // ci in user config should suggest project config with canonical form
         let mut unknown = HashMap::new();
         let mut inner = toml::map::Map::new();
         inner.insert(
@@ -160,7 +186,30 @@ mod tests {
             toml::Value::String("github".to_string()),
         );
         unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mci[22m belongs in project config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown));
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_deprecated_in_right_config_is_skipped() {
+        // commit-generation in user config should be skipped (deprecation system handles it)
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "command".to_string(),
+            toml::Value::String("llm".to_string()),
+        );
+        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
+        assert!(warn_unknown_keys::<UserConfig>(&unknown).is_empty());
+
+        // ci in project config should be skipped (deprecation system handles it)
+        let mut unknown = HashMap::new();
+        let mut inner = toml::map::Map::new();
+        inner.insert(
+            "platform".to_string(),
+            toml::Value::String("github".to_string()),
+        );
+        unknown.insert("ci".to_string(), toml::Value::Table(inner));
+        assert!(warn_unknown_keys::<ProjectConfig>(&unknown).is_empty());
     }
 
     // ==================== render_ci_tool_status tests ====================

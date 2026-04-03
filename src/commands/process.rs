@@ -2,7 +2,6 @@ use anyhow::Context;
 use color_print::cformat;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
 use std::process::Command;
 use std::process::Stdio;
 use std::str::FromStr;
@@ -197,15 +196,15 @@ fn posix_command_separator(command: &str) -> &'static str {
 ///
 /// # Returns
 /// Path to the log file where output is being written
-pub fn spawn_detached(
+/// Create the log directory and file for a detached process.
+///
+/// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
+/// `spawn_detached_exec`.
+fn create_detach_log(
     repo: &Repository,
-    worktree_path: &Path,
-    command: &str,
     branch: &str,
     hook_log: &HookLog,
-    context_json: Option<&str>,
-) -> anyhow::Result<std::path::PathBuf> {
-    // Create log directory in the common git directory
+) -> anyhow::Result<(PathBuf, fs::File)> {
     let log_dir = repo.wt_logs_dir();
     fs::create_dir_all(&log_dir).with_context(|| {
         format!(
@@ -214,16 +213,26 @@ pub fn spawn_detached(
         )
     })?;
 
-    // Generate log path using the HookLog specification
     let log_path = hook_log.path(&log_dir, branch);
-
-    // Create log file
     let log_file = fs::File::create(&log_path).with_context(|| {
         format!(
             "Failed to create log file {}",
             format_path_for_display(&log_path)
         )
     })?;
+
+    Ok((log_path, log_file))
+}
+
+pub fn spawn_detached(
+    repo: &Repository,
+    worktree_path: &Path,
+    command: &str,
+    branch: &str,
+    hook_log: &HookLog,
+    context_json: Option<&str>,
+) -> anyhow::Result<std::path::PathBuf> {
+    let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
 
     log::debug!(
         "$ {} (detached, logging to {})",
@@ -269,7 +278,15 @@ fn spawn_detached_unix(
         None => command.to_string(),
     };
 
-    let shell_cmd = format!("{} &", full_command);
+    // Wrap in braces so `&` backgrounds the entire compound command.
+    // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
+    // `cmd1 && cmd2` (foreground) then `cmd3 &` (background) — the semicolon
+    // has lower precedence than `&`, so only the last segment is backgrounded.
+    let shell_cmd = format!(
+        "{{ {}{} }} &",
+        full_command,
+        posix_command_separator(&full_command)
+    );
 
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
@@ -370,6 +387,115 @@ fn spawn_detached_windows(
     Ok(())
 }
 
+/// Spawn a detached background process by executing a binary directly.
+///
+/// Unlike [`spawn_detached`] (which wraps a shell command in `sh -c`), this
+/// spawns the executable without an intermediate shell. Stdin bytes are written
+/// to the child's stdin pipe and then the pipe is closed.
+///
+/// Used for structured child processes like `wt hook run-pipeline` where the parent
+/// passes data via stdin rather than through a temp file or shell arguments.
+pub fn spawn_detached_exec(
+    repo: &Repository,
+    worktree_path: &Path,
+    program: &Path,
+    args: &[&str],
+    branch: &str,
+    hook_log: &HookLog,
+    stdin_bytes: &[u8],
+) -> anyhow::Result<std::path::PathBuf> {
+    let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
+
+    log::debug!(
+        "$ {} {} (detached, logging to {})",
+        program.display(),
+        args.join(" "),
+        log_path.file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    #[cfg(unix)]
+    {
+        spawn_detached_exec_unix(worktree_path, program, args, log_file, stdin_bytes)?;
+    }
+
+    #[cfg(windows)]
+    {
+        spawn_detached_exec_windows(worktree_path, program, args, log_file, stdin_bytes)?;
+    }
+
+    Ok(log_path)
+}
+
+#[cfg(unix)]
+fn spawn_detached_exec_unix(
+    worktree_path: &Path,
+    program: &Path,
+    args: &[&str],
+    log_file: fs::File,
+    stdin_bytes: &[u8],
+) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(worktree_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .context("Failed to clone log file handle")?,
+        ))
+        .stderr(Stdio::from(log_file))
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+        .process_group(0)
+        .spawn()
+        .context("Failed to spawn detached process")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        // Ignore BrokenPipe — child may exit before reading all input.
+        let _ = stdin.write_all(stdin_bytes);
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_detached_exec_windows(
+    worktree_path: &Path,
+    program: &Path,
+    args: &[&str],
+    log_file: fs::File,
+    stdin_bytes: &[u8],
+) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(worktree_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .context("Failed to clone log file handle")?,
+        ))
+        .stderr(Stdio::from(log_file))
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        .spawn()
+        .context("Failed to spawn detached process")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(stdin_bytes);
+    }
+
+    Ok(())
+}
+
 /// Generate a staging path for worktree removal.
 ///
 /// Places the staging directory inside `.git/wt/trash/` so it is hidden from the
@@ -392,33 +518,41 @@ pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf
 /// This is used after the worktree has been renamed to a staging path,
 /// git metadata has been pruned, and the branch has been deleted synchronously.
 ///
-/// The delay mirrors `build_remove_command`'s `sleep 1`. After the rename,
-/// a placeholder directory is created at `original_path` so the shell's
+/// When `changed_directory` is true — the shell is cd-ing away from the removed
+/// worktree — a placeholder directory is created at `original_path` so the shell's
 /// working directory remains valid until the wrapper has processed the `cd`
 /// directive. Without this, shells that validate `$env.PWD` (notably Nushell)
-/// emit errors between binary exit and the `cd`.
+/// emit errors between binary exit and the `cd`. The background command then
+/// waits for the shell wrapper before cleaning up the placeholder.
 ///
-/// The background command removes both the placeholder and the staged directory.
+/// When `changed_directory` is false, no placeholder exists, so the background
+/// command just removes the staged directory directly.
 pub fn build_remove_command_staged(
     staged_path: &std::path::Path,
     original_path: &std::path::Path,
+    changed_directory: bool,
 ) -> String {
     use shell_escape::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
 
-    let original_path_str = original_path.to_string_lossy();
-    let original_escaped = escape(original_path_str.as_ref().into());
+    if changed_directory {
+        let original_path_str = original_path.to_string_lossy();
+        let original_escaped = escape(original_path_str.as_ref().into());
 
-    // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
-    // rmdir: remove the empty placeholder (safe — only removes empty directories).
-    // rm -rf: remove the staged worktree contents.
-    // Use -- to prevent option parsing for paths starting with -
-    format!(
-        "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
-        original_escaped, staged_escaped
-    )
+        // sleep 1: give the shell wrapper time to cd away before removing the placeholder.
+        // rmdir: remove the empty placeholder (safe — only removes empty directories).
+        // rm -rf: remove the staged worktree contents.
+        // Use -- to prevent option parsing for paths starting with -
+        format!(
+            "sleep 1 && rmdir -- {} 2>/dev/null; rm -rf -- {}",
+            original_escaped, staged_escaped
+        )
+    } else {
+        // No placeholder to clean up — just remove the staged directory.
+        format!("rm -rf -- {}", staged_escaped)
+    }
 }
 
 /// Build shell command for background worktree removal (legacy path).
@@ -432,25 +566,20 @@ pub fn build_remove_command_staged(
 ///
 /// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
 /// even when the worktree contains untracked files (like build artifacts).
+///
+/// When `changed_directory` is true, a 1-second delay runs first so the shell
+/// wrapper can cd away before the directory is removed. When false (removing a
+/// non-current worktree), the removal runs immediately.
 pub fn build_remove_command(
     worktree_path: &std::path::Path,
     branch_to_delete: Option<&str>,
     force_worktree: bool,
+    changed_directory: bool,
 ) -> String {
     use shell_escape::escape;
 
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
-
-    // TODO: This delay is a timing-based workaround, not a principled fix.
-    // The race: after wt exits, the shell wrapper reads the directive file and
-    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
-    // completes (e.g., for prompt updates), and if the background removal has
-    // already deleted the directory, we get "shell-init: error retrieving current
-    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
-    // deterministic solutions (shell-spawned background, marker file sync) add
-    // significant complexity for marginal benefit.
-    let delay = "sleep 1";
 
     // Stop fsmonitor daemon first (best effort - ignore errors)
     // This prevents zombie daemons from accumulating when using builtin fsmonitor
@@ -461,18 +590,29 @@ pub fn build_remove_command(
 
     let force_flag = if force_worktree { " --force" } else { "" };
 
+    // When removing the current worktree, delay so the shell wrapper can cd away
+    // before the directory is removed. The primary fix for the "shell-init: error
+    // retrieving current directory" race is in the fish wrapper (using builtins
+    // instead of subprocesses to read the directive), but this provides defense in
+    // depth for other shells and edge cases.
+    let prefix = if changed_directory {
+        format!("sleep 1 && {} && ", stop_fsmonitor)
+    } else {
+        format!("{} && ", stop_fsmonitor)
+    };
+
     match branch_to_delete {
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{} && {} && git worktree remove{} {} && git branch -D {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped, branch_escaped
+                "{}git worktree remove{} {} && git branch -D {}",
+                prefix, force_flag, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{} && {} && git worktree remove{} {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped
+                "{}git worktree remove{} {}",
+                prefix, force_flag, worktree_escaped
             )
         }
     }
@@ -568,21 +708,20 @@ mod tests {
 
         let path = PathBuf::from("/tmp/test-worktree");
 
-        // Without branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, None, false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        // changed_directory=true: sleep before removal
+        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
-        // With branch deletion, without force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        // changed_directory=false: no sleep
+        assert_snapshot!(build_remove_command(&path, None, false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
-
-        // With branch deletion and force
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]
@@ -611,12 +750,17 @@ mod tests {
     fn test_build_remove_command_staged() {
         let staged_path = PathBuf::from("/tmp/repo/.git/wt/trash/my-project.feature-1234567890");
         let original_path = PathBuf::from("/tmp/my-project.feature");
-        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+
+        // changed_directory=true: placeholder cleanup before rm -rf
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, true), @"sleep 1 && rmdir -- /tmp/my-project.feature 2>/dev/null; rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
+
+        // changed_directory=false: just rm -rf, no placeholder
+        assert_snapshot!(build_remove_command_staged(&staged_path, &original_path, false), @"rm -rf -- /tmp/repo/.git/wt/trash/my-project.feature-1234567890");
 
         // Shell escaping for special characters (space in path)
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command_staged(&special_path, &special_original), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+        assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
     }
 
     #[test]
@@ -660,7 +804,7 @@ mod tests {
         assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
 
         // Unknown hook type
-        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, pre-start, post-start, post-switch, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
+        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
         // Unknown internal operation
         assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");

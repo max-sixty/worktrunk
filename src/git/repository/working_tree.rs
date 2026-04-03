@@ -254,12 +254,6 @@ impl<'a> WorkingTree<'a> {
         LineDiff::from_numstat(&stdout)
     }
 
-    /// Get line diff statistics between working tree and a specific ref.
-    pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
-        LineDiff::from_numstat(&stdout)
-    }
-
     /// Determine whether there are staged changes in the index.
     ///
     /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.

@@ -105,23 +105,23 @@ Output as JSON for scripting:
 
 [1m[32mColumns[0m
 
- Column                                                Shows                                               
- ─────── ───────────────────────────────────────────────────────────────────────────────────────────────── 
- Branch  Branch name                                                                                       
- Status  Compact symbols (see below)                                                                       
- HEAD±   Uncommitted changes: +added -deleted lines                                                        
- main↕   Commits ahead/behind default branch                                                               
- main…±  Line diffs since the merge-base with the default branch ([2m--full[0m)                                  
- Summary LLM-generated branch summary ([2m--full[0m + [2msummary = true[0m, requires [2mcommit.generation[0m) [experimental] 
- Remote⇅ Commits ahead/behind tracking branch                                                              
- CI      Pipeline status ([2m--full[0m)                                                                          
- Path    Worktree directory                                                                                
- URL     Dev server URL from project config (dimmed if port not listening)                                 
- Commit  Short hash (8 chars)                                                                              
- Age     Time since last commit                                                                            
- Message Last commit message (truncated)                                                                   
+ Column                                                 Shows                                                
+ ─────── ─────────────────────────────────────────────────────────────────────────────────────────────────── 
+ Branch  Branch name                                                                                         
+ Status  Compact symbols (see below)                                                                         
+ HEAD±   Uncommitted changes: +added -deleted lines                                                          
+ main↕   Commits ahead/behind default branch                                                                 
+ main…±  Line diffs since the merge-base with the default branch; [2m--full[0m only                                
+ Summary LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m [experimental] 
+ Remote⇅ Commits ahead/behind tracking branch                                                                
+ CI      Pipeline status; [2m--full[0m only                                                                        
+ Path    Worktree directory                                                                                  
+ URL     Dev server URL from project config; dimmed if port is not listening                                 
+ Commit  Short hash (8 chars)                                                                                
+ Age     Time since last commit                                                                              
+ Message Last commit message (truncated)                                                                     
 
-Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch (header label stays [2mmain[0m for compactness). [2mmain…±[0m uses a merge-base (three-dot) diff.
+Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch — the header label stays [2mmain[0m for compactness. [2mmain…±[0m uses a merge-base (three-dot) diff.
 
 [32mCI status[0m
 
@@ -137,7 +137,7 @@ The CI column shows GitHub/GitLab pipeline status:
  [33m⚠[0m yellow  Fetch error (rate limit, network) 
  (blank)   No upstream or no PR/MR           
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches (visible with [2m--remotes[0m) get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
 [32mLLM summaries [experimental][0m
 
@@ -147,31 +147,31 @@ Reuses the [2mcommit.generation[0m command — the same LLM that generates com
 
 The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
 
-    Subcolumn     Symbol                                          Meaning                                           
- ──────────────── ────── ────────────────────────────────────────────────────────────────────────────────────────── 
- Working tree (1) [36m+[0m      Staged files                                                                               
- Working tree (2) [36m![0m      Modified files (unstaged)                                                                  
- Working tree (3) [36m?[0m      Untracked files                                                                            
- Worktree         [31m✘[0m      Merge conflicts                                                                            
-                  [33m⤴[0m      Rebase in progress                                                                         
-                  [33m⤵[0m      Merge in progress                                                                          
-                  [2m/[0m      Branch without worktree                                                                    
-                  [31m⚑[0m      Branch-worktree mismatch (branch name doesn't match worktree path)                         
-                  [33m⊟[0m      Prunable (directory missing)                                                               
-                  [33m⊞[0m      Locked worktree                                                                            
- Default branch   [2m^[0m      Is the default branch                                                                      
-                  [2m∅[0m      Orphan branch (no common ancestor with the default branch)                                 
-                  [33m✗[0m      Would conflict if merged to the default branch (with [2m--full[0m, includes uncommitted changes) 
-                  [2m_[0m      Same commit as the default branch, clean                                                   
-                  [2m–[0m      Same commit as the default branch, uncommitted changes                                     
-                  [2m⊂[0m      Content integrated into the default branch or target                                       
-                  [2m↕[0m      Diverged from the default branch                                                           
-                  [2m↑[0m      Ahead of the default branch                                                                
-                  [2m↓[0m      Behind the default branch                                                                  
- Remote           [2m|[0m      In sync with remote                                                                        
-                  [2m⇅[0m      Diverged from remote                                                                       
-                  [2m⇡[0m      Ahead of remote                                                                            
-                  [2m⇣[0m      Behind remote                                                                              
+    Subcolumn     Symbol                                          Meaning                                          
+ ──────────────── ────── ───────────────────────────────────────────────────────────────────────────────────────── 
+ Working tree (1) [36m+[0m      Staged files                                                                              
+ Working tree (2) [36m![0m      Modified files (unstaged)                                                                 
+ Working tree (3) [36m?[0m      Untracked files                                                                           
+ Worktree         [31m✘[0m      Merge conflicts                                                                           
+                  [33m⤴[0m      Rebase in progress                                                                        
+                  [33m⤵[0m      Merge in progress                                                                         
+                  [2m/[0m      Branch without worktree                                                                   
+                  [31m⚑[0m      Branch-worktree mismatch (branch name doesn't match worktree path)                        
+                  [33m⊟[0m      Prunable (directory missing)                                                              
+                  [33m⊞[0m      Locked worktree                                                                           
+ Default branch   [2m^[0m      Is the default branch                                                                     
+                  [2m∅[0m      Orphan branch (no common ancestor with the default branch)                                
+                  [33m✗[0m      Would conflict if merged to the default branch; with [2m--full[0m, includes uncommitted changes 
+                  [2m_[0m      Same commit as the default branch, clean                                                  
+                  [2m–[0m      Same commit as the default branch, uncommitted changes                                    
+                  [2m⊂[0m      Content integrated into the default branch or target                                      
+                  [2m↕[0m      Diverged from the default branch                                                          
+                  [2m↑[0m      Ahead of the default branch                                                               
+                  [2m↓[0m      Behind the default branch                                                                 
+ Remote           [2m|[0m      In sync with remote                                                                       
+                  [2m⇅[0m      Diverged from remote                                                                      
+                  [2m⇡[0m      Ahead of remote                                                                           
+                  [2m⇣[0m      Behind remote                                                                             
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
 
@@ -204,53 +204,54 @@ Use [2m--ignored[0m to bypass filtering and show everything.
 Query structured data with [2m--format=json[0m:
 
 [107m [0m [2m# Current worktree path (for scripts)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches with uncommitted changes[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.working_tree.modified)'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.working_tree.modified)'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Worktrees with merge conflicts[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.operation_state == "conflicts")'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.operation_state == "conflicts")'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches ahead of main (needs merging)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main.ahead > 0) | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main.ahead > 0) | .branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Integrated branches (safe to remove)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches without worktrees[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--branches[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.kind == "branch") | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--branches[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.kind == "branch") | .branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Worktrees ahead of remote (needs pushing)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Stale CI (local changes not reflected in CI)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--full[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.ci.stale) | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--full[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.ci.stale) | .branch'[0m[2m[0m
 
 [1mFields:[0m
 
-       Field           Type                                   Description                               
- ────────────────── ─────────── ─────────────────────────────────────────────────────────────────────── 
- [2mbranch[0m             string/null Branch name (null for detached HEAD)                                    
- [2mpath[0m               string      Worktree path (absent for branches without worktrees)                   
- [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                  
- [2mcommit[0m             object      Commit info (see below)                                                 
- [2mworking_tree[0m       object      Working tree state (see below)                                          
- [2mmain_state[0m         string      Relation to the default branch (see below)                              
- [2mintegration_reason[0m string      Why branch is integrated (see below)                                    
- [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent when clean)                   
- [2mmain[0m               object      Relationship to the default branch (see below, absent when is_main)     
- [2mremote[0m             object      Tracking branch info (see below, absent when no tracking)               
- [2mworktree[0m           object      Worktree metadata (see below)                                           
- [2mis_main[0m            boolean     Is the main worktree                                                    
- [2mis_current[0m         boolean     Is the current worktree                                                 
- [2mis_previous[0m        boolean     Previous worktree from wt switch                                        
- [2mci[0m                 object      CI status (see below, absent when no CI)                                
- [2murl[0m                string      Dev server URL from project config (absent when not configured)         
- [2murl_active[0m         boolean     Whether the URL's port is listening (absent when not configured)        
- [2msummary[0m            string      LLM-generated branch summary (absent when not configured or no summary) 
- [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                   
- [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                         
+       Field           Type                                  Description                               
+ ────────────────── ─────────── ────────────────────────────────────────────────────────────────────── 
+ [2mbranch[0m             string/null Branch name (null for detached HEAD)                                   
+ [2mpath[0m               string      Worktree path (absent for branches without worktrees)                  
+ [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                 
+ [2mcommit[0m             object      Commit info (see below)                                                
+ [2mworking_tree[0m       object      Working tree state (see below)                                         
+ [2mmain_state[0m         string      Relation to the default branch (see below)                             
+ [2mintegration_reason[0m string      Why branch is integrated (see below)                                   
+ [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m; absent when clean                   
+ [2mmain[0m               object      Relationship to the default branch (see below); absent when is_main    
+ [2mremote[0m             object      Tracking branch info (see below); absent when no tracking              
+ [2mworktree[0m           object      Worktree metadata (see below)                                          
+ [2mis_main[0m            boolean     Is the main worktree                                                   
+ [2mis_current[0m         boolean     Is the current worktree                                                
+ [2mis_previous[0m        boolean     Previous worktree from wt switch                                       
+ [2mci[0m                 object      CI status (see below); absent when no CI                               
+ [2murl[0m                string      Dev server URL from project config; absent when not configured         
+ [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured        
+ [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary 
+ [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                  
+ [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                        
+ [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)     
 
 [32mCommit object[0m
 
@@ -314,7 +315,7 @@ These values describe the relation to the default branch.
 
 [32mintegration_reason values[0m
 
-When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"[0m
+When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"[0m [2m"patch-id-match"[0m
 
 [32mci.status values[0m
 

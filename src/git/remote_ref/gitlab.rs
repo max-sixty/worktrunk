@@ -21,16 +21,16 @@
 //!
 //! This saves ~1 second for the common case (switching to an existing MR branch).
 
-use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
-use super::{PlatformData, RemoteRefInfo, RemoteRefProvider};
-use crate::git::error::GitError;
+use super::{
+    CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
+    run_cli_api,
+};
 use crate::git::{RefType, Repository};
-use crate::shell_exec::Cmd;
 
 /// GitLab Merge Request provider.
 #[derive(Debug, Clone, Copy)]
@@ -88,23 +88,15 @@ struct GlabApiErrorResponse {
 /// Fetch MR information from GitLab using the `glab` CLI.
 fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefInfo> {
     let api_path = format!("projects/:id/merge_requests/{}", mr_number);
-
-    let output = match Cmd::new("glab")
-        .args(["api", &api_path])
-        .current_dir(repo_root)
-        .env("GLAB_NO_PROMPT", "1")
-        .run()
-    {
-        Ok(output) => output,
-        Err(e) => {
-            if e.kind() == ErrorKind::NotFound {
-                bail!(
-                    "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli#installation"
-                );
-            }
-            return Err(anyhow::Error::from(e).context("Failed to run glab api"));
-        }
-    };
+    let args = ["api", api_path.as_str()];
+    let output = run_cli_api(CliApiRequest {
+        tool: "glab",
+        args: &args,
+        repo_root,
+        prompt_env: ("GLAB_NO_PROMPT", "1"),
+        install_hint: "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli#installation",
+        run_context: "Failed to run glab api",
+    })?;
 
     if !output.status.success() {
         if let Ok(error_response) = serde_json::from_slice::<GlabApiErrorResponse>(&output.stdout) {
@@ -125,18 +117,11 @@ fn fetch_mr_info(mr_number: u32, repo_root: &Path) -> anyhow::Result<RemoteRefIn
             }
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let details = if stderr.trim().is_empty() {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        return Err(GitError::CliApiError {
-            ref_type: RefType::Mr,
-            message: format!("glab api failed for MR !{}", mr_number),
-            stderr: details,
-        }
-        .into());
+        return Err(cli_api_error(
+            RefType::Mr,
+            format!("glab api failed for MR !{}", mr_number),
+            &output,
+        ));
     }
 
     let response: GlabMrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
@@ -263,12 +248,15 @@ fn fetch_project_urls(
     repo_root: &Path,
 ) -> anyhow::Result<(Option<String>, Option<String>)> {
     let api_path = format!("projects/{}", project_id);
-
-    let output = Cmd::new("glab")
-        .args(["api", &api_path])
-        .current_dir(repo_root)
-        .env("GLAB_NO_PROMPT", "1")
-        .run()?;
+    let args = ["api", api_path.as_str()];
+    let output = run_cli_api(CliApiRequest {
+        tool: "glab",
+        args: &args,
+        repo_root,
+        prompt_env: ("GLAB_NO_PROMPT", "1"),
+        install_hint: "GitLab CLI (glab) not installed; install from https://gitlab.com/gitlab-org/cli#installation",
+        run_context: "Failed to run glab api",
+    })?;
 
     if !output.status.success() {
         bail!("Failed to fetch project {}", project_id);
@@ -280,14 +268,18 @@ fn fetch_project_urls(
 
 /// Get the git protocol configured in `glab` (GitLab CLI).
 pub fn git_protocol() -> String {
-    Cmd::new("glab")
-        .args(["config", "get", "git_protocol"])
-        .run()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    cli_config_value("glab", "git_protocol")
         .filter(|p| p == "ssh" || p == "https")
         .unwrap_or_else(|| "https".to_string())
+}
+
+/// Construct the remote URL for a GitLab project, respecting protocol preference.
+pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
+    if git_protocol() == "ssh" {
+        format!("git@{host}:{owner}/{repo}.git")
+    } else {
+        format!("https://{host}/{owner}/{repo}.git")
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +298,24 @@ mod tests {
     fn test_ref_type() {
         let provider = GitLabProvider;
         assert_eq!(provider.ref_type(), RefType::Mr);
+    }
+
+    #[test]
+    fn test_fork_remote_url_formats() {
+        // Protocol depends on `glab config get git_protocol`, so just check format
+        let url = fork_remote_url("gitlab.com", "contributor", "repo");
+        let valid_urls = [
+            "git@gitlab.com:contributor/repo.git",
+            "https://gitlab.com/contributor/repo.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
+
+        let url = fork_remote_url("gitlab.example.com", "org", "project");
+        let valid_urls = [
+            "git@gitlab.example.com:org/project.git",
+            "https://gitlab.example.com/org/project.git",
+        ];
+        assert!(valid_urls.contains(&url.as_str()), "unexpected URL: {url}");
     }
 
     #[test]

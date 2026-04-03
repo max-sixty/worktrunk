@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
 use crate::git::{HookType, Repository};
+use crate::shell_exec::Cmd;
 
 /// Test fixture that creates a real temporary git repository.
 struct TestRepo {
@@ -11,10 +12,10 @@ struct TestRepo {
 impl TestRepo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["init"])
             .current_dir(dir.path())
-            .output()
+            .run()
             .unwrap();
         let repo = Repository::at(dir.path()).unwrap();
         Self { _dir: dir, repo }
@@ -84,17 +85,20 @@ fn test_find_unknown_keys_known_sections() {
     let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[commit-generation]
-command = "llm"
-
 [list]
 full = true
 
 [commit]
 stage = "all"
 
+[commit.generation]
+command = "llm"
+
 [merge]
 squash = true
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 
 [post-create]
 run = "npm install"
@@ -185,7 +189,6 @@ fn test_user_project_config_with_worktree_path_serde() {
             ..Default::default()
         },
         approved_commands: vec!["npm install".to_string()],
-        ..Default::default()
     };
     let toml = toml::to_string(&config).unwrap();
     insta::assert_snapshot!(toml, @r#"
@@ -212,7 +215,6 @@ fn test_worktree_path_for_project_uses_project_specific() {
                 ..Default::default()
             },
             approved_commands: vec![],
-            ..Default::default()
         },
     );
 
@@ -240,7 +242,6 @@ fn test_worktree_path_for_project_falls_back_to_global() {
                 ..Default::default()
             },
             approved_commands: vec!["npm install".to_string()],
-            ..Default::default()
         },
     );
 
@@ -280,7 +281,6 @@ fn test_format_path_with_project_override() {
                 ..Default::default()
             },
             approved_commands: vec![],
-            ..Default::default()
         },
     );
 
@@ -342,7 +342,6 @@ fn test_worktrunk_config_default() {
     assert!(config.configs.list.is_none());
     assert!(config.configs.commit.is_none());
     assert!(config.configs.merge.is_none());
-    assert!(config.commit_generation.is_none());
     assert!(!config.skip_shell_integration_prompt);
 }
 
@@ -459,7 +458,7 @@ fn test_merge_config_serde() {
         rebase: Some(false),
         remove: Some(true),
         verify: Some(true),
-        no_ff: None,
+        ff: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
@@ -669,7 +668,7 @@ fn test_merge_merge_config() {
         rebase: Some(true),
         remove: Some(true),
         verify: Some(true),
-        no_ff: Some(false),
+        ff: Some(true),
     };
     let override_config = MergeConfig {
         squash: Some(false), // Override
@@ -677,7 +676,7 @@ fn test_merge_merge_config() {
         rebase: None,        // Fall back to base
         remove: Some(false), // Override
         verify: None,        // Fall back to base
-        no_ff: Some(true),   // Override
+        ff: Some(false),     // Override
     };
 
     let merged = base.merge_with(&override_config);
@@ -686,7 +685,7 @@ fn test_merge_merge_config() {
     assert_eq!(merged.rebase, Some(true));
     assert_eq!(merged.remove, Some(false));
     assert_eq!(merged.verify, Some(true));
-    assert_eq!(merged.no_ff, Some(true));
+    assert_eq!(merged.ff, Some(false));
 }
 
 #[test]
@@ -870,7 +869,7 @@ fn test_effective_merge_with_partial_override() {
                 rebase: Some(true),
                 remove: Some(true),
                 verify: Some(true),
-                no_ff: Some(false),
+                ff: Some(true),
             }),
             ..Default::default()
         },
@@ -887,7 +886,7 @@ fn test_effective_merge_with_partial_override() {
                     rebase: None,
                     remove: None,
                     verify: None,
-                    no_ff: None,
+                    ff: None,
                 }),
                 ..Default::default()
             },
@@ -927,45 +926,6 @@ fn test_effective_list_project_only() {
 
     // No global, no matching project = None
     assert!(config.list(Some("github.com/other/repo")).is_none());
-}
-
-#[test]
-fn test_effective_select_with_project_override() {
-    // Test that OverridableConfig merge works correctly for select
-    let mut config = UserConfig {
-        configs: OverridableConfig {
-            select: Some(SelectConfig {
-                pager: Some("delta".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            overrides: OverridableConfig {
-                select: Some(SelectConfig {
-                    pager: Some("bat".to_string()),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
-
-    // Project override takes precedence
-    let effective = config.select(Some("github.com/user/repo")).unwrap();
-    assert_eq!(effective.pager, Some("bat".to_string()));
-
-    // No project override = use global
-    let effective = config.select(Some("github.com/other/repo")).unwrap();
-    assert_eq!(effective.pager, Some("delta".to_string()));
-
-    // No project = use global
-    let effective = config.select(None).unwrap();
-    assert_eq!(effective.pager, Some("delta".to_string()));
 }
 
 #[test]
@@ -1028,13 +988,13 @@ fn test_list_config_accessor_methods_with_values() {
 #[test]
 fn test_merge_config_accessor_methods_defaults() {
     let config = MergeConfig::default();
-    // MergeConfig defaults are all true except no_ff (false)
+    // MergeConfig defaults are all true (including ff)
     assert!(config.squash());
     assert!(config.commit());
     assert!(config.rebase());
     assert!(config.remove());
     assert!(config.verify());
-    assert!(!config.no_ff());
+    assert!(config.ff());
 }
 
 #[test]
@@ -1045,14 +1005,27 @@ fn test_merge_config_accessor_methods_with_values() {
         rebase: Some(false),
         remove: Some(false),
         verify: Some(false),
-        no_ff: Some(true),
+        ff: Some(false),
     };
     assert!(!config.squash());
     assert!(!config.commit());
     assert!(!config.rebase());
     assert!(!config.remove());
     assert!(!config.verify());
-    assert!(config.no_ff());
+    assert!(!config.ff());
+}
+
+#[test]
+fn test_deprecated_no_ff_migrated_to_ff() {
+    let config = UserConfig::load_from_str("[merge]\nno-ff = true\n").unwrap();
+    assert!(!config.configs.merge.unwrap().ff());
+}
+
+#[test]
+fn test_deprecated_no_ff_does_not_override_explicit_ff() {
+    // If both `ff` and `no-ff` are set, `ff` wins (no-ff is ignored)
+    let config = UserConfig::load_from_str("[merge]\nff = true\nno-ff = true\n").unwrap();
+    assert!(config.configs.merge.unwrap().ff());
 }
 
 #[test]
@@ -1065,17 +1038,6 @@ fn test_commit_config_accessor_methods() {
         generation: None,
     };
     assert_eq!(config.stage(), StageMode::Tracked);
-}
-
-#[test]
-fn test_select_config_fields() {
-    let config = SelectConfig::default();
-    assert!(config.pager.is_none());
-
-    let config = SelectConfig {
-        pager: Some("delta --paging=never".to_string()),
-    };
-    assert_eq!(config.pager.as_deref(), Some("delta --paging=never"));
 }
 
 // =========================================================================
@@ -1205,94 +1167,113 @@ fn test_switch_config_merge() {
 }
 
 #[test]
-fn test_switch_config_no_cd_accessor() {
+fn test_switch_config_cd_accessor() {
     use crate::config::user::SwitchConfig;
 
-    // Default is false
+    // Default is true
     let config = SwitchConfig::default();
-    assert!(!config.no_cd());
-
-    // Explicit false
-    let config = SwitchConfig {
-        no_cd: Some(false),
-        ..Default::default()
-    };
-    assert!(!config.no_cd());
+    assert!(config.cd());
 
     // Explicit true
     let config = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(true),
         ..Default::default()
     };
-    assert!(config.no_cd());
+    assert!(config.cd());
+
+    // Explicit false
+    let config = SwitchConfig {
+        cd: Some(false),
+        ..Default::default()
+    };
+    assert!(!config.cd());
 }
 
 #[test]
-fn test_switch_config_no_cd_merge() {
+fn test_switch_config_cd_merge() {
     use crate::config::user::{Merge, SwitchConfig};
 
     // Other overrides base
     let base = SwitchConfig {
-        no_cd: Some(false),
+        cd: Some(true),
         ..Default::default()
     };
     let other = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(false),
         ..Default::default()
     };
     let merged = base.merge_with(&other);
-    assert!(merged.no_cd());
+    assert!(!merged.cd());
 
     // Base preserved when other is None
     let base = SwitchConfig {
-        no_cd: Some(true),
+        cd: Some(false),
         ..Default::default()
     };
     let merged = base.merge_with(&SwitchConfig::default());
-    assert!(merged.no_cd());
+    assert!(!merged.cd());
 
     // Neither set
     let merged = SwitchConfig::default().merge_with(&SwitchConfig::default());
-    assert!(!merged.no_cd()); // default false
+    assert!(merged.cd()); // default true
 }
 
 #[test]
-fn test_switch_config_no_cd_from_toml() {
+fn test_switch_config_cd_from_toml() {
     let toml = r#"
 [switch]
-no-cd = true
+cd = false
 "#;
     let config = UserConfig::load_from_str(toml).unwrap();
     let switch = config.switch(None).unwrap();
-    assert!(switch.no_cd());
+    assert!(!switch.cd());
 }
 
 #[test]
-fn test_switch_config_no_cd_resolved() {
+fn test_switch_config_cd_resolved() {
     let toml = r#"
 [switch]
-no-cd = true
+cd = false
 "#;
     let config = UserConfig::load_from_str(toml).unwrap();
     let resolved = config.resolved(None);
-    assert!(resolved.switch.no_cd());
+    assert!(!resolved.switch.cd());
+}
+
+#[test]
+fn test_deprecated_no_cd_migrated_to_cd() {
+    let config = UserConfig::load_from_str("[switch]\nno-cd = true\n").unwrap();
+    assert!(!config.configs.switch.unwrap().cd());
+}
+
+#[test]
+fn test_deprecated_no_cd_does_not_override_explicit_cd() {
+    let config = UserConfig::load_from_str("[switch]\ncd = true\nno-cd = true\n").unwrap();
+    assert!(config.configs.switch.unwrap().cd());
 }
 
 #[test]
 fn test_switch_picker_fallback_from_select() {
-    // When only [select] is configured, switch_picker() should use its pager
-    let config = UserConfig {
-        configs: OverridableConfig {
-            select: Some(SelectConfig {
-                pager: Some("bat".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let config = UserConfig::load_from_str(
+        r#"
+[select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("bat"));
+    // [select] is migrated to [switch.picker] at the TOML level before parsing
+    assert_eq!(
+        config
+            .configs
+            .switch
+            .as_ref()
+            .and_then(|switch| switch.picker.as_ref())
+            .and_then(|picker| picker.pager.as_deref()),
+        Some("bat")
+    );
     // timeout_ms not available from select, so default applies
     assert_eq!(picker.timeout_ms, None);
     assert_eq!(
@@ -1303,25 +1284,17 @@ fn test_switch_picker_fallback_from_select() {
 
 #[test]
 fn test_switch_picker_prefers_new_over_select() {
-    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+    let config = UserConfig::load_from_str(
+        r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 100
 
-    // When both [switch.picker] and [select] are configured, switch.picker wins
-    let config = UserConfig {
-        configs: OverridableConfig {
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("delta".to_string()),
-                    timeout_ms: Some(100),
-                }),
-                ..Default::default()
-            }),
-            select: Some(SelectConfig {
-                pager: Some("bat".to_string()),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+[select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("delta"));
@@ -1370,40 +1343,35 @@ fn test_switch_picker_project_override() {
 
 #[test]
 fn test_switch_picker_project_fallback_from_select() {
-    // Project has [select], global has [switch.picker]
-    // Project's select pager should be used
-    use crate::config::user::{SwitchConfig, SwitchPickerConfig};
+    let config = UserConfig::load_from_str(
+        r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 300
 
-    let mut config = UserConfig {
-        configs: OverridableConfig {
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("delta".to_string()),
-                    timeout_ms: Some(300),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    config.projects.insert(
-        "github.com/user/repo".to_string(),
-        UserProjectOverrides {
-            overrides: OverridableConfig {
-                select: Some(SelectConfig {
-                    pager: Some("bat".to_string()),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#,
+    )
+    .unwrap();
 
     let picker = config.switch_picker(Some("github.com/user/repo"));
-    assert_eq!(picker.pager.as_deref(), Some("bat")); // Project select fallback
-    assert_eq!(picker.timeout_ms, Some(300)); // From global (select has no timeout)
+    assert_eq!(picker.pager.as_deref(), Some("bat"));
+    assert_eq!(picker.timeout_ms, Some(300));
+    // [select] is migrated to [switch.picker] at the TOML level before parsing,
+    // so it ends up in the switch.picker field, not select
+    assert!(
+        config
+            .projects
+            .get("github.com/user/repo")
+            .unwrap()
+            .overrides
+            .switch
+            .as_ref()
+            .and_then(|s| s.picker.as_ref())
+            .and_then(|p| p.pager.as_deref())
+            == Some("bat")
+    );
 }
 
 #[test]
@@ -1447,7 +1415,7 @@ fn test_resolved_config_for_project() {
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
     assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
-    assert!(!resolved.switch.no_cd()); // Default false
+    assert!(resolved.switch.cd()); // Default true
 }
 
 // =========================================================================
@@ -1458,7 +1426,6 @@ fn test_resolved_config_for_project() {
 fn test_user_project_config_with_nested_configs_serde() {
     let config = UserProjectOverrides {
         approved_commands: vec!["npm install".to_string()],
-        commit_generation: None, // Deprecated field, use commit.generation instead
         overrides: OverridableConfig {
             worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             list: Some(ListConfig {
@@ -1586,8 +1553,45 @@ squash = false
 }
 
 #[test]
-fn test_deprecated_commit_generation_format_serde() {
-    // Test old format: [commit-generation] is still parsed for backward compatibility
+fn test_copy_ignored_config_merges_global_and_project() {
+    let project_id = "github.com/user/repo";
+    let config = UserConfig::load_from_str(
+        r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+
+[projects."github.com/user/repo".step.copy-ignored]
+exclude = [".repo-local/", ".entire/"]
+"#,
+    )
+    .unwrap();
+
+    let expected_global = vec![".conductor/".to_string(), ".entire/".to_string()];
+    let expected_merged = vec![
+        ".conductor/".to_string(),
+        ".entire/".to_string(),
+        ".repo-local/".to_string(),
+    ];
+
+    assert_eq!(config.copy_ignored(None).exclude, expected_global);
+    assert_eq!(
+        config.copy_ignored(Some(project_id)).exclude,
+        expected_merged.clone()
+    );
+    assert_eq!(
+        config
+            .resolved(Some(project_id))
+            .step
+            .copy_ignored()
+            .exclude,
+        expected_merged
+    );
+}
+
+#[test]
+fn test_deprecated_commit_generation_migrated_on_load() {
+    // [commit-generation] is migrated to [commit.generation] at the TOML level
+    // before serde parsing, so it lands in configs.commit.generation
     let content = r#"
 [commit-generation]
 command = "llm -m claude-haiku-4.5"
@@ -1596,22 +1600,29 @@ command = "llm -m claude-haiku-4.5"
 command = "claude -p --model opus"
 "#;
 
-    let config: UserConfig = toml::from_str(content).unwrap();
+    let config = UserConfig::load_from_str(content).unwrap();
 
-    // Old format parsed into commit_generation field
     assert_eq!(
-        config.commit_generation.as_ref().unwrap().command,
-        Some("llm -m claude-haiku-4.5".to_string())
+        config
+            .configs
+            .commit
+            .as_ref()
+            .and_then(|commit| commit.generation.as_ref())
+            .and_then(|generation| generation.command.as_deref()),
+        Some("llm -m claude-haiku-4.5")
     );
 
-    // Project override uses deprecated field
     let project = config.projects.get("github.com/user/repo").unwrap();
     assert_eq!(
-        project.commit_generation.as_ref().unwrap().command,
-        Some("claude -p --model opus".to_string())
+        project
+            .overrides
+            .commit
+            .as_ref()
+            .and_then(|commit| commit.generation.as_ref())
+            .and_then(|generation| generation.command.as_deref()),
+        Some("claude -p --model opus")
     );
 
-    // Effective config uses the deprecated values
     let effective_cg = config.commit_generation(Some("github.com/user/repo"));
     assert_eq!(
         effective_cg.command,
@@ -1621,26 +1632,23 @@ command = "claude -p --model opus"
 
 #[test]
 fn test_deprecated_commit_generation_with_args_field() {
-    // Test that old format with args field still parses (args is ignored)
-    // This ensures backward compatibility for users who haven't migrated yet
+    // Test that old format with args field is migrated: args merged into command
     let content = r#"
 [commit-generation]
 command = "llm"
 args = ["-m", "claude-haiku-4.5"]
 "#;
 
-    let result: Result<UserConfig, _> = toml::from_str(content);
-    assert!(
-        result.is_ok(),
-        "Old format with args field should parse (args is ignored): {:?}",
-        result.err()
-    );
-
-    let config = result.unwrap();
-    // Command is parsed, args is ignored (struct no longer has args field)
+    let config = UserConfig::load_from_str(content).unwrap();
+    // Migration merges args into command and renames section
     assert_eq!(
-        config.commit_generation.as_ref().unwrap().command,
-        Some("llm".to_string())
+        config
+            .configs
+            .commit
+            .as_ref()
+            .and_then(|c| c.generation.as_ref())
+            .and_then(|g| g.command.as_deref()),
+        Some("llm -m claude-haiku-4.5")
     );
 }
 
@@ -1805,34 +1813,6 @@ fn test_save_to_new_file_commit_with_stage_and_generation() {
 }
 
 #[test]
-fn test_save_to_new_file_with_deprecated_commit_generation() {
-    // Test that save_to() serializes deprecated commit_generation field
-    // (for backward compat when loading old configs and re-saving)
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
-
-    let config = UserConfig {
-        commit_generation: Some(CommitGenerationConfig {
-            command: Some("old-llm".to_string()),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    config.save_to(&config_path).unwrap();
-
-    let saved = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        saved.contains("[commit-generation]"),
-        "Should use deprecated format: {saved}"
-    );
-    assert!(
-        saved.contains("command = \"old-llm\""),
-        "Should contain command: {saved}"
-    );
-}
-
-#[test]
 fn test_save_to_new_file_with_skip_shell_integration() {
     // Test skip-shell-integration-prompt is only written when true
     let dir = tempfile::tempdir().unwrap();
@@ -1909,7 +1889,7 @@ fn test_hooks_merge_append_semantics() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1928,7 +1908,7 @@ fn test_hooks_no_project_override_uses_global() {
 
     let effective = config.hooks(Some("github.com/other/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1951,7 +1931,7 @@ fn test_hooks_project_only_no_global() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
@@ -1983,13 +1963,13 @@ fn test_hooks_different_hook_types_not_merged() {
 
     // post-start: only global
     let post_start = effective.post_start.unwrap();
-    let start_commands = post_start.commands();
+    let start_commands: Vec<_> = post_start.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
     // pre-commit: only project
     let pre_commit = effective.pre_commit.unwrap();
-    let commit_commands = pre_commit.commands();
+    let commit_commands: Vec<_> = pre_commit.commands().collect();
     assert_eq!(commit_commands.len(), 1);
     assert_eq!(commit_commands[0].template, "echo project-commit");
 }
@@ -2007,7 +1987,7 @@ fn test_hooks_none_project_uses_global() {
 
     let effective = config.hooks(None);
     let post_start = effective.post_start.unwrap();
-    let commands = post_start.commands();
+    let commands: Vec<_> = post_start.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -2068,7 +2048,8 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "select" | "commit-generation" | "aliases" => {
+            "list" | "commit" | "merge" | "switch" | "step" | "select" | "commit-generation"
+            | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }
@@ -2135,7 +2116,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2180,7 +2161,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands = effective.post_start.as_ref().unwrap().commands();
+    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2335,7 +2316,7 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 
     let merged = global_hooks.merge_with(&project_hooks);
     let pre_merge = merged.pre_merge.unwrap();
-    let commands = pre_merge.commands();
+    let commands: Vec<_> = pre_merge.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "global-lint"); // Global first
     assert_eq!(commands[1].template, "project-lint"); // Project second
@@ -2352,7 +2333,7 @@ fn test_hooks_merge_folds_post_create_into_pre_start() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(commands.len(), 2, "Both hooks should be present");
     assert_eq!(commands[0].template, "npm install"); // User's post-create first
     assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
@@ -2370,7 +2351,7 @@ fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(
         commands.len(),
         2,
@@ -2390,10 +2371,52 @@ fn test_hooks_merge_post_create_both_sides() {
     let pre_start = merged
         .get(HookType::PreStart)
         .expect("should have pre-start");
-    let commands = pre_start.commands();
+    let commands: Vec<_> = pre_start.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install");
     assert_eq!(commands[1].template, "cargo build");
+}
+
+#[test]
+fn test_aliases_accessor_appends_on_collision() {
+    let toml_str = r#"
+[aliases]
+shared = "global-cmd"
+global-only = "only-global"
+
+[projects."test-project".aliases]
+shared = "project-cmd"
+project-only = "only-project"
+"#;
+    let config: UserConfig = toml::from_str(toml_str).unwrap();
+
+    let aliases = config.aliases(Some("test-project"));
+
+    // Non-colliding aliases are present
+    assert_eq!(aliases["global-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["global-only"].commands().next().unwrap().template,
+        "only-global"
+    );
+    assert_eq!(aliases["project-only"].commands().count(), 1);
+    assert_eq!(
+        aliases["project-only"].commands().next().unwrap().template,
+        "only-project"
+    );
+
+    // Colliding alias: both commands run (global first, then per-project)
+    let shared: Vec<_> = aliases["shared"].commands().collect();
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared[0].template, "global-cmd");
+    assert_eq!(shared[1].template, "project-cmd");
+
+    // Without project: only global aliases
+    let global_only = config.aliases(None);
+    assert_eq!(global_only["shared"].commands().count(), 1);
+    assert_eq!(
+        global_only["shared"].commands().next().unwrap().template,
+        "global-cmd"
+    );
 }
 
 /// Test that reload_projects_from handles permission errors

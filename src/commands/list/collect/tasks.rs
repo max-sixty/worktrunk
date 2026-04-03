@@ -254,17 +254,21 @@ impl Task for HasFileChangesTask {
     }
 }
 
-/// Task 3b: Merge simulation
+/// Task 3b: Merge simulation + patch-id fallback
 ///
-/// Checks if merging the branch into target would add any changes by simulating
-/// the merge with `git merge-tree --write-tree`. Returns false when the merge
-/// result equals target's tree, indicating the branch is already integrated.
+/// Delegates to [`Repository::merge_integration_probe()`], which runs:
 ///
-/// This catches branches where target has advanced past the squash-merge point -
-/// the three-dot diff might show changes, but those changes are already in target
-/// via the squash merge.
+/// 1. `merge-tree --write-tree` — simulates merging branch into target. If the
+///    result tree equals target's tree, the branch is integrated (`MergeAddsNothing`).
+/// 2. `patch-id` fallback — only when merge-tree conflicts (returns `None`).
+///    Computes the branch's entire diff as a single patch-id and checks if any
+///    target commit matches (`PatchIdMatch`). Detects squash merges where target
+///    later modified the same files.
 ///
-/// Uses target for integration detection.
+/// These are bundled in one task because patch-id only runs when merge-tree
+/// conflicts — it needs the merge-tree result first. Splitting them into separate
+/// parallel tasks would either waste work (running patch-id unconditionally) or
+/// require two-phase scheduling.
 pub struct WouldMergeAddTask;
 
 impl Task for WouldMergeAddTask {
@@ -276,6 +280,7 @@ impl Task for WouldMergeAddTask {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
+                is_patch_id_match: false,
             });
         };
         // When integration_target is None, return true (conservative: assume would add)
@@ -283,15 +288,17 @@ impl Task for WouldMergeAddTask {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
+                is_patch_id_match: false,
             });
         };
-        let repo = &ctx.repo;
-        let would_merge_add = repo
-            .would_merge_add_to_target(branch, &base)
+        let probe = ctx
+            .repo
+            .merge_integration_probe(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
-            would_merge_add,
+            would_merge_add: probe.would_merge_add,
+            is_patch_id_match: probe.is_patch_id_match,
         })
     }
 }
@@ -605,7 +612,7 @@ impl Task for CiStatusTask {
         let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
             // Use from_branch_ref with the authoritative is_remote flag
             // rather than guessing from the branch name
-            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote, repo);
+            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote);
             PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha)
         });
 

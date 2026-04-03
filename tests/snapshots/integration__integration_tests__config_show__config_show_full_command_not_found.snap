@@ -33,7 +33,7 @@ info:
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
-    WORKTRUNK_TEST_LATEST_VERSION: 0.28.2
+    WORKTRUNK_TEST_LATEST_VERSION: 0.33.0
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -62,9 +62,6 @@ exit_code: 0
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
-
-[36mCLAUDE CODE[39m
-[2m○[22m [1mclaude[22m CLI not installed
 
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m

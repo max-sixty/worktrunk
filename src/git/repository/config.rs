@@ -1,5 +1,7 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
+use std::path::PathBuf;
+
 use anyhow::Context;
 use color_print::cformat;
 
@@ -54,6 +56,64 @@ impl Repository {
     /// Read user-defined branch-keyed marker.
     pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
         branch.and_then(|branch| self.branch_marker(branch))
+    }
+
+    /// Get all vars entries for a branch, sorted by key name.
+    ///
+    /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
+    /// via `{{ vars.key }}`.
+    pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
+        let escaped = regex::escape(branch);
+        let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
+        let output = self
+            .run_command(&["config", "--get-regexp", &pattern])
+            .unwrap_or_default();
+
+        let prefix = format!("worktrunk.state.{branch}.vars.");
+        output
+            .lines()
+            .filter_map(|line| {
+                let (config_key, value) = line.split_once(' ')?;
+                let key = config_key.strip_prefix(&prefix)?;
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect()
+    }
+
+    /// Get all vars entries across all branches in a single git call.
+    ///
+    /// Returns a map of branch → (key → value). Uses one `git config --get-regexp`
+    /// instead of N per-branch calls, avoiding N+1 subprocess spawns in `wt list --format=json`.
+    pub fn all_vars_entries(
+        &self,
+    ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
+        let output = self
+            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.vars\."])
+            .unwrap_or_default();
+
+        let mut result: std::collections::HashMap<
+            String,
+            std::collections::BTreeMap<String, String>,
+        > = std::collections::HashMap::new();
+        for line in output.lines() {
+            let Some((config_key, value)) = line.split_once(' ') else {
+                continue;
+            };
+            let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
+                continue;
+            };
+            // Use rsplit_once: var keys cannot contain dots (validated by
+            // validate_vars_key), so the last `.vars.` is always the real separator.
+            // split_once would misparse branch names containing `.vars.`.
+            let Some((branch, key)) = rest.rsplit_once(".vars.") else {
+                continue;
+            };
+            result
+                .entry(branch.to_string())
+                .or_default()
+                .insert(key.to_string(), value.to_string());
+        }
+        result
     }
 
     /// Set the previous branch in worktrunk.history for `wt switch -` support.
@@ -272,6 +332,7 @@ impl Repository {
             return Err(GitError::BranchNotFound {
                 branch,
                 show_create_hint: true,
+                last_fetch_ago: None,
             }
             .into());
         }
@@ -402,6 +463,39 @@ impl Repository {
     // =========================================================================
     // Project config
     // =========================================================================
+
+    /// Return the path for the project config file.
+    ///
+    /// Uses the current worktree when inside one (both normal and bare repos).
+    /// For bare repos at the bare root (outside any worktree), falls back to
+    /// the primary worktree. Returns `None` when no worktree can be determined
+    /// (bare repo with no linked worktrees).
+    pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        let in_worktree = self
+            .current_worktree()
+            .run_command(&["rev-parse", "--is-inside-work-tree"])
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false);
+
+        if in_worktree {
+            // Inside a worktree — use it (normal repo or linked worktree in bare repo)
+            return Ok(Some(
+                self.current_worktree()
+                    .root()?
+                    .join(".config")
+                    .join("wt.toml"),
+            ));
+        }
+
+        if self.is_bare().unwrap_or(false) {
+            // At bare repo root — use primary worktree
+            return Ok(self
+                .primary_worktree()?
+                .map(|p| p.join(".config").join("wt.toml")));
+        }
+
+        Ok(None)
+    }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///

@@ -6,7 +6,7 @@ use clap::Subcommand;
 pub enum StepCommand {
     /// Stage and commit with LLM-generated message
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files) and commits with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -21,7 +21,7 @@ Controls what to stage before committing:
 | `none` | Don't stage anything, commit only what's already staged |
 
 ```console
-wt step commit --stage=tracked
+$ wt step commit --stage=tracked
 ```
 
 Configure the default in user config:
@@ -37,14 +37,18 @@ Output the rendered LLM prompt to stdout without running the command. Useful for
 
 ```console
 # Inspect the rendered prompt
-wt step commit --show-prompt | less
+$ wt step commit --show-prompt | less
 
 # Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
     Commit {
+        /// Branch to operate on (defaults to current worktree)
+        #[arg(short, long, add = crate::completion::worktree_only_completer())]
+        branch: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
         yes: bool,
@@ -68,7 +72,7 @@ wt step commit --show-prompt | llm -m gpt-5-nano
     ///
     /// Stages changes and generates message with LLM.
     #[command(
-        after_long_help = r#"Stages all changes (including untracked files), then squashes all commits since diverging from the target branch into a single commit with an [LLM-generated message](@/llm-commits.md).
+        after_long_help = r#"See [LLM-generated commit messages](@/llm-commits.md) for configuration and prompt customization.
 
 ## Options
 
@@ -83,7 +87,7 @@ Controls what to stage before squashing:
 | `none` | Don't stage anything, squash only committed changes |
 
 ```console
-wt step squash --stage=none
+$ wt step squash --stage=none
 ```
 
 Configure the default in user config:
@@ -98,7 +102,7 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```console
-wt step squash --show-prompt | less
+$ wt step squash --show-prompt | less
 ```
 "#
     )]
@@ -135,8 +139,8 @@ wt step squash --show-prompt | less
 ## Examples
 
 ```console
-wt step push             # Fast-forward main to current branch
-wt step push develop     # Fast-forward develop instead
+$ wt step push             # Fast-forward main to current branch
+$ wt step push develop     # Fast-forward develop instead
 ```
 
 Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
@@ -165,8 +169,8 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
 ## Examples
 
 ```console
-wt step rebase            # Rebase onto default branch
-wt step rebase develop    # Rebase onto develop
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
 ```
 "#
     )]
@@ -189,15 +193,15 @@ wt step rebase develop    # Rebase onto develop
 Arguments after `--` are forwarded to `git diff`:
 
 ```console
-wt step diff -- --stat
-wt step diff -- --name-only
-wt step diff -- -- '*.rs'
+$ wt step diff -- --stat
+$ wt step diff -- --name-only
+$ wt step diff -- -- '*.rs'
 ```
 
 The diff is pipeable to tools like `delta`:
 
 ```console
-wt step diff | delta
+$ wt step diff | delta
 ```
 
 ## How it works
@@ -205,9 +209,9 @@ wt step diff | delta
 Equivalent to:
 
 ```console
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+$ cp "$(git rev-parse --git-dir)/index" /tmp/idx
+$ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+$ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
@@ -228,10 +232,7 @@ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default
     /// Copy gitignored files to another worktree
     ///
     /// Eliminates cold starts by copying build caches and dependencies.
-    #[command(
-        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
-
-## Setup
+    #[command(after_long_help = r#"## Setup
 
 Add to the project config:
 
@@ -243,15 +244,22 @@ copy = "wt step copy-ignored"
 
 ## What gets copied
 
-All gitignored files are copied by default. Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
 
-To limit what gets copied, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
+To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
 ```text
 # .worktreeinclude
 .env
 node_modules/
 target/
+```
+
+After `.worktreeinclude` selects entries, you can add more gitignore-style excludes in user config, per-project user overrides, or project config:
+
+```toml
+[step.copy-ignored]
+exclude = [".cache/", ".turbo/"]
 ```
 
 ## Common patterns
@@ -269,7 +277,7 @@ target/
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Skips `.git` entries, VCS metadata directories (`.jj`, `.hg`, etc.), and other worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
 
 ## Performance
 
@@ -310,8 +318,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 - worktrunk copies all gitignored files by default; Claude Code requires `.worktreeinclude`
 - worktrunk uses copy-on-write for large directories like `target/` — potentially 30x faster on macOS, 6x on Linux
 - worktrunk runs as a configurable hook in the worktree lifecycle
-"#
-    )]
+"#)]
     CopyIgnored {
         /// Source worktree branch
         ///
@@ -338,9 +345,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
     ///
     /// Prints the result to stdout for use in scripts and shell substitutions.
     #[command(
-        after_long_help = r#"Evaluates a template expression in the current worktree context and prints the result to stdout. All [hook template variables and filters](@/hook.md#template-variables) are available.
-
-Output goes to stdout with no decoration, making it suitable for shell substitution and piping.
+        after_long_help = r#"All [hook template variables and filters](@/hook.md#template-variables) are available.
 
 ## Examples
 
@@ -397,9 +402,7 @@ Note: This command is experimental and may change in future versions.
     ///
     /// Executes sequentially with real-time output; continues on failure.
     #[command(
-        after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
-
-Context JSON is piped to stdin for scripts that need structured data.
+        after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
 ## Template variables
 
@@ -410,25 +413,25 @@ All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#te
 Check status across all worktrees:
 
 ```console
-wt step for-each -- git status --short
+$ wt step for-each -- git status --short
 ```
 
 Run npm install in all worktrees:
 
 ```console
-wt step for-each -- npm install
+$ wt step for-each -- npm install
 ```
 
 Use branch name in command:
 
 ```console
-wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- "echo Branch: {{ branch }}"
 ```
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```console
-git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -506,8 +509,8 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
-wt step prune --min-age=0s     # no age guard
-wt step prune --min-age=2d     # skip worktrees younger than 2 days
+$ wt step prune --min-age=0s     # no age guard
+$ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
 
 ## Examples
@@ -515,13 +518,13 @@ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 Preview what would be removed:
 
 ```console
-wt step prune --dry-run
+$ wt step prune --dry-run
 ```
 
 Remove all merged worktrees:
 
 ```console
-wt step prune
+$ wt step prune
 ```
 "#
     )]
@@ -546,33 +549,30 @@ wt step prune
     /// \[experimental\] Move worktrees to expected paths
     ///
     /// Relocates worktrees whose path doesn't match the `worktree-path` template.
-    #[command(
-        after_long_help = r#"Moves worktrees to match the configured `worktree-path` template.
-
-## Examples
+    #[command(after_long_help = r#"## Examples
 
 Preview what would be moved:
 
 ```console
-wt step relocate --dry-run
+$ wt step relocate --dry-run
 ```
 
 Move all mismatched worktrees:
 
 ```console
-wt step relocate
+$ wt step relocate
 ```
 
 Auto-commit and clobber blockers (never fails):
 
 ```console
-wt step relocate --commit --clobber
+$ wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
 
 ```console
-wt step relocate feature bugfix
+$ wt step relocate feature bugfix
 ```
 
 ## Swap handling
@@ -600,8 +600,7 @@ expected path. Untracked and gitignored files remain at the original location.
 - **Detached HEAD** — no branch to compute expected path
 
 Note: This command is experimental and may change in future versions.
-"#
-    )]
+"#)]
     Relocate {
         /// Worktrees to relocate (defaults to all mismatched)
         #[arg(add = crate::completion::worktree_only_completer())]

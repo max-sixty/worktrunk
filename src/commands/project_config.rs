@@ -34,16 +34,10 @@ pub fn collect_commands_for_hooks(
     let mut commands = Vec::new();
     for hook in hooks {
         if let Some(config) = project_config.hooks.get(*hook) {
-            commands.extend(
-                config
-                    .commands()
-                    .iter()
-                    .cloned()
-                    .map(|command| ApprovableCommand {
-                        phase: Phase::Hook(*hook),
-                        command,
-                    }),
-            );
+            commands.extend(config.commands().cloned().map(|command| ApprovableCommand {
+                phase: Phase::Hook(*hook),
+                command,
+            }));
         }
     }
     commands

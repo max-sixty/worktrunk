@@ -60,6 +60,31 @@ If surrounding lines also need updating, note that in your reply.
 
 When a bug may already be fixed, ask the reporter: `wt --version`
 
+### Closing Duplicates
+
+When an issue is clearly a duplicate, close it after commenting. Use
+`gh issue close <number>` and tell the reporter: if they believe this was
+closed in error, they can let us know and we'll reopen it.
+
+### Suggesting Aliases for Feature Requests
+
+When a feature request can be addressed with a shell alias or `wt step` alias,
+compose and test one before responding. This lets users try workflows
+immediately rather than waiting for a native flag.
+
+**When to suggest an alias:**
+- The request is for a behavioral variant of an existing command (e.g.,
+  idempotent create-or-switch, auto-push after merge)
+- The behavior can be composed from existing `wt` commands
+- A shell one-liner or `wt step` alias covers the use case
+
+**How to respond:**
+1. Draft the alias (shell function or `wt step` alias, whichever fits better)
+2. Test it in a scratch repo — verify it works for both the happy path and the
+   fallback case
+3. Post the tested alias in the issue with usage examples
+4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) for context
+
 ## Per-Workflow References
 
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search

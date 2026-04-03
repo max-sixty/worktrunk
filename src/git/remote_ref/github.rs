@@ -2,15 +2,14 @@
 //!
 //! Implements `RemoteRefProvider` for GitHub Pull Requests using the `gh` CLI.
 
-use std::io::ErrorKind;
-
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
-use super::{PlatformData, RemoteRefInfo, RemoteRefProvider};
-use crate::git::error::GitError;
+use super::{
+    CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
+    run_cli_api,
+};
 use crate::git::{self, RefType, Repository};
-use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
 #[derive(Debug, Clone, Copy)]
@@ -79,30 +78,42 @@ struct GhOwner {
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
-    // Best-effort hostname extraction for GitHub Enterprise support.
-    // Falls back to gh's default (github.com) if the remote URL can't be parsed.
+    // Extract owner/repo from primary remote URL. Uses raw URL (not
+    // effective) because insteadOf may rewrite to a non-parseable path.
+    // SSH aliases only affect the host, not the path — owner/repo is always real.
+    let remote = repo.primary_remote()?;
+    let url = repo
+        .remote_url(&remote)
+        .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
+    let parsed = git::GitRemoteUrl::parse(&url)
+        .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+
+    let api_path = format!(
+        "repos/{}/{}/pulls/{}",
+        parsed.owner(),
+        parsed.repo(),
+        pr_number
+    );
+
+    // Only pass --hostname when explicitly configured (for GHE / self-hosted).
     let hostname = repo
-        .primary_remote_url()
-        .and_then(|url| git::GitRemoteUrl::parse(&url))
-        .map(|parsed| parsed.host().to_string())
-        .unwrap_or_else(|| "github.com".to_string());
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_hostname().map(String::from));
 
-    let api_path = format!("repos/{{owner}}/{{repo}}/pulls/{}", pr_number);
-
-    let output = match Cmd::new("gh")
-        .args(["api", &api_path, "--hostname", &hostname])
-        .current_dir(repo_root)
-        .env("GH_PROMPT_DISABLED", "1")
-        .run()
-    {
-        Ok(output) => output,
-        Err(e) => {
-            if e.kind() == ErrorKind::NotFound {
-                bail!("GitHub CLI (gh) not installed; install from https://cli.github.com/");
-            }
-            return Err(anyhow::Error::from(e).context("Failed to run gh api"));
-        }
-    };
+    let mut args = vec!["api", api_path.as_str()];
+    if let Some(h) = &hostname {
+        args.extend(["--hostname", h.as_str()]);
+    }
+    let output = run_cli_api(CliApiRequest {
+        tool: "gh",
+        args: &args,
+        repo_root,
+        prompt_env: ("GH_PROMPT_DISABLED", "1"),
+        install_hint: "GitHub CLI (gh) not installed; install from https://cli.github.com/",
+        run_context: "Failed to run gh api",
+    })?;
 
     if !output.status.success() {
         if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
@@ -120,18 +131,11 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
             }
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let details = if stderr.trim().is_empty() {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            stderr.trim().to_string()
-        };
-        return Err(GitError::CliApiError {
-            ref_type: RefType::Pr,
-            message: format!("gh api failed for PR #{}", pr_number),
-            stderr: details,
-        }
-        .into());
+        return Err(cli_api_error(
+            RefType::Pr,
+            format!("gh api failed for PR #{}", pr_number),
+            &output,
+        ));
     }
 
     let response: GhApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
@@ -211,13 +215,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 
 /// Get the git protocol preference from `gh` (GitHub CLI).
 fn use_ssh_protocol() -> bool {
-    Cmd::new("gh")
-        .args(["config", "get", "git_protocol"])
-        .run()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "ssh")
-        .unwrap_or(false)
+    cli_config_value("gh", "git_protocol").as_deref() == Some("ssh")
 }
 
 /// Construct the remote URL for a fork repository.

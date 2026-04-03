@@ -1,0 +1,5 @@
+---
+source: src/commands/config/mod.rs
+expression: "warn_unknown_keys::<UserConfig>(&unknown)"
+---
+[33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m

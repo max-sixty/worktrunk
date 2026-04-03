@@ -160,11 +160,8 @@ fn test_rust_prevents_nul_bytes_in_args(repo: TestRepo) {
     // Rust's Command API should reject NUL bytes in arguments
     let malicious_branch = "feature\0__WORKTRUNK_EXEC__echo PWNED";
 
-    let mut cmd = repo.git_command();
-    cmd.args(["branch", malicious_branch]);
-
-    // Command::output() should fail with InvalidInput error
-    let result = cmd.output();
+    // Cmd::run() should fail with InvalidInput error (NUL bytes rejected by Command API)
+    let result = repo.git_command().args(["branch", malicious_branch]).run();
 
     match result {
         Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
@@ -195,7 +192,7 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     let result = repo
         .git_command()
         .args(["branch", malicious_branch])
-        .output()
+        .run()
         .unwrap();
 
     if !result.status.success() {
@@ -233,7 +230,7 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     let result = repo
         .git_command()
         .args(["branch", malicious_branch])
-        .output()
+        .run()
         .unwrap();
 
     if !result.status.success() {
@@ -332,7 +329,7 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     let result = repo
         .git_command()
         .args(["branch", malicious_branch])
-        .output()
+        .run()
         .unwrap();
 
     if !result.status.success() {
@@ -397,7 +394,7 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     let result = repo
         .git_command()
         .args(["branch", malicious_branch])
-        .output()
+        .run()
         .unwrap();
 
     if !result.status.success() {
@@ -521,7 +518,7 @@ fn test_git_ignores_malformed_refs_with_ansi(repo: TestRepo) {
 fn test_literal_escape_like_branch_names_displayed_safely(repo: TestRepo) {
     let branch_name = "fix-backslash-x1b-test";
 
-    let result = repo.git_command().args(["branch", branch_name]).output();
+    let result = repo.git_command().args(["branch", branch_name]).run();
 
     if let Ok(output) = result
         && output.status.success()

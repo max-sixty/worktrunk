@@ -16,40 +16,35 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, setup_fake_remote};
-
-fn release_binary() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_wt"))
-}
-
-/// Run a command and assert it succeeded.
-fn run_bench_cmd(cmd: &mut Command) {
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Benchmark command failed:\nstderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+use wt_perf::{RepoConfig, create_repo, isolate_cmd, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
-    let binary = release_binary();
-    let env = ("WORKTRUNK_FIRST_OUTPUT", "1");
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     let config = RepoConfig::typical(4);
     let temp = create_repo(&config);
     let repo_path = temp.path().join("repo");
     setup_fake_remote(&repo_path);
 
+    let make_cmd = |args: &[&str]| {
+        let mut cmd = Command::new(binary);
+        cmd.args(args).current_dir(&repo_path);
+        isolate_cmd(&mut cmd, None);
+        cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
+        cmd
+    };
+
     // remove: exits after validation, before approval/output
     group.bench_function("remove", |b| {
         b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .args(["remove", "--yes", "--no-verify", "--force", "feature-wt-1"])
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
+            let output = make_cmd(&["remove", "--yes", "--no-verify", "--force", "feature-wt-1"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Benchmark command failed:\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         });
     });
@@ -57,11 +52,13 @@ fn bench_first_output(c: &mut Criterion) {
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .args(["switch", "--yes", "--no-verify", "feature-wt-1"])
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
+            let output = make_cmd(&["switch", "--yes", "--no-verify", "feature-wt-1"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Benchmark command failed:\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         });
     });
@@ -69,11 +66,11 @@ fn bench_first_output(c: &mut Criterion) {
     // list: exits after skeleton data collection, before render
     group.bench_function("list", |b| {
         b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .arg("list")
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
+            let output = make_cmd(&["list"]).output().unwrap();
+            assert!(
+                output.status.success(),
+                "Benchmark command failed:\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         });
     });

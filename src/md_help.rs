@@ -184,12 +184,22 @@ fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
     render_table_with_termimad(lines, "", max_width)
 }
 
-/// Render a markdown table from markdown source string (no indent)
-pub(crate) fn render_markdown_table(markdown: &str) -> String {
-    let lines: Vec<&str> = markdown
-        .lines()
-        .filter(|l| l.trim().starts_with('|') && l.trim().ends_with('|'))
+/// Render a table from headers and rows using termimad.
+///
+/// Column widths are computed by termimad based on content.
+pub(crate) fn render_data_table(headers: &[&str], rows: &[Vec<String>]) -> String {
+    let header_line = format!("| {} |", headers.join(" | "));
+    let separator = format!("|{}|", vec!["---"; headers.len()].join("|"));
+    let row_lines: Vec<String> = rows
+        .iter()
+        .map(|row| format!("| {} |", row.join(" | ")))
         .collect();
+
+    let mut lines: Vec<&str> = Vec::with_capacity(rows.len() + 2);
+    lines.push(&header_line);
+    lines.push(&separator);
+    lines.extend(row_lines.iter().map(|s| s.as_str()));
+
     render_table_with_termimad(&lines, "", None)
 }
 
@@ -608,33 +618,30 @@ mod tests {
     }
 
     // ============================================================================
-    // render_markdown_table
+    // render_data_table
     // ============================================================================
 
     #[test]
-    fn test_render_markdown_table_basic() {
-        let result = render_markdown_table("| Col1 | Col2 |\n| ---- | ---- |\n| A | B |");
+    fn test_render_data_table_basic() {
+        let rows = vec![
+            vec!["Alice".into(), "42".into()],
+            vec!["Bob".into(), "7".into()],
+        ];
+        let result = render_data_table(&["Name", "Score"], &rows);
         assert_snapshot!(result, @"
-        Col1 Col2 
-        ──── ──── 
-        A    B
+        Name  Score 
+        ───── ───── 
+        Alice 42    
+        Bob   7
         ");
     }
 
     #[test]
-    fn test_render_markdown_table_empty() {
-        let result = render_markdown_table("");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_render_markdown_table_with_non_table_lines() {
-        let result =
-            render_markdown_table("Not a table\n| A | B |\nAlso not\n| - | - |\n| 1 | 2 |");
+    fn test_render_data_table_empty_rows() {
+        let result = render_data_table(&["A", "B"], &[]);
         assert_snapshot!(result, @"
          A   B  
-        ─── ─── 
-        1   2
+        ─── ───
         ");
     }
 

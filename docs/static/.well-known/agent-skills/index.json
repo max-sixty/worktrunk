@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "worktrunk",
+      "type": "skill-md",
+      "description": "Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for \"setting up commit message generation\", \"configuring hooks\", \"automating tasks\", or general worktrunk questions.",
+      "url": "./worktrunk/SKILL.md",
+      "digest": "sha256:41a8ac46013de94515181c45890f3f96cd76c016ef3292ccc5f44b87246555e4"
+    }
+  ]
+}

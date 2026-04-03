@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub"]
 
 [package]
 name = "worktrunk"
-version = "0.31.0"
+version = "0.34.0"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"
@@ -137,7 +137,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.47.1", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.27"
@@ -149,6 +149,7 @@ vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
 similar = "2.7.0"
+sha2 = "0.11"
 
 [[bench]]
 name = "completion"
@@ -164,6 +165,10 @@ harness = false
 
 [[bench]]
 name = "time_to_first_output"
+harness = false
+
+[[bench]]
+name = "remove"
 harness = false
 
 [lints.rust]

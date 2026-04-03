@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template, validate_template};
+use worktrunk::config::{UserConfig, expand_template, template_references_var, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
@@ -183,21 +183,36 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let mut hooks = super::hooks::prepare_background_hooks(
+    let mut flat_hooks = Vec::new();
+    let mut pipeline_hooks = Vec::new();
+
+    match super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
         extra_vars,
         hooks_display_path,
-    )?;
+    )? {
+        super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
+        super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+    }
+
     if matches!(result, SwitchResult::Created { .. }) {
-        hooks.extend(super::hooks::prepare_background_hooks(
+        match super::hooks::prepare_background_hooks(
             &ctx,
             HookType::PostStart,
             extra_vars,
             hooks_display_path,
-        )?);
+        )? {
+            super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
+            super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+        }
     }
-    super::hooks::spawn_background_hooks(&ctx, hooks)
+
+    // Spawn pipeline hooks as compound commands, flat hooks as independent processes
+    if !pipeline_hooks.is_empty() {
+        super::hooks::spawn_hook_pipeline(&ctx, pipeline_hooks)?;
+    }
+    super::hooks::spawn_background_hooks(&ctx, flat_hooks)
 }
 
 /// Handle the switch command.
@@ -224,7 +239,7 @@ pub fn handle_switch(
     // Now that we have the repo, we can resolve project-specific config.
     let change_dir = change_dir_flag.unwrap_or_else(|| {
         let project_id = repo.project_identifier().ok();
-        !config.resolved(project_id.as_deref()).switch.no_cd()
+        config.resolved(project_id.as_deref()).switch.cd()
     });
 
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
@@ -467,6 +482,12 @@ fn validate_switch_templates(
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {
+                    // Skip full validation for lazy templates ({{ vars.X }}) —
+                    // they're expanded at runtime after prior pipeline steps set
+                    // the vars. Syntax is still checked by expand_commands.
+                    if template_references_var(&cmd.template, "vars") {
+                        continue;
+                    }
                     let name = match &cmd.name {
                         Some(n) => format!("{source} {hook_type}:{n}"),
                         None => format!("{source} {hook_type} hook"),

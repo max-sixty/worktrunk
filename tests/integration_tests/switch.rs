@@ -3,6 +3,7 @@ use crate::common::{
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
     setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -229,7 +230,7 @@ fn test_switch_create_from_remote_base_no_upstream(#[from(repo_with_remote)] rep
     let upstream_check = repo
         .git_command()
         .args(["rev-parse", "--abbrev-ref", "my-feature@{upstream}"])
-        .output()
+        .run()
         .unwrap();
 
     assert!(
@@ -359,6 +360,30 @@ fn test_switch_nonexistent_branch(repo: TestRepo) {
     // Switching to a nonexistent branch (without --create) should give a clear
     // "branch not found" error, not fall through to a confusing git error.
     snapshot_switch("switch_nonexistent_branch", &repo, &["nonexistent-branch"]);
+}
+
+#[rstest]
+fn test_switch_nonexistent_branch_with_fetch_time(repo: TestRepo) {
+    // When FETCH_HEAD exists, the hint should include "last fetched X ago".
+    let git_dir = repo.root_path().join(".git");
+    fs::write(git_dir.join("FETCH_HEAD"), "").unwrap();
+
+    // Set TEST_EPOCH to 3 hours after the real mtime so the file appears "3h ago"
+    let mtime = fs::metadata(git_dir.join("FETCH_HEAD"))
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let epoch_3h_later = mtime + 3 * 3600;
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["nonexistent-branch"], None);
+        cmd.env("WORKTRUNK_TEST_EPOCH", epoch_3h_later.to_string());
+        assert_cmd_snapshot!("switch_nonexistent_with_fetch_time", cmd);
+    });
 }
 
 #[rstest]
@@ -984,7 +1009,7 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
         .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
-        .output()
+        .run()
         .unwrap();
     let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -1519,6 +1544,37 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
 
 use crate::common::mock_commands::{MockConfig, MockResponse, copy_mock_binary};
 
+/// Set origin to a GitHub URL so `fetch_pr_info` can parse owner/repo.
+///
+/// Saves the original bare repo URL and configures `url.insteadOf` so that
+/// `git fetch`/`git push` still work against the local bare remote.
+fn set_github_remote_url(repo: &TestRepo) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Redirect GitHub URL to local bare remote for actual git operations
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+}
+
 /// Helper to set up mock gh for PR tests with custom PR response.
 ///
 /// The response should be in `gh api repos/{owner}/{repo}/pulls/{number}` format:
@@ -1620,7 +1676,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1687,7 +1743,7 @@ fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1801,7 +1857,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -1818,7 +1874,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -1921,6 +1977,7 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
 /// Test error when PR is not found
 #[rstest]
 fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -1950,6 +2007,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test error when fork was deleted (head.repo is null)
 #[rstest]
 fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // gh api repos/{owner}/{repo}/pulls/{number} format with null head.repo
     // This happens when the fork that the PR was opened from has been deleted
     let gh_response = r#"{
@@ -1991,6 +2049,7 @@ fn test_switch_pr_base_conflict(repo: TestRepo) {
 /// Test fork PR where branch already exists and tracks same PR (should reuse)
 #[rstest]
 fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // First, manually create the branch with correct tracking config
     // Branch name matches headRefName (no owner prefix) so git push works
     let branch_name = "feature-fix";
@@ -2037,6 +2096,7 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
 /// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // Create a PR ref on the remote
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
@@ -2045,7 +2105,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2072,7 +2132,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2117,10 +2177,102 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     });
 }
 
+/// Test fork PR where branch already exists with the same PR ref path but the
+/// wrong remote configured.
+///
+/// This branch should not be reused because push/pull would be wired to the
+/// wrong repository.
+#[rstest]
+fn test_switch_pr_fork_existing_same_pr_wrong_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
+    set_github_remote_url(&repo);
+    repo.setup_custom_remote("fork", "main");
+
+    // Create a PR ref on the real PR remote.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{sha}:refs/pull/42/head")]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Create the branch with a stale tracking configuration pointing at a
+    // different remote that happens to use the same PR ref path.
+    let branch_name = "feature-fix";
+    repo.run_git(&["branch", branch_name, "main"]);
+    repo.run_git(&["config", &format!("branch.{branch_name}.remote"), "fork"]);
+    repo.run_git(&[
+        "config",
+        &format!("branch.{branch_name}.merge"),
+        "refs/pull/42/head",
+    ]);
+
+    // Set up GitHub URL and redirect (like test_switch_pr_fork).
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{bare_url}.insteadOf"),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+    configure_mock_gh_env(&mut cmd, &mock_bin);
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "switch should succeed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        stderr.contains("Using prefixed branch name contributor/feature-fix due to name conflict"),
+        "expected prefixed branch warning when existing branch tracks the PR on the wrong remote\nstderr:\n{stderr}",
+    );
+}
+
 /// Test fork PR where branch exists but has no tracking config
 /// Uses prefixed branch name `contributor/feature-fix` to avoid conflict
 #[rstest]
 fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // Create a PR ref on the remote
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
@@ -2129,7 +2281,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2147,7 +2299,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2196,6 +2348,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
 /// Should reuse the existing prefixed branch
 #[rstest]
 fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // Create the unprefixed branch (simulating existing local branch)
     repo.run_git(&["branch", "feature-fix", "main"]);
 
@@ -2232,7 +2385,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2279,6 +2432,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
 /// Test fork PR where prefixed branch exists but tracks different PR (should error)
 #[rstest]
 fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     // Create the unprefixed branch (simulating existing local branch)
     repo.run_git(&["branch", "feature-fix", "main"]);
 
@@ -2301,7 +2455,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2348,6 +2502,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
 /// Test pr: when gh is not authenticated
 #[rstest]
 fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2376,6 +2531,7 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when hitting GitHub rate limit
 #[rstest]
 fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2406,6 +2562,7 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when gh returns invalid JSON
 #[rstest]
 fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2429,6 +2586,7 @@ fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when network error occurs
 #[rstest]
 fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2455,6 +2613,7 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when gh returns unknown error
 #[rstest]
 fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2482,6 +2641,7 @@ fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
 /// Test pr: when PR has empty branch name
 #[rstest]
 fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    set_github_remote_url(&repo);
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
 
@@ -2618,7 +2778,7 @@ fn test_switch_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2677,7 +2837,7 @@ fn test_switch_mr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -2936,7 +3096,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -2957,7 +3117,7 @@ fn test_switch_mr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -3055,7 +3215,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
     let commit_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
-        .output()
+        .run()
         .unwrap();
     let sha = String::from_utf8_lossy(&commit_sha.stdout)
         .trim()
@@ -3083,7 +3243,7 @@ fn test_switch_mr_fork_existing_branch_tracks_mr(#[from(repo_with_remote)] repo:
         &repo
             .git_command()
             .args(["config", "remote.origin.url"])
-            .output()
+            .run()
             .unwrap()
             .stdout,
     )
@@ -3274,6 +3434,13 @@ fn configure_cli_not_installed_env(cmd: &mut std::process::Command, minimal_bin:
 /// Test pr: when gh CLI is not installed
 #[rstest]
 fn test_switch_pr_gh_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set a GitHub URL so fetch_pr_info can parse owner/repo before checking for gh
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
         // Symlinks not available (Windows without Developer Mode)
         eprintln!("Skipping test: symlinks not available on this system");
@@ -3388,15 +3555,15 @@ fn test_switch_base_without_create_warns_not_errors(repo: TestRepo) {
     );
 }
 
-/// Test that `--cd` flag overrides `[switch] no-cd = true` config
+/// Test that `--cd` flag overrides `[switch] cd = false` config
 #[rstest]
 fn test_switch_cd_flag_overrides_no_cd_config(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 
@@ -3470,15 +3637,15 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
-/// Test that `[switch] no-cd = true` config is respected when no flags provided
+/// Test that `[switch] cd = false` config is respected when no flags provided
 #[rstest]
 fn test_switch_no_cd_config_default(repo: TestRepo) {
-    // Set up config with no-cd = true
+    // Set up config with cd = false
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [switch]
-no-cd = true
+cd = false
 "#,
     );
 

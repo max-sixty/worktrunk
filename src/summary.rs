@@ -46,7 +46,7 @@ pub(crate) struct CombinedDiff {
 ///
 /// Uses commit-message format (subject + body) which naturally produces
 /// imperative-mood summaries without "This branch..." preamble.
-const SUMMARY_TEMPLATE: &str = r#"Write a summary of this branch's changes as a commit message.
+const SUMMARY_TEMPLATE: &str = r#"<task>Write a summary of this branch's changes as a commit message.</task>
 
 <format>
 - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
@@ -259,7 +259,7 @@ mod tests {
     fn test_render_prompt_includes_diff_and_stat() {
         let result = render_prompt("diff content here", "stat content here").unwrap();
         insta::assert_snapshot!(result, @r#"
-        Write a summary of this branch's changes as a commit message.
+        <task>Write a summary of this branch's changes as a commit message.</task>
 
         <format>
         - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")

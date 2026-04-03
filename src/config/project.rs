@@ -8,7 +8,8 @@ use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::HooksConfig;
+use super::commands::CommandConfig;
+use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
 ///
@@ -55,6 +56,35 @@ pub struct ProjectCiConfig {
     pub platform: Option<String>,
 }
 
+/// Project-level forge configuration.
+///
+/// Override forge detection when URL-based detection fails (e.g., SSH host
+/// aliases, GitHub Enterprise, or self-hosted GitLab with custom domains).
+///
+/// # Example
+///
+/// ```toml
+/// [forge]
+/// platform = "github"              # or "gitlab"
+/// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectForgeConfig {
+    /// Forge platform override. When set, skips URL-based platform detection.
+    ///
+    /// Values: "github" or "gitlab"
+    #[serde(default)]
+    pub platform: Option<String>,
+
+    /// API hostname for GitHub Enterprise or self-hosted GitLab.
+    ///
+    /// Only needed when the remote URL uses an SSH host alias that doesn't
+    /// resolve to the real API hostname. For standard github.com/gitlab.com
+    /// setups, this is not needed.
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
 impl ProjectListConfig {
     /// Returns true if any list configuration is set.
     pub fn is_configured(&self) -> bool {
@@ -64,8 +94,30 @@ impl ProjectListConfig {
 
 impl ProjectConfig {
     /// Get the CI platform override if configured.
+    ///
+    /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
+    }
+
+    /// Get the forge platform override, checking `[forge]` first then `[ci]`.
+    pub fn forge_platform(&self) -> Option<&str> {
+        self.forge
+            .as_ref()
+            .and_then(|f| f.platform.as_deref())
+            .or_else(|| self.ci_platform())
+    }
+
+    /// Get the forge API hostname if configured.
+    pub fn forge_hostname(&self) -> Option<&str> {
+        self.forge.as_ref().and_then(|f| f.hostname.as_deref())
+    }
+
+    /// Get `wt step copy-ignored` configuration if configured.
+    pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
+        self.step
+            .as_ref()
+            .and_then(|step| step.copy_ignored.as_ref())
     }
 }
 
@@ -107,14 +159,26 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub list: Option<ProjectListConfig>,
 
-    /// CI configuration (platform override)
+    /// CI configuration (platform override). Deprecated: use `[forge]` instead.
     #[serde(default)]
     pub ci: Option<ProjectCiConfig>,
 
+    /// Forge configuration (platform detection override, API hostname)
+    #[serde(default)]
+    pub forge: Option<ProjectForgeConfig>,
+
+    /// Configuration for `wt step` subcommands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
     /// \[experimental\] Command aliases for `wt step <name>`.
     ///
-    /// Each alias maps a name to a command template. All hook template variables
-    /// are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    /// Each alias maps a name to one or more command templates. All hook
+    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
+    ///
+    /// Uses `CommandConfig` for consistency with hooks. This means the
+    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
+    /// technically works, but the single-string format is the expected usage.
     ///
     /// ```toml
     /// [aliases]
@@ -122,7 +186,7 @@ pub struct ProjectConfig {
     /// lint = "npm run lint"
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, String>>,
+    pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }
 
 impl ProjectConfig {
@@ -134,33 +198,12 @@ impl ProjectConfig {
         repo: &crate::git::Repository,
         write_hints: bool,
     ) -> Result<Option<Self>, ConfigError> {
-        // For bare repos, go straight to the primary worktree for config.
-        // `root()` falls back to the bare repo directory when `--show-toplevel`
-        // fails, which would incorrectly pick up a `.config/wt.toml` placed in
-        // the bare repo root — that's an accidental side effect, not a real
-        // worktree root (#1691).
-        let config_path = if repo.is_bare().unwrap_or(false) {
-            let primary = repo
-                .primary_worktree()
-                .ok()
-                .flatten()
-                .map(|p| p.join(".config").join("wt.toml"))
-                .filter(|p| p.exists());
-            match primary {
-                Some(path) => path,
-                None => return Ok(None),
-            }
-        } else {
-            let repo_root = repo
-                .current_worktree()
-                .root()
-                .map_err(|e| ConfigError::Message(format!("Failed to get worktree root: {}", e)))?;
-            let config_path = repo_root.join(".config").join("wt.toml");
-            if config_path.exists() {
-                config_path
-            } else {
-                return Ok(None);
-            }
+        let config_path = match repo
+            .project_config_path()
+            .map_err(|e| ConfigError::Message(format!("Failed to get config path: {}", e)))?
+        {
+            Some(path) if path.exists() => path,
+            _ => return Ok(None),
         };
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
@@ -183,13 +226,9 @@ impl ProjectConfig {
 
         // Warn about unknown fields (only in main worktree where it's actionable)
         if is_main_worktree {
-            let unknown_keys: std::collections::HashMap<_, _> = find_unknown_keys(&contents)
-                .into_iter()
-                .filter(|(k, _)| !super::deprecation::DEPRECATED_SECTION_KEYS.contains(&k.as_str()))
-                .collect();
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &config_path,
-                &unknown_keys,
+                &find_unknown_keys(&contents),
                 "Project config",
             );
         }
@@ -293,6 +332,19 @@ url = "http://localhost:{{ branch | hash_port }}"
         assert!(!list.is_configured());
     }
 
+    #[test]
+    fn test_deserialize_step_copy_ignored() {
+        let contents = r#"
+[step.copy-ignored]
+exclude = [".conductor/", ".entire/"]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(
+            config.copy_ignored().unwrap().exclude,
+            vec![".conductor/".to_string(), ".entire/".to_string()]
+        );
+    }
+
     // ============================================================================
     // CiConfig Tests
     // ============================================================================
@@ -339,6 +391,67 @@ platform = "gitlab"
     }
 
     // ============================================================================
+    // ForgeConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_forge_platform() {
+        let contents = r#"
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert!(config.forge_hostname().is_none());
+    }
+
+    #[test]
+    fn test_deserialize_forge_hostname() {
+        let contents = r#"
+[forge]
+platform = "github"
+hostname = "github.example.com"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert_eq!(config.forge_platform(), Some("github"));
+        assert_eq!(config.forge_hostname(), Some("github.example.com"));
+    }
+
+    #[test]
+    fn test_forge_platform_falls_back_to_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform not set, falls back to ci.platform
+        assert_eq!(config.forge_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_platform_takes_precedence_over_ci() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+
+[forge]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        // forge.platform takes precedence
+        assert_eq!(config.forge_platform(), Some("github"));
+        // ci.platform still accessible directly
+        assert_eq!(config.ci_platform(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_forge_config_default() {
+        let config = ProjectForgeConfig::default();
+        assert!(config.platform.is_none());
+        assert!(config.hostname.is_none());
+    }
+
+    // ============================================================================
     // find_unknown_keys Tests
     // ============================================================================
 
@@ -354,6 +467,9 @@ platform = "gitlab"
         let contents = r#"
 post-create = "npm install"
 pre-merge = "cargo test"
+
+[step.copy-ignored]
+exclude = [".conductor/"]
 "#;
         let keys = find_unknown_keys(contents);
         assert!(keys.is_empty());

@@ -127,6 +127,9 @@ pub(super) struct RepoCache {
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
+    /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
+    /// Cached because forge detection may query the same remote multiple times.
+    pub(super) effective_remote_urls: DashMap<String, Option<String>>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Worktree root paths: worktree_path -> canonicalized root
@@ -372,6 +375,20 @@ impl Repository {
     /// [1]: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt---git-common-dir
     pub fn git_common_dir(&self) -> &Path {
         &self.git_common_dir
+    }
+
+    /// Get the epoch timestamp of the last `git fetch`, if available.
+    ///
+    /// Checks the modification time of `FETCH_HEAD` in the git common directory.
+    /// Returns `None` if the file doesn't exist (never fetched) or on any I/O error.
+    pub fn last_fetch_epoch(&self) -> Option<u64> {
+        let fetch_head = self.git_common_dir().join("FETCH_HEAD");
+        let metadata = std::fs::metadata(fetch_head).ok()?;
+        let modified = metadata.modified().ok()?;
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
     }
 
     /// Get the worktrunk data directory inside the git directory.

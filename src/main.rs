@@ -15,7 +15,7 @@ use worktrunk::styling::{
 };
 
 use commands::command_approval::approve_hooks;
-use commands::context::CommandEnv;
+use commands::command_executor::CommandContext;
 use commands::list::progressive::RenderMode;
 use commands::worktree::RemoveResult;
 
@@ -47,20 +47,23 @@ use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{BranchDeletionMode, handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
-    add_approvals, clear_approvals, handle_completions, handle_config_create, handle_config_show,
+    add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
     handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
     handle_rebase, handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all,
     handle_state_get, handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_diff, step_eval,
-    step_for_each, step_prune, step_relocate,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
+    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
+    step_relocate,
 };
 use output::handle_remove_output;
 
 use cli::{
-    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
-    DefaultBranchAction, HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
-    PreviousBranchAction, StateCommand, StepCommand,
+    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
+    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand,
+    ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, StepCommand,
+    VarsAction,
 };
 use worktrunk::HookType;
 
@@ -150,6 +153,20 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, name.as_deref(), &vars),
+        HookCommand::PostSwitch {
+            name,
+            yes,
+            dry_run,
+            foreground,
+            vars,
+        } => run_toggleable_hook(
+            HookType::PostSwitch,
+            yes,
+            dry_run,
+            foreground,
+            name.as_deref(),
+            &vars,
+        ),
         HookCommand::PreStart {
             name,
             yes,
@@ -170,32 +187,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             name.as_deref(),
             &vars,
         ),
-        HookCommand::PostSwitch {
-            name,
-            yes,
-            dry_run,
-            foreground,
-            vars,
-        } => run_toggleable_hook(
-            HookType::PostSwitch,
-            yes,
-            dry_run,
-            foreground,
-            name.as_deref(),
-            &vars,
-        ),
         HookCommand::PreCommit {
             name,
             yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreCommit, yes, dry_run, name.as_deref(), &vars),
-        HookCommand::PreMerge {
-            name,
-            yes,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostCommit {
             name,
             yes,
@@ -210,6 +207,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             name.as_deref(),
             &vars,
         ),
+        HookCommand::PreMerge {
+            name,
+            yes,
+            dry_run,
+            vars,
+        } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, name.as_deref(), &vars),
         HookCommand::PostMerge {
             name,
             yes,
@@ -244,6 +247,7 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             name.as_deref(),
             &vars,
         ),
+        HookCommand::RunPipeline => commands::run_pipeline(),
         HookCommand::Approvals { action } => match action {
             ApprovalsCommand::Add { all } => add_approvals(all),
             ApprovalsCommand::Clear { global } => clear_approvals(global),
@@ -254,11 +258,12 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
 fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit {
+            branch,
             yes,
             verify,
             stage,
             show_prompt,
-        } => step_commit(yes, verify, stage, show_prompt),
+        } => step_commit(branch, yes, verify, stage, show_prompt),
         StepCommand::Squash {
             target,
             yes,
@@ -388,6 +393,17 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             Some(HintsAction::Get) | None => handle_hints_get(),
             Some(HintsAction::Clear { name }) => handle_hints_clear(name),
         },
+        StateCommand::Vars { action } => match action {
+            VarsAction::Get { key, branch } => handle_vars_get(&key, branch),
+            VarsAction::Set {
+                assignment: (key, value),
+                branch,
+            } => handle_vars_set(&key, &value, branch),
+            VarsAction::List { branch } => handle_vars_list(branch),
+            VarsAction::Clear { key, all, branch } => {
+                handle_vars_clear(key.as_deref(), all, branch)
+            }
+        },
         StateCommand::Get { format } => handle_state_show(format),
         StateCommand::Clear => handle_state_clear_all(),
     }
@@ -455,7 +471,20 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full } => handle_config_show(full),
         ConfigCommand::Update { yes } => handle_config_update(yes),
+        ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
+    }
+}
+
+fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
+    match action {
+        ConfigPluginsCommand::Claude { action } => match action {
+            ConfigPluginsClaudeCommand::Install { yes } => handle_claude_install(yes),
+            ConfigPluginsClaudeCommand::Uninstall { yes } => handle_claude_uninstall(yes),
+            ConfigPluginsClaudeCommand::InstallStatusline { yes } => {
+                handle_claude_install_statusline(yes)
+            }
+        },
     }
 }
 
@@ -655,6 +684,7 @@ fn validate_remove_targets(
                         deletion_mode,
                         force,
                         config,
+                        None,
                     ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
@@ -669,7 +699,7 @@ fn validate_remove_targets(
                 } else {
                     RemoveTarget::Path(&path_canonical)
                 };
-                match repo.prepare_worktree_removal(target, deletion_mode, force, config) {
+                match repo.prepare_worktree_removal(target, deletion_mode, force, config, None) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
                 }
@@ -680,6 +710,7 @@ fn validate_remove_targets(
                     deletion_mode,
                     force,
                     config,
+                    None,
                 ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),
@@ -705,11 +736,23 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
 
             let repo = Repository::current().context("Failed to remove worktree")?;
 
+            // Resolve current worktree context for hook approval
+            let current_wt = repo.current_worktree();
+            let approve_worktree_path = current_wt.root()?;
+            let approve_branch = current_wt
+                .branch()
+                .context("Failed to determine current branch")?;
+
             // Helper: approve remove hooks using current worktree context
             // Returns true if hooks should run (user approved)
             let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-                let env = CommandEnv::for_action_branchless()?;
-                let ctx = env.context(yes);
+                let ctx = CommandContext::new(
+                    &repo,
+                    &config,
+                    approve_branch.as_deref(),
+                    &approve_worktree_path,
+                    yes,
+                );
                 let approved = approve_hooks(
                     &ctx,
                     &[
@@ -734,6 +777,7 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                         BranchDeletionMode::from_flags(!spec.delete_branch, spec.force_delete),
                         spec.force,
                         &config,
+                        None,
                     )
                     .context("Failed to remove worktree")?;
 
@@ -791,7 +835,7 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
         })
 }
 
-fn main() {
+fn init_rayon_thread_pool() {
     // Configure Rayon's global thread pool for mixed I/O workloads.
     // The `wt list` command runs git operations (CPU + disk I/O) and network
     // requests (CI status, URL health checks) in parallel. Using 2x CPU cores
@@ -808,17 +852,16 @@ fn main() {
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build_global();
+}
 
-    // Tell crossterm to always emit ANSI sequences
-    crossterm::style::force_color_output(true);
-
+fn parse_cli() -> Option<Cli> {
     if completion::maybe_handle_env_completion() {
-        return;
+        return None;
     }
 
     // Handle --help with pager before clap processes it
     if help::maybe_handle_help_with_pager() {
-        return;
+        return None;
     }
 
     // TODO: Enhance error messages to show possible values for missing enum arguments
@@ -830,40 +873,60 @@ fn main() {
     let matches = cmd.try_get_matches().unwrap_or_else(|e| {
         enhance_and_exit_error(e);
     });
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
+}
 
+fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<std::path::PathBuf>) {
     // Initialize base path from -C flag if provided
-    if let Some(path) = cli.directory {
+    if let Some(path) = directory {
         set_base_path(path);
     }
 
     // Initialize config path from --config flag if provided
-    if let Some(path) = cli.config {
+    if let Some(path) = config {
         set_config_path(path);
     }
+}
 
-    // Configure logging based on --verbose flag or RUST_LOG env var
-    // When -vv is set, also write logs to .git/wt/logs/verbose.log
-    if cli.verbose >= 2 {
-        verbose_log::init();
-    }
-
-    // Capture verbose level and command line before cli is partially consumed
-    let verbose_level = cli.verbose;
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-
+fn init_command_log(command_line: &str) {
     // Initialize command log for always-on logging of hooks and LLM commands.
     // Directory and file are created lazily on first log_command() call.
     if let Ok(repo) = worktrunk::git::Repository::current() {
-        worktrunk::command_log::init(&repo.wt_logs_dir(), &command_line);
+        worktrunk::command_log::init(&repo.wt_logs_dir(), command_line);
+    }
+}
+
+fn thread_label() -> char {
+    let thread_id = format!("{:?}", std::thread::current().id());
+    thread_id
+        .strip_prefix("ThreadId(")
+        .and_then(|s| s.strip_suffix(")"))
+        .and_then(|s| s.parse::<usize>().ok())
+        .map(|n| {
+            if n == 0 {
+                '0'
+            } else if n <= 26 {
+                char::from(b'a' + (n - 1) as u8)
+            } else if n <= 52 {
+                char::from(b'A' + (n - 27) as u8)
+            } else {
+                '?'
+            }
+        })
+        .unwrap_or('?')
+}
+
+fn init_logging(verbose_level: u8) {
+    // Configure logging based on --verbose flag or RUST_LOG env var
+    // When -vv is set, also write logs to .git/wt/logs/verbose.log
+    if verbose_level >= 2 {
+        verbose_log::init();
     }
 
     // Set global verbosity level for styled verbose output
     output::set_verbosity(verbose_level);
 
-    // -vv enables debug logging via env_logger; -v uses styled output (not logging)
-    // Otherwise, respect RUST_LOG (defaulting to off)
-    let mut builder = if cli.verbose >= 2 {
+    let mut builder = if verbose_level >= 2 {
         let mut b = env_logger::Builder::new();
         b.filter_level(log::LevelFilter::Debug);
         b
@@ -874,25 +937,7 @@ fn main() {
     builder
         .format(|buf, record| {
             let msg = record.args().to_string();
-
-            // Map thread ID to a single character (a-z, then A-Z)
-            let thread_id = format!("{:?}", std::thread::current().id());
-            let thread_num = thread_id
-                .strip_prefix("ThreadId(")
-                .and_then(|s| s.strip_suffix(")"))
-                .and_then(|s| s.parse::<usize>().ok())
-                .map(|n| {
-                    if n == 0 {
-                        '0'
-                    } else if n <= 26 {
-                        char::from(b'a' + (n - 1) as u8)
-                    } else if n <= 52 {
-                        char::from(b'A' + (n - 27) as u8)
-                    } else {
-                        '?'
-                    }
-                })
-                .unwrap_or('?');
+            let thread_num = thread_label();
 
             // Write plain text to log file (no ANSI codes)
             verbose_log::write_line(&format!("[{thread_num}] {msg}"));
@@ -924,16 +969,10 @@ fn main() {
             }
         })
         .init();
+}
 
-    let Some(command) = cli.command else {
-        // No subcommand provided - print help to stderr (stdout is eval'd by shell wrapper)
-        let mut cmd = cli::build_command();
-        let help = cmd.render_help().ansi().to_string();
-        eprintln!("{help}");
-        return;
-    };
-
-    let result = match command {
+fn dispatch_command(command: Commands) -> anyhow::Result<()> {
+    match command {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
@@ -1023,85 +1062,121 @@ fn main() {
             commit: flag_pair(commit, no_commit),
             rebase: flag_pair(rebase, no_rebase),
             remove: flag_pair(remove, no_remove),
-            no_ff: flag_pair(no_ff, ff),
+            ff: flag_pair(ff, no_ff),
             verify: flag_pair(verify, no_verify),
             yes,
             stage,
         }),
+    }
+}
+
+fn print_command_error(error: &anyhow::Error) {
+    // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
+    // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
+    // skip eprintln! for those to avoid phantom blank lines.
+    if let Some(err) = error.downcast_ref::<worktrunk::git::GitError>() {
+        eprintln!("{}", err);
+    } else if let Some(err) = error.downcast_ref::<worktrunk::git::WorktrunkError>() {
+        let display = err.to_string();
+        if !display.is_empty() {
+            eprintln!("{display}");
+        }
+    } else if let Some(err) = error.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
+        eprintln!("{}", err);
+    } else if let Some(err) = error.downcast_ref::<worktrunk::config::TemplateExpandError>() {
+        eprintln!("{}", err);
+    } else {
+        // Anyhow error formatting:
+        // - With context: show context as header, root cause in gutter
+        // - Simple error: inline with emoji
+        // - Empty error: skip (errors already printed elsewhere)
+        let msg = error.to_string();
+        if !msg.is_empty() {
+            let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
+            if !chain.is_empty() {
+                eprintln!("{}", error_message(&msg));
+                let chain_text = chain.join("\n");
+                eprintln!("{}", format_with_gutter(&chain_text, None));
+            } else if msg.contains('\n') || msg.contains('\r') {
+                debug_assert!(false, "Multiline error without context: {msg}");
+                log::warn!("Multiline error without context: {msg}");
+                let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
+                eprintln!("{}", error_message("Command failed"));
+                eprintln!("{}", format_with_gutter(&normalized, None));
+            } else {
+                eprintln!("{}", error_message(&msg));
+            }
+        }
+    }
+}
+
+fn print_cwd_removed_hint_if_needed() {
+    // If the CWD has been deleted, hint the user about recovery options.
+    // Check both: (1) explicit flag set by merge/remove when it knows the CWD
+    // worktree was removed (reliable on all platforms), and (2) OS-level detection
+    // for cases not covered by the flag (e.g., external worktree removal).
+    let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
+    if cwd_gone {
+        if let Some(hint) = cwd_removed_hint() {
+            eprintln!("{}", hint_message(hint));
+        } else {
+            eprintln!("{}", info_message("Current directory was removed"));
+        }
+    }
+}
+
+fn finish_command(verbose_level: u8, command_line: &str, error: Option<&anyhow::Error>) {
+    let error_text = error.map(|err| err.to_string());
+    diagnostic::write_if_verbose(verbose_level, command_line, error_text.as_deref());
+    let _ = output::terminate_output();
+}
+
+fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line: &str) -> ! {
+    print_command_error(&error);
+    print_cwd_removed_hint_if_needed();
+
+    // Preserve exit code from child processes (especially for signals like SIGINT)
+    let code = exit_code(&error).unwrap_or(1);
+    finish_command(verbose_level, command_line, Some(&error));
+    process::exit(code);
+}
+
+fn print_help_to_stderr() {
+    // No subcommand provided - print help to stderr (stdout is eval'd by shell wrapper)
+    let mut cmd = cli::build_command();
+    let help = cmd.render_help().ansi().to_string();
+    eprintln!("{help}");
+}
+
+fn main() {
+    init_rayon_thread_pool();
+
+    // Tell crossterm to always emit ANSI sequences
+    crossterm::style::force_color_output(true);
+
+    let Some(cli) = parse_cli() else {
+        return;
     };
 
-    if let Err(e) = result {
-        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
-        // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
-        // skip eprintln! for those to avoid phantom blank lines.
-        if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
-            eprintln!("{}", err);
-        } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
-            let display = err.to_string();
-            if !display.is_empty() {
-                eprintln!("{display}");
-            }
-        } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-            eprintln!("{}", err);
-        } else if let Some(err) = e.downcast_ref::<worktrunk::config::TemplateExpandError>() {
-            eprintln!("{}", err);
-        } else {
-            // Anyhow error formatting:
-            // - With context: show context as header, root cause in gutter
-            // - Simple error: inline with emoji
-            // - Empty error: skip (errors already printed elsewhere)
-            let msg = e.to_string();
-            if !msg.is_empty() {
-                // Collect the error chain (skipping the first which is in msg)
-                let chain: Vec<String> = e.chain().skip(1).map(|e| e.to_string()).collect();
-                if !chain.is_empty() {
-                    // Has context: msg is context, chain contains intermediate + root cause
-                    eprintln!("{}", error_message(&msg));
-                    let chain_text = chain.join("\n");
-                    eprintln!("{}", format_with_gutter(&chain_text, None));
-                } else if msg.contains('\n') || msg.contains('\r') {
-                    // Multiline error without context - this shouldn't happen if all
-                    // errors have proper context. Catch in debug builds, log in release.
-                    debug_assert!(false, "Multiline error without context: {msg}");
-                    log::warn!("Multiline error without context: {msg}");
-                    // Normalize line endings for display
-                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
-                    eprintln!("{}", error_message("Command failed"));
-                    eprintln!("{}", format_with_gutter(&normalized, None));
-                } else {
-                    // Single-line error without context: inline with emoji
-                    eprintln!("{}", error_message(&msg));
-                }
-            }
-        }
+    let Cli {
+        directory,
+        config,
+        verbose,
+        command,
+    } = cli;
+    apply_global_options(directory, config);
 
-        // If the CWD has been deleted, hint the user about recovery options.
-        // Check both: (1) explicit flag set by merge/remove when it knows the CWD
-        // worktree was removed (reliable on all platforms), and (2) OS-level detection
-        // for cases not covered by the flag (e.g., external worktree removal).
-        let cwd_gone = output::was_cwd_removed() || std::env::current_dir().is_err();
-        if cwd_gone {
-            if let Some(hint) = cwd_removed_hint() {
-                eprintln!("{}", hint_message(hint));
-            } else {
-                eprintln!("{}", info_message("Current directory was removed"));
-            }
-        }
+    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    init_command_log(&command_line);
+    init_logging(verbose);
 
-        // Preserve exit code from child processes (especially for signals like SIGINT)
-        let code = exit_code(&e).unwrap_or(1);
+    let Some(command) = command else {
+        print_help_to_stderr();
+        return;
+    };
 
-        // Write diagnostic if -vv was used (error case)
-        diagnostic::write_if_verbose(verbose_level, &command_line, Some(&e.to_string()));
-
-        // Reset ANSI state before exiting
-        let _ = output::terminate_output();
-        process::exit(code);
+    match dispatch_command(command) {
+        Ok(()) => finish_command(verbose, &command_line, None),
+        Err(error) => handle_command_failure(error, verbose, &command_line),
     }
-
-    // Write diagnostic if -vv was used (success case)
-    diagnostic::write_if_verbose(verbose_level, &command_line, None);
-
-    // Reset ANSI state before returning to shell (success case)
-    let _ = output::terminate_output();
 }
