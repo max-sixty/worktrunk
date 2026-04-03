@@ -1572,10 +1572,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         match &item.source {
             CheckSource::Prunable { wt_idx } => {
                 let wt = &worktrees[*wt_idx];
-                let branch = wt
-                    .branch
-                    .as_ref()
-                    .context("prunable item missing branch")?;
+                let branch = wt.branch.as_ref().context("prunable item missing branch")?;
                 let candidate = Candidate {
                     label: branch.clone(),
                     branch: Some(branch.clone()),
