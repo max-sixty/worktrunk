@@ -442,7 +442,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
 /// Prepare hook steps as a pipeline, preserving serial/concurrent structure.
 ///
 /// Accepts pre-looked-up configs to avoid redundant loading.
-pub(crate) fn prepare_pipeline_hooks_with_configs(
+fn prepare_pipeline_hooks_with_configs(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
     proj_config: Option<&CommandConfig>,

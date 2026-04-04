@@ -27,9 +27,8 @@ use super::command_executor::build_hook_context;
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_hook_commands,
-    prepare_pipeline_hooks_with_configs, run_hook_with_filter, spawn_background_hooks,
-    spawn_hook_pipeline,
+    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_background_hooks,
+    prepare_hook_commands, run_hook_with_filter, spawn_background_hooks, spawn_prepared_hooks,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -67,37 +66,27 @@ fn run_post_hook(
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
-        // Pipeline configs (list form) use the background pipeline runner.
-        // Name filtering falls through to the flat path (individual command execution).
-        let has_pipeline = [user_config, project_config]
-            .iter()
-            .any(|c| c.is_some_and(CommandConfig::is_pipeline));
-
-        if has_pipeline && name_filter.is_none() {
-            let steps = prepare_pipeline_hooks_with_configs(
+        if name_filter.is_some() {
+            // Name filtering operates on individual commands — use the flat path
+            // which extracts matching commands regardless of pipeline structure.
+            let commands = prepare_hook_commands(
                 ctx,
-                user_config,
-                project_config,
-                hook_type,
-                extra_vars,
-                None,
+                HookCommandSpec {
+                    user_config,
+                    project_config,
+                    hook_type,
+                    extra_vars,
+                    name_filter,
+                    display_path: None,
+                },
             )?;
-            return spawn_hook_pipeline(ctx, steps);
+            check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+            return spawn_background_hooks(ctx, commands);
         }
 
-        let commands = prepare_hook_commands(
-            ctx,
-            HookCommandSpec {
-                user_config,
-                project_config,
-                hook_type,
-                extra_vars,
-                name_filter,
-                display_path: None,
-            },
-        )?;
-        check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
-        return spawn_background_hooks(ctx, commands);
+        // No name filter: use the unified path that auto-detects pipeline vs flat.
+        let hooks = prepare_background_hooks(ctx, hook_type, extra_vars, None)?;
+        return spawn_prepared_hooks(ctx, hooks);
     }
 
     run_filtered_hook(
