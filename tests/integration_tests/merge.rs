@@ -808,17 +808,11 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
         Some(&feature_wt)
     ));
 
-    // Verify both commands ran
+    // Verify both commands ran (poll for background pipeline runner completion)
     let notify_file = repo.root_path().join("notify.txt");
     let deploy_file = repo.root_path().join("deploy.txt");
-    assert!(
-        notify_file.exists(),
-        "Notify command should have created marker file"
-    );
-    assert!(
-        deploy_file.exists(),
-        "Deploy command should have created marker file"
-    );
+    wait_for_file(&notify_file);
+    wait_for_file(&deploy_file);
 }
 
 #[rstest]

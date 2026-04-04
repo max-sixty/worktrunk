@@ -23,7 +23,7 @@ info:
     NO_COLOR: ""
     PATH: "[PATH]"
     PSModulePath: ""
-    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwp292D/repo.feature
+    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpi7W4q3/repo.feature
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -52,4 +52,4 @@ exit_code: 0
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mRunning post-merge: [1mproject[22m @ [1m_REPO_[22m[39m
+[36m◎[39m [36mRunning post-merge: [1mcmd-0[22m @ [1m_REPO_[22m[39m

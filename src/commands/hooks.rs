@@ -7,13 +7,13 @@ use worktrunk::config::CommandConfig;
 use worktrunk::git::WorktrunkError;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    eprintln, error_message, format_bash_with_gutter, progress_message, verbosity, warning_message,
+    eprintln, error_message, format_bash_with_gutter, progress_message, warning_message,
 };
 
 use super::command_executor::{
     CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
 };
-use crate::commands::process::{HookLog, spawn_detached, spawn_detached_exec};
+use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::execute_command_in_worktree;
 
 /// A prepared command with its source information.
@@ -159,137 +159,6 @@ fn filter_by_name(
     }
 }
 
-/// Spawn hook commands as background (detached) processes.
-///
-/// Used for post-start and post-switch hooks during normal worktree operations.
-/// Commands are spawned and immediately detached - we don't wait for them.
-///
-/// By default, shows a single-line summary of all hooks being run, with support
-/// for multiple hook types in a single message (e.g., "Running post-switch: user:foo; post-start: project:bar").
-/// With `-v`, shows verbose per-hook output with command details.
-pub fn spawn_background_hooks(
-    ctx: &CommandContext,
-    commands: Vec<SourcedCommand>,
-) -> anyhow::Result<()> {
-    if commands.is_empty() {
-        return Ok(());
-    }
-
-    let verbose = verbosity();
-
-    if verbose == 0 {
-        // Group commands by hook type, preserving insertion order
-        let groups = group_commands_by_hook_type(&commands);
-        // All commands in a batch share the same display_path (set by prepare_hook_commands)
-        let display_path = commands.first().and_then(|c| c.display_path.as_ref());
-
-        // Format: "Running {type}: {names}[; {type}: {names}]... [@ {path}]"
-        let type_segments: Vec<String> = groups
-            .iter()
-            .map(|(hook_type, cmds)| {
-                let names: Vec<String> = cmds
-                    .iter()
-                    .map(|c| cformat!("<bold>{}</>", c.summary_name()))
-                    .collect();
-                format!("{hook_type}: {}", names.join(", "))
-            })
-            .collect();
-
-        let message = match display_path {
-            Some(path) => {
-                let path_display = format_path_for_display(path);
-                cformat!(
-                    "Running {} @ <bold>{path_display}</>",
-                    type_segments.join("; ")
-                )
-            }
-            None => format!("Running {}", type_segments.join("; ")),
-        };
-        eprintln!("{}", progress_message(message));
-    }
-
-    // Track index for unnamed commands to prevent log collisions (per hook type)
-    // Use a Vec since HookType doesn't implement Hash
-    let mut unnamed_indices: Vec<(HookType, usize)> = Vec::new();
-
-    for cmd in &commands {
-        if verbose >= 1 {
-            cmd.announce()?;
-        }
-
-        let name = match &cmd.prepared.name {
-            Some(n) => n.clone(),
-            None => {
-                let idx = if let Some((_, count)) = unnamed_indices
-                    .iter_mut()
-                    .find(|(t, _)| *t == cmd.hook_type)
-                {
-                    let result = *count;
-                    *count += 1;
-                    result
-                } else {
-                    unnamed_indices.push((cmd.hook_type, 1));
-                    0
-                };
-                format!("cmd-{idx}")
-            }
-        };
-        // Use HookLog with the command's own hook_type for consistent log file naming
-        let hook_log = HookLog::hook(cmd.source, cmd.hook_type, &name);
-
-        // Lazy commands (referencing vars.) carry the raw template in lazy_template.
-        // Expand them before spawning, same as run_hook_with_filter does for foreground.
-        let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
-            let name_label = cmd.summary_name();
-            match expand_lazy_template(template, &cmd.prepared.context_json, ctx.repo, &name_label)
-            {
-                Ok(s) => s,
-                Err(err) => {
-                    eprintln!(
-                        "{}",
-                        warning_message(format!(
-                            "Failed to expand template for \"{name_label}\": {err}"
-                        ))
-                    );
-                    continue;
-                }
-            }
-        } else {
-            cmd.prepared.expanded.clone()
-        };
-
-        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
-        if let Err(err) = spawn_detached(
-            ctx.repo,
-            ctx.worktree_path,
-            &expanded,
-            ctx.branch_or_head(),
-            &hook_log,
-            Some(&cmd.prepared.context_json),
-        ) {
-            let err_msg = err.to_string();
-            let message = match &cmd.prepared.name {
-                Some(name) => format!("Failed to spawn \"{name}\": {err_msg}"),
-                None => format!("Failed to spawn command: {err_msg}"),
-            };
-            eprintln!("{}", warning_message(message));
-        } else {
-            // Background: outcome unknown, log with null exit/duration
-            worktrunk::command_log::log_command(&log_label, &expanded, None, None);
-        }
-    }
-
-    Ok(())
-}
-
-/// Prepared hooks ready for background spawning — either flat commands or a pipeline.
-pub(crate) enum PreparedHooks {
-    /// Traditional flat commands (string or map config) — spawned independently.
-    Flat(Vec<SourcedCommand>),
-    /// Pipeline steps (list config) — spawned as `wt hook run-pipeline`.
-    Pipeline(Vec<SourcedStep>),
-}
-
 /// A pipeline step with source information, for pipeline-aware execution.
 pub struct SourcedStep {
     pub step: PreparedStep,
@@ -344,7 +213,7 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
 /// process expands templates just-in-time and executes each step via
 /// the detected shell.
 ///
-/// Used for post-* hooks when the config uses a pipeline (list form).
+/// Used for all post-* background hooks regardless of config format.
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
 
@@ -437,58 +306,6 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     }
 
     Ok(())
-}
-
-/// Prepare hook steps as a pipeline, preserving serial/concurrent structure.
-///
-/// Accepts pre-looked-up configs to avoid redundant loading.
-fn prepare_pipeline_hooks_with_configs(
-    ctx: &CommandContext,
-    user_config: Option<&CommandConfig>,
-    proj_config: Option<&CommandConfig>,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    display_path: Option<&Path>,
-) -> anyhow::Result<Vec<SourcedStep>> {
-    let display_path = display_path.map(|p| p.to_path_buf());
-    let mut all_steps = Vec::new();
-
-    let sources = [
-        (HookSource::User, user_config),
-        (HookSource::Project, proj_config),
-    ];
-
-    for (source, config) in sources {
-        let Some(config) = config else { continue };
-        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
-        all_steps.extend(steps.into_iter().map(|step| SourcedStep {
-            step,
-            source,
-            hook_type,
-            display_path: display_path.clone(),
-        }));
-    }
-
-    Ok(all_steps)
-}
-
-/// Group commands by hook type, preserving insertion order.
-///
-/// Returns a vector of (HookType, Vec<&SourcedCommand>) tuples.
-/// This preserves the order in which hook types were first encountered
-/// (e.g., post-switch before post-start).
-fn group_commands_by_hook_type(
-    commands: &[SourcedCommand],
-) -> Vec<(HookType, Vec<&SourcedCommand>)> {
-    let mut groups: Vec<(HookType, Vec<&SourcedCommand>)> = Vec::new();
-    for cmd in commands {
-        if let Some((_, vec)) = groups.iter_mut().find(|(t, _)| *t == cmd.hook_type) {
-            vec.push(cmd);
-        } else {
-            groups.push((cmd.hook_type, vec![cmd]));
-        }
-    }
-    groups
 }
 
 /// Check if a name filter was provided but no commands matched.
@@ -666,64 +483,47 @@ pub fn execute_hook(
 
 /// Prepare background hooks with automatic config lookup.
 ///
-/// Returns `PreparedHooks::Pipeline` when any source uses a list config,
-/// or `PreparedHooks::Flat` for traditional string/map configs.
-/// Callers should use `spawn_prepared_hooks` to execute the result.
+/// Returns pipeline steps ready for `spawn_hook_pipeline`. All background
+/// hooks — regardless of config format (string, map, or list) — are
+/// prepared as pipeline steps and executed by the pipeline runner.
 pub(crate) fn prepare_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
-) -> anyhow::Result<PreparedHooks> {
+) -> anyhow::Result<Vec<SourcedStep>> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
 
-    if [user_config, proj_config]
-        .iter()
-        .any(|c| c.is_some_and(CommandConfig::is_pipeline))
-    {
-        let steps = prepare_pipeline_hooks_with_configs(
-            ctx,
-            user_config,
-            proj_config,
+    let display_path = display_path.map(|p| p.to_path_buf());
+    let mut all_steps = Vec::new();
+
+    let sources = [
+        (HookSource::User, user_config),
+        (HookSource::Project, proj_config),
+    ];
+
+    for (source, config) in sources {
+        let Some(config) = config else { continue };
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
+        all_steps.extend(steps.into_iter().map(|step| SourcedStep {
+            step,
+            source,
             hook_type,
-            extra_vars,
-            display_path,
-        )?;
-        return Ok(PreparedHooks::Pipeline(steps));
+            display_path: display_path.clone(),
+        }));
     }
 
-    let commands = prepare_hook_commands(
-        ctx,
-        HookCommandSpec {
-            user_config,
-            project_config: proj_config,
-            hook_type,
-            extra_vars,
-            name_filter: None,
-            display_path,
-        },
-    )?;
-    Ok(PreparedHooks::Flat(commands))
-}
-
-/// Spawn prepared hooks (either flat or pipeline).
-pub(crate) fn spawn_prepared_hooks(
-    ctx: &CommandContext,
-    hooks: PreparedHooks,
-) -> anyhow::Result<()> {
-    match hooks {
-        PreparedHooks::Flat(commands) => spawn_background_hooks(ctx, commands),
-        PreparedHooks::Pipeline(steps) => spawn_hook_pipeline(ctx, steps),
-    }
+    Ok(all_steps)
 }
 
 /// Expand a lazy template using its command's context JSON.
 ///
-/// Used by both `spawn_background_hooks` (background) and `run_hook_with_filter`
-/// (foreground) to expand templates that reference `vars.*` at execution time.
+/// Used by `run_hook_with_filter` (foreground) to expand templates that
+/// reference `vars.*` at execution time. Background hooks handle lazy
+/// expansion inside the pipeline runner process instead.
 fn expand_lazy_template(
     template: &str,
     context_json: &str,

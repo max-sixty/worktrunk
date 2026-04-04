@@ -467,13 +467,10 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
         Some(&feature_wt),
     );
 
-    // Post-merge runs in the destination (main) worktree
+    // Post-merge runs in the destination (main) worktree (poll for pipeline runner)
     let main_worktree = repo.root_path();
     let marker_file = main_worktree.join("user_postmerge.txt");
-    assert!(
-        marker_file.exists(),
-        "User post-merge hook should have run in main worktree"
-    );
+    wait_for_file(&marker_file);
 }
 
 // ============================================================================
@@ -1543,7 +1540,9 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
 
 #[rstest]
 fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
-    // Write project config with multiple named hooks (table format)
+    // Write project config with multiple named hooks (table format).
+    // Map configs run as a concurrent group in one pipeline runner,
+    // producing a single log file with all outputs.
     repo.write_project_config(
         r#"[post-start]
 first = "echo FIRST_OUTPUT"
@@ -1563,46 +1562,30 @@ second = "echo SECOND_OUTPUT"
         "wt hook post-start should succeed (spawns in background)"
     );
 
-    // Wait for both log files to be created
+    // Wait for the pipeline log file to be created
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 2);
+    wait_for_file_count(&log_dir, "log", 1);
 
-    // Collect log files and their contents
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
+    let log_file = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
-        .collect();
-    assert_eq!(log_files.len(), 2, "Should have 2 log files");
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .expect("Should have a log file");
 
-    // Wait for content in both log files
-    for log_file in &log_files {
-        wait_for_file_content(&log_file.path());
-    }
-
-    // Collect all log contents
-    let mut found_first = false;
-    let mut found_second = false;
-    for log_file in &log_files {
-        let name = log_file.file_name().to_string_lossy().to_string();
-        let content = fs::read_to_string(log_file.path()).unwrap();
-        if name.contains("first") {
-            assert!(
-                content.contains("FIRST_OUTPUT"),
-                "first log should contain FIRST_OUTPUT, got: {content}"
-            );
-            found_first = true;
+    // Poll for both outputs — concurrent commands may flush at different times.
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(15);
+    loop {
+        let content = fs::read_to_string(log_file.path()).unwrap_or_default();
+        if content.contains("FIRST_OUTPUT") && content.contains("SECOND_OUTPUT") {
+            break;
         }
-        if name.contains("second") {
-            assert!(
-                content.contains("SECOND_OUTPUT"),
-                "second log should contain SECOND_OUTPUT, got: {content}"
-            );
-            found_second = true;
-        }
+        assert!(
+            start.elapsed() < timeout,
+            "Timed out waiting for both outputs in log. Got: {content}"
+        );
+        thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(found_first, "Should have log for 'first' hook");
-    assert!(found_second, "Should have log for 'second' hook");
 }
 
 #[rstest]

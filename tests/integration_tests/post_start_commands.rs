@@ -982,57 +982,36 @@ approved-commands = [
 
     snapshot_switch("post_start_separate_logs", &repo, &["--create", "feature"]);
 
-    // Wait for all 3 log files to be created (poll, don't use fixed sleep)
+    // Map configs run as a concurrent group in one pipeline runner process,
+    // producing a single log file. Wait for it and verify all outputs are present.
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 3);
+    wait_for_file_count(&log_dir, "log", 1);
 
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
+    let log_file = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
-        .collect();
+        .find(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
+        .expect("should have one log file");
 
-    // Wait for content to be flushed in each log file before reading
-    for entry in &log_files {
-        wait_for_file_content(&entry.path());
-    }
-
-    // Read all log files and verify no cross-contamination
-    let mut found_outputs = vec![false, false, false];
-    for entry in log_files {
-        let contents = fs::read_to_string(entry.path()).unwrap();
-        let count_task1 = contents.matches("TASK1_OUTPUT").count();
-        let count_task2 = contents.matches("TASK2_OUTPUT").count();
-        let count_task3 = contents.matches("TASK3_OUTPUT").count();
-
-        // Each log should contain exactly one task's output
-        let total_outputs = count_task1 + count_task2 + count_task3;
-        assert_eq!(
-            total_outputs,
-            1,
-            "Each log should contain exactly one task's output, found {} in {:?}",
-            total_outputs,
-            entry.path()
+    // Poll for all outputs — concurrent commands may flush at different times.
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(15);
+    loop {
+        let contents = fs::read_to_string(log_file.path()).unwrap_or_default();
+        if contents.contains("TASK1_OUTPUT")
+            && contents.contains("TASK2_OUTPUT")
+            && contents.contains("TASK3_OUTPUT")
+        {
+            break;
+        }
+        assert!(
+            start.elapsed() < timeout,
+            "Timed out waiting for all outputs in log. Got: {contents}"
         );
-
-        if count_task1 == 1 {
-            found_outputs[0] = true;
-        }
-        if count_task2 == 1 {
-            found_outputs[1] = true;
-        }
-        if count_task3 == 1 {
-            found_outputs[2] = true;
-        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
-
-    assert!(
-        found_outputs.iter().all(|&x| x),
-        "Should find output from all three tasks, found: {:?}",
-        found_outputs
-    );
 }
 
 #[rstest]
