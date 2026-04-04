@@ -18,9 +18,15 @@ use rayon::prelude::*;
 
 /// Capped at 4 threads to avoid saturating the CPU — the global rayon pool is
 /// much larger (2× CPU cores, tuned for network I/O in `wt list`).
+///
+/// The 8 MiB stack matches the default on Linux/macOS; Windows defaults to
+/// ~2 MiB, which can overflow under concurrent reflink/copy work (observed as
+/// a worker-thread stack overflow in `test_copy_ignored_many_directories_no_emfile`
+/// on Windows CI).
 static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
+        .stack_size(8 * 1024 * 1024)
         .build()
         .expect("failed to build copy thread pool")
 });
