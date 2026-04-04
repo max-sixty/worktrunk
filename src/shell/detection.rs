@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::paths::{home_dir_required, powershell_profile_paths};
 
@@ -305,54 +305,241 @@ pub struct BypassAlias {
     pub content: String,
 }
 
-/// Scan a single file for shell integration lines and potential false negatives.
-fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
-    let file = fs::File::open(path).ok()?;
+/// Check whether a file or any shell config sourced from it contains integration.
+pub fn file_tree_has_integration(path: &Path, cmd: &str) -> Result<bool, std::io::Error> {
+    let mut seen = HashSet::new();
+    Ok(file_tree_find_match(path, &mut seen, &|line| {
+        is_shell_integration_line(line, cmd)
+    })?
+    .is_some())
+}
+
+/// Find the first file in a sourced config tree containing an exact line.
+pub fn find_exact_line_in_file_tree(
+    path: &Path,
+    expected_line: &str,
+) -> Result<Option<PathBuf>, std::io::Error> {
+    let expected_line = expected_line.trim().to_string();
+    let mut seen = HashSet::new();
+    file_tree_find_match(path, &mut seen, &|line| line.trim() == expected_line)
+}
+
+fn file_tree_find_match<F>(
+    path: &Path,
+    seen: &mut HashSet<PathBuf>,
+    predicate: &F,
+) -> Result<Option<PathBuf>, std::io::Error>
+where
+    F: Fn(&str) -> bool,
+{
+    if !mark_path_seen(path, seen) {
+        return Ok(None);
+    }
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        if predicate(&line) {
+            return Ok(Some(path.to_path_buf()));
+        }
+
+        for sourced_path in collect_sourced_paths(&line, path) {
+            if let Some(found_path) = file_tree_find_match(&sourced_path, seen, predicate)? {
+                return Ok(Some(found_path));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn scan_file_recursive(
+    path: &Path,
+    cmd: &str,
+    seen: &mut HashSet<PathBuf>,
+    results: &mut Vec<FileDetectionResult>,
+) -> Result<(), std::io::Error> {
+    if !mark_path_seen(path, seen) {
+        return Ok(());
+    }
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+
     let reader = BufReader::new(file);
     let mut matched_lines = Vec::new();
     let mut unmatched_candidates = Vec::new();
     let mut bypass_aliases = Vec::new();
+    let mut sourced_paths = Vec::new();
 
-    for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
+    for (line_number, line) in reader.lines().enumerate() {
+        let line = line?;
         let line_number = line_number + 1; // 1-based
         let trimmed = line.trim();
-        // Skip empty lines and comments
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
+
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            if is_shell_integration_line(&line, cmd) {
+                matched_lines.push(DetectedLine {
+                    line_number,
+                    content: line.clone(),
+                });
+            } else if contains_cmd_at_word_boundary(&line, cmd) {
+                unmatched_candidates.push(DetectedLine {
+                    line_number,
+                    content: line.clone(),
+                });
+            }
+
+            if let Some(alias) = detect_bypass_alias(trimmed, cmd, line_number) {
+                bypass_aliases.push(BypassAlias {
+                    content: line.clone(),
+                    ..alias
+                });
+            }
         }
 
-        if is_shell_integration_line(&line, cmd) {
-            matched_lines.push(DetectedLine {
-                line_number,
-                content: line.clone(),
-            });
-        } else if contains_cmd_at_word_boundary(&line, cmd) {
-            unmatched_candidates.push(DetectedLine {
-                line_number,
-                content: line.clone(),
-            });
-        }
-
-        // Check for aliases that bypass shell integration
-        if let Some(alias) = detect_bypass_alias(trimmed, cmd, line_number) {
-            bypass_aliases.push(BypassAlias {
-                content: line.clone(),
-                ..alias
-            });
-        }
+        sourced_paths.extend(collect_sourced_paths(&line, path));
     }
 
-    // Only return if we found something interesting
-    if matched_lines.is_empty() && unmatched_candidates.is_empty() && bypass_aliases.is_empty() {
+    if !matched_lines.is_empty() || !unmatched_candidates.is_empty() || !bypass_aliases.is_empty() {
+        results.push(FileDetectionResult {
+            path: path.to_path_buf(),
+            matched_lines,
+            unmatched_candidates,
+            bypass_aliases,
+        });
+    }
+
+    for sourced_path in sourced_paths {
+        scan_file_recursive(&sourced_path, cmd, seen, results)?;
+    }
+
+    Ok(())
+}
+
+fn mark_path_seen(path: &Path, seen: &mut HashSet<PathBuf>) -> bool {
+    let visited = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    seen.insert(visited)
+}
+
+fn collect_sourced_paths(line: &str, current_file: &Path) -> Vec<PathBuf> {
+    split_shell_segments(line)
+        .into_iter()
+        .filter_map(|segment| parse_source_segment(segment.trim(), current_file))
+        .collect()
+}
+
+fn split_shell_segments(line: &str) -> Vec<&str> {
+    let mut segments = vec![line];
+    for separator in ["&&", "||", ";"] {
+        segments = segments
+            .into_iter()
+            .flat_map(|segment| segment.split(separator))
+            .collect();
+    }
+    segments
+}
+
+fn parse_source_segment(segment: &str, current_file: &Path) -> Option<PathBuf> {
+    let rest = segment
+        .strip_prefix("source ")
+        .or_else(|| segment.strip_prefix(". "))?
+        .trim_start();
+
+    let target = extract_shell_word(rest)?;
+    if target.starts_with("<(")
+        || target.starts_with("=(")
+        || target.contains("$(")
+        || target.contains('`')
+        || target.contains('*')
+        || target.contains('?')
+    {
         return None;
     }
 
-    Some(FileDetectionResult {
-        path: path.to_path_buf(),
-        matched_lines,
-        unmatched_candidates,
-        bypass_aliases,
-    })
+    resolve_source_path(target, current_file)
+}
+
+fn extract_shell_word(input: &str) -> Option<&str> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = input.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some(&rest[..end]);
+    }
+
+    if let Some(rest) = input.strip_prefix('\'') {
+        let end = rest.find('\'')?;
+        return Some(&rest[..end]);
+    }
+
+    input.split_whitespace().next()
+}
+
+fn resolve_source_path(target: &str, current_file: &Path) -> Option<PathBuf> {
+    let resolved = expand_shell_path(target)?;
+    if resolved.is_absolute() {
+        return Some(resolved);
+    }
+
+    Some(
+        current_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(resolved),
+    )
+}
+
+fn expand_shell_path(target: &str) -> Option<PathBuf> {
+    if target == "~" {
+        return home_dir_required().ok();
+    }
+
+    if let Some(rest) = target.strip_prefix("~/") {
+        return Some(home_dir_required().ok()?.join(rest));
+    }
+
+    if let Some(rest) = target.strip_prefix("${") {
+        let end = rest.find('}')?;
+        let var_name = &rest[..end];
+        let suffix = &rest[end + 1..];
+        return env_var_path(var_name, suffix);
+    }
+
+    if let Some(rest) = target.strip_prefix('$') {
+        let var_len = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .count();
+        if var_len > 0 {
+            let var_name = &rest[..var_len];
+            let suffix = &rest[var_len..];
+            return env_var_path(var_name, suffix);
+        }
+    }
+
+    Some(PathBuf::from(target))
+}
+
+fn env_var_path(var_name: &str, suffix: &str) -> Option<PathBuf> {
+    let base = std::env::var_os(var_name).map(PathBuf::from)?;
+    let suffix = suffix.trim_start_matches(['/', '\\']);
+    if suffix.is_empty() {
+        Some(base)
+    } else {
+        Some(base.join(suffix))
+    }
 }
 
 /// Detect if a line defines an alias that bypasses shell integration.
@@ -469,14 +656,13 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
     config_files.extend(powershell_profile_paths(&home));
 
     // Deduplicate and scan
+    let mut root_paths = HashSet::new();
     let mut seen = HashSet::new();
     for path in config_files {
-        if !seen.insert(path.clone()) || !path.exists() {
+        if !root_paths.insert(path.clone()) || !path.exists() {
             continue;
         }
-        if let Some(result) = scan_file(&path, cmd) {
-            results.push(result);
-        }
+        scan_file_recursive(&path, cmd, &mut seen, &mut results)?;
     }
 
     Ok(results)
@@ -485,6 +671,7 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell::Shell;
     use rstest::rstest;
 
     // ==========================================================================
@@ -1083,5 +1270,120 @@ mod tests {
     fn test_unrelated_alias_not_detected() {
         let result = detect_bypass_alias(r#"alias vim="nvim""#, "wt", 1);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_exact_line_in_file_tree_in_sourced_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+        let sourced_dir = temp_dir.path().join(".zsh").join("config.d");
+        fs::create_dir_all(&sourced_dir).unwrap();
+        let sourced_file = sourced_dir.join("init.zsh");
+        let config_line = Shell::Zsh.config_line("wt");
+
+        fs::write(&zshrc, "source .zsh/config.d/init.zsh\n").unwrap();
+        fs::write(&sourced_file, format!("{config_line}\n")).unwrap();
+
+        assert_eq!(
+            find_exact_line_in_file_tree(&zshrc, &config_line).unwrap(),
+            Some(sourced_file)
+        );
+    }
+
+    #[test]
+    fn test_split_shell_segments_handles_multi_statement_line() {
+        let line = r#"[[ -f x ]] && source "dir file/init.zsh"; echo ok || source other.zsh"#;
+        let segments: Vec<_> = split_shell_segments(line)
+            .into_iter()
+            .map(str::trim)
+            .collect();
+
+        assert_eq!(
+            segments,
+            vec![
+                "[[ -f x ]]",
+                r#"source "dir file/init.zsh""#,
+                "echo ok",
+                "source other.zsh"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_shell_word_handles_quotes_and_plain_paths() {
+        assert_eq!(
+            extract_shell_word(r#""dir file/init.zsh" trailing"#),
+            Some("dir file/init.zsh")
+        );
+        assert_eq!(
+            extract_shell_word("'dir file/init.zsh' trailing"),
+            Some("dir file/init.zsh")
+        );
+        assert_eq!(
+            extract_shell_word("plain/path/init.zsh trailing"),
+            Some("plain/path/init.zsh")
+        );
+    }
+
+    #[test]
+    fn test_expand_shell_path_expands_home_forms() {
+        let home = home_dir_required().unwrap();
+
+        assert_eq!(expand_shell_path("~/init.zsh"), Some(home.join("init.zsh")));
+        assert_eq!(
+            expand_shell_path("$HOME/init.zsh"),
+            Some(home.join("init.zsh"))
+        );
+        assert_eq!(
+            expand_shell_path("${HOME}/init.zsh"),
+            Some(home.join("init.zsh"))
+        );
+    }
+
+    #[test]
+    fn test_parse_source_segment_resolves_quoted_relative_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+
+        assert_eq!(
+            parse_source_segment(r#"source "dir file/init.zsh""#, &zshrc),
+            Some(temp_dir.path().join("dir file").join("init.zsh"))
+        );
+    }
+
+    #[test]
+    fn test_parse_source_segment_skips_dynamic_sources() {
+        let current_file = Path::new("/tmp/.zshrc");
+
+        for segment in [
+            "source <(wt config shell init zsh)",
+            "source =(wt config shell init zsh)",
+            "source $(printf init.zsh)",
+            "source `printf init.zsh`",
+            "source *.zsh",
+            "source init?.zsh",
+        ] {
+            assert_eq!(
+                parse_source_segment(segment, current_file),
+                None,
+                "Expected dynamic source to be skipped: {segment}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_sourced_paths_finds_source_in_multi_statement_line() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let zshrc = temp_dir.path().join(".zshrc");
+
+        let paths = collect_sourced_paths(
+            r#"[[ -f x ]] && source "dir file/init.zsh" && echo ok"#,
+            &zshrc,
+        );
+
+        assert_eq!(
+            paths,
+            vec![temp_dir.path().join("dir file").join("init.zsh")]
+        );
     }
 }
