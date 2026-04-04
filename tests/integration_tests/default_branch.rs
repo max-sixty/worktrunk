@@ -1,5 +1,6 @@
 use crate::common::{TestRepo, repo, repo_with_remote};
 use rstest::rstest;
+use std::fs;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 #[rstest]
@@ -111,6 +112,30 @@ fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
     let remote = git_repo.primary_remote().unwrap();
     assert_eq!(remote, "upstream");
+}
+
+#[rstest]
+fn test_primary_remote_skips_includeif_lines(repo: TestRepo) {
+    // `git config --get-regexp remote\..+\.url` uses an unanchored regex, so it matches
+    // any config key containing "remote.<something>.url" — not just actual remote entries.
+    // For example, `includeIf.hasconfig:remote.*.url:...` keys match and can appear before
+    // the first real remote URL. primary_remote() must skip these non-remote lines.
+    //
+    // We prepend an includeIf section to the local .git/config so it appears before the
+    // [remote "origin"] section in git's output (git emits config entries in file order
+    // within each scope, and global config entries appear before local ones).
+    let git_config = repo.root_path().join(".git/config");
+    let original = fs::read_to_string(&git_config).unwrap();
+    let patched = format!(
+        "[includeIf \"hasconfig:remote.*.url:https://github.com/example/other.git\"]\n\
+         \tpath = /dev/null\n{}",
+        original
+    );
+    fs::write(&git_config, patched).unwrap();
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let remote = git_repo.primary_remote().unwrap();
+    assert_eq!(remote, "origin");
 }
 
 #[rstest]

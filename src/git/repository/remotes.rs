@@ -125,9 +125,13 @@ impl Repository {
                 let output = self
                     .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
                     .unwrap_or_default();
-                let first_remote = output.lines().next().and_then(|line| {
+                let first_remote = output.lines().find_map(|line| {
                     // Parse "remote.<name>.url <value>" format
                     // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
+                    // Use find_map (not next + parse) because the unanchored regex matches
+                    // any config key containing "remote.<something>.url" — not just actual
+                    // remote entries. For example, includeIf.hasconfig:remote.*.url:... keys
+                    // match and can appear before the first real remote URL.
                     line.strip_prefix("remote.")
                         .and_then(|s| s.split_once(".url "))
                         .map(|(name, _)| name)
