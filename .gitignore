@@ -1,4 +1,5 @@
 /target
+.DS_Store
 docs/static/assets/
 docs/demos/out/
 
