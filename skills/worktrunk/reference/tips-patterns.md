@@ -234,8 +234,8 @@ $   'The login session expires after 5 minutes. Find the session timeout config 
 
 **cmux** (new workspace):
 ```bash
-$ cmux new-workspace --command "wt switch --create fix-auth-bug -x claude -- \
-$   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
+$ cmux new-workspace --command &quot;wt switch --create fix-auth-bug -x claude -- \
+$   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'&quot;
 ```
 
 This lets one Claude session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
