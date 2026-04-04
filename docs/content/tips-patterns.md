@@ -272,17 +272,17 @@ Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktre
 ```toml
 # ~/.config/worktrunk/config.toml
 [pre-start]
-cmux = "cmux new-workspace --name {{ branch | sanitize }} --cwd {{ worktree_path }}"
+cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} --cwd {{ worktree_path }}"
 
 [pre-switch]
 cmux = """
-WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
+WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ repo | sanitize }}/{{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
 [ -n "$WS" ] && cmux select-workspace --workspace "$WS" || true
 """
 
 [pre-remove]
 cmux = """
-WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
+WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ repo | sanitize }}/{{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
 [ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
 """
 ```
