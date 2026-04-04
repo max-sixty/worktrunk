@@ -4,15 +4,26 @@
 //! copy-on-write clones where the filesystem supports them (APFS, btrfs, XFS),
 //! falling back to regular copies otherwise.
 //!
-//! Parallelism uses rayon's global thread pool. `par_iter` at each directory
-//! level copies siblings concurrently while the tree is walked depth-first.
+//! All copy I/O runs in a dedicated 4-thread pool rather than the global rayon
+//! pool (which is sized at 2× CPU cores for network I/O) to avoid saturating
+//! the CPU on a background operation.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Context;
 use rayon::prelude::*;
+
+/// Capped at 4 threads to avoid saturating the CPU — the global rayon pool is
+/// much larger (2× CPU cores, tuned for network I/O in `wt list`).
+static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .expect("failed to build copy thread pool")
+});
 
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
@@ -22,7 +33,14 @@ use rayon::prelude::*;
 ///
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
+///
+/// Uses a dedicated 4-thread pool. Nested calls (recursive directories) skip
+/// pool entry and run inline on the current worker thread.
 pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+    COPY_POOL.install(|| copy_dir_recursive_inner(src, dest, force))
+}
+
+fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
     fs::create_dir_all(dest).with_context(|| format!("creating directory {}", dest.display()))?;
 
     let entries: Vec<_> = fs::read_dir(src)?.collect::<Result<Vec<_>, _>>()?;
@@ -44,7 +62,7 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
                 create_symlink(&target, &src_path, &dest_path)?;
             }
         } else if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dest_path, force)?;
+            copy_dir_recursive_inner(&src_path, &dest_path, force)?;
         } else if !file_type.is_file() {
             log::debug!("skipping non-regular file: {}", src_path.display());
         } else {

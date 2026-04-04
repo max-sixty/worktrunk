@@ -185,8 +185,11 @@ pub(crate) fn spawn_switch_background_hooks(
 
     let mut flat_hooks = Vec::new();
 
-    // Spawn each hook type's pipeline independently (don't merge different hook types
-    // into one pipeline — they have different hook_type metadata for logs and templates).
+    // Spawn each hook type's pipeline independently — pipelines carry a single
+    // hook_type/source/context, so mixing types in one runner would give later
+    // steps the wrong template variables (e.g., {{ hook_type }}).
+    // Flat hooks are spawned as independent processes, so accumulating them
+    // across hook types for a combined display message is fine.
     match super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
@@ -213,7 +216,6 @@ pub(crate) fn spawn_switch_background_hooks(
         }
     }
 
-    // Flat hooks from all types batch into one summary line
     super::hooks::spawn_background_hooks(&ctx, flat_hooks)
 }
 

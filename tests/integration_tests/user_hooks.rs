@@ -2605,3 +2605,33 @@ fn test_user_post_start_pipeline_hook_name_per_step(repo: TestRepo) {
         "Step 2 should see its own hook_name, not step 1's"
     );
 }
+
+#[rstest]
+fn test_user_post_switch_pipeline_via_switch_create(repo: TestRepo) {
+    // Post-switch with pipeline config, triggered by `wt switch --create`.
+    // This exercises the pipeline branch in `spawn_switch_background_hooks`,
+    // which spawns each hook type's pipeline independently.
+    repo.write_test_config(
+        r#"post-switch = [
+    "echo SWITCH_STEP_1 > switch_step1.txt",
+    { check = "cat switch_step1.txt > switch_step2.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_switch_pipeline_via_create",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let step2_file = worktree_path.join("switch_step2.txt");
+    wait_for_file_content(&step2_file);
+
+    let content = fs::read_to_string(&step2_file).unwrap();
+    assert!(
+        content.contains("SWITCH_STEP_1"),
+        "Pipeline serial ordering should be preserved for post-switch, got: {content}"
+    );
+}

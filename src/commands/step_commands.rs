@@ -1459,51 +1459,45 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         Ok(true)
     }
 
-    for wt in &worktrees {
-        // Track branches so the orphan scan doesn't re-discover them
+    enum CheckSource {
+        /// Worktree with directory gone (prunable)
+        Prunable { branch: String },
+        /// Linked worktree
+        Linked { wt_idx: usize },
+        /// Local branch without a worktree entry
+        Orphan,
+    }
+
+    struct CheckItem {
+        integration_ref: String,
+        source: CheckSource,
+    }
+
+    let mut check_items: Vec<CheckItem> = Vec::new();
+
+    for (idx, wt) in worktrees.iter().enumerate() {
         if let Some(branch) = &wt.branch {
             seen_branches.insert(branch.clone());
         }
 
-        // Skip locked worktrees
         if wt.locked.is_some() {
             continue;
         }
 
-        // Never prune the default branch
         if let Some(branch) = &wt.branch
             && default_branch.as_deref() == Some(branch.as_str())
         {
             continue;
         }
 
-        // Prunable entries (directory gone): check integration, include as branch-only
         if wt.is_prunable() {
             if let Some(branch) = &wt.branch {
-                let (effective_target, reason) =
-                    repo.integration_reason(branch, &integration_target)?;
-                if let Some(reason) = reason {
-                    let candidate = Candidate {
-                        label: branch.clone(),
-                        branch: Some(branch.clone()),
-                        path: None,
-                        kind: CandidateKind::BranchOnly,
-                    };
-                    if dry_run {
-                        eprintln!(
-                            "{}",
-                            info_message(cformat!(
-                                "<bold>{}</> (stale) — {} {}",
-                                branch,
-                                reason.description(),
-                                effective_target
-                            ))
-                        );
-                        candidates.push(candidate);
-                    } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-                        removed.push(candidate);
-                    }
-                }
+                check_items.push(CheckItem {
+                    integration_ref: branch.clone(),
+                    source: CheckSource::Prunable {
+                        branch: branch.clone(),
+                    },
+                });
             }
             continue;
         }
@@ -1515,126 +1509,151 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             continue;
         }
 
-        // For integration check: use branch name, or commit SHA for detached
         let integration_ref = match &wt.branch {
-            Some(b) if !wt.detached => b.as_str(),
-            _ => &wt.head,
+            Some(b) if !wt.detached => b.clone(),
+            _ => wt.head.clone(),
         };
 
-        // Check integration first — only apply age guard to integrated worktrees
-        let (effective_target, reason) =
-            repo.integration_reason(integration_ref, &integration_target)?;
-        let Some(reason) = reason else {
-            continue;
-        };
-
-        let label = wt
-            .branch
-            .clone()
-            .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
-
-        // Check age: skip recently-created worktrees that look "merged" because
-        // they were just created from the default branch
-        if min_age_duration > Duration::ZERO {
-            let git_dir = wt_tree.git_dir()?;
-            let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
-            let created = metadata.created().or_else(|_| {
-                // Fallback: mtime of the `commondir` file (write-once by git worktree add)
-                fs::metadata(git_dir.join("commondir")).and_then(|m| m.modified())
-            });
-            if let Ok(created) = created
-                && let Ok(created_epoch) = created.duration_since(std::time::UNIX_EPOCH)
-            {
-                let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
-                if age < min_age_duration {
-                    skipped_young.push(label);
-                    continue;
-                }
-            }
-        }
-
-        let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
-        let is_current = wt_path == current_root;
-        let candidate = Candidate {
-            branch: if wt.detached { None } else { wt.branch.clone() },
-            label,
-            path: Some(wt.path.clone()),
-            kind: if is_current {
-                CandidateKind::Current
-            } else {
-                CandidateKind::Other
-            },
-        };
-        if dry_run {
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "<bold>{}</> — {} {}",
-                    candidate.label,
-                    reason.description(),
-                    effective_target
-                ))
-            );
-            candidates.push(candidate);
-        } else if is_current {
-            deferred_current = Some(candidate);
-        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-            removed.push(candidate);
-        }
+        check_items.push(CheckItem {
+            integration_ref,
+            source: CheckSource::Linked { wt_idx: idx },
+        });
     }
 
-    // Also scan local branches that don't have a worktree entry
     for branch in repo.all_branches()? {
         if seen_branches.contains(&branch) {
             continue;
         }
-        // Never prune the default branch — it's trivially "integrated" into
-        // itself, which would cause a tautological deletion.
         if default_branch.as_deref() == Some(branch.as_str()) {
             continue;
         }
-        let (effective_target, reason) = repo.integration_reason(&branch, &integration_target)?;
-        if let Some(reason) = reason {
-            // Apply min-age guard: check reflog creation timestamp
+        check_items.push(CheckItem {
+            integration_ref: branch,
+            source: CheckSource::Orphan,
+        });
+    }
+
+    let integration_results: Vec<anyhow::Result<_>> = check_items
+        .par_iter()
+        .map(|item| {
+            let (effective_target, reason) =
+                repo.integration_reason(&item.integration_ref, &integration_target)?;
+            Ok((effective_target, reason))
+        })
+        .collect();
+
+    // Process results sequentially (removals must be serial)
+    for (item, result) in check_items.iter().zip(integration_results) {
+        let (effective_target, reason) = result?;
+        let Some(reason) = reason else {
+            continue;
+        };
+
+        // Linked worktrees need special handling: age check via filesystem
+        // metadata, current-worktree deferral, and path-based candidates.
+        if let CheckSource::Linked { wt_idx } = &item.source {
+            let wt = &worktrees[*wt_idx];
+            let label = wt
+                .branch
+                .clone()
+                .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
+
+            // Skip recently-created worktrees that look "merged" because
+            // they were just created from the default branch
             if min_age_duration > Duration::ZERO {
-                let ref_name = format!("refs/heads/{branch}");
-                if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+                let wt_tree = repo.worktree_at(&wt.path);
+                let git_dir = wt_tree.git_dir()?;
+                let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
+                let created = metadata.created().or_else(|_| {
+                    fs::metadata(git_dir.join("commondir")).and_then(|m| m.modified())
+                });
+                if let Ok(created) = created
+                    && let Ok(created_epoch) = created.duration_since(std::time::UNIX_EPOCH)
                 {
-                    // Last reflog entry is the branch creation event
-                    if let Some(created_epoch) = stdout
-                        .trim()
-                        .lines()
-                        .last()
-                        .and_then(|s| s.parse::<u64>().ok())
-                    {
-                        let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
-                        if age < min_age_duration {
-                            skipped_young.push(branch.clone());
-                            continue;
-                        }
+                    let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
+                    if age < min_age_duration {
+                        skipped_young.push(label);
+                        continue;
                     }
                 }
             }
+
+            let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
+            let is_current = wt_path == current_root;
             let candidate = Candidate {
-                label: branch.clone(),
-                branch: Some(branch),
-                path: None,
-                kind: CandidateKind::BranchOnly,
+                branch: if wt.detached { None } else { wt.branch.clone() },
+                label,
+                path: Some(wt.path.clone()),
+                kind: if is_current {
+                    CandidateKind::Current
+                } else {
+                    CandidateKind::Other
+                },
             };
             if dry_run {
                 eprintln!(
                     "{}",
                     info_message(cformat!(
-                        "<bold>{}</> (branch only) — {} {}",
+                        "<bold>{}</> — {} {}",
                         candidate.label,
                         reason.description(),
                         effective_target
                     ))
                 );
                 candidates.push(candidate);
+            } else if is_current {
+                deferred_current = Some(candidate);
             } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
                 removed.push(candidate);
             }
+            continue;
+        }
+
+        // Branch-only candidates: prunable (stale worktree) and orphan branches
+        let (branch, suffix) = match &item.source {
+            CheckSource::Prunable { branch } => (branch, " (stale)"),
+            CheckSource::Orphan => (&item.integration_ref, " (branch only)"),
+            CheckSource::Linked { .. } => unreachable!(),
+        };
+
+        // Age check for orphan branches via reflog creation timestamp
+        if matches!(&item.source, CheckSource::Orphan) && min_age_duration > Duration::ZERO {
+            let ref_name = format!("refs/heads/{branch}");
+            if let Ok(stdout) = repo.run_command(&["reflog", "show", "--format=%ct", &ref_name])
+                && let Some(created_epoch) = stdout
+                    .trim()
+                    .lines()
+                    .last()
+                    .and_then(|s| s.parse::<u64>().ok())
+            {
+                let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
+                if age < min_age_duration {
+                    skipped_young.push(branch.clone());
+                    continue;
+                }
+            }
+        }
+
+        let candidate = Candidate {
+            label: branch.clone(),
+            branch: Some(branch.clone()),
+            path: None,
+            kind: CandidateKind::BranchOnly,
+        };
+        if dry_run {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "<bold>{}</>{} — {} {}",
+                    branch,
+                    suffix,
+                    reason.description(),
+                    effective_target
+                ))
+            );
+            candidates.push(candidate);
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            removed.push(candidate);
         }
     }
 
