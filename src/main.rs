@@ -488,12 +488,14 @@ fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_list_command(
     subcommand: Option<ListSubcommand>,
     format: OutputFormat,
     branches: bool,
     remotes: bool,
     full: bool,
+    ignored: bool,
     progressive: bool,
     no_progressive: bool,
 ) -> anyhow::Result<()> {
@@ -514,7 +516,7 @@ fn handle_list_command(
         None => {
             let (repo, _recovered) = current_or_recover()?;
             let render_mode = RenderMode::detect(flag_pair(progressive, no_progressive));
-            handle_list(repo, format, branches, remotes, full, render_mode)
+            handle_list(repo, format, branches, remotes, full, ignored, render_mode)
         }
     }
 }
@@ -981,6 +983,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             branches,
             remotes,
             full,
+            ignored,
             progressive,
             no_progressive,
         } => handle_list_command(
@@ -989,6 +992,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             branches,
             remotes,
             full,
+            ignored,
             progressive,
             no_progressive,
         ),

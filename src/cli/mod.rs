@@ -590,6 +590,21 @@ These appear across all columns while the table is loading:
 
 ---
 
+## Filtering with ignore patterns
+
+The `[list].ignore` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+
+```toml
+[list]
+ignore = ["tmp-*", "*/scratch/*"]
+```
+
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 ignored`).
+
+Use `--ignored` to bypass filtering and show everything.
+
+---
+
 ## JSON output
 
 Query structured data with `--format=json`:
@@ -745,6 +760,12 @@ Missing a field that would be generally useful? Open an issue at https://github.
         /// Show CI, diff analysis, and LLM summaries
         #[arg(long)]
         full: bool,
+
+        /// Show all items, including ignored ones
+        ///
+        /// Disables filtering by [list].ignore patterns, showing all items.
+        #[arg(long)]
+        ignored: bool,
 
         /// Show fast info immediately, update with slow info
         ///
