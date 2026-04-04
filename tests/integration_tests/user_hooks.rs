@@ -2557,3 +2557,51 @@ fn test_user_post_start_pipeline_shell_escaping(repo: TestRepo) {
         "Quotes should survive escaping, got: {content}"
     );
 }
+
+// ============================================================================
+// Pipeline hook_name isolation (Bug 2 regression test)
+// ============================================================================
+
+#[rstest]
+fn test_user_post_start_pipeline_hook_name_per_step(repo: TestRepo) {
+    // Each step in a pipeline should see its own hook_name, not the first step's name.
+    // Before the fix, step 2 would see step 1's hook_name because the shared pipeline
+    // context included hook_name from the first command's context_json.
+    repo.write_test_config(
+        r#"post-start = [
+    { step_one = "echo {{ hook_name }} > step_one_name.txt" },
+    { step_two = "echo {{ hook_name }} > step_two_name.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_hook_name_per_step",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    let step_one_file = worktree_path.join("step_one_name.txt");
+    let step_two_file = worktree_path.join("step_two_name.txt");
+    wait_for_file_content(&step_one_file);
+    wait_for_file_content(&step_two_file);
+
+    let step_one_name = fs::read_to_string(&step_one_file)
+        .unwrap()
+        .trim()
+        .to_string();
+    let step_two_name = fs::read_to_string(&step_two_file)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(
+        step_one_name, "step_one",
+        "Step 1 should see its own hook_name"
+    );
+    assert_eq!(
+        step_two_name, "step_two",
+        "Step 2 should see its own hook_name, not step 1's"
+    );
+}

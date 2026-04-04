@@ -2,7 +2,7 @@ use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file,
+    repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file, wait_for_file_content,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -2641,5 +2641,49 @@ fn test_merge_no_ff_target_without_worktree(repo: TestRepo) {
         parents.len(),
         2,
         "Should create merge commit even without target worktree"
+    );
+}
+
+// ============================================================================
+// Post-merge pipeline test (Bug 1 regression test)
+// ============================================================================
+
+#[rstest]
+fn test_merge_post_merge_pipeline_serial_ordering(mut repo: TestRepo) {
+    // Post-merge with a pipeline config (list form) should preserve serial ordering.
+    // Before the fix, pipelines were flattened into independent background commands,
+    // losing serial/concurrent semantics.
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-merge = [
+    "echo STEP_ONE_DONE > step_one_marker.txt",
+    "cat step_one_marker.txt > step_two_saw_one.txt"
+]
+"#,
+    )
+    .unwrap();
+
+    repo.commit("Add pipeline config");
+
+    let feature_wt = repo.add_feature();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--yes"],
+        Some(&feature_wt)
+    ));
+
+    // Step 2 reads step 1's output. With pipeline semantics, step 2 runs after step 1.
+    // Without pipeline semantics (flat), they'd race and step 2 would likely fail.
+    let marker_file = repo.root_path().join("step_two_saw_one.txt");
+    wait_for_file_content(&marker_file);
+
+    let content = fs::read_to_string(&marker_file).unwrap();
+    assert!(
+        content.contains("STEP_ONE_DONE"),
+        "Step 2 should see step 1's output (serial pipeline), got: {content}"
     );
 }

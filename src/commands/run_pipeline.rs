@@ -82,14 +82,12 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     let repo =
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
-    let context_json =
-        serde_json::to_string(&spec.context).context("failed to serialize pipeline context")?;
-
     for step in &spec.steps {
         match step {
             PipelineStepSpec::Single { template, name } => {
                 let expanded = expand_now(template, &spec, &repo, name.as_deref())?;
-                let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &context_json)?;
+                let step_json = build_step_context_json(&spec.context, name.as_deref())?;
+                let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &step_json)?;
                 let status = child.wait().context("failed to wait for child process")?;
                 if !status.success() {
                     bail!(
@@ -100,7 +98,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 }
             }
             PipelineStepSpec::Concurrent { commands } => {
-                run_concurrent_group(commands, &spec, &repo, &context_json)?;
+                run_concurrent_group(commands, &spec, &repo)?;
             }
         }
     }
@@ -109,17 +107,23 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 }
 
 /// Expand a template using the spec's context and fresh vars from git config.
+///
+/// Injects per-step `hook_name` into the vars so each step sees its own name,
+/// not the first step's name (the shared context has `hook_name` stripped).
 fn expand_now(
     template: &str,
     spec: &PipelineSpec,
     repo: &Repository,
     name: Option<&str>,
 ) -> anyhow::Result<String> {
-    let vars: HashMap<&str, &str> = spec
+    let mut vars: HashMap<&str, &str> = spec
         .context
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    if let Some(n) = name {
+        vars.insert("hook_name", n);
+    }
     let label = name.unwrap_or("pipeline step");
     // shell_escape=true — values are interpolated into a string passed to a shell,
     // so they must be escaped to prevent word splitting and metachar injection.
@@ -158,13 +162,13 @@ fn run_concurrent_group(
     commands: &[super::pipeline_spec::PipelineCommandSpec],
     spec: &PipelineSpec,
     repo: &Repository,
-    context_json: &str,
 ) -> anyhow::Result<()> {
     let mut children = Vec::with_capacity(commands.len());
 
     for cmd in commands {
         let expanded = expand_now(&cmd.template, spec, repo, cmd.name.as_deref())?;
-        let child = spawn_shell_command(&expanded, &spec.worktree_path, context_json)?;
+        let cmd_json = build_step_context_json(&spec.context, cmd.name.as_deref())?;
+        let child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json)?;
         children.push((cmd.name.clone(), expanded, child));
     }
 
@@ -183,6 +187,24 @@ fn run_concurrent_group(
         bail!("concurrent group had failures: {}", failures.join(", "));
     }
     Ok(())
+}
+
+/// Build per-step context JSON, injecting `hook_name` when the step has a name.
+///
+/// The shared pipeline context has `hook_name` stripped (it varies per step).
+/// This function adds it back for the specific step so commands receive the
+/// correct `hook_name` on stdin.
+fn build_step_context_json(
+    base_context: &HashMap<String, String>,
+    name: Option<&str>,
+) -> anyhow::Result<String> {
+    if let Some(n) = name {
+        let mut ctx = base_context.clone();
+        ctx.insert("hook_name".into(), n.into());
+        serde_json::to_string(&ctx).context("failed to serialize step context")
+    } else {
+        serde_json::to_string(base_context).context("failed to serialize step context")
+    }
 }
 
 fn format_exit(code: Option<i32>) -> String {

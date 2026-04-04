@@ -20,6 +20,7 @@ use crate::commands::hooks::{
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
+use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{
     BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
     stage_worktree_removal,
@@ -833,16 +834,29 @@ fn spawn_hooks_after_remove(
         super::pre_hook_display_path(main_path)
     };
 
+    // Build post-remove template variables from the removed worktree identity.
+    let remove_vars =
+        PostRemoveContext::new(removed_worktree_path, removed_commit, main_path, repo);
+    let extra_vars = remove_vars.extra_vars(removed_branch);
+
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    // Template variables differ per hook type (prepared separately below).
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
-    let mut hooks = remove_ctx.prepare_post_remove_commands(
-        removed_branch,
-        removed_worktree_path,
-        removed_commit,
+
+    let mut flat_hooks = Vec::new();
+
+    // Post-remove hooks (pipeline-aware via prepare_background_hooks).
+    match prepare_background_hooks(
+        &remove_ctx,
+        worktrunk::HookType::PostRemove,
+        &extra_vars,
         display_path,
-    )?;
+    )? {
+        crate::commands::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
+        crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
+            spawn_hook_pipeline(&remove_ctx, steps)?;
+        }
+    }
 
     // Post-switch: only when the user actually changed directory.
     // Uses its own context for template variable preparation (dest branch),
@@ -857,16 +871,14 @@ fn spawn_hooks_after_remove(
             &[],
             display_path,
         )? {
-            crate::commands::hooks::PreparedHooks::Flat(cmds) => hooks.extend(cmds),
+            crate::commands::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
             crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
-                if !steps.is_empty() {
-                    spawn_hook_pipeline(&switch_ctx, steps)?;
-                }
+                spawn_hook_pipeline(&switch_ctx, steps)?;
             }
         }
     }
 
-    spawn_background_hooks(&remove_ctx, hooks)
+    spawn_background_hooks(&remove_ctx, flat_hooks)
 }
 
 // ============================================================================

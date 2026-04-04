@@ -27,9 +27,12 @@ use super::branch_deletion::delete_branch_if_safe;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::{HookFailureStrategy, execute_hook, spawn_background_hooks};
+use super::hooks::{
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_prepared_hooks,
+};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
     execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
@@ -133,15 +136,20 @@ impl PickerCollector {
                 // Spawn post-remove hooks in background (log to files, no terminal output).
                 let post_ctx =
                     CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
-                let post_hooks = post_ctx.prepare_post_remove_commands(
-                    hook_branch,
+                let remove_vars = PostRemoveContext::new(
                     worktree_path,
                     removed_commit.as_deref(),
+                    main_path,
+                    &repo,
+                );
+                let extra_vars = remove_vars.extra_vars(hook_branch);
+                let hooks = prepare_background_hooks(
+                    &post_ctx,
+                    worktrunk::HookType::PostRemove,
+                    &extra_vars,
                     None, // no display path in TUI context
                 )?;
-                if !post_hooks.is_empty() {
-                    spawn_background_hooks(&post_ctx, post_hooks)?;
-                }
+                spawn_prepared_hooks(&post_ctx, hooks)?;
             }
             RemoveResult::BranchOnly {
                 branch_name,

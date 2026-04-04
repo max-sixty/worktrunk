@@ -184,8 +184,9 @@ pub(crate) fn spawn_switch_background_hooks(
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
     let mut flat_hooks = Vec::new();
-    let mut pipeline_hooks = Vec::new();
 
+    // Spawn each hook type's pipeline independently (don't merge different hook types
+    // into one pipeline — they have different hook_type metadata for logs and templates).
     match super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
@@ -193,7 +194,9 @@ pub(crate) fn spawn_switch_background_hooks(
         hooks_display_path,
     )? {
         super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-        super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+        super::hooks::PreparedHooks::Pipeline(steps) => {
+            super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     if matches!(result, SwitchResult::Created { .. }) {
@@ -204,14 +207,13 @@ pub(crate) fn spawn_switch_background_hooks(
             hooks_display_path,
         )? {
             super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-            super::hooks::PreparedHooks::Pipeline(steps) => pipeline_hooks.extend(steps),
+            super::hooks::PreparedHooks::Pipeline(steps) => {
+                super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+            }
         }
     }
 
-    // Spawn pipeline hooks as compound commands, flat hooks as independent processes
-    if !pipeline_hooks.is_empty() {
-        super::hooks::spawn_hook_pipeline(&ctx, pipeline_hooks)?;
-    }
+    // Flat hooks from all types batch into one summary line
     super::hooks::spawn_background_hooks(&ctx, flat_hooks)
 }
 
