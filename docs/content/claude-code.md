@@ -14,6 +14,14 @@ The worktrunk Claude Code plugin provides two features:
 
 ## Installation
 
+Recommended:
+
+{{ terminal(cmd="wt config plugins claude install") }}
+
+This wraps the marketplace flow for you and installs the same plugin automatically.
+
+Manual equivalent:
+
 {{ terminal(cmd="claude plugin marketplace add max-sixty/worktrunk|||claude plugin install worktrunk@worktrunk") }}
 
 ## Configuration skill
