@@ -170,33 +170,23 @@ pub struct SourcedStep {
 /// Format a summary description of a pipeline for display.
 ///
 /// Shows step names/counts with `→` separating serial steps.
+/// Named steps show their name; unnamed steps show their source (`user`/`project`).
 /// Example: "install → build, lint"
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
-    let mut unnamed_idx = 0usize;
     let mut parts = Vec::new();
     for step in steps {
+        let source_label = step.source.to_string();
         match &step.step {
             PreparedStep::Single(cmd) => {
-                let name = match &cmd.name {
-                    Some(n) => cformat!("<bold>{}</>", n),
-                    None => {
-                        let label = format!("cmd-{unnamed_idx}");
-                        unnamed_idx += 1;
-                        cformat!("<bold>{}</>", label)
-                    }
-                };
-                parts.push(name);
+                let label = cmd.name.as_deref().unwrap_or(&source_label);
+                parts.push(cformat!("<bold>{}</>", label));
             }
             PreparedStep::Concurrent(cmds) => {
                 let names: Vec<String> = cmds
                     .iter()
-                    .map(|c| match &c.name {
-                        Some(n) => cformat!("<bold>{}</>", n),
-                        None => {
-                            let label = format!("cmd-{unnamed_idx}");
-                            unnamed_idx += 1;
-                            cformat!("<bold>{}</>", label)
-                        }
+                    .map(|c| {
+                        let label = c.name.as_deref().unwrap_or(&source_label);
+                        cformat!("<bold>{}</>", label)
                     })
                     .collect();
                 parts.push(names.join(", "));
@@ -644,8 +634,9 @@ mod tests {
             make_sourced_step(PreparedStep::Single(make_cmd(None, "npm run build"))),
         ];
         let summary = format_pipeline_summary(&steps);
-        assert!(summary.contains("cmd-0"));
-        assert!(summary.contains("cmd-1"));
+        // Unnamed steps show source name ("user" from make_sourced_step)
+        assert!(summary.contains("user"));
+        assert!(summary.contains("→"));
     }
 
     #[test]
