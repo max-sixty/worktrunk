@@ -58,6 +58,12 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         render_claude_code_status(&mut show_output)?;
     }
 
+    // Render OpenCode status (only when opencode CLI is available)
+    if is_opencode_available() {
+        show_output.push('\n');
+        render_opencode_status(&mut show_output)?;
+    }
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -220,6 +226,46 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if OpenCode CLI is available
+fn is_opencode_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OPENCODE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("opencode").is_ok()
+}
+
+/// Render OPENCODE section (plugin status).
+/// Caller must check `is_opencode_available()` first.
+fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("OPENCODE", None))?;
+
+    // Plugin status
+    let plugin_installed = super::opencode::is_plugin_installed();
+    let plugin_exists = super::opencode::plugin_file_exists();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if plugin_exists {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
             ))
         )?;
     }

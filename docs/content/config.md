@@ -127,7 +127,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 [commit.generation]
@@ -756,7 +756,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

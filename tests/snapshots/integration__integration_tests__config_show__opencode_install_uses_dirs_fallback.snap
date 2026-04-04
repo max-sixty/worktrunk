@@ -1,9 +1,12 @@
 ---
-source: tests/integration_tests/hook_show.rs
+source: tests/integration_tests/config_show.rs
 info:
   program: wt
   args:
-    - remove
+    - config
+    - opencode
+    - install
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -34,10 +37,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mFailed to remove worktree[39m
-[107m [0m fatal: not a git repository [GIT_DISCOVERY_MSG]
+[32m✓[39m [32mPlugin installed @ [1m~/.config/opencode/plugins/worktrunk.ts[22m[39m
+[2m↳[22m [2mActivity markers (🤖/💬) will appear in [4mwt list[24m[22m

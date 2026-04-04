@@ -715,6 +715,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
+    // Treat OpenCode as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "0");
 
     // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
     for &(key, value) in STATIC_TEST_ENV_VARS {
@@ -1012,6 +1014,9 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
     // Map it to .config to match Unix XDG_CONFIG_HOME behavior
     cmd.env("APPDATA", home.join(".config"));
+    // OpenCode: override config dir to avoid platform-specific dirs::config_dir() differences
+    // (Linux: ~/.config, macOS: ~/Library/Application Support, Windows: AppData\Roaming)
+    cmd.env("OPENCODE_CONFIG_DIR", home.join("opencode-config"));
 }
 
 /// Override `WORKTRUNK_CONFIG_PATH` to point to the XDG-derived user config path
@@ -1060,6 +1065,8 @@ pub struct TestRepo {
     mock_bin_path: Option<PathBuf>,
     /// Whether Claude CLI should be treated as installed
     claude_installed: bool,
+    /// Whether OpenCode CLI should be treated as installed
+    opencode_installed: bool,
     /// Snapshot settings guard - keeps insta filters active for this repo's lifetime
     _snapshot_guard: insta::internals::SettingsBindDropGuard,
 }
@@ -1108,6 +1115,7 @@ impl TestRepo {
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
+            opencode_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1154,6 +1162,7 @@ impl TestRepo {
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
+            opencode_installed: false,
             _snapshot_guard: snapshot_guard,
         };
 
@@ -1946,6 +1955,28 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Setup mock `opencode` CLI as installed
+    ///
+    /// Call this to simulate OpenCode being available on the system.
+    pub fn setup_mock_opencode_installed(&mut self) {
+        self.opencode_installed = true;
+    }
+
+    /// Setup the worktrunk plugin as installed in OpenCode
+    ///
+    /// Creates the worktrunk.ts plugin file in the OpenCode config directory.
+    /// Uses `opencode-config/plugins/` under temp_home, which aligns with the
+    /// `OPENCODE_CONFIG_DIR` env var set in `configure_wt_cmd()` and install/uninstall tests.
+    pub fn setup_opencode_plugin_installed(temp_home: &std::path::Path) {
+        let plugins_dir = temp_home.join("opencode-config/plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        std::fs::write(
+            plugins_dir.join("worktrunk.ts"),
+            include_str!("../../dev/opencode-plugin.ts"),
+        )
+        .unwrap();
+    }
+
     /// Setup mock `claude` CLI with plugin subcommand support
     ///
     /// Creates a mock claude binary that handles `plugin marketplace`,
@@ -2219,6 +2250,11 @@ impl TestRepo {
         if self.claude_installed {
             cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
         }
+
+        // Override OpenCode installed status if setup_mock_opencode_installed() was called
+        if self.opencode_installed {
+            cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "1");
+        }
     }
 
     /// Set a marker for a branch.
@@ -2398,6 +2434,8 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.PATH", "[PATH]");
     // Mock commands directory (temp path for mock gh/glab binaries)
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
+    // OpenCode config directory (platform-independent override for tests)
+    settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -2864,7 +2902,8 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         r"fatal: not a git repository \(or any[^\n]*(?:\n[^\n]*filesystem boundary[^\n]*)?",
         "fatal: not a git repository [GIT_DISCOVERY_MSG]",
     );
-
+    // Normalize thread IDs in panic messages (vary across runs)
+    settings.add_filter(r"thread '([^']+)' \(\d+\)", "thread '$1'");
     add_standard_env_redactions(&mut settings);
 
     settings

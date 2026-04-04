@@ -5,8 +5,8 @@ mod step;
 
 pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigPluginsClaudeCommand,
-    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
-    MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
+    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::HookCommand;
 pub(crate) use list::ListSubcommand;
@@ -1698,7 +1698,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 [commit.generation]

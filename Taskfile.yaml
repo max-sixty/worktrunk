@@ -300,7 +300,7 @@ tasks:
         echo "Done! Fixture at: tests/fixtures/standard/"
 
   bench-llm-commits:
-    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex)
+    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex, opencode)
     silent: true
     cmds:
       - |
@@ -389,13 +389,14 @@ tasks:
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
         COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' -c system_prompt='"'"''"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+        COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-4.5 --variant fast'
 
         # Check which tools are available
         echo "=== LLM Commit Message Benchmark ==="
         echo ""
         echo "Checking available tools..."
         AVAILABLE=()
-        for tool in claude llm aichat codex; do
+        for tool in claude llm aichat codex opencode; do
           if command -v "$tool" &>/dev/null; then
             echo "  ✓ $tool"
             AVAILABLE+=("$tool")
@@ -417,6 +418,7 @@ tasks:
           echo "  llm: uv tool install llm llm-anthropic"
           echo "  aichat: https://github.com/sigoden/aichat"
           echo "  codex: npm install -g @openai/codex"
+          echo "  opencode: https://opencode.ai/download"
           exit 1
         fi
 

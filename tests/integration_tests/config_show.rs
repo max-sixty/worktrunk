@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_snapshot_settings,
-    setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
+    setup_snapshot_settings, setup_snapshot_settings_with_home, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -2144,6 +2144,306 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+#[rstest]
+fn test_config_show_opencode_available_plugin_not_installed(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock opencode as available (but plugin not installed)
+    repo.setup_mock_opencode_installed();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_opencode_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock opencode CLI and plugin as installed
+    repo.setup_mock_opencode_installed();
+    TestRepo::setup_opencode_plugin_installed(temp_home.path());
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock opencode CLI as installed
+    repo.setup_mock_opencode_installed();
+
+    // Write an outdated plugin file (different content from embedded source)
+    let plugins_dir = temp_home.path().join("opencode-config/plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(
+        plugins_dir.join("worktrunk.ts"),
+        "// outdated plugin content\n",
+    )
+    .unwrap();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// =============================================================================
+// OpenCode plugin install/uninstall
+// =============================================================================
+
+/// Fresh install writes the plugin to the expected path.
+#[rstest]
+fn test_opencode_install_creates_plugin(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join("opencode-config/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin file should exist after install"
+    );
+    let content = fs::read_to_string(&plugin_path).unwrap();
+    assert!(
+        content.contains("session.status"),
+        "Plugin should contain event handler"
+    );
+}
+
+/// When the plugin is already installed with current content, show info message.
+#[rstest]
+fn test_opencode_install_already_installed(temp_home: TempDir) {
+    // Pre-install the plugin
+    TestRepo::setup_opencode_plugin_installed(temp_home.path());
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// When an outdated plugin exists, install replaces it with current content.
+#[rstest]
+fn test_opencode_install_updates_outdated(temp_home: TempDir) {
+    // Write an outdated plugin file
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugins_dir = canonical_home.join("opencode-config/plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(plugins_dir.join("worktrunk.ts"), "// outdated\n").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify content was updated
+    let content = fs::read_to_string(plugins_dir.join("worktrunk.ts")).unwrap();
+    assert!(
+        content.contains("session.status"),
+        "Plugin should be updated to current content"
+    );
+}
+
+/// Uninstall removes the plugin file.
+#[rstest]
+fn test_opencode_uninstall_removes_plugin(temp_home: TempDir) {
+    // Pre-install the plugin
+    TestRepo::setup_opencode_plugin_installed(temp_home.path());
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join("opencode-config/plugins/worktrunk.ts");
+    assert!(plugin_path.exists(), "Plugin should exist before uninstall");
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "opencode", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        !plugin_path.exists(),
+        "Plugin file should be removed after uninstall"
+    );
+}
+
+/// Uninstall when not installed shows info message.
+#[rstest]
+fn test_opencode_uninstall_not_installed(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.args(["config", "plugins", "opencode", "uninstall", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Install uses dirs::config_dir() fallback when OPENCODE_CONFIG_DIR is unset.
+///
+/// This exercises the `dirs::config_dir()` branch in `opencode_plugins_dir()`
+/// (lines 26-28 of opencode.rs). On Linux with XDG_CONFIG_HOME set, dirs
+/// resolves to `$XDG_CONFIG_HOME`, so the plugin lands at
+/// `{temp_home}/.config/opencode/plugins/worktrunk.ts`.
+///
+/// Linux-only: `dirs::config_dir()` resolves differently per platform
+/// (macOS: `~/Library/Application Support`, Windows: native API), making
+/// the path assertion platform-specific. The core install logic is tested
+/// cross-platform via `OPENCODE_CONFIG_DIR` in other tests.
+#[cfg(target_os = "linux")]
+#[rstest]
+fn test_opencode_install_uses_dirs_fallback(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // Remove OPENCODE_CONFIG_DIR so the code falls through to dirs::config_dir()
+        cmd.env_remove("OPENCODE_CONFIG_DIR");
+        cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    // dirs::config_dir() uses XDG_CONFIG_HOME on Linux → {temp_home}/.config
+    let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin file should exist at dirs::config_dir() fallback path: {}",
+        plugin_path.display()
+    );
+}
+
+/// Install prompt declined (no `--yes`, piped stdin → empty → declined).
+/// Exercises the `return Ok(())` branch at lines 83-84 of opencode.rs.
+#[rstest]
+fn test_opencode_install_prompt_declined(temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // No --yes, piped stdin sends empty → prompt declines
+        cmd.args(["config", "plugins", "opencode", "install"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join("opencode-config/plugins/worktrunk.ts");
+    assert!(
+        !plugin_path.exists(),
+        "Plugin should NOT be installed when prompt is declined"
+    );
+}
+
+/// Uninstall prompt declined (no `--yes`, piped stdin → empty → declined).
+/// Exercises the `return Ok(())` branch at lines 129-130 of opencode.rs.
+#[rstest]
+fn test_opencode_uninstall_prompt_declined(temp_home: TempDir) {
+    // Pre-install the plugin so we reach the prompt
+    TestRepo::setup_opencode_plugin_installed(temp_home.path());
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join("opencode-config/plugins/worktrunk.ts");
+    assert!(plugin_path.exists(), "Plugin should exist before test");
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // No --yes, piped stdin sends empty → prompt declines
+        cmd.args(["config", "plugins", "opencode", "uninstall"]);
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    assert!(
+        plugin_path.exists(),
+        "Plugin should still exist when uninstall prompt is declined"
+    );
 }
 
 /// When $SHELL is not set but PSModulePath is, config show should display

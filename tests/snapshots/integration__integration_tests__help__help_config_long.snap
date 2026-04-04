@@ -23,6 +23,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -158,7 +159,7 @@ Generate commit messages automatically during merge. Requires an external CLI to
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mcommand = [0m[2m[32m"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 
-[32mopencode[0m
+[32mOpenCode[0m
 
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
