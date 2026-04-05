@@ -24,6 +24,63 @@ use crate::sync::Semaphore;
 /// Prevents resource exhaustion when spawning many parallel git commands.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 
+/// The working directory at `wt` startup. Captured once so relative `GIT_*`
+/// path variables inherited from a parent `git` process can be resolved to
+/// absolute paths regardless of each subsequent child command's `current_dir`.
+static STARTUP_CWD: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// `GIT_*` environment variables that name paths used by git for repository
+/// discovery and I/O. When git invokes shell aliases (`alias.x = "!cmd"`) it
+/// may set some of these to *relative* paths (e.g. `GIT_DIR=.git`), which
+/// then resolve against whatever `current_dir` a child process happens to
+/// run in — not the directory where `wt` was invoked. Normalizing them to
+/// absolute paths keeps git's alias context without breaking discovery.
+const INHERITED_GIT_PATH_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+];
+
+/// Record the current working directory at `wt` startup so relative `GIT_*`
+/// path variables inherited from a parent process can later be resolved to
+/// absolute paths by [`Cmd`]'s env setup.
+///
+/// Call once during `wt` startup, before any code changes the process's
+/// working directory. Subsequent calls are no-ops.
+pub fn init_startup_cwd() {
+    STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
+}
+
+fn startup_cwd() -> Option<&'static PathBuf> {
+    STARTUP_CWD
+        .get_or_init(|| std::env::current_dir().ok())
+        .as_ref()
+}
+
+/// For each inherited `GIT_*` path variable that is set to a *relative* path,
+/// produce an absolute form resolved against the startup cwd. Returns the
+/// `(var, absolute_value)` pairs that should be applied to a child process's
+/// environment to shadow the inherited relative values.
+fn inherited_git_env_overrides() -> Vec<(&'static str, OsString)> {
+    let Some(cwd) = startup_cwd() else {
+        return Vec::new();
+    };
+    let mut overrides = Vec::new();
+    for var in INHERITED_GIT_PATH_VARS {
+        let Some(value) = std::env::var_os(var) else {
+            continue;
+        };
+        let path = std::path::Path::new(&value);
+        if path.is_absolute() {
+            continue;
+        }
+        overrides.push((*var, cwd.join(path).into_os_string()));
+    }
+    overrides
+}
+
 /// Monotonic epoch for trace timestamps.
 ///
 /// Using `Instant` instead of `SystemTime` ensures monotonic timestamps even if
@@ -474,6 +531,14 @@ impl Cmd {
     fn apply_common_settings(&self, cmd: &mut Command) {
         if let Some(dir) = &self.current_dir {
             cmd.current_dir(dir);
+        }
+
+        // Normalize inherited relative `GIT_*` path variables (e.g. the
+        // `GIT_DIR=.git` git sets for shell aliases) to absolute paths
+        // resolved against the startup cwd, so they don't re-resolve against
+        // the child's `current_dir`. See issue #1914.
+        for (key, val) in inherited_git_env_overrides() {
+            cmd.env(key, val);
         }
 
         for (key, val) in &self.envs {
