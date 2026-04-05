@@ -59,6 +59,31 @@ fn startup_cwd() -> Option<&'static PathBuf> {
         .as_ref()
 }
 
+/// Pure helper: given a base directory and a lookup function for environment
+/// variables, compute the `(var, absolute_value)` overrides that should be
+/// applied to a child process's environment to shadow any inherited relative
+/// `GIT_*` path variables. Absolute values and unset variables are skipped.
+///
+/// Factored out from [`inherited_git_env_overrides`] so it can be unit-tested
+/// without touching process-wide state.
+fn compute_git_env_overrides<F>(base: &std::path::Path, lookup: F) -> Vec<(&'static str, OsString)>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let mut overrides = Vec::new();
+    for var in INHERITED_GIT_PATH_VARS {
+        let Some(value) = lookup(var) else {
+            continue;
+        };
+        let path = std::path::Path::new(&value);
+        if path.is_absolute() {
+            continue;
+        }
+        overrides.push((*var, base.join(path).into_os_string()));
+    }
+    overrides
+}
+
 /// For each inherited `GIT_*` path variable that is set to a *relative* path,
 /// produce an absolute form resolved against the startup cwd. Returns the
 /// `(var, absolute_value)` pairs that should be applied to a child process's
@@ -67,18 +92,7 @@ fn inherited_git_env_overrides() -> Vec<(&'static str, OsString)> {
     let Some(cwd) = startup_cwd() else {
         return Vec::new();
     };
-    let mut overrides = Vec::new();
-    for var in INHERITED_GIT_PATH_VARS {
-        let Some(value) = std::env::var_os(var) else {
-            continue;
-        };
-        let path = std::path::Path::new(&value);
-        if path.is_absolute() {
-            continue;
-        }
-        overrides.push((*var, cwd.join(path).into_os_string()));
-    }
-    overrides
+    compute_git_env_overrides(cwd, |var| std::env::var_os(var))
 }
 
 /// Monotonic epoch for trace timestamps.
@@ -1012,6 +1026,57 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_compute_git_env_overrides() {
+        let base = std::path::Path::new("/startup/cwd");
+        let env: std::collections::HashMap<&str, OsString> = [
+            // relative — should be resolved against base
+            ("GIT_DIR", OsString::from(".git")),
+            // absolute — should be skipped
+            ("GIT_WORK_TREE", OsString::from("/abs/work")),
+            // relative with parent traversal
+            ("GIT_INDEX_FILE", OsString::from("../index")),
+            // unrelated var — should not appear
+            ("GIT_AUTHOR_NAME", OsString::from("Test User")),
+        ]
+        .into_iter()
+        .collect();
+
+        let overrides = compute_git_env_overrides(base, |var| env.get(var).cloned());
+
+        // Unset GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY are skipped, absolute
+        // GIT_WORK_TREE is skipped, unrelated vars are never consulted.
+        assert_eq!(overrides.len(), 2);
+        let as_map: std::collections::HashMap<_, _> = overrides.into_iter().collect();
+        assert_eq!(
+            as_map.get("GIT_DIR"),
+            Some(&OsString::from("/startup/cwd/.git"))
+        );
+        assert_eq!(
+            as_map.get("GIT_INDEX_FILE"),
+            Some(&OsString::from("/startup/cwd/../index"))
+        );
+    }
+
+    #[test]
+    fn test_compute_git_env_overrides_all_absolute() {
+        let base = std::path::Path::new("/startup/cwd");
+        let env: std::collections::HashMap<&str, OsString> =
+            [("GIT_DIR", OsString::from("/abs/.git"))]
+                .into_iter()
+                .collect();
+
+        let overrides = compute_git_env_overrides(base, |var| env.get(var).cloned());
+        assert!(overrides.is_empty());
+    }
+
+    #[test]
+    fn test_compute_git_env_overrides_all_unset() {
+        let base = std::path::Path::new("/startup/cwd");
+        let overrides = compute_git_env_overrides(base, |_| None);
+        assert!(overrides.is_empty());
+    }
 
     #[test]
     fn test_max_concurrent_commands_defaults() {
