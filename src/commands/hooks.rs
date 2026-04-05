@@ -172,6 +172,14 @@ pub struct SourcedStep {
 /// Shows step names/counts with `→` separating serial steps.
 /// Named steps show their name; unnamed steps show their source (`user`/`project`).
 /// Example: "install → build, lint"
+///
+/// TODO: Rethink hook display presentation. Current issues:
+/// - Arrows (`→`) add visual noise and aren't obviously meaningful to users
+/// - Multiple unnamed steps from the same source repeat the label (`user → user`)
+/// - Source prefix was dropped for named steps (`user:bg` → `bg`) — less
+///   informative when both user and project hooks are present
+/// - Combined hook-type messages were split (`post-switch: X; post-start: Y`
+///   → two separate lines) — more verbose for the common create case
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     let mut parts = Vec::new();
     for step in steps {
