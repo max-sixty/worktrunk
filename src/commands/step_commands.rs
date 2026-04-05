@@ -365,8 +365,9 @@ pub fn handle_squash(
     // Spawn post-commit hooks in background (respects --no-verify)
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        let steps = prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        spawn_hook_pipeline(&ctx, steps)?;
+        for steps in prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)? {
+            spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     Ok(SquashResult::Squashed)

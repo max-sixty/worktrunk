@@ -355,8 +355,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        let steps = prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
-        spawn_hook_pipeline(&ctx, steps)?;
+        for steps in prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)? {
+            spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     Ok(())

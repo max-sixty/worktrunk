@@ -183,22 +183,24 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let steps = super::hooks::prepare_background_hooks(
+    for steps in super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
         extra_vars,
         hooks_display_path,
-    )?;
-    super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+    )? {
+        super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+    }
 
     if matches!(result, SwitchResult::Created { .. }) {
-        let steps = super::hooks::prepare_background_hooks(
+        for steps in super::hooks::prepare_background_hooks(
             &ctx,
             HookType::PostStart,
             extra_vars,
             hooks_display_path,
-        )?;
-        super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+        )? {
+            super::hooks::spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     Ok(())

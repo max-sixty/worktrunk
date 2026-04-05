@@ -843,13 +843,14 @@ fn spawn_hooks_after_remove(
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
 
     // Post-remove hooks.
-    let steps = prepare_background_hooks(
+    for steps in prepare_background_hooks(
         &remove_ctx,
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
-    )?;
-    spawn_hook_pipeline(&remove_ctx, steps)?;
+    )? {
+        spawn_hook_pipeline(&remove_ctx, steps)?;
+    }
 
     // Post-switch: only when the user actually changed directory.
     // Uses its own context for template variable preparation (dest branch),
@@ -858,13 +859,14 @@ fn spawn_hooks_after_remove(
         let dest_branch = repo.worktree_at(main_path).branch()?;
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
-        let steps = prepare_background_hooks(
+        for steps in prepare_background_hooks(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
             display_path,
-        )?;
-        spawn_hook_pipeline(&switch_ctx, steps)?;
+        )? {
+            spawn_hook_pipeline(&switch_ctx, steps)?;
+        }
     }
 
     Ok(())

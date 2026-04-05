@@ -240,9 +240,11 @@ impl CommitOptions<'_> {
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let steps =
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_hook_pipeline(self.ctx, steps)?;
+            for steps in
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?
+            {
+                spawn_hook_pipeline(self.ctx, steps)?;
+            }
         }
 
         Ok(())

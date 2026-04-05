@@ -481,22 +481,23 @@ pub fn execute_hook(
 
 /// Prepare background hooks with automatic config lookup.
 ///
-/// Returns pipeline steps ready for `spawn_hook_pipeline`. All background
-/// hooks — regardless of config format (string, map, or list) — are
-/// prepared as pipeline steps and executed by the pipeline runner.
+/// Returns pipeline steps grouped by source — one group per source that has
+/// hooks configured. Each group should be spawned as an independent pipeline
+/// so that user and project hooks remain independent (a user hook failure
+/// doesn't abort project hooks).
 pub(crate) fn prepare_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
-) -> anyhow::Result<Vec<SourcedStep>> {
+) -> anyhow::Result<Vec<Vec<SourcedStep>>> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
         lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
 
     let display_path = display_path.map(|p| p.to_path_buf());
-    let mut all_steps = Vec::new();
+    let mut groups = Vec::new();
 
     let sources = [
         (HookSource::User, user_config),
@@ -506,15 +507,23 @@ pub(crate) fn prepare_background_hooks(
     for (source, config) in sources {
         let Some(config) = config else { continue };
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
-        all_steps.extend(steps.into_iter().map(|step| SourcedStep {
-            step,
-            source,
-            hook_type,
-            display_path: display_path.clone(),
-        }));
+        if steps.is_empty() {
+            continue;
+        }
+        groups.push(
+            steps
+                .into_iter()
+                .map(|step| SourcedStep {
+                    step,
+                    source,
+                    hook_type,
+                    display_path: display_path.clone(),
+                })
+                .collect(),
+        );
     }
 
-    Ok(all_steps)
+    Ok(groups)
 }
 
 /// Expand a lazy template using its command's context JSON.

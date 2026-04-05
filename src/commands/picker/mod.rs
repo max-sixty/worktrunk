@@ -143,13 +143,14 @@ impl PickerCollector {
                     &repo,
                 );
                 let extra_vars = remove_vars.extra_vars(hook_branch);
-                let steps = prepare_background_hooks(
+                for steps in prepare_background_hooks(
                     &post_ctx,
                     worktrunk::HookType::PostRemove,
                     &extra_vars,
                     None, // no display path in TUI context
-                )?;
-                spawn_hook_pipeline(&post_ctx, steps)?;
+                )? {
+                    spawn_hook_pipeline(&post_ctx, steps)?;
+                }
             }
             RemoveResult::BranchOnly {
                 branch_name,

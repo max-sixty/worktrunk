@@ -93,9 +93,11 @@ fn run_post_hook(
             return spawn_hook_pipeline(ctx, steps);
         }
 
-        // No name filter: prepare as pipeline steps and spawn.
-        let steps = prepare_background_hooks(ctx, hook_type, extra_vars, None)?;
-        return spawn_hook_pipeline(ctx, steps);
+        // No name filter: prepare as pipeline steps and spawn per source.
+        for steps in prepare_background_hooks(ctx, hook_type, extra_vars, None)? {
+            spawn_hook_pipeline(ctx, steps)?;
+        }
+        return Ok(());
     }
 
     run_filtered_hook(
