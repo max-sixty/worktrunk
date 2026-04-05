@@ -38,7 +38,7 @@ use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
-    spawn_prepared_hooks,
+    spawn_hook_pipeline,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
@@ -365,8 +365,9 @@ pub fn handle_squash(
     // Spawn post-commit hooks in background (respects --no-verify)
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        let hooks = prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        spawn_prepared_hooks(&ctx, hooks)?;
+        for steps in prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)? {
+            spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     Ok(SquashResult::Squashed)

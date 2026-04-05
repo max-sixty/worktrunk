@@ -14,8 +14,7 @@ use crate::commands::branch_deletion::{
 };
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_background_hooks,
-    spawn_hook_pipeline,
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -843,19 +842,14 @@ fn spawn_hooks_after_remove(
     // branch since both post-remove and post-switch are consequences of that removal.
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
 
-    let mut flat_hooks = Vec::new();
-
-    // Post-remove hooks (pipeline-aware via prepare_background_hooks).
-    match prepare_background_hooks(
+    // Post-remove hooks.
+    for steps in prepare_background_hooks(
         &remove_ctx,
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
     )? {
-        crate::commands::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-        crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
-            spawn_hook_pipeline(&remove_ctx, steps)?;
-        }
+        spawn_hook_pipeline(&remove_ctx, steps)?;
     }
 
     // Post-switch: only when the user actually changed directory.
@@ -865,20 +859,17 @@ fn spawn_hooks_after_remove(
         let dest_branch = repo.worktree_at(main_path).branch()?;
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
-        match prepare_background_hooks(
+        for steps in prepare_background_hooks(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
             display_path,
         )? {
-            crate::commands::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-            crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
-                spawn_hook_pipeline(&switch_ctx, steps)?;
-            }
+            spawn_hook_pipeline(&switch_ctx, steps)?;
         }
     }
 
-    spawn_background_hooks(&remove_ctx, flat_hooks)
+    Ok(())
 }
 
 // ============================================================================

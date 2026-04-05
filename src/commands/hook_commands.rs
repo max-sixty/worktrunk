@@ -27,8 +27,8 @@ use super::command_executor::build_hook_context;
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_background_hooks,
-    prepare_hook_commands, run_hook_with_filter, spawn_background_hooks, spawn_prepared_hooks,
+    HookCommandSpec, HookFailureStrategy, SourcedStep, check_name_filter_matched,
+    prepare_background_hooks, prepare_hook_commands, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -67,8 +67,8 @@ fn run_post_hook(
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
         if name_filter.is_some() {
-            // Name filtering operates on individual commands — use the flat path
-            // which extracts matching commands regardless of pipeline structure.
+            // Name filtering operates on individual commands — extract matching
+            // commands, convert to pipeline steps, and spawn via pipeline runner.
             let commands = prepare_hook_commands(
                 ctx,
                 HookCommandSpec {
@@ -81,12 +81,23 @@ fn run_post_hook(
                 },
             )?;
             check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
-            return spawn_background_hooks(ctx, commands);
+            let steps: Vec<SourcedStep> = commands
+                .into_iter()
+                .map(|cmd| SourcedStep {
+                    step: super::command_executor::PreparedStep::Single(cmd.prepared),
+                    source: cmd.source,
+                    hook_type: cmd.hook_type,
+                    display_path: cmd.display_path,
+                })
+                .collect();
+            return spawn_hook_pipeline(ctx, steps);
         }
 
-        // No name filter: use the unified path that auto-detects pipeline vs flat.
-        let hooks = prepare_background_hooks(ctx, hook_type, extra_vars, None)?;
-        return spawn_prepared_hooks(ctx, hooks);
+        // No name filter: prepare as pipeline steps and spawn per source.
+        for steps in prepare_background_hooks(ctx, hook_type, extra_vars, None)? {
+            spawn_hook_pipeline(ctx, steps)?;
+        }
+        return Ok(());
     }
 
     run_filtered_hook(

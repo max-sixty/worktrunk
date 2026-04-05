@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_prepared_hooks,
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
 };
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
@@ -355,8 +355,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        let hooks = prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
-        spawn_prepared_hooks(&ctx, hooks)?;
+        for steps in prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)? {
+            spawn_hook_pipeline(&ctx, steps)?;
+        }
     }
 
     Ok(())

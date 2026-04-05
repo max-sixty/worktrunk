@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_hook_pipeline,
 };
 use super::repository_ext::warn_about_untracked_files;
 
@@ -240,9 +240,11 @@ impl CommitOptions<'_> {
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let hooks =
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_prepared_hooks(self.ctx, hooks)?;
+            for steps in
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?
+            {
+                spawn_hook_pipeline(self.ctx, steps)?;
+            }
         }
 
         Ok(())
