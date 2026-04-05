@@ -31,6 +31,15 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("failed to build copy thread pool")
 });
 
+/// Run a closure on the dedicated copy thread pool.
+///
+/// Use this to wrap outer `par_iter` loops that call [`copy_dir_recursive`],
+/// so all copy parallelism shares the same 4 threads instead of blocking
+/// global-pool threads while waiting for copy workers.
+pub fn copy_pool_install<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    COPY_POOL.install(f)
+}
+
 /// Copy a directory tree recursively using reflink (COW) per file.
 ///
 /// Handles regular files, directories, and symlinks. Non-regular files (sockets,
