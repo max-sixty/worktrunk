@@ -309,6 +309,23 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
     let main_worktree = test.create_worktree("main", "main");
     test.commit_in(&main_worktree, "Initial commit");
 
+    // Helper: run `wt step print-repo-path --yes` and extract the
+    // `REPO_PATH=...` value emitted by the alias. We compare these as-is
+    // so platform-specific path formatting (e.g. msys-style paths that
+    // Git Bash uses on Windows for `echo`) doesn't affect the test — we
+    // only assert that both invocations produce the *same* value.
+    let extract_repo_path = |out: &std::process::Output| -> String {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        combined
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("REPO_PATH=").map(str::to_owned))
+            .unwrap_or_else(|| panic!("no REPO_PATH= line in output:\n{combined}"))
+    };
+
     // Baseline: invoke `wt` normally from the main worktree.
     let mut baseline = wt_command();
     test.configure_wt_cmd(&mut baseline);
@@ -323,16 +340,7 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
         String::from_utf8_lossy(&baseline_out.stdout),
         String::from_utf8_lossy(&baseline_out.stderr)
     );
-    let baseline_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&baseline_out.stdout),
-        String::from_utf8_lossy(&baseline_out.stderr)
-    );
-    let expected = format!("REPO_PATH={}", test.bare_repo_path().display());
-    assert!(
-        baseline_combined.contains(&expected),
-        "baseline output did not contain {expected}:\n{baseline_combined}"
-    );
+    let baseline_repo_path = extract_repo_path(&baseline_out);
 
     // Simulate a git alias invocation: git sets GIT_DIR (and GIT_PREFIX) for
     // shell aliases. From a linked worktree, git sets GIT_DIR to the
@@ -360,14 +368,11 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
         String::from_utf8_lossy(&via_alias_out.stdout),
         String::from_utf8_lossy(&via_alias_out.stderr)
     );
-    let via_alias_combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&via_alias_out.stdout),
-        String::from_utf8_lossy(&via_alias_out.stderr)
-    );
-    assert!(
-        via_alias_combined.contains(&expected),
-        "via-alias output did not contain {expected}:\n{via_alias_combined}\n\
+    let via_alias_repo_path = extract_repo_path(&via_alias_out);
+
+    assert_eq!(
+        baseline_repo_path, via_alias_repo_path,
+        "repo_path differed when invoked via a simulated git alias \
          (relative GIT_DIR was not normalized — see #1914)"
     );
 }
