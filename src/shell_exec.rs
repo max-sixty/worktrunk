@@ -1029,12 +1029,17 @@ mod tests {
 
     #[test]
     fn test_compute_git_env_overrides() {
-        let base = std::path::Path::new("/startup/cwd");
+        // Use a platform-appropriate absolute base path so `Path::is_absolute`
+        // behaves the same on Windows and Unix (Unix-style `/abs/...` paths
+        // are not absolute on Windows).
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let base = base_buf.as_path();
+        let abs_work = std::env::temp_dir().join("wt-test-abs-work");
         let env: std::collections::HashMap<&str, OsString> = [
             // relative — should be resolved against base
             ("GIT_DIR", OsString::from(".git")),
             // absolute — should be skipped
-            ("GIT_WORK_TREE", OsString::from("/abs/work")),
+            ("GIT_WORK_TREE", abs_work.clone().into_os_string()),
             // relative with parent traversal
             ("GIT_INDEX_FILE", OsString::from("../index")),
             // unrelated var — should not appear
@@ -1051,30 +1056,31 @@ mod tests {
         let as_map: std::collections::HashMap<_, _> = overrides.into_iter().collect();
         assert_eq!(
             as_map.get("GIT_DIR"),
-            Some(&OsString::from("/startup/cwd/.git"))
+            Some(&base.join(".git").into_os_string())
         );
         assert_eq!(
             as_map.get("GIT_INDEX_FILE"),
-            Some(&OsString::from("/startup/cwd/../index"))
+            Some(&base.join("../index").into_os_string())
         );
     }
 
     #[test]
     fn test_compute_git_env_overrides_all_absolute() {
-        let base = std::path::Path::new("/startup/cwd");
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let abs_git = std::env::temp_dir().join("wt-test-abs.git");
         let env: std::collections::HashMap<&str, OsString> =
-            [("GIT_DIR", OsString::from("/abs/.git"))]
+            [("GIT_DIR", abs_git.into_os_string())]
                 .into_iter()
                 .collect();
 
-        let overrides = compute_git_env_overrides(base, |var| env.get(var).cloned());
+        let overrides = compute_git_env_overrides(base_buf.as_path(), |var| env.get(var).cloned());
         assert!(overrides.is_empty());
     }
 
     #[test]
     fn test_compute_git_env_overrides_all_unset() {
-        let base = std::path::Path::new("/startup/cwd");
-        let overrides = compute_git_env_overrides(base, |_| None);
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let overrides = compute_git_env_overrides(base_buf.as_path(), |_| None);
         assert!(overrides.is_empty());
     }
 
