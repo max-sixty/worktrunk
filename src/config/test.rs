@@ -4,28 +4,8 @@
 //! edge cases in template variable substitution.
 
 use super::expand_template;
-use crate::git::Repository;
-use crate::shell_exec::Cmd;
+use crate::testutil::TestRepo;
 use std::collections::HashMap;
-
-/// Test fixture that creates a real temporary git repository.
-struct TestRepo {
-    _dir: tempfile::TempDir,
-    repo: Repository,
-}
-
-impl TestRepo {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        Cmd::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .run()
-            .unwrap();
-        let repo = Repository::at(dir.path()).unwrap();
-        Self { _dir: dir, repo }
-    }
-}
 
 fn test_repo() -> TestRepo {
     TestRepo::new()

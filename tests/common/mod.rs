@@ -669,6 +669,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
 ///
+/// This is intentionally more thorough than `wt_perf::isolate_cmd()`:
+/// integration tests need full determinism (timestamps, locale, mock commands,
+/// wide COLUMNS for path display) while benchmarks only need host config stripped.
+///
 /// ## Related: `TestRepo::test_env_vars()`
 ///
 /// PTY tests use `test_env_vars()` which returns env vars as a Vec. Both functions
