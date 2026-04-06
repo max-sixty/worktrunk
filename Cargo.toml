@@ -1,7 +1,7 @@
 [workspace]
 members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub so `cargo test` builds its binary (via its integration test)
-default-members = [".", "tests/helpers/mock-stub"]
+# Include mock-stub and wt-perf so `cargo test` builds their binaries
+default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 [package]
 name = "worktrunk"

@@ -1,3 +1,7 @@
+# HOW THE BINARY GETS BUILT:
+# Has a dummy integration test (tests/builds.rs) that triggers binary compilation
+# when running `cargo test`. Combined with `workspace.default-members` including
+# this package, `cargo test` automatically builds the binary.
 [package]
 name = "wt-perf"
 version = "0.1.0"
