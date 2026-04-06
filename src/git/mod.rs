@@ -25,7 +25,7 @@ mod test;
 //
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
-// - git diff --numstat (accesses pack files and indexes via mmap)
+// - git diff --shortstat (accesses pack files and indexes via mmap)
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
