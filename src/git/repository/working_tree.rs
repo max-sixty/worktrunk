@@ -250,8 +250,8 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--numstat", "HEAD"])?;
-        LineDiff::from_numstat(&stdout)
+        let stdout = self.run_command(&["diff", "--shortstat", "HEAD"])?;
+        Ok(LineDiff::from_shortstat(&stdout))
     }
 
     /// Determine whether there are staged changes in the index.

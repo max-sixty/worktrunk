@@ -250,7 +250,7 @@ if msg.contains("no merge base") { return Ok(true); }
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--shortstat` (localized) | `--numstat` |
+| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (markers `(+)`/`(-)` are hardcoded) |
 | `git status` | default | `--porcelain=v2` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
