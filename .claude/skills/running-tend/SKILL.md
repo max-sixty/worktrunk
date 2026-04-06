@@ -95,7 +95,9 @@ Files to update:
 | File | Field | Example (if stable is 1.94) |
 |------|-------|----|
 | `Cargo.toml` | `rust-version` | `"1.93"` |
+| `tests/helpers/wt-perf/Cargo.toml` | `rust-version` | `"1.93"` |
 | `rust-toolchain.toml` | `channel` | `"1.93.0"` |
+| `flake.nix` | MSRV comment | `1.93` |
 
 After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
 and verify `cargo msrv verify` passes.
