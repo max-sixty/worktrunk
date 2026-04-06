@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.34.2
+
+### Improved
+
+- **OpenCode integration**: Activity tracking plugin shows agent status (`🤖` working, `💬` waiting) in `wt list`, with `wt config plugins opencode install/uninstall` for management. Also adds OpenCode as an LLM commit generation backend. ([#1807](https://github.com/max-sixty/worktrunk/pull/1807), thanks @noirbizarre)
+
+- **Lower priority for copy-ignored**: `wt step copy-ignored` now runs at the lowest OS scheduling priority (`renice -n 19`), yielding CPU to interactive foreground tasks on large trees. ([#1916](https://github.com/max-sixty/worktrunk/pull/1916))
+
+- **Diff stats performance**: Switched from `--numstat` (one line per file) to `--shortstat` (single summary line), reducing diff output from O(files) to O(1) per worktree. ([#1917](https://github.com/max-sixty/worktrunk/pull/1917))
+
+### Fixed
+
+- **Remote detection with `includeIf` config**: `primary_remote()` failed when non-remote git config keys (like `includeIf.hasconfig:remote.*.url`) matched the remote regex. ([#1908](https://github.com/max-sixty/worktrunk/pull/1908), thanks @nirvdrum)
+
+- **Background hook execution**: Fixed three issues — list-form configs lost serial/concurrent semantics in post-merge/post-remove hooks, pipeline `hook_name` context leaked across steps, and lazy template expansion was broken for name-filtered hooks (e.g., `wt hook post-start db`). ([#1910](https://github.com/max-sixty/worktrunk/pull/1910))
+
+- **Copy-ignored parallelism**: The outer loop in `wt step copy-ignored` ran on the global rayon pool instead of the dedicated copy pool, effectively serializing top-level entries. Now runs entirely on the 4-thread copy pool. ([#1913](https://github.com/max-sixty/worktrunk/pull/1913))
+
+- **Windows stack overflow in copy-ignored**: Copy pool worker threads used platform default stack size (~2 MiB on Windows), causing overflow with 200+ directories. Now uses explicit 8 MiB stack size across all platforms. ([#1911](https://github.com/max-sixty/worktrunk/pull/1911))
+
+- **Nix flake build**: Fixed `flake.nix` filtering out the `dev/` directory, which broke builds after OpenCode integration added `include_str!("../../../dev/opencode-plugin.ts")`. ([#1924](https://github.com/max-sixty/worktrunk/pull/1924), thanks @mariuskimmina)
+
+### Internal
+
+- Unified background hook execution into a single pipeline-based path, removing ~260 lines of dual-path branching. ([#1912](https://github.com/max-sixty/worktrunk/pull/1912))
+- Replaced deprecated `codecov/test-results-action` with `codecov/codecov-action`. ([#1918](https://github.com/max-sixty/worktrunk/pull/1918))
+- Bumped AUR deploy action to v4.1.2 (fixes argument order with Arch Linux's updated `runuser`). ([#1909](https://github.com/max-sixty/worktrunk/pull/1909))
+
 ## 0.34.1
 
 ### Improved
