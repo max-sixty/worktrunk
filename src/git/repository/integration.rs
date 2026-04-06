@@ -31,22 +31,21 @@ impl Repository {
     /// qualified form to ensure we reference the branch, not a same-named tag.
     /// Otherwise returns the original ref unchanged (for HEAD, SHAs, remote refs).
     fn resolve_preferring_branch(&self, r: &str) -> String {
-        if let Some(cached) = self.cache.resolved_refs.get(r) {
-            return cached.clone();
-        }
-        let qualified = format!("refs/heads/{r}");
-        let resolved = if self
-            .run_command(&["rev-parse", "--verify", "-q", &qualified])
-            .is_ok()
-        {
-            qualified
-        } else {
-            r.to_string()
-        };
         self.cache
             .resolved_refs
-            .insert(r.to_string(), resolved.clone());
-        resolved
+            .entry(r.to_string())
+            .or_insert_with(|| {
+                let qualified = format!("refs/heads/{r}");
+                if self
+                    .run_command(&["rev-parse", "--verify", "-q", &qualified])
+                    .is_ok()
+                {
+                    qualified
+                } else {
+                    r.to_string()
+                }
+            })
+            .clone()
     }
 
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
