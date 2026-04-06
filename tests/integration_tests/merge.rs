@@ -712,6 +712,29 @@ fn test_merge_post_merge_command_skipped_with_no_hooks(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_merge_no_verify_deprecated_still_works(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    // --no-verify should still work but emit a deprecation warning
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-verify"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     // Create project config with failing post-merge command
     let config_dir = repo.root_path().join(".config");
