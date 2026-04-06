@@ -257,7 +257,10 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        let boundary = s.floor_char_boundary(max - 3);
+        let mut boundary = max - 3;
+        while !s.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
         format!("{}...", &s[..boundary])
     }
 }
