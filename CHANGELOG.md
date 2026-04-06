@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.34.1
+
+### Improved
+
+- **`step prune` performance**: Integration checks now run in parallel, dramatically reducing prune time for repos with many branches (3+ minutes → seconds with 100+ branches). Fixes [#1888](https://github.com/max-sixty/worktrunk/issues/1888). ([#1890](https://github.com/max-sixty/worktrunk/pull/1890), thanks @ortonomy for reporting)
+
+### Fixed
+
+- **CPU saturation during copy operations**: Restored a dedicated 4-thread copy pool that was accidentally removed in v0.34.0, preventing ~1000% CPU usage on copy-heavy operations like `step copy-ignored`. ([#1905](https://github.com/max-sixty/worktrunk/pull/1905))
+
+- **Background pipeline template variables**: When `wt switch --create` fires both post-switch and post-start hooks, pipeline steps were incorrectly accumulated into a single background process, causing `{{ hook_type }}` to expand to the wrong value. Each hook type now spawns its own pipeline. ([#1904](https://github.com/max-sixty/worktrunk/pull/1904))
+
+### Internal
+
+- Extracted shared `classify_unknown_key` to deduplicate config warning logic. ([#1902](https://github.com/max-sixty/worktrunk/pull/1902))
+
 ## 0.34.0
 
 ### Improved

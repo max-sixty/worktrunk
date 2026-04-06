@@ -237,11 +237,32 @@ pub fn spawn_background_hooks(
         // Use HookLog with the command's own hook_type for consistent log file naming
         let hook_log = HookLog::hook(cmd.source, cmd.hook_type, &name);
 
+        // Lazy commands (referencing vars.) carry the raw template in lazy_template.
+        // Expand them before spawning, same as run_hook_with_filter does for foreground.
+        let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
+            let name_label = cmd.summary_name();
+            match expand_lazy_template(template, &cmd.prepared.context_json, ctx.repo, &name_label)
+            {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!(
+                        "{}",
+                        warning_message(format!(
+                            "Failed to expand template for \"{name_label}\": {err}"
+                        ))
+                    );
+                    continue;
+                }
+            }
+        } else {
+            cmd.prepared.expanded.clone()
+        };
+
         let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
         if let Err(err) = spawn_detached(
             ctx.repo,
             ctx.worktree_path,
-            &cmd.prepared.expanded,
+            &expanded,
             ctx.branch_or_head(),
             &hook_log,
             Some(&cmd.prepared.context_json),
@@ -254,7 +275,7 @@ pub fn spawn_background_hooks(
             eprintln!("{}", warning_message(message));
         } else {
             // Background: outcome unknown, log with null exit/duration
-            worktrunk::command_log::log_command(&log_label, &cmd.prepared.expanded, None, None);
+            worktrunk::command_log::log_command(&log_label, &expanded, None, None);
         }
     }
 
@@ -346,8 +367,10 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     };
     eprintln!("{}", progress_message(message));
 
-    // Extract context from the first command. All steps share the same base context.
-    let context: std::collections::HashMap<String, String> = steps
+    // Extract base context from the first command. All steps share the same base context,
+    // but per-step metadata (hook_name) is stripped — it gets injected per-step by the
+    // background runner.
+    let mut context: std::collections::HashMap<String, String> = steps
         .iter()
         .find_map(|s| match &s.step {
             PreparedStep::Single(cmd) => Some(&cmd.context_json),
@@ -356,6 +379,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         .map(|json| serde_json::from_str(json).context("failed to deserialize context_json"))
         .transpose()?
         .unwrap_or_default();
+    context.remove("hook_name");
 
     // Build pipeline spec from prepared steps. Use the raw template for lazy
     // steps (vars-referencing) and the expanded command for eager steps.
@@ -418,7 +442,7 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
 /// Prepare hook steps as a pipeline, preserving serial/concurrent structure.
 ///
 /// Accepts pre-looked-up configs to avoid redundant loading.
-pub(crate) fn prepare_pipeline_hooks_with_configs(
+fn prepare_pipeline_hooks_with_configs(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
     proj_config: Option<&CommandConfig>,
@@ -542,15 +566,8 @@ pub fn run_hook_with_filter(
         // Lazy commands (referencing vars.) are expanded just before execution
         // so that vars set by earlier commands in the pipeline are available.
         let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
-            let context_map: std::collections::HashMap<String, String> =
-                serde_json::from_str(&cmd.prepared.context_json)
-                    .expect("context_json round-trip should never fail");
-            let vars: std::collections::HashMap<&str, &str> = context_map
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
             let name = cmd.summary_name();
-            worktrunk::config::expand_template(template, &vars, true, ctx.repo, &name)?
+            expand_lazy_template(template, &cmd.prepared.context_json, ctx.repo, &name)?
         } else {
             cmd.prepared.expanded.clone()
         };
@@ -701,6 +718,27 @@ pub(crate) fn spawn_prepared_hooks(
         PreparedHooks::Flat(commands) => spawn_background_hooks(ctx, commands),
         PreparedHooks::Pipeline(steps) => spawn_hook_pipeline(ctx, steps),
     }
+}
+
+/// Expand a lazy template using its command's context JSON.
+///
+/// Used by both `spawn_background_hooks` (background) and `run_hook_with_filter`
+/// (foreground) to expand templates that reference `vars.*` at execution time.
+fn expand_lazy_template(
+    template: &str,
+    context_json: &str,
+    repo: &worktrunk::git::Repository,
+    label: &str,
+) -> anyhow::Result<String> {
+    let context_map: std::collections::HashMap<String, String> =
+        serde_json::from_str(context_json).context("failed to deserialize context_json")?;
+    let vars: std::collections::HashMap<&str, &str> = context_map
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    Ok(worktrunk::config::expand_template(
+        template, &vars, true, repo, label,
+    )?)
 }
 
 #[cfg(test)]

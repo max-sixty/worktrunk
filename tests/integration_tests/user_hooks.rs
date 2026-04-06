@@ -2557,3 +2557,160 @@ fn test_user_post_start_pipeline_shell_escaping(repo: TestRepo) {
         "Quotes should survive escaping, got: {content}"
     );
 }
+
+// ============================================================================
+// Pipeline hook_name isolation (Bug 2 regression test)
+// ============================================================================
+
+#[rstest]
+fn test_user_post_start_pipeline_hook_name_per_step(repo: TestRepo) {
+    // Each step in a pipeline should see its own hook_name, not the first step's name.
+    // Before the fix, step 2 would see step 1's hook_name because the shared pipeline
+    // context included hook_name from the first command's context_json.
+    repo.write_test_config(
+        r#"post-start = [
+    { step_one = "echo {{ hook_name }} > step_one_name.txt" },
+    { step_two = "echo {{ hook_name }} > step_two_name.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_start_pipeline_hook_name_per_step",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    let step_one_file = worktree_path.join("step_one_name.txt");
+    let step_two_file = worktree_path.join("step_two_name.txt");
+    wait_for_file_content(&step_one_file);
+    wait_for_file_content(&step_two_file);
+
+    let step_one_name = fs::read_to_string(&step_one_file)
+        .unwrap()
+        .trim()
+        .to_string();
+    let step_two_name = fs::read_to_string(&step_two_file)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(
+        step_one_name, "step_one",
+        "Step 1 should see its own hook_name"
+    );
+    assert_eq!(
+        step_two_name, "step_two",
+        "Step 2 should see its own hook_name, not step 1's"
+    );
+}
+
+#[rstest]
+fn test_user_post_switch_pipeline_via_switch_create(repo: TestRepo) {
+    // Post-switch with pipeline config, triggered by `wt switch --create`.
+    // This exercises the pipeline branch in `spawn_switch_background_hooks`,
+    // which spawns each hook type's pipeline independently.
+    repo.write_test_config(
+        r#"post-switch = [
+    "echo SWITCH_STEP_1 > switch_step1.txt",
+    { check = "cat switch_step1.txt > switch_step2.txt" }
+]
+"#,
+    );
+
+    snapshot_switch(
+        "user_post_switch_pipeline_via_create",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let step2_file = worktree_path.join("switch_step2.txt");
+    wait_for_file_content(&step2_file);
+
+    let content = fs::read_to_string(&step2_file).unwrap();
+    assert!(
+        content.contains("SWITCH_STEP_1"),
+        "Pipeline serial ordering should be preserved for post-switch, got: {content}"
+    );
+}
+
+// ============================================================================
+// Post-remove pipeline (Bug 1 regression test)
+// ============================================================================
+
+#[rstest]
+fn test_user_post_remove_pipeline_serial_ordering(mut repo: TestRepo) {
+    // Post-remove with a pipeline config should preserve serial ordering.
+    // Before the fix, prepare_post_remove_commands returned flat commands,
+    // so pipeline configs lost serial/concurrent semantics.
+    let _feature_wt = repo.add_worktree("feature");
+
+    repo.write_test_config(
+        r#"post-remove = [
+    "echo REMOVE_STEP_1 > ../remove_step1.txt",
+    "cat ../remove_step1.txt > ../remove_step2.txt"
+]
+"#,
+    );
+
+    snapshot_remove(
+        "user_post_remove_pipeline_ordering",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(repo.root_path()),
+    );
+
+    // Step 2 reads step 1's output. With pipeline semantics, step 2 runs after step 1.
+    let parent = repo.root_path().parent().unwrap();
+    let step2_file = parent.join("remove_step2.txt");
+    wait_for_file_content(&step2_file);
+
+    let content = fs::read_to_string(&step2_file).unwrap();
+    assert!(
+        content.contains("REMOVE_STEP_1"),
+        "Step 2 should see step 1's output (serial pipeline), got: {content}"
+    );
+}
+
+// ============================================================================
+// Name-filtered lazy template (Bug 3 regression test)
+// ============================================================================
+
+#[rstest]
+fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
+    // A pipeline step that uses {{ vars.X }} should expand correctly when
+    // name-filtered via `wt hook post-start db`. Before the fix, the flat
+    // spawn path passed the raw unexpanded template to the shell.
+    //
+    // vars.* are read from git config, so we pre-set the value.
+    repo.write_test_config(
+        r#"post-start = [
+    { setup = "echo setup" },
+    { db = "echo {{ vars.name }} > lazy_filtered.txt" }
+]
+"#,
+    );
+
+    // Pre-set vars.name via git config (same mechanism as pipeline step 1 would use).
+    // Test repo starts on main branch.
+    repo.run_git(&["config", "worktrunk.state.main.vars.name", "test-db"]);
+
+    // Run just the 'db' step by name. This goes through the flat background path
+    // since name filtering bypasses the pipeline runner.
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["post-start", "db"], None);
+        assert_cmd_snapshot!("standalone_hook_name_filtered_lazy_template", cmd);
+    });
+
+    let marker_file = repo.root_path().join("lazy_filtered.txt");
+    wait_for_file_content(&marker_file);
+
+    let content = fs::read_to_string(&marker_file).unwrap().trim().to_string();
+    assert_eq!(
+        content, "test-db",
+        "Lazy template should expand {{ vars.name }} from git config"
+    );
+}

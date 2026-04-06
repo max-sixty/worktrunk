@@ -9,8 +9,7 @@ use super::command_executor::CommandContext;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, execute_hook, prepare_hook_commands,
-    spawn_background_hooks,
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_prepared_hooks,
 };
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
@@ -356,25 +355,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        let project_config = ctx.repo.load_project_config()?;
-        let user_hooks_cfg = ctx.config.hooks(ctx.project_id().as_deref());
-        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
-            &user_hooks_cfg,
-            project_config.as_ref(),
-            HookType::PostMerge,
-        );
-        let commands = prepare_hook_commands(
-            &ctx,
-            HookCommandSpec {
-                user_config: user_cfg,
-                project_config: proj_cfg,
-                hook_type: HookType::PostMerge,
-                extra_vars: &extra,
-                name_filter: None,
-                display_path,
-            },
-        )?;
-        spawn_background_hooks(&ctx, commands)?;
+        let hooks = prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
+        spawn_prepared_hooks(&ctx, hooks)?;
     }
 
     Ok(())
