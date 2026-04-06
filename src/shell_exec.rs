@@ -295,12 +295,16 @@ fn run_with_timeout_impl(
             // Child exited: pipe write ends are closed, sequential reads are safe.
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
-            if let Some(ref mut h) = child.stdout {
-                h.read_to_end(&mut stdout)?;
-            }
-            if let Some(ref mut h) = child.stderr {
-                h.read_to_end(&mut stderr)?;
-            }
+            child
+                .stdout
+                .take()
+                .map(|mut h| h.read_to_end(&mut stdout))
+                .transpose()?;
+            child
+                .stderr
+                .take()
+                .map(|mut h| h.read_to_end(&mut stderr))
+                .transpose()?;
             Ok(std::process::Output {
                 status,
                 stdout,
