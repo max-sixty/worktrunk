@@ -74,26 +74,84 @@ struct GhOwner {
     login: String,
 }
 
+/// Result of a single GitHub API attempt for a PR.
+enum PrApiResult {
+    /// Successfully fetched the PR response.
+    Success(std::process::Output),
+    /// PR not found on this owner/repo (404).
+    NotFound,
+    /// A non-retryable error occurred.
+    Error(anyhow::Error),
+}
+
+/// Try fetching a PR from a specific owner/repo via the GitHub API.
+fn try_fetch_pr(
+    owner: &str,
+    repo_name: &str,
+    pr_number: u32,
+    repo_root: &std::path::Path,
+    hostname: Option<&str>,
+) -> PrApiResult {
+    let api_path = format!("repos/{}/{}/pulls/{}", owner, repo_name, pr_number);
+
+    let mut args = vec!["api", api_path.as_str()];
+    if let Some(h) = hostname {
+        args.extend(["--hostname", h]);
+    }
+    let output = match run_cli_api(CliApiRequest {
+        tool: "gh",
+        args: &args,
+        repo_root,
+        prompt_env: ("GH_PROMPT_DISABLED", "1"),
+        install_hint: "GitHub CLI (gh) not installed; install from https://cli.github.com/",
+        run_context: "Failed to run gh api",
+    }) {
+        Ok(output) => output,
+        Err(e) => return PrApiResult::Error(e),
+    };
+
+    if !output.status.success() {
+        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
+            match error_response.status.as_str() {
+                "404" => return PrApiResult::NotFound,
+                "401" => {
+                    return PrApiResult::Error(anyhow::anyhow!(
+                        "GitHub CLI not authenticated; run gh auth login"
+                    ));
+                }
+                "403" => {
+                    let message_lower = error_response.message.to_lowercase();
+                    if message_lower.contains("rate limit") {
+                        return PrApiResult::Error(anyhow::anyhow!(
+                            "GitHub API rate limit exceeded; wait a few minutes and retry"
+                        ));
+                    }
+                    return PrApiResult::Error(anyhow::anyhow!(
+                        "GitHub API access forbidden: {}",
+                        error_response.message
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        return PrApiResult::Error(cli_api_error(
+            RefType::Pr,
+            format!("gh api failed for PR #{}", pr_number),
+            &output,
+        ));
+    }
+
+    PrApiResult::Success(output)
+}
+
 /// Fetch PR information from GitHub using the `gh` CLI.
+///
+/// Tries the primary remote first. If the PR is not found (404), retries with
+/// other configured remotes. This handles fork setups where origin points to the
+/// user's fork but the PR lives on the upstream repository.
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
-
-    // Extract owner/repo from primary remote URL. Uses raw URL (not
-    // effective) because insteadOf may rewrite to a non-parseable path.
-    // SSH aliases only affect the host, not the path — owner/repo is always real.
-    let remote = repo.primary_remote()?;
-    let url = repo
-        .remote_url(&remote)
-        .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
-    let parsed = git::GitRemoteUrl::parse(&url)
-        .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
-
-    let api_path = format!(
-        "repos/{}/{}/pulls/{}",
-        parsed.owner(),
-        parsed.repo(),
-        pr_number
-    );
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted).
     let hostname = repo
@@ -102,42 +160,62 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         .flatten()
         .and_then(|c| c.forge_hostname().map(String::from));
 
-    let mut args = vec!["api", api_path.as_str()];
-    if let Some(h) = &hostname {
-        args.extend(["--hostname", h.as_str()]);
-    }
-    let output = run_cli_api(CliApiRequest {
-        tool: "gh",
-        args: &args,
-        repo_root,
-        prompt_env: ("GH_PROMPT_DISABLED", "1"),
-        install_hint: "GitHub CLI (gh) not installed; install from https://cli.github.com/",
-        run_context: "Failed to run gh api",
-    })?;
+    // Collect unique owner/repo pairs from all remotes, primary remote first.
+    // Uses raw URLs (not effective) because insteadOf may rewrite to a
+    // non-parseable path. SSH aliases only affect the host, not the path —
+    // owner/repo is always real.
+    let primary_remote = repo.primary_remote()?;
+    let all_remotes = repo.all_remote_urls();
+    let mut tried = Vec::new();
 
-    if !output.status.success() {
-        if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
-            match error_response.status.as_str() {
-                "404" => bail!("PR #{} not found", pr_number),
-                "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
-                "403" => {
-                    let message_lower = error_response.message.to_lowercase();
-                    if message_lower.contains("rate limit") {
-                        bail!("GitHub API rate limit exceeded; wait a few minutes and retry");
-                    }
-                    bail!("GitHub API access forbidden: {}", error_response.message);
-                }
-                _ => {}
-            }
+    // Build ordered list: primary remote first, then others
+    let mut remote_entries: Vec<&(String, String)> = Vec::new();
+    for entry in &all_remotes {
+        if entry.0 == primary_remote {
+            remote_entries.insert(0, entry);
+        } else {
+            remote_entries.push(entry);
         }
-
-        return Err(cli_api_error(
-            RefType::Pr,
-            format!("gh api failed for PR #{}", pr_number),
-            &output,
-        ));
     }
 
+    for (_remote_name, url) in &remote_entries {
+        let Some(parsed) = git::GitRemoteUrl::parse(url) else {
+            continue;
+        };
+        let owner = parsed.owner().to_string();
+        let repo_name = parsed.repo().to_string();
+
+        // Skip if we already tried this owner/repo pair
+        if tried.iter().any(|(o, r): &(String, String)| {
+            o.eq_ignore_ascii_case(&owner) && r.eq_ignore_ascii_case(&repo_name)
+        }) {
+            continue;
+        }
+        tried.push((owner.clone(), repo_name.clone()));
+
+        match try_fetch_pr(
+            &owner,
+            &repo_name,
+            pr_number,
+            repo_root,
+            hostname.as_deref(),
+        ) {
+            PrApiResult::Success(output) => {
+                return parse_pr_response(pr_number, &output);
+            }
+            PrApiResult::NotFound => continue,
+            PrApiResult::Error(e) => return Err(e),
+        }
+    }
+
+    bail!("PR #{} not found", pr_number)
+}
+
+/// Parse a successful GitHub API response into `RemoteRefInfo`.
+fn parse_pr_response(
+    pr_number: u32,
+    output: &std::process::Output,
+) -> anyhow::Result<RemoteRefInfo> {
     let response: GhApiPrResponse = serde_json::from_slice(&output.stdout).with_context(|| {
         format!(
             "Failed to parse GitHub API response for PR #{}. \
