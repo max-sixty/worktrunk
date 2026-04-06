@@ -151,9 +151,9 @@ pub struct ListConfig {
     pub timeout_ms: Option<u64>,
 
     /// Glob patterns for items to hide from list output.
-    /// Matches against worktree paths and branch names. Use `--ignored` flag to view hidden items.
+    /// Matches against worktree paths and branch names. Use `--hidden` flag to view hidden items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ignore: Option<Vec<String>>,
+    pub hidden: Option<Vec<String>>,
 }
 
 impl ListConfig {
@@ -203,7 +203,7 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
-            ignore: other.ignore.clone().or_else(|| self.ignore.clone()),
+            hidden: other.hidden.clone().or_else(|| self.hidden.clone()),
         }
     }
 }

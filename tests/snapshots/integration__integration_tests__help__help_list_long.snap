@@ -54,10 +54,10 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
       [1m[36m--full[0m
           Show CI, diff analysis, and LLM summaries
 
-      [1m[36m--ignored[0m
-          [experimental] Show all items, including ignored ones[0m
+      [1m[36m--hidden[0m
+          [experimental] Show all items, including hidden ones[0m
           
-          Disables filtering by [list].ignore patterns, showing all items.[0m
+          Disables filtering by [list].hidden patterns, showing all items.[0m
 
       [1m[36m--progressive[0m
           Show fast info immediately, update with slow info[0m
@@ -186,16 +186,16 @@ These appear across all columns while the table is loading:
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mFiltering with ignore patterns [experimental][0m
+[1m[32mFiltering with hidden patterns [experimental][0m
 
-The [2m[list].ignore[0m config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+The [2m[list].hidden[0m config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
 [107m [0m [2m[36m[list][0m
-[107m [0m [2mignore = [[0m[2m[32m"tmp-*"[0m[2m, [0m[2m[32m"*/scratch/*"[0m[2m][0m
+[107m [0m [2mhidden = [[0m[2m[32m"tmp-*"[0m[2m, [0m[2m[32m"*/scratch/*"[0m[2m][0m
 
-A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches ([2m--branches[0m), and remote branches ([2m--remotes[0m). The summary line shows how many items were filtered (e.g. [2mShowing 3 worktrees, 1 ignored[0m).
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches ([2m--branches[0m), and remote branches ([2m--remotes[0m). The summary line shows how many items were filtered (e.g. [2mShowing 3 worktrees, 1 hidden[0m).
 
-Use [2m--ignored[0m to bypass filtering and show everything.
+Use [2m--hidden[0m to bypass filtering and show everything.
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 

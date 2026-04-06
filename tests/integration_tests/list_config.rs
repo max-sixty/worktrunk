@@ -476,18 +476,18 @@ task-timeout-ms = 1
 }
 
 #[rstest]
-fn test_list_config_ignore_single_glob(mut repo: TestRepo) {
-    // Create worktrees: one matching the ignore pattern, one not
+fn test_list_config_hidden_single_glob(mut repo: TestRepo) {
+    // Create worktrees: one matching the hidden pattern, one not
     repo.add_worktree("feature");
     repo.add_worktree("tmp-scratch");
 
-    // Write config with ignore pattern to the test config path
+    // Write config with hidden pattern to the test config path
     // Pattern matches worktree directory names containing "tmp-"
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [list]
-ignore = ["*/repo.tmp-*"]
+hidden = ["*/repo.tmp-*"]
 "#,
     );
 
@@ -495,19 +495,19 @@ ignore = ["*/repo.tmp-*"]
 }
 
 #[rstest]
-fn test_list_config_ignore_array_globs(mut repo: TestRepo) {
+fn test_list_config_hidden_array_globs(mut repo: TestRepo) {
     // Create worktrees matching different patterns
     repo.add_worktree("feature");
     repo.add_worktree("tmp-one");
     repo.add_worktree("scratch-two");
 
-    // Write config with multiple ignore patterns
+    // Write config with multiple hidden patterns
     // Patterns match worktree directory names containing "tmp-" or "scratch-"
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [list]
-ignore = ["*/repo.tmp-*", "*/repo.scratch-*"]
+hidden = ["*/repo.tmp-*", "*/repo.scratch-*"]
 "#,
     );
 
@@ -515,28 +515,28 @@ ignore = ["*/repo.tmp-*", "*/repo.scratch-*"]
 }
 
 #[rstest]
-fn test_list_ignored_flag_shows_all_worktrees(mut repo: TestRepo) {
-    // Create worktrees: one matching the ignore pattern, one not
+fn test_list_hidden_flag_shows_all_worktrees(mut repo: TestRepo) {
+    // Create worktrees: one matching the hidden pattern, one not
     repo.add_worktree("feature");
     repo.add_worktree("tmp-scratch");
 
-    // Write config with ignore pattern
+    // Write config with hidden pattern
     repo.write_test_config(
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [list]
-ignore = ["*/repo.tmp-*"]
+hidden = ["*/repo.tmp-*"]
 "#,
     );
 
-    // Use --ignored flag to show ALL worktrees (disables filtering)
+    // Use --hidden flag to show ALL worktrees (disables filtering)
     let mut cmd = list_snapshots::command(&repo, repo.root_path());
-    cmd.arg("--ignored");
+    cmd.arg("--hidden");
     assert_cmd_snapshot!(cmd);
 }
 
 #[rstest]
-fn test_list_config_ignore_by_parent_path(mut repo: TestRepo) {
+fn test_list_config_hidden_by_parent_path(mut repo: TestRepo) {
     // Create worktrees in different parent directories
     let temp_dir = repo.root_path().parent().unwrap();
     let scratch_dir = temp_dir.join("scratch");
@@ -548,12 +548,12 @@ fn test_list_config_ignore_by_parent_path(mut repo: TestRepo) {
     // Worktree in "keep" folder (should be kept)
     repo.add_worktree_at_path("feature-keep", &keep_dir.join("repo.feature-keep"));
 
-    // Configure ignore pattern matching the parent directory
+    // Configure hidden pattern matching the parent directory
     repo.write_test_config(
         r#"worktree-path = "{{ branch }}"
 
 [list]
-ignore = ["*/scratch/*"]
+hidden = ["*/scratch/*"]
 "#,
     );
 
@@ -561,7 +561,7 @@ ignore = ["*/scratch/*"]
 }
 
 #[rstest]
-fn test_list_config_ignore_worktree_by_branch_name(mut repo: TestRepo) {
+fn test_list_config_hidden_worktree_by_branch_name(mut repo: TestRepo) {
     repo.add_worktree("feature");
     repo.add_worktree("tmp-scratch");
 
@@ -570,7 +570,7 @@ fn test_list_config_ignore_worktree_by_branch_name(mut repo: TestRepo) {
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [list]
-ignore = ["tmp-*"]
+hidden = ["tmp-*"]
 "#,
     );
 
@@ -578,7 +578,7 @@ ignore = ["tmp-*"]
 }
 
 #[rstest]
-fn test_list_config_ignore_local_branch(repo: TestRepo) {
+fn test_list_config_hidden_local_branch(repo: TestRepo) {
     // Remove fixture worktrees to isolate test (keep only main worktree)
     for branch in &["feature-a", "feature-b", "feature-c"] {
         let worktree_path = repo
@@ -608,7 +608,7 @@ fn test_list_config_ignore_local_branch(repo: TestRepo) {
         r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [list]
-ignore = ["tmp-*"]
+hidden = ["tmp-*"]
 "#,
     );
 

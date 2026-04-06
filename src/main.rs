@@ -495,7 +495,7 @@ fn handle_list_command(
     branches: bool,
     remotes: bool,
     full: bool,
-    ignored: bool,
+    hidden: bool,
     progressive: bool,
     no_progressive: bool,
 ) -> anyhow::Result<()> {
@@ -516,7 +516,7 @@ fn handle_list_command(
         None => {
             let (repo, _recovered) = current_or_recover()?;
             let render_mode = RenderMode::detect(flag_pair(progressive, no_progressive));
-            handle_list(repo, format, branches, remotes, full, ignored, render_mode)
+            handle_list(repo, format, branches, remotes, full, hidden, render_mode)
         }
     }
 }
@@ -983,7 +983,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             branches,
             remotes,
             full,
-            ignored,
+            hidden,
             progressive,
             no_progressive,
         } => handle_list_command(
@@ -992,7 +992,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             branches,
             remotes,
             full,
-            ignored,
+            hidden,
             progressive,
             no_progressive,
         ),

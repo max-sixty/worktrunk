@@ -46,6 +46,6 @@ exit_code: 0
 + feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
 + feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
 
-[2m○[22m [2mShowing 5 worktrees, 1 ignored, 3 ahead
+[2m○[22m [2mShowing 5 worktrees, 2 hidden, 3 ahead
 
 ----- stderr -----

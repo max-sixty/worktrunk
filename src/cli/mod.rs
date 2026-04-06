@@ -590,18 +590,18 @@ These appear across all columns while the table is loading:
 
 ---
 
-## Filtering with ignore patterns [experimental]
+## Filtering with hidden patterns [experimental]
 
-The `[list].ignore` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+The `[list].hidden` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
 ```toml
 [list]
-ignore = ["tmp-*", "*/scratch/*"]
+hidden = ["tmp-*", "*/scratch/*"]
 ```
 
-A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 ignored`).
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
 
-Use `--ignored` to bypass filtering and show everything.
+Use `--hidden` to bypass filtering and show everything.
 
 ---
 
@@ -761,11 +761,11 @@ Missing a field that would be generally useful? Open an issue at https://github.
         #[arg(long)]
         full: bool,
 
-        /// \[experimental\] Show all items, including ignored ones
+        /// \[experimental\] Show all items, including hidden ones
         ///
-        /// Disables filtering by [list].ignore patterns, showing all items.
+        /// Disables filtering by [list].hidden patterns, showing all items.
         #[arg(long)]
-        ignored: bool,
+        hidden: bool,
 
         /// Show fast info immediately, update with slow info
         ///
@@ -1758,7 +1758,7 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
-ignore = ["tmp-*"]    # [experimental] Glob patterns to hide from output; use --ignored to show all
+hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output; use --hidden to show all
 ```
 
 ### Commit

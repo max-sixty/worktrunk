@@ -251,7 +251,7 @@ pub enum ShowConfig {
         cli_branches: bool,
         cli_remotes: bool,
         cli_full: bool,
-        cli_ignored: bool,
+        cli_hidden: bool,
     },
 }
 
@@ -368,8 +368,8 @@ pub fn collect(
         skip_tasks,
         command_timeout,
         collect_deadline,
-        show_ignored,
-        ignore_patterns,
+        show_hidden,
+        hidden_patterns,
     ) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -390,7 +390,7 @@ pub fn collect(
             cli_branches,
             cli_remotes,
             cli_full,
-            cli_ignored,
+            cli_hidden,
         } => {
             let config = repo.config();
             let show_branches = cli_branches || config.list.branches();
@@ -416,33 +416,33 @@ pub fn collect(
                 let deadline = config.list.timeout().map(|d| std::time::Instant::now() + d);
                 (task_timeout, deadline)
             };
-            let ignore_patterns = config.list.ignore.clone();
+            let hidden_patterns = config.list.hidden.clone();
             (
                 show_branches,
                 show_remotes,
                 skip_tasks,
                 command_timeout,
                 collect_deadline,
-                cli_ignored,
-                ignore_patterns,
+                cli_hidden,
+                hidden_patterns,
             )
         }
     };
 
-    // Compile ignore patterns once for use across worktrees, branches, and remotes.
+    // Compile hidden patterns once for use across worktrees, branches, and remotes.
     // Uses string matching (not path matching) for branch names since they contain
     // `/` separators but aren't filesystem paths.
-    let compiled_ignore: Vec<glob::Pattern> = if show_ignored {
+    let compiled_hidden: Vec<glob::Pattern> = if show_hidden {
         Vec::new()
     } else {
-        ignore_patterns
+        hidden_patterns
             .as_ref()
             .map(|p| {
                 p.iter()
                     .filter_map(|s| match glob::Pattern::new(s) {
                         Ok(pat) => Some(pat),
                         Err(e) => {
-                            log::warn!("Invalid [list].ignore pattern {:?}: {}", s, e);
+                            log::warn!("Invalid [list].hidden pattern {:?}: {}", s, e);
                             None
                         }
                     })
@@ -450,11 +450,11 @@ pub fn collect(
             })
             .unwrap_or_default()
     };
-    let branch_ignored =
-        |name: &str| -> bool { compiled_ignore.iter().any(|pat| pat.matches(name)) };
+    let branch_hidden =
+        |name: &str| -> bool { compiled_hidden.iter().any(|pat| pat.matches(name)) };
 
-    // Filter out ignored worktrees by path or branch name
-    let (worktrees, ignored_worktree_count) = if compiled_ignore.is_empty() {
+    // Filter out hidden worktrees by path or branch name
+    let (worktrees, hidden_worktree_count) = if compiled_hidden.is_empty() {
         (worktrees, 0)
     } else {
         let before = worktrees.len();
@@ -464,13 +464,13 @@ pub fn collect(
                 let path = canonicalize(&wt.path)
                     .ok()
                     .unwrap_or_else(|| wt.path.clone());
-                let path_matches = compiled_ignore.iter().any(|pat| pat.matches_path(&path));
-                let name_matches = wt.branch.as_deref().is_some_and(&branch_ignored);
+                let path_matches = compiled_hidden.iter().any(|pat| pat.matches_path(&path));
+                let name_matches = wt.branch.as_deref().is_some_and(&branch_hidden);
                 !(path_matches || name_matches)
             })
             .collect();
-        let ignored = before - filtered.len();
-        (filtered, ignored)
+        let hidden = before - filtered.len();
+        (filtered, hidden)
     };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
@@ -490,17 +490,17 @@ pub fn collect(
         Vec::new()
     };
 
-    // Filter ignored local branches
-    let (branches_without_worktrees, ignored_branch_count) = if compiled_ignore.is_empty() {
+    // Filter hidden local branches
+    let (branches_without_worktrees, hidden_branch_count) = if compiled_hidden.is_empty() {
         (branches_without_worktrees, 0)
     } else {
         let before = branches_without_worktrees.len();
         let filtered: Vec<_> = branches_without_worktrees
             .into_iter()
-            .filter(|(name, _)| !branch_ignored(name))
+            .filter(|(name, _)| !branch_hidden(name))
             .collect();
-        let ignored = before - filtered.len();
-        (filtered, ignored)
+        let hidden = before - filtered.len();
+        (filtered, hidden)
     };
 
     let remote_branches = if show_remotes {
@@ -514,20 +514,20 @@ pub fn collect(
         Vec::new()
     };
 
-    // Filter ignored remote branches
-    let (remote_branches, ignored_remote_count) = if compiled_ignore.is_empty() {
+    // Filter hidden remote branches
+    let (remote_branches, hidden_remote_count) = if compiled_hidden.is_empty() {
         (remote_branches, 0)
     } else {
         let before = remote_branches.len();
         let filtered: Vec<_> = remote_branches
             .into_iter()
-            .filter(|(name, _)| !branch_ignored(name))
+            .filter(|(name, _)| !branch_hidden(name))
             .collect();
-        let ignored = before - filtered.len();
-        (filtered, ignored)
+        let hidden = before - filtered.len();
+        (filtered, hidden)
     };
 
-    let total_ignored = ignored_worktree_count + ignored_branch_count + ignored_remote_count;
+    let total_hidden = hidden_worktree_count + hidden_branch_count + hidden_remote_count;
 
     // Detect current worktree using git rev-parse --show-toplevel (via WorkingTree::root).
     // This correctly handles worktrees placed inside other worktrees (e.g., .worktrees/ layout)
@@ -1072,7 +1072,7 @@ pub fn collect(
             &all_items,
             show_branches || show_remotes,
             layout.hidden_column_count,
-            total_ignored,
+            total_hidden,
             error_count,
             timed_out_count,
         ),

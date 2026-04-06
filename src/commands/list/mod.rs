@@ -149,7 +149,7 @@ pub fn handle_list(
     cli_branches: bool,
     cli_remotes: bool,
     cli_full: bool,
-    cli_ignored: bool,
+    cli_hidden: bool,
     render_mode: RenderMode,
 ) -> anyhow::Result<()> {
     // Progressive rendering only for table format with Progressive mode
@@ -175,7 +175,7 @@ pub fn handle_list(
             cli_branches,
             cli_remotes,
             cli_full,
-            cli_ignored,
+            cli_hidden,
         },
         show_progress,
         render_table,
@@ -208,7 +208,7 @@ pub(super) struct SummaryMetrics {
     worktrees: usize,
     local_branches: usize,
     remote_branches: usize,
-    ignored: usize,
+    hidden: usize,
     dirty_worktrees: usize,
     ahead_items: usize,
 }
@@ -269,8 +269,8 @@ impl SummaryMetrics {
             parts.push(format!("{} worktree{}", self.worktrees, plural));
         }
 
-        if self.ignored > 0 {
-            parts.push(format!("{} ignored", self.ignored));
+        if self.hidden > 0 {
+            parts.push(format!("{} hidden", self.hidden));
         }
 
         if self.dirty_worktrees > 0 {
@@ -299,12 +299,12 @@ pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
-    ignored_count: usize,
+    hidden_count: usize,
     error_count: usize,
     timed_out_count: usize,
 ) -> String {
     let mut metrics = SummaryMetrics::from_items(items);
-    metrics.ignored = ignored_count;
+    metrics.hidden = hidden_count;
     let dim = Style::new().dimmed();
     let summary = metrics
         .summary_parts(show_branches, hidden_column_count)
@@ -340,7 +340,7 @@ mod tests {
         assert_eq!(metrics.worktrees, 0);
         assert_eq!(metrics.local_branches, 0);
         assert_eq!(metrics.remote_branches, 0);
-        assert_eq!(metrics.ignored, 0);
+        assert_eq!(metrics.hidden, 0);
         assert_eq!(metrics.dirty_worktrees, 0);
         assert_eq!(metrics.ahead_items, 0);
     }
@@ -351,7 +351,7 @@ mod tests {
             worktrees: 1,
             local_branches: 0,
             remote_branches: 0,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -365,7 +365,7 @@ mod tests {
             worktrees: 3,
             local_branches: 0,
             remote_branches: 0,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -379,7 +379,7 @@ mod tests {
             worktrees: 2,
             local_branches: 5,
             remote_branches: 10,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -396,7 +396,7 @@ mod tests {
             worktrees: 3,
             local_branches: 0,
             remote_branches: 0,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 2,
             ahead_items: 0,
         };
@@ -410,7 +410,7 @@ mod tests {
             worktrees: 2,
             local_branches: 0,
             remote_branches: 0,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 1,
         };
@@ -424,7 +424,7 @@ mod tests {
             worktrees: 1,
             local_branches: 0,
             remote_branches: 0,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -441,7 +441,7 @@ mod tests {
             worktrees: 2,
             local_branches: 0,
             remote_branches: 5,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -455,7 +455,7 @@ mod tests {
             worktrees: 5,
             local_branches: 3,
             remote_branches: 8,
-            ignored: 0,
+            hidden: 0,
             dirty_worktrees: 2,
             ahead_items: 4,
         };
@@ -487,8 +487,8 @@ mod tests {
         assert_snapshot!(format_summary_message(&[], false, 0, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
         // Single error
         assert_snapshot!(format_summary_message(&[], false, 0, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
-        // With ignored items
-        assert_snapshot!(format_summary_message(&[], false, 0, 3, 0, 0), @"[2m○[22m [2mShowing 0 worktrees, 3 ignored[0m");
+        // With hidden items
+        assert_snapshot!(format_summary_message(&[], false, 0, 3, 0, 0), @"[2m○[22m [2mShowing 0 worktrees, 3 hidden[0m");
         // Single timeout
         assert_snapshot!(format_summary_message(&[], false, 0, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
     }

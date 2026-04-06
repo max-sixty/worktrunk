@@ -122,18 +122,18 @@ These appear across all columns while the table is loading:
 
 ---
 
-## Filtering with ignore patterns [experimental]
+## Filtering with hidden patterns [experimental]
 
-The `[list].ignore` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+The `[list].hidden` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
 ```toml
 [list]
-ignore = ["tmp-*", "*/scratch/*"]
+hidden = ["tmp-*", "*/scratch/*"]
 ```
 
-A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 ignored`).
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
 
-Use `--ignored` to bypass filtering and show everything.
+Use `--hidden` to bypass filtering and show everything.
 
 ---
 
@@ -289,10 +289,10 @@ Options:
       --full
           Show CI, diff analysis, and LLM summaries
 
-      --ignored
-          [experimental] Show all items, including ignored ones
+      --hidden
+          [experimental] Show all items, including hidden ones
 
-          Disables filtering by [list].ignore patterns, showing all items.
+          Disables filtering by [list].hidden patterns, showing all items.
 
       --progressive
           Show fast info immediately, update with slow info

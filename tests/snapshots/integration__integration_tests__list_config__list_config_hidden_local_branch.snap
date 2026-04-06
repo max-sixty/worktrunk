@@ -4,6 +4,7 @@ info:
   program: wt
   args:
     - list
+    - "--branches"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -39,13 +40,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                  [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
-+ [2mfeature[0m        [2m_[22m                                  [2m../repo.feature[0m    [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
-+ feature-a      [2m↑[22m                 [32m↑1[0m               ../repo.feature-a  [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
-+ feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
-+ feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
+  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main         [2m^[22m[2m|[22m                           [2m|[0m     .     [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
+  [2mfeature[0m     [2m/[22m[2m_[22m                                        [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
 
-[2m○[22m [2mShowing 5 worktrees, 2 ignored, 3 ahead
+[2m○[22m [2mShowing 1 worktrees, 1 branches, 1 hidden
 
 ----- stderr -----
