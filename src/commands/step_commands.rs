@@ -967,8 +967,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
             let perms = fs::metadata(src)
                 .context("reading source file permissions")?
                 .permissions();
-            fs::set_permissions(dest, perms)
-                .context("setting destination file permissions")?;
+            fs::set_permissions(dest, perms).context("setting destination file permissions")?;
         }
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
