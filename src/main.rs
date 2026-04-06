@@ -547,6 +547,7 @@ struct SwitchCommandArgs {
     cd: bool,
     no_cd: bool,
     verify: bool,
+    format: crate::cli::SwitchFormat,
 }
 
 fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
@@ -584,6 +585,7 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
                     clobber: spec.clobber,
                     change_dir: change_dir_flag,
                     verify: spec.verify,
+                    format: spec.format,
                 },
                 &mut config,
                 &binary_name(),
@@ -1005,6 +1007,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             cd,
             no_cd,
             verify,
+            format,
         } => handle_switch_command(SwitchCommandArgs {
             branch,
             branches,
@@ -1018,6 +1021,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             cd,
             no_cd,
             verify,
+            format,
         }),
         Commands::Remove {
             branches,

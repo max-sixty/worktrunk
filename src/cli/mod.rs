@@ -188,6 +188,15 @@ pub(crate) fn version_str() -> &'static str {
     })
 }
 
+/// Output format for commands with text + JSON modes (e.g., `wt switch`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum SwitchFormat {
+    /// Human-readable text output
+    Text,
+    /// JSON output
+    Json,
+}
+
 // TODO: ClaudeCode is statusline-specific but lives in this shared enum, forcing
 // unrelated codepaths to handle it. Consider a dedicated StatuslineFormat enum.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -465,6 +474,13 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout. Designed for tool
+        /// integration (e.g., Claude Code WorktreeCreate hooks).
+        #[arg(long, default_value = "text", requires = "branch", conflicts_with_all = ["branches", "remotes"], help_heading = "Automation")]
+        format: SwitchFormat,
     },
 
     /// List worktrees and their status
