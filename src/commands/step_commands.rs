@@ -707,6 +707,7 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
+    worktrunk::copy::lower_process_priority();
     let repo = Repository::current()?;
     let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
