@@ -112,17 +112,14 @@ fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Res
             if dest_path.symlink_metadata().is_err() {
                 match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                     Ok(_) => {
-                        // Preserve source file permissions (especially the execute bit).
-                        // reflink_or_copy may not preserve permissions on all platforms.
+                        // Preserve file permissions (especially the execute bit).
                         #[cfg(unix)]
                         {
-                            let src_perms = fs::metadata(&src_path)
-                                .context(format!("reading permissions for {}", src_path.display()))?
+                            let perms = fs::metadata(&src_path)
+                                .context("reading source file permissions")?
                                 .permissions();
-                            fs::set_permissions(&dest_path, src_perms).context(format!(
-                                "setting permissions on {}",
-                                dest_path.display()
-                            ))?;
+                            fs::set_permissions(&dest_path, perms)
+                                .context("setting destination file permissions")?;
                         }
                     }
                     Err(e) if e.kind() == ErrorKind::AlreadyExists => {}

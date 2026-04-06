@@ -852,18 +852,14 @@ pub fn step_copy_ignored(
                         if dest_entry.symlink_metadata().is_err() {
                             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
                                 Ok(_) => {
-                                    // Preserve source file permissions (especially the execute bit).
-                                    // reflink_or_copy may not preserve permissions on all platforms.
+                                    // Preserve file permissions (especially the execute bit).
                                     #[cfg(unix)]
                                     {
-                                        let src_perms = std::fs::metadata(src_entry)
-                                            .context(format!(
-                                                "reading permissions for {display_path}"
-                                            ))?
+                                        let perms = std::fs::metadata(src_entry)
+                                            .context("reading source file permissions")?
                                             .permissions();
-                                        std::fs::set_permissions(&dest_entry, src_perms).context(
-                                            format!("setting permissions on {display_path}"),
-                                        )?;
+                                        std::fs::set_permissions(&dest_entry, perms)
+                                            .context("setting destination file permissions")?;
                                     }
                                     copied_count.fetch_add(1, Ordering::Relaxed);
                                 }
