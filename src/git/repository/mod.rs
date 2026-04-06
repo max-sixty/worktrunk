@@ -28,6 +28,7 @@ use crate::shell_exec::Cmd;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
+use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
 
@@ -79,6 +80,28 @@ impl std::fmt::Display for StreamCommandError {
 }
 
 impl std::error::Error for StreamCommandError {}
+
+/// Convert a child exit status into `Ok(())` or a [`StreamCommandError`].
+fn stream_exit_result(
+    status: std::process::ExitStatus,
+    buffer: &Arc<Mutex<Vec<String>>>,
+    cmd_str: &str,
+) -> anyhow::Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    let lines = buffer.lock().unwrap();
+    let exit_info = status
+        .code()
+        .map(|c| format!("exit code {c}"))
+        .unwrap_or_else(|| "killed by signal".to_string());
+    Err(StreamCommandError {
+        output: lines.join("\n"),
+        command: cmd_str.to_string(),
+        exit_info,
+    }
+    .into())
+}
 
 // ============================================================================
 // Repository Cache
@@ -778,49 +801,39 @@ impl Repository {
 
         let start = Instant::now();
 
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let _ = stdout_handle.join();
-                    let _ = stderr_handle.join();
+        // Phase 1: If delay threshold is enabled, wait that long for the child to
+        // exit. If it finishes before the threshold, output stays buffered (quiet).
+        if delay_ms >= 0 {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let remaining = delay.saturating_sub(start.elapsed());
 
-                    if status.success() {
-                        return Ok(());
-                    }
-                    // Failed - return buffered output as error
-                    let lines = buffer.lock().unwrap();
-                    let exit_info = status
-                        .code()
-                        .map(|c| format!("exit code {c}"))
-                        .unwrap_or_else(|| "killed by signal".to_string());
-                    return Err(StreamCommandError {
-                        output: lines.join("\n"),
-                        command: cmd_str,
-                        exit_info,
-                    }
-                    .into());
-                }
-                Ok(None) => {
-                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
-                    if delay_ms >= 0
-                        && !streaming.load(Ordering::Relaxed)
-                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
-                    {
-                        streaming.store(true, Ordering::Relaxed);
-
-                        if let Some(ref msg) = progress_message {
-                            let _ = writeln!(std::io::stderr(), "{}", msg);
-                        }
-                        for line in buffer.lock().unwrap().drain(..) {
-                            let _ = writeln!(std::io::stderr(), "{}", line);
-                        }
-                        let _ = std::io::stderr().flush();
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => bail!("Failed to wait for command: {}", e),
+            // Zero delay means "stream immediately", not "try a zero-timeout reap".
+            if !remaining.is_zero()
+                && let Some(status) = child
+                    .wait_timeout(remaining)
+                    .context("Failed to wait for command")?
+            {
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return stream_exit_result(status, &buffer, &cmd_str);
             }
+
+            // Delay threshold exceeded — switch to streaming
+            streaming.store(true, Ordering::Relaxed);
+            if let Some(ref msg) = progress_message {
+                let _ = writeln!(std::io::stderr(), "{}", msg);
+            }
+            for line in buffer.lock().unwrap().drain(..) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+            }
+            let _ = std::io::stderr().flush();
         }
+
+        // Phase 2: Block until the child exits (no polling).
+        let status = child.wait().context("Failed to wait for command")?;
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+        stream_exit_result(status, &buffer, &cmd_str)
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).
