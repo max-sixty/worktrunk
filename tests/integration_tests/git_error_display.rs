@@ -394,7 +394,7 @@ fn display_hook_command_failed_with_skip_hint() {
     }
     .into();
 
-    // Wrap with hint (as done by commands supporting --no-verify)
+    // Wrap with hint (as done by commands supporting --no-hooks)
     let err_with_hint = add_hook_skip_hint(err);
 
     assert_snapshot!(

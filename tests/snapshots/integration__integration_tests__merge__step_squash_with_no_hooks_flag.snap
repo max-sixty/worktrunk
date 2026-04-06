@@ -1,12 +1,11 @@
 ---
-source: tests/integration_tests/remove.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - remove
-    - "--foreground"
-    - "--no-verify"
-    - feature-skip
+    - step
+    - squash
+    - "--no-hooks"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -22,6 +21,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -29,12 +29,14 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'squash: combined commits'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -44,5 +46,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRemoving [1mfeature-skip[22m worktree...[39m
-[32m✓[39m [32mRemoved [1mfeature-skip[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
+[2m○[22m Skipping pre-commit hooks (--no-hooks)
+[36m◎[39m [36mSquashing 2 commits into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[107m [0m [1msquash: combined commits[22m
+[32m✓[39m [32mSquashed @ [HASH][39m

@@ -4,7 +4,7 @@
 //! - Run for all repositories
 //! - Execute before project hooks
 //! - Don't require approval
-//! - Skipped together with project hooks via --no-verify
+//! - Skipped together with project hooks via --no-hooks
 
 use crate::common::{
     TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
@@ -115,7 +115,7 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 }
 
 #[rstest]
-fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
+fn test_no_hooks_flag_skips_all_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
     repo.commit("Add project config");
@@ -132,11 +132,11 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 "#,
     );
 
-    // Create worktree with --no-verify (skips ALL hooks)
+    // Create worktree with --no-hooks (skips ALL hooks)
     snapshot_switch(
-        "no_verify_skips_all_hooks",
+        "no_hooks_skips_all_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -145,14 +145,14 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
     let user_marker = worktree_path.join("user_marker.txt");
     assert!(
         !user_marker.exists(),
-        "User hook should be skipped with --no-verify"
+        "User hook should be skipped with --no-hooks"
     );
 
-    // Project hook should also NOT have run (--no-verify skips ALL hooks)
+    // Project hook should also NOT have run (--no-hooks skips ALL hooks)
     let project_marker = worktree_path.join("project_marker.txt");
     assert!(
         !project_marker.exists(),
-        "Project hook should also be skipped with --no-verify"
+        "Project hook should also be skipped with --no-hooks"
     );
 }
 
@@ -206,7 +206,7 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 }
 
 #[rstest]
-fn test_user_post_start_skipped_with_no_verify(repo: TestRepo) {
+fn test_user_post_start_skipped_with_no_hooks(repo: TestRepo) {
     // Write user config with post-start hook
     repo.write_test_config(
         r#"[post-start]
@@ -215,9 +215,9 @@ bg = "echo 'USER_BG' > user_bg_marker.txt"
     );
 
     snapshot_switch(
-        "user_post_start_skipped_no_verify",
+        "user_post_start_skipped_no_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
     // Wait to ensure background hook would have had time to run
@@ -227,7 +227,7 @@ bg = "echo 'USER_BG' > user_bg_marker.txt"
     let marker_file = worktree_path.join("user_bg_marker.txt");
     assert!(
         !marker_file.exists(),
-        "User post-start hook should be skipped with --no-verify"
+        "User post-start hook should be skipped with --no-hooks"
     );
 }
 
@@ -292,7 +292,7 @@ check = "exit 1"
 }
 
 #[rstest]
-fn test_user_pre_merge_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_pre_merge_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt =
         repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
@@ -305,17 +305,17 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     );
 
     snapshot_merge(
-        "user_pre_merge_skipped_no_verify",
+        "user_pre_merge_skipped_no_hooks",
         &repo,
-        &["main", "--yes", "--no-remove", "--no-verify"],
+        &["main", "--yes", "--no-remove", "--no-hooks"],
         Some(&feature_wt),
     );
 
-    // User hook should NOT have run (--no-verify skips all hooks)
+    // User hook should NOT have run (--no-hooks skips all hooks)
     let marker_file = feature_wt.join("user_premerge_marker.txt");
     assert!(
         !marker_file.exists(),
-        "User pre-merge hook should be skipped with --no-verify"
+        "User pre-merge hook should be skipped with --no-hooks"
     );
 }
 
@@ -542,7 +542,7 @@ block = "exit 1"
 }
 
 #[rstest]
-fn test_user_pre_remove_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_pre_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
@@ -553,11 +553,11 @@ block = "exit 1"
 "#,
     );
 
-    // With --no-verify, all hooks (including the failing one) should be skipped
+    // With --no-hooks, all hooks (including the failing one) should be skipped
     snapshot_remove(
-        "user_pre_remove_skipped_no_verify",
+        "user_pre_remove_skipped_no_hooks",
         &repo,
-        &["feature", "--force-delete", "--no-verify"],
+        &["feature", "--force-delete", "--no-hooks"],
         Some(repo.root_path()),
     );
 
@@ -571,7 +571,7 @@ block = "exit 1"
     }
     assert!(
         !feature_wt.exists(),
-        "Worktree should be removed when --no-verify skips failing hook"
+        "Worktree should be removed when --no-hooks skips failing hook"
     );
 }
 
@@ -723,21 +723,21 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
 }
 
 #[rstest]
-fn test_user_post_remove_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_post_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
     // Write user config with post-remove hook that creates a marker
     repo.write_test_config(
         r#"[post-remove]
-marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
+marker = "echo 'SHOULD_NOT_RUN' > ../no_hooks_postremove.txt"
 "#,
     );
 
     snapshot_remove(
-        "user_post_remove_no_verify",
+        "user_post_remove_no_hooks",
         &repo,
-        &["feature", "--force-delete", "--no-verify"],
+        &["feature", "--force-delete", "--no-hooks"],
         Some(repo.root_path()),
     );
 
@@ -750,7 +750,7 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
     }
     assert!(
         !feature_wt.exists(),
-        "Worktree should be removed with --no-verify"
+        "Worktree should be removed with --no-hooks"
     );
 
     // Post-remove hook should NOT have run
@@ -758,11 +758,11 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
         .root_path()
         .parent()
         .unwrap()
-        .join("no_verify_postremove.txt");
+        .join("no_hooks_postremove.txt");
     thread::sleep(Duration::from_millis(500)); // Wait to ensure hook would have run if enabled
     assert!(
         !marker_file.exists(),
-        "Post-remove hook should be skipped when --no-verify is used"
+        "Post-remove hook should be skipped when --no-hooks is used"
     );
 }
 
@@ -966,7 +966,7 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
 }
 
 #[rstest]
-fn test_user_post_commit_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_post_commit_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create feature worktree with staged changes
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
@@ -979,9 +979,9 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
     );
 
     snapshot_step_commit(
-        "user_post_commit_skipped_no_verify",
+        "user_post_commit_skipped_no_hooks",
         &repo,
-        &["--no-verify"],
+        &["--no-hooks"],
         Some(&feature_wt),
     );
 
@@ -991,7 +991,7 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
     let marker_file = feature_wt.join("user_postcommit.txt");
     assert!(
         !marker_file.exists(),
-        "User post-commit hook should be skipped with --no-verify"
+        "User post-commit hook should be skipped with --no-hooks"
     );
 }
 
@@ -2003,9 +2003,9 @@ block = "exit 1"
     );
 }
 
-/// Test that --no-verify skips the pre-switch hook
+/// Test that --no-hooks skips the pre-switch hook
 #[rstest]
-fn test_user_pre_switch_skipped_with_no_verify(repo: TestRepo) {
+fn test_user_pre_switch_skipped_with_no_hooks(repo: TestRepo) {
     // Write user config with pre-switch hook that creates a marker
     repo.write_test_config(
         r#"[pre-switch]
@@ -2014,16 +2014,16 @@ check = "echo 'SHOULD_NOT_RUN' > pre_switch_marker.txt"
     );
 
     snapshot_switch(
-        "user_pre_switch_no_verify",
+        "user_pre_switch_no_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
-    // Pre-switch hook should NOT have run (--no-verify skips all hooks)
+    // Pre-switch hook should NOT have run (--no-hooks skips all hooks)
     let marker_file = repo.root_path().join("pre_switch_marker.txt");
     assert!(
         !marker_file.exists(),
-        "Pre-switch hook should be skipped with --no-verify"
+        "Pre-switch hook should be skipped with --no-hooks"
     );
 }
 

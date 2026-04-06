@@ -168,10 +168,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if !self.verify && any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
         if self.verify {
@@ -233,7 +230,7 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-verify)
+        // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch

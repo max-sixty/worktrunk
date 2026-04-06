@@ -79,7 +79,7 @@ pub fn step_commit(
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue commit
     let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
@@ -93,7 +93,7 @@ pub fn step_commit(
             true
         }
     } else {
-        false // --no-verify was passed
+        false // --no-hooks was passed
     };
 
     let mut options = CommitOptions::new(&ctx);
@@ -122,7 +122,7 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `verify` - If true, run pre-commit hooks (false when --no-verify flag is passed)
+/// * `verify` - If true, run pre-commit hooks (false when --no-hooks flag is passed)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
@@ -156,7 +156,7 @@ pub fn handle_squash(
     );
     let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue squash
     let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
@@ -170,14 +170,11 @@ pub fn handle_squash(
             true
         }
     } else {
-        // Show skip message when --no-verify was passed and hooks exist
+        // Show skip message when --no-hooks was passed and hooks exist
         if any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
-        false // --no-verify was passed
+        false // --no-hooks was passed
     };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
@@ -362,7 +359,7 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
-    // Spawn post-commit hooks in background (respects --no-verify)
+    // Spawn post-commit hooks in background (respects --no-hooks)
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
         for steps in prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)? {

@@ -53,7 +53,7 @@ Project commands require approval on first run:
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
 - Use `--yes` to bypass prompts — useful for CI and automation
-- Use `--no-verify` to skip hooks
+- Use `--no-hooks` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
@@ -82,7 +82,7 @@ For pre-* hooks, commands in a table run sequentially. For post-* hooks, they ru
 | Approval | Required | Not required |
 | Execution order | After user hooks | First |
 
-Skip all hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+Skip all hooks with `--no-hooks`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 

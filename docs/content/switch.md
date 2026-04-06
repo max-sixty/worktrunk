@@ -38,7 +38,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
 5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
-{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-verify      # Skip hooks") }}
+{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
 
 ## Shortcuts
 
@@ -193,7 +193,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
 
 <b><span class=g>Global Options:</span></b>
