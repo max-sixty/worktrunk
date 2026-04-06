@@ -24,7 +24,7 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    PWD: /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp6KEi50/repo
+    PWD: "[PWD]"
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
