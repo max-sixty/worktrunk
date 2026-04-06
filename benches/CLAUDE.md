@@ -128,6 +128,7 @@ SELECT
        WHEN name LIKE '%is-ancestor%' THEN 'is_ancestor'
        WHEN name LIKE '%diff --name%' THEN 'file_changes'
        WHEN name LIKE '%diff --numstat%' THEN 'diff_numstat'
+       WHEN name LIKE '%diff --shortstat%' THEN 'diff_shortstat'
        WHEN name LIKE '%diff --cached%' THEN 'diff_cached'
        WHEN name LIKE '% diff main...%' THEN 'diff_3dot'
        WHEN name LIKE '% diff HEAD%' THEN 'diff_wt'
