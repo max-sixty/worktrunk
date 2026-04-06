@@ -28,8 +28,8 @@ fn run_copy_ignored(repo: &TestRepo, feature_path: &Path) -> std::process::Outpu
 fn run_copy_ignored_single_entry(repo: &TestRepo, feature_path: &Path) {
     let output = run_copy_ignored(repo, feature_path);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("Copied 1 entry"),
-        "expected one copied entry: {}",
+        String::from_utf8_lossy(&output.stderr).contains("Copied 1 file"),
+        "expected one copied file: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -801,6 +801,7 @@ pub fn step_copy_ignored(
         }
     }
 
+    let mut copied_count = 0usize;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -808,9 +809,10 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
-                format!("copying directory {}", format_path_for_display(relative))
-            })?;
+            copied_count +=
+                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                    format!("copying directory {}", format_path_for_display(relative))
+                })?;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -826,20 +828,17 @@ pub fn step_copy_ignored(
                 })?
                 .file_type()
                 .is_symlink();
-            copy_leaf(src_entry, &dest_entry, is_symlink, force)?;
+            if copy_leaf(src_entry, &dest_entry, is_symlink, force)? {
+                copied_count += 1;
+            }
         }
     }
 
     // Show summary
-    let copied_count = entries_to_copy.len();
-    let entry_word = if copied_count == 1 {
-        "entry"
-    } else {
-        "entries"
-    };
+    let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(
         "{}",
-        success_message(format!("Copied {copied_count} {entry_word}"))
+        success_message(format!("Copied {copied_count} {file_word}"))
     );
 
     Ok(())

@@ -16,6 +16,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -50,16 +51,17 @@ pub fn lower_process_priority() {
 
 /// Copy a single file or symlink, using reflink (COW) when possible.
 ///
-/// Existing entries at the destination are skipped for idempotent usage.
-/// When `force` is true, existing entries are removed before copying.
-pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyhow::Result<()> {
+/// Returns `true` if the entry was copied, `false` if skipped (destination
+/// already exists). When `force` is true, existing entries are removed before
+/// copying.
+pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyhow::Result<bool> {
     if force {
         remove_if_exists(dest)?;
     }
     // Use symlink_metadata (not exists()) because exists() follows symlinks
     // and returns false for broken ones.
     if dest.symlink_metadata().is_ok() {
-        return Ok(());
+        return Ok(false);
     }
 
     if is_symlink {
@@ -69,13 +71,13 @@ pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyh
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
             Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// A leaf item (file or symlink) collected during the directory walk.
@@ -94,7 +96,9 @@ struct CopyLeaf {
 ///
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying.
-pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<()> {
+///
+/// Returns the number of files actually copied (excludes skipped entries).
+pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<usize> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
@@ -128,11 +132,14 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
     }
 
     // Phase 2: Copy all leaves in parallel.
+    let copied = AtomicUsize::new(0);
     COPY_POOL.install(|| {
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                copy_leaf(&leaf.src, &leaf.dest, leaf.is_symlink, force)?;
+                if copy_leaf(&leaf.src, &leaf.dest, leaf.is_symlink, force)? {
+                    copied.fetch_add(1, Ordering::Relaxed);
+                }
                 Ok(())
             })
     })?;
@@ -149,7 +156,7 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
             .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
     }
 
-    Ok(())
+    Ok(copied.into_inner())
 }
 
 /// Remove a file, ignoring "not found" errors.
