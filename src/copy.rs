@@ -50,17 +50,16 @@ pub fn lower_process_priority() {
 
 /// Copy a single file or symlink, using reflink (COW) when possible.
 ///
-/// Returns `true` if the entry was copied, `false` if skipped (destination
-/// already exists). When `force` is true, existing entries are removed before
-/// copying.
-pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyhow::Result<bool> {
+/// Existing entries at the destination are skipped for idempotent usage.
+/// When `force` is true, existing entries are removed before copying.
+pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyhow::Result<()> {
     if force {
         remove_if_exists(dest)?;
     }
     // Use symlink_metadata (not exists()) because exists() follows symlinks
     // and returns false for broken ones.
     if dest.symlink_metadata().is_ok() {
-        return Ok(false);
+        return Ok(());
     }
 
     if is_symlink {
@@ -70,13 +69,13 @@ pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyh
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
             Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 /// A leaf item (file or symlink) collected during the directory walk.
@@ -154,7 +153,7 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
 }
 
 /// Remove a file, ignoring "not found" errors.
-pub fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
+fn remove_if_exists(path: &Path) -> anyhow::Result<()> {
     if let Err(e) = fs::remove_file(path) {
         anyhow::ensure!(e.kind() == ErrorKind::NotFound, e);
     }
@@ -186,4 +185,22 @@ fn create_symlink(target: &Path, src_path: &Path, dest_path: &Path) -> anyhow::R
         anyhow::bail!("symlink creation not supported on this platform");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remove_if_exists_nonexistent() {
+        // NotFound is silently ignored
+        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
+    }
+
+    #[test]
+    fn test_remove_if_exists_not_a_file() {
+        // Trying to remove a directory with remove_file produces a non-NotFound error
+        let dir = std::env::temp_dir();
+        assert!(remove_if_exists(&dir).is_err());
+    }
 }

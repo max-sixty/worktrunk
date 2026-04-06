@@ -23,8 +23,6 @@ use ignore::gitignore::GitignoreBuilder;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
-#[cfg(test)]
-use worktrunk::copy::remove_if_exists;
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -803,7 +801,6 @@ pub fn step_copy_ignored(
         }
     }
 
-    let mut copied_count = 0usize;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -814,7 +811,6 @@ pub fn step_copy_ignored(
             copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
                 format!("copying directory {}", format_path_for_display(relative))
             })?;
-            copied_count += 1;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -830,13 +826,12 @@ pub fn step_copy_ignored(
                 })?
                 .file_type()
                 .is_symlink();
-            if copy_leaf(src_entry, &dest_entry, is_symlink, force)? {
-                copied_count += 1;
-            }
+            copy_leaf(src_entry, &dest_entry, is_symlink, force)?;
         }
     }
 
     // Show summary
+    let copied_count = entries_to_copy.len();
     let entry_word = if copied_count == 1 {
         "entry"
     } else {
@@ -1752,19 +1747,6 @@ pub fn step_relocate(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_remove_if_exists_nonexistent() {
-        // NotFound is silently ignored
-        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
-    }
-
-    #[test]
-    fn test_remove_if_exists_not_a_file() {
-        // Trying to remove a directory with remove_file produces a non-NotFound error
-        let dir = std::env::temp_dir();
-        assert!(remove_if_exists(&dir).is_err());
-    }
 
     #[test]
     fn test_move_entry_file() {
