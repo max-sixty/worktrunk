@@ -262,11 +262,14 @@ const REPO_WIDE_PATTERNS: &[(&str, &str)] = &[
 /// Truncate a string for display, respecting UTF-8 char boundaries.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        let boundary = s.floor_char_boundary(max - 3);
-        format!("{}...", &s[..boundary])
+        return s.to_string();
     }
+    // Find the last char boundary at or before max-3
+    let mut end = max - 3;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
 }
 
 /// Analyze trace entries for cache effectiveness and report findings.
