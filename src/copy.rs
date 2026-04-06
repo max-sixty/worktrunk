@@ -7,6 +7,9 @@
 //! All copy I/O runs in a dedicated 4-thread pool rather than the global rayon
 //! pool (which is sized at 2× CPU cores for network I/O) to avoid saturating
 //! the CPU on a background operation.
+//!
+//! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
+//! [`lower_process_priority`] before starting work.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -38,6 +41,25 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// global-pool threads while waiting for copy workers.
 pub fn copy_pool_install<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     COPY_POOL.install(f)
+}
+
+/// Lower the current process's scheduling priority so copy I/O doesn't
+/// compete with interactive foreground work.
+///
+/// Uses `renice` rather than a direct `nice(2)` syscall to stay within the
+/// `forbid(unsafe_code)` lint. Non-fatal: if `renice` is missing or fails,
+/// copies proceed at normal priority.
+pub fn lower_process_priority() {
+    #[cfg(unix)]
+    {
+        use std::process::{Command, Stdio};
+        let _ = Command::new("renice")
+            .args(["-n", "19", "-p", &std::process::id().to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 /// Copy a directory tree recursively using reflink (COW) per file.
