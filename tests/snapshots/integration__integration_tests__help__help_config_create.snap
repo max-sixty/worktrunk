@@ -144,6 +144,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2m# timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2m# ignore = ["tmp-*"]    # Glob patterns to hide from output; use --ignored to show all[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Commit[0m
 [107m [0m [2m#[0m
