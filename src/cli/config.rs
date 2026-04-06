@@ -156,6 +156,47 @@ Detects various forms of the integration pattern regardless of:
 }
 
 #[derive(Subcommand)]
+pub enum ConfigPluginsOpencodeCommand {
+    /// Install the activity tracking plugin
+    #[command(
+        after_long_help = r#"Writes the worktrunk plugin to the OpenCode plugins directory.
+
+## Examples
+
+```console
+$ wt config plugins opencode install
+$ wt config plugins opencode install --yes
+```
+
+## Plugin location
+
+The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`.
+Override with the `OPENCODE_CONFIG_DIR` environment variable."#
+    )]
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove the activity tracking plugin
+    #[command(
+        after_long_help = r#"Removes the worktrunk plugin from the OpenCode plugins directory.
+
+## Examples
+
+```console
+$ wt config plugins opencode uninstall
+```"#
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ApprovalsCommand {
     /// Store approvals in approvals.toml
     #[command(
@@ -206,6 +247,28 @@ $ wt config plugins claude install-statusline
     Claude {
         #[command(subcommand)]
         action: ConfigPluginsClaudeCommand,
+    },
+
+    /// OpenCode plugin
+    #[command(
+        after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+## Examples
+
+```console
+$ wt config plugins opencode install
+$ wt config plugins opencode uninstall
+```
+
+## Plugin location
+
+Written to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts`)."#
+    )]
+    Opencode {
+        #[command(subcommand)]
+        action: ConfigPluginsOpencodeCommand,
     },
 }
 
@@ -344,13 +407,14 @@ $ wt config update --yes
 
 ## Supported tools
 
-- **claude** — Claude Code plugin
+- **claude** — Claude Code plugin (activity tracking + statusline)
+- **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
-$ wt config plugins claude uninstall
+$ wt config plugins opencode install
 ```"#
     )]
     Plugins {
@@ -520,7 +584,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage

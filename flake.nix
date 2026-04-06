@@ -44,7 +44,9 @@
             p: type:
             (craneLib.filterCargoSources p type)
             || (pkgs.lib.hasInfix "/templates/" p)
-            || (baseNameOf (dirOf p) == "templates");
+            || (baseNameOf (dirOf p) == "templates")
+            || (pkgs.lib.hasInfix "/dev/" p)
+            || (baseNameOf (dirOf p) == "dev");
         };
 
         # Common arguments for crane builds

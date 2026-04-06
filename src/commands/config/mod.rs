@@ -4,6 +4,7 @@
 
 mod create;
 mod hints;
+pub mod opencode;
 mod plugins;
 mod show;
 mod state;
@@ -12,6 +13,7 @@ mod update;
 // Re-export public functions
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
+pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
 pub use plugins::{
     handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
 };

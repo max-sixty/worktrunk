@@ -296,7 +296,7 @@ impl Repository {
 
         // Use two-dot syntax with the cached merge-base
         let range = format!("{}..{}", merge_base, head);
-        let mut args = vec!["diff", "--numstat", &range];
+        let mut args = vec!["diff", "--shortstat", &range];
 
         let sparse_paths = self.sparse_checkout_paths();
         if !sparse_paths.is_empty() {
@@ -305,7 +305,7 @@ impl Repository {
         }
 
         let stdout = self.run_command(&args)?;
-        LineDiff::from_numstat(&stdout)
+        Ok(LineDiff::from_shortstat(&stdout))
     }
 
     /// Get formatted diff stats summary for display.
@@ -313,24 +313,11 @@ impl Repository {
     /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
     /// Returns empty vector if diff command fails or produces no output.
     ///
-    /// Callers should pass `--shortstat` in args for compatibility; this method
-    /// internally replaces it with `--numstat` for locale-independent parsing.
+    /// Callers pass args including `--shortstat` which produces a single summary line.
     pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        // Replace --shortstat with --numstat for locale-independent parsing
-        let args: Vec<&str> = args
-            .iter()
-            .map(|&arg| {
-                if arg == "--shortstat" {
-                    "--numstat"
-                } else {
-                    arg
-                }
-            })
-            .collect();
-
-        self.run_command(&args)
+        self.run_command(args)
             .ok()
-            .map(|output| DiffStats::from_numstat(&output).format_summary())
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
     }
 }

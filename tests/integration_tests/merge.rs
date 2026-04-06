@@ -607,11 +607,11 @@ fn test_merge_pre_merge_command_no_hooks(mut repo: TestRepo) {
 
     let feature_wt = repo.add_feature();
 
-    // Merge with --no-verify - should skip pre-merge commands and succeed
+    // Merge with --no-hooks - should skip pre-merge commands and succeed
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "merge",
-        &["main", "--no-verify"],
+        &["main", "--no-hooks"],
         Some(&feature_wt)
     ));
 }
@@ -681,7 +681,7 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_merge_post_merge_command_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create project config with post-merge command that writes a marker file
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -695,11 +695,11 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
 
     let feature_wt = repo.add_feature();
 
-    // Merge with --no-verify - hook should be skipped entirely
+    // Merge with --no-hooks - hook should be skipped entirely
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "merge",
-        &["main", "--yes", "--no-verify"],
+        &["main", "--yes", "--no-hooks"],
         Some(&feature_wt)
     ));
 
@@ -707,7 +707,30 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
     let marker_file = repo.root_path().join("post-merge-ran.txt");
     assert!(
         !marker_file.exists(),
-        "Post-merge command should not run when --no-verify is set"
+        "Post-merge command should not run when --no-hooks is set"
+    );
+}
+
+#[rstest]
+fn test_merge_no_verify_deprecated_still_works(mut repo: TestRepo) {
+    let feature_wt = repo.add_feature();
+
+    // --no-verify should still work but emit a deprecation warning
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes", "--no-verify"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
     );
 }
 
@@ -808,17 +831,11 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
         Some(&feature_wt)
     ));
 
-    // Verify both commands ran
+    // Verify both commands ran (poll for background pipeline runner completion)
     let notify_file = repo.root_path().join("notify.txt");
     let deploy_file = repo.root_path().join("deploy.txt");
-    assert!(
-        notify_file.exists(),
-        "Notify command should have created marker file"
-    );
-    assert!(
-        deploy_file.exists(),
-        "Deploy command should have created marker file"
-    );
+    wait_for_file(&notify_file);
+    wait_for_file(&deploy_file);
 }
 
 #[rstest]
@@ -1641,11 +1658,11 @@ fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, 
 }
 
 #[rstest]
-fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
+fn test_step_squash_with_no_hooks_flag(mut repo: TestRepo) {
     // Create a feature worktree with multiple commits
     let feature_wt = repo.add_worktree("feature");
 
-    // Add a pre-commit hook so --no-verify has something to skip
+    // Add a pre-commit hook so --no-hooks has something to skip
     // Create in feature worktree since worktrees don't share working tree files
     fs::create_dir_all(feature_wt.join(".config")).expect("Failed to create .config");
     fs::write(
@@ -1665,7 +1682,7 @@ fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
 
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
-        cmd.arg("squash").args(["--no-verify"]);
+        cmd.arg("squash").args(["--no-hooks"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'squash: combined commits'",
@@ -1704,7 +1721,7 @@ fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
 fn test_step_squash_with_both_flags(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
-    // Add a pre-commit hook so --no-verify has something to skip
+    // Add a pre-commit hook so --no-hooks has something to skip
     // Create in feature worktree since worktrees don't share working tree files
     fs::create_dir_all(feature_wt.join(".config")).expect("Failed to create .config");
     fs::write(
@@ -1726,7 +1743,7 @@ fn test_step_squash_with_both_flags(mut repo: TestRepo) {
 
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
-        cmd.arg("squash").args(["--no-verify", "--stage=tracked"]);
+        cmd.arg("squash").args(["--no-hooks", "--stage=tracked"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'squash: combined commits'",
@@ -1767,8 +1784,8 @@ fn test_step_squash_single_commit(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
-    // Add a pre-commit hook so --no-verify has something to skip
+fn test_step_commit_with_no_hooks_flag(repo: TestRepo) {
+    // Add a pre-commit hook so --no-hooks has something to skip
     fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
     fs::write(
         repo.root_path().join(".config/wt.toml"),
@@ -1780,7 +1797,7 @@ fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
 
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
-        cmd.arg("commit").args(["--no-verify"]);
+        cmd.arg("commit").args(["--no-hooks"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'feat: add file'",
@@ -1814,7 +1831,7 @@ fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
 
 #[rstest]
 fn test_step_commit_with_both_flags(repo: TestRepo) {
-    // Add a pre-commit hook so --no-verify has something to skip
+    // Add a pre-commit hook so --no-hooks has something to skip
     fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
     fs::write(
         repo.root_path().join(".config/wt.toml"),
@@ -1829,7 +1846,7 @@ fn test_step_commit_with_both_flags(repo: TestRepo) {
 
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
-        cmd.arg("commit").args(["--no-verify", "--stage=tracked"]);
+        cmd.arg("commit").args(["--no-hooks", "--stage=tracked"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'fix: update file'",
@@ -1860,7 +1877,7 @@ fn test_step_commit_branch_flag(mut repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], None); // cwd = main worktree
         cmd.arg("commit")
-            .args(["--branch", "feature", "--no-verify"]);
+            .args(["--branch", "feature", "--no-hooks"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'feat: add feature file'",
@@ -1909,7 +1926,7 @@ fn test_step_commit_detached_head(mut repo: TestRepo) {
 
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
-        cmd.arg("commit").args(["--no-verify"]);
+        cmd.arg("commit").args(["--no-hooks"]);
         cmd.env(
             "WORKTRUNK_COMMIT__GENERATION__COMMAND",
             "cat >/dev/null && echo 'chore: commit in detached state'",

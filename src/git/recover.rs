@@ -208,19 +208,14 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::shell_exec::Cmd;
+    use crate::testutil::set_test_identity;
     use ansi_str::AnsiStr;
 
     fn git_init(path: &Path) {
         Cmd::new("git")
-            .args(["init", "--quiet"])
+            .args(["init", "--quiet", "-b", "main"])
             .current_dir(path)
             .run()
-            .unwrap();
-    }
-
-    fn configure_test_identity(repo: &Repository) {
-        repo.run_command(&["config", "user.name", "Test"]).unwrap();
-        repo.run_command(&["config", "user.email", "test@test.com"])
             .unwrap();
     }
 
@@ -288,7 +283,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         // Create an initial commit so worktree add works
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
@@ -307,7 +302,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
         let repo = Repository::at(tmp.path()).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -333,7 +328,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -358,7 +353,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -382,7 +377,7 @@ mod tests {
         let repo_a_handle = Repository::at(&repo_a).unwrap();
         let repo_b_handle = Repository::at(&repo_b).unwrap();
         for repo in [&repo_a_handle, &repo_b_handle] {
-            configure_test_identity(repo);
+            set_test_identity(repo);
             repo.run_command(&["commit", "--allow-empty", "-m", "init"])
                 .unwrap();
         }
@@ -419,7 +414,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -445,7 +440,7 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         git_init(&repo_dir);
         let repo = Repository::at(&repo_dir).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
 
@@ -469,7 +464,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
         let repo = Repository::at(tmp.path()).unwrap();
-        configure_test_identity(&repo);
+        set_test_identity(&repo);
         repo.run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
         let hint = hint_for_repo(&repo);

@@ -54,8 +54,12 @@ $ wt step commit --show-prompt | llm -m gpt-5-nano
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
+
+        /// Skip hooks (deprecated alias for --no-hooks)
+        #[arg(long = "no-verify", hide = true)]
+        no_verify_deprecated: bool,
 
         /// What to stage before committing [default: all]
         #[arg(long)]
@@ -118,8 +122,12 @@ $ wt step squash --show-prompt | less
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
+
+        /// Skip hooks (deprecated alias for --no-hooks)
+        #[arg(long = "no-verify", hide = true)]
+        no_verify_deprecated: bool,
 
         /// What to stage before committing [default: all]
         #[arg(long)]

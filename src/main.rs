@@ -50,9 +50,10 @@ use commands::{
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
-    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
-    handle_rebase, handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
+    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge,
+    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
+    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
     handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
     run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
     step_relocate,
@@ -61,9 +62,9 @@ use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
-    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand,
-    ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, StepCommand,
-    VarsAction,
+    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
+    HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction,
+    StateCommand, StepCommand, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -139,6 +140,20 @@ fn warn_select_deprecated() {
         "{}",
         warning_message("wt select is deprecated; use wt switch instead")
     );
+}
+
+/// Resolve the `--no-hooks` / `--no-verify` pair: emit a deprecation warning
+/// if the old flag was used, then return the effective verify value.
+fn resolve_verify(verify: bool, no_verify_deprecated: bool) -> bool {
+    if no_verify_deprecated {
+        eprintln!(
+            "{}",
+            warning_message("--no-verify is deprecated; use --no-hooks instead")
+        );
+        false
+    } else {
+        verify
+    }
 }
 
 fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
@@ -261,16 +276,22 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             branch,
             yes,
             verify,
+            no_verify_deprecated,
             stage,
             show_prompt,
-        } => step_commit(branch, yes, verify, stage, show_prompt),
+        } => {
+            let verify = resolve_verify(verify, no_verify_deprecated);
+            step_commit(branch, yes, verify, stage, show_prompt)
+        }
         StepCommand::Squash {
             target,
             yes,
             verify,
+            no_verify_deprecated,
             stage,
             show_prompt,
         } => {
+            let verify = resolve_verify(verify, no_verify_deprecated);
             // Handle --show-prompt early: just build and output the prompt
             if show_prompt {
                 commands::step_show_squash_prompt(target.as_deref())
@@ -484,6 +505,10 @@ fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
             ConfigPluginsClaudeCommand::InstallStatusline { yes } => {
                 handle_claude_install_statusline(yes)
             }
+        },
+        ConfigPluginsCommand::Opencode { action } => match action {
+            ConfigPluginsOpencodeCommand::Install { yes } => handle_opencode_install(yes),
+            ConfigPluginsOpencodeCommand::Uninstall { yes } => handle_opencode_uninstall(yes),
         },
     }
 }
@@ -1007,6 +1032,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             cd,
             no_cd,
             verify,
+            no_verify_deprecated,
             format,
         } => handle_switch_command(SwitchCommandArgs {
             branch,
@@ -1020,7 +1046,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             clobber,
             cd,
             no_cd,
-            verify,
+            verify: resolve_verify(verify, no_verify_deprecated),
             format,
         }),
         Commands::Remove {
@@ -1029,6 +1055,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             force_delete,
             foreground,
             verify,
+            no_verify_deprecated,
             yes,
             force,
         } => handle_remove_command(RemoveCommandArgs {
@@ -1036,7 +1063,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             delete_branch,
             force_delete,
             foreground,
-            verify,
+            verify: resolve_verify(verify, no_verify_deprecated),
             yes,
             force,
         }),
@@ -1053,20 +1080,30 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             no_ff,
             ff,
             verify,
+            no_hooks,
             no_verify,
             yes,
             stage,
-        } => handle_merge(MergeOptions {
-            target: target.as_deref(),
-            squash: flag_pair(squash, no_squash),
-            commit: flag_pair(commit, no_commit),
-            rebase: flag_pair(rebase, no_rebase),
-            remove: flag_pair(remove, no_remove),
-            ff: flag_pair(ff, no_ff),
-            verify: flag_pair(verify, no_verify),
-            yes,
-            stage,
-        }),
+        } => {
+            // Merge uses flag_pair, so resolve_verify doesn't apply directly
+            if no_verify {
+                eprintln!(
+                    "{}",
+                    warning_message("--no-verify is deprecated; use --no-hooks instead")
+                );
+            }
+            handle_merge(MergeOptions {
+                target: target.as_deref(),
+                squash: flag_pair(squash, no_squash),
+                commit: flag_pair(commit, no_commit),
+                rebase: flag_pair(rebase, no_rebase),
+                remove: flag_pair(remove, no_remove),
+                ff: flag_pair(ff, no_ff),
+                verify: flag_pair(verify, no_hooks || no_verify),
+                yes,
+                stage,
+            })
+        }
     }
 }
 

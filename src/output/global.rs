@@ -446,8 +446,9 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 ///
 /// ```ignore
 /// // Prepare and spawn hooks with display path:
-/// let hooks = prepare_background_hooks(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))?;
-/// spawn_background_hooks(&ctx, hooks)?;
+/// for steps in prepare_background_hooks(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))? {
+///     spawn_hook_pipeline(&ctx, steps)?;
+/// }
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
     if is_shell_integration_active() {
