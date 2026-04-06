@@ -136,10 +136,11 @@ jobs:
 
     - name: 📊 Upload test results to Codecov
       if: ${{ !cancelled() && github.repository_owner == 'max-sixty' }}
-      uses: codecov/test-results-action@v1.2.1
+      uses: codecov/codecov-action@v6.0.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
+        report_type: test_results
 
   # Check if Cargo/CI files changed (for conditional jobs below)
   changes:
