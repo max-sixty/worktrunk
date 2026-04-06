@@ -272,18 +272,19 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     let spec = PipelineSpec {
         worktree_path: ctx.worktree_path.to_path_buf(),
         branch: ctx.branch_or_head().to_string(),
-        hook_type: hook_type.to_string(),
-        source: source.to_string(),
+        hook_type,
+        source,
         context,
         steps: spec_steps,
+        log_dir: ctx.repo.wt_logs_dir(),
     };
 
     let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
 
     let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
 
-    let hook_log = HookLog::hook(source, hook_type, "pipeline");
-    let log_label = format!("{hook_type} {source} pipeline");
+    let hook_log = HookLog::hook(source, hook_type, "runner");
+    let log_label = format!("{hook_type} {source} runner");
 
     if let Err(err) = spawn_detached_exec(
         ctx.repo,

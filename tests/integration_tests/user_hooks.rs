@@ -1516,20 +1516,20 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
         "wt hook post-start should succeed (spawns in background)"
     );
 
-    // Wait for log file to be created and contain output
+    // Wait for log files: runner log + per-command log (cmd-0, unnamed single command)
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    wait_for_file_count(&log_dir, "log", 2);
 
-    // Find and read the log file
-    let log_file = fs::read_dir(&log_dir)
+    // Find the command log file (contains "cmd-0" in name)
+    let cmd_log = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .find(|e| e.path().extension().is_some_and(|ext| ext == "log"))
-        .expect("Should have a log file");
+        .find(|e| e.file_name().to_string_lossy().contains("cmd-0"))
+        .expect("Should have a cmd-0 log file");
 
     // Wait for content to be written (command runs async)
-    wait_for_file_content(&log_file.path());
-    let log_content = fs::read_to_string(log_file.path()).unwrap();
+    wait_for_file_content(&cmd_log.path());
+    let log_content = fs::read_to_string(cmd_log.path()).unwrap();
 
     // Verify the hook actually ran and wrote output (not just that file was created)
     assert!(
@@ -1542,7 +1542,7 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
 fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
     // Write project config with multiple named hooks (table format).
     // Map configs run as a concurrent group in one pipeline runner,
-    // producing a single log file with all outputs.
+    // each command producing its own log file.
     repo.write_project_config(
         r#"[post-start]
 first = "echo FIRST_OUTPUT"
@@ -1562,29 +1562,28 @@ second = "echo SECOND_OUTPUT"
         "wt hook post-start should succeed (spawns in background)"
     );
 
-    // Wait for the pipeline log file to be created
+    // Wait for per-command log files: runner log + first + second
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    wait_for_file_count(&log_dir, "log", 3);
 
-    let log_file = fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.path().extension().is_some_and(|ext| ext == "log"))
-        .expect("Should have a log file");
+    // Verify each command's output is in its own log file
+    for (task, expected) in [("first", "FIRST_OUTPUT"), ("second", "SECOND_OUTPUT")] {
+        let log_file = fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(&format!("post-start-{task}"))
+            })
+            .unwrap_or_else(|| panic!("should have log file for {task}"));
 
-    // Poll for both outputs — concurrent commands may flush at different times.
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(15);
-    loop {
-        let content = fs::read_to_string(log_file.path()).unwrap_or_default();
-        if content.contains("FIRST_OUTPUT") && content.contains("SECOND_OUTPUT") {
-            break;
-        }
+        wait_for_file_content(&log_file.path());
+        let content = fs::read_to_string(log_file.path()).unwrap();
         assert!(
-            start.elapsed() < timeout,
-            "Timed out waiting for both outputs in log. Got: {content}"
+            content.contains(expected),
+            "Log for {task} should contain {expected}, got: {content}"
         );
-        thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
