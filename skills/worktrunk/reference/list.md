@@ -122,7 +122,7 @@ These appear across all columns while the table is loading:
 
 ---
 
-## Filtering with ignore patterns
+## Filtering with ignore patterns [experimental]
 
 The `[list].ignore` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
@@ -290,7 +290,7 @@ Options:
           Show CI, diff analysis, and LLM summaries
 
       --ignored
-          Show all items, including ignored ones
+          [experimental] Show all items, including ignored ones
 
           Disables filtering by [list].ignore patterns, showing all items.
 

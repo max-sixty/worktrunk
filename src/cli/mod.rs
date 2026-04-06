@@ -590,7 +590,7 @@ These appear across all columns while the table is loading:
 
 ---
 
-## Filtering with ignore patterns
+## Filtering with ignore patterns [experimental]
 
 The `[list].ignore` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
@@ -761,7 +761,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
         #[arg(long)]
         full: bool,
 
-        /// Show all items, including ignored ones
+        /// \[experimental\] Show all items, including ignored ones
         ///
         /// Disables filtering by [list].ignore patterns, showing all items.
         #[arg(long)]
@@ -1758,7 +1758,7 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
-ignore = ["tmp-*"]    # Glob patterns to hide from output; use --ignored to show all
+ignore = ["tmp-*"]    # [experimental] Glob patterns to hide from output; use --ignored to show all
 ```
 
 ### Commit

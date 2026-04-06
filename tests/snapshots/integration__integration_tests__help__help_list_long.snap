@@ -55,7 +55,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
           Show CI, diff analysis, and LLM summaries
 
       [1m[36m--ignored[0m
-          Show all items, including ignored ones[0m
+          [experimental] Show all items, including ignored ones[0m
           
           Disables filtering by [list].ignore patterns, showing all items.[0m
 
@@ -186,7 +186,7 @@ These appear across all columns while the table is loading:
 
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
 
-[1m[32mFiltering with ignore patterns[0m
+[1m[32mFiltering with ignore patterns [experimental][0m
 
 The [2m[list].ignore[0m config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
 
