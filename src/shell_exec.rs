@@ -277,9 +277,9 @@ fn log_output(output: &std::process::Output) {
 
 /// Implementation of timeout-based command execution.
 ///
-/// Spawns the process, waits with timeout, then reads pipes. No reader threads are
-/// needed: if the child exits, its pipe write ends close and sequential reads are safe;
-/// if it times out, we kill it and discard output.
+/// Spawns reader threads to drain stdout/stderr concurrently (preventing deadlock when
+/// output exceeds the OS pipe buffer), then waits with timeout. On timeout, kills the
+/// child; scoped threads see EOF and join automatically before the function returns.
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
@@ -290,36 +290,47 @@ fn run_with_timeout_impl(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    match child.wait_timeout(timeout)? {
-        Some(status) => {
-            // Child exited: pipe write ends are closed, sequential reads are safe.
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
-            child
-                .stdout
-                .take()
-                .map(|mut h| h.read_to_end(&mut stdout))
+    let mut child_stdout = child.stdout.take();
+    let mut child_stderr = child.stderr.take();
+
+    std::thread::scope(|s| {
+        let stdout_thread = s.spawn(|| {
+            let mut buf = Vec::new();
+            child_stdout
+                .as_mut()
+                .map(|h| h.read_to_end(&mut buf))
                 .transpose()?;
-            child
-                .stderr
-                .take()
-                .map(|mut h| h.read_to_end(&mut stderr))
+            Ok::<_, std::io::Error>(buf)
+        });
+        let stderr_thread = s.spawn(|| {
+            let mut buf = Vec::new();
+            child_stderr
+                .as_mut()
+                .map(|h| h.read_to_end(&mut buf))
                 .transpose()?;
-            Ok(std::process::Output {
-                status,
-                stdout,
-                stderr,
-            })
+            Ok::<_, std::io::Error>(buf)
+        });
+
+        match child.wait_timeout(timeout)? {
+            Some(status) => {
+                let stdout = stdout_thread.join().unwrap()?;
+                let stderr = stderr_thread.join().unwrap()?;
+                Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                })
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    "command timed out",
+                ))
+            }
         }
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(std::io::Error::new(
-                ErrorKind::TimedOut,
-                "command timed out",
-            ))
-        }
-    }
+    })
 }
 
 // ============================================================================
