@@ -85,6 +85,21 @@ immediately rather than waiting for a native flag.
 3. Post the tested alias in the issue with usage examples
 4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) for context
 
+## Weekly Maintenance: MSRV & Toolchain
+
+Bump both MSRV and the development toolchain to **latest stable − 1**. When
+Rust 1.N is the current stable release, set both to 1.(N−1).
+
+Files to update:
+
+| File | Field | Example (if stable is 1.94) |
+|------|-------|----|
+| `Cargo.toml` | `rust-version` | `"1.93"` |
+| `rust-toolchain.toml` | `channel` | `"1.93.0"` |
+
+After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
+and verify `cargo msrv verify` passes.
+
 ## Per-Workflow References
 
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search
