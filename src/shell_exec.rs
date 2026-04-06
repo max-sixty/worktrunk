@@ -277,68 +277,59 @@ fn log_output(output: &std::process::Output) {
 
 /// Implementation of timeout-based command execution.
 ///
-/// Spawns the process, captures stdout/stderr in background threads, and waits with timeout.
-/// If the timeout is exceeded, kills the process and returns TimedOut error.
+/// Spawns reader threads to drain stdout/stderr concurrently (preventing deadlock when
+/// output exceeds the OS pipe buffer), then waits with timeout. On timeout, kills the
+/// child; scoped threads see EOF and join automatically before the function returns.
 fn run_with_timeout_impl(
     cmd: &mut Command,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
-    // Spawn process with piped stdout/stderr
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Take ownership of stdout/stderr handles
-    let mut stdout_handle = child.stdout.take();
-    let mut stderr_handle = child.stderr.take();
+    let mut child_stdout = child.stdout.take();
+    let mut child_stderr = child.stderr.take();
 
-    // Spawn threads to read stdout/stderr in parallel
-    // This prevents deadlock when buffers fill up
-    let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(ref mut handle) = stdout_handle {
-            let _ = handle.read_to_end(&mut buf);
+    std::thread::scope(|s| {
+        let stdout_thread = s.spawn(|| {
+            let mut buf = Vec::new();
+            child_stdout
+                .as_mut()
+                .map(|h| h.read_to_end(&mut buf))
+                .transpose()?;
+            Ok::<_, std::io::Error>(buf)
+        });
+        let stderr_thread = s.spawn(|| {
+            let mut buf = Vec::new();
+            child_stderr
+                .as_mut()
+                .map(|h| h.read_to_end(&mut buf))
+                .transpose()?;
+            Ok::<_, std::io::Error>(buf)
+        });
+
+        match child.wait_timeout(timeout)? {
+            Some(status) => {
+                let stdout = stdout_thread.join().unwrap()?;
+                let stderr = stderr_thread.join().unwrap()?;
+                Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                })
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    "command timed out",
+                ))
+            }
         }
-        buf
-    });
-
-    let stderr_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(ref mut handle) = stderr_handle {
-            let _ = handle.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    // Wait for process with timeout
-    let status = match child.wait_timeout(timeout)? {
-        Some(status) => status,
-        None => {
-            // Timeout exceeded - kill the process
-            let _ = child.kill();
-            let _ = child.wait();
-
-            // Wait for reader threads to complete (they'll see EOF after kill)
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-
-            return Err(std::io::Error::new(
-                ErrorKind::TimedOut,
-                "command timed out",
-            ));
-        }
-    };
-
-    // Collect output from threads
-    let stdout = stdout_thread.join().unwrap_or_default();
-    let stderr = stderr_thread.join().unwrap_or_default();
-
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
     })
 }
 
