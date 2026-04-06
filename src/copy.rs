@@ -117,13 +117,12 @@ fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Res
                         #[cfg(unix)]
                         {
                             let src_perms = fs::metadata(&src_path)
-                                .with_context(|| {
-                                    format!("reading permissions for {}", src_path.display())
-                                })?
+                                .context(format!("reading permissions for {}", src_path.display()))?
                                 .permissions();
-                            fs::set_permissions(&dest_path, src_perms).with_context(|| {
-                                format!("setting permissions on {}", dest_path.display())
-                            })?;
+                            fs::set_permissions(&dest_path, src_perms).context(format!(
+                                "setting permissions on {}",
+                                dest_path.display()
+                            ))?;
                         }
                     }
                     Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
