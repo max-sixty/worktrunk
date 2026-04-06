@@ -111,7 +111,21 @@ fn copy_dir_recursive_inner(src: &Path, dest: &Path, force: bool) -> anyhow::Res
             // fail with ENOENT on some platforms when copying through the broken symlink.
             if dest_path.symlink_metadata().is_err() {
                 match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        // Preserve source file permissions (especially the execute bit).
+                        // reflink_or_copy may not preserve permissions on all platforms.
+                        #[cfg(unix)]
+                        {
+                            let src_perms = fs::metadata(&src_path)
+                                .with_context(|| {
+                                    format!("reading permissions for {}", src_path.display())
+                                })?
+                                .permissions();
+                            fs::set_permissions(&dest_path, src_perms).with_context(|| {
+                                format!("setting permissions on {}", dest_path.display())
+                            })?;
+                        }
+                    }
                     Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
                     Err(e) => {
                         return Err(anyhow::Error::from(e)
