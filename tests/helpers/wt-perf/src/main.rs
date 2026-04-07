@@ -252,16 +252,12 @@ To capture traces, run with RUST_LOG=debug:
     entries
 }
 
-/// Truncate a string for display, respecting UTF-8 char boundaries.
+/// Truncate an ASCII string for display, appending "..." if it exceeds `max` chars.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        let mut boundary = max - 3;
-        while !s.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        format!("{}...", &s[..boundary])
+        format!("{}...", &s[..max - 3])
     }
 }
 
