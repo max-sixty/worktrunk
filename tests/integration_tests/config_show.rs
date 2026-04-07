@@ -3599,3 +3599,38 @@ fn test_config_show_json(repo: TestRepo, temp_home: TempDir) {
     // Project config doesn't exist in this fixture
     assert!(!json["project"]["exists"].as_bool().unwrap());
 }
+
+#[rstest]
+fn test_config_show_json_with_project_config(repo: TestRepo, temp_home: TempDir) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create project config
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "[list]\nurl = \"http://localhost:3000\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+
+    assert!(json["project"]["exists"].as_bool().unwrap());
+    assert!(json["project"]["config"].is_object());
+}

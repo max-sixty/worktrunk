@@ -820,14 +820,12 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(args.yes)?;
 
+                handle_remove_output(&result, args.foreground, run_hooks, false)?;
                 if json_mode {
-                    let json = remove_result_to_json(&result);
-                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                    let json = serde_json::json!([remove_result_to_json(&result)]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
-                    Ok(())
-                } else {
-                    handle_remove_output(&result, args.foreground, run_hooks, false)
                 }
+                Ok(())
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(

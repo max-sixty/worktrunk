@@ -2739,7 +2739,7 @@ fn test_remove_json(mut repo: TestRepo) {
     assert!(output.status.success());
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    // Multi-branch removal outputs an array
+    // Always outputs an array (even for single removal)
     let items = json.as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["branch"], "feature");
