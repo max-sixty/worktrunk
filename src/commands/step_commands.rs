@@ -1545,13 +1545,6 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
     // sending each result through a channel as it completes. The main thread
     // processes results as they arrive for age filtering and candidate
     // collection, overlapping with still-running checks.
-    if check_items.len() > 10 {
-        eprintln!(
-            "{}",
-            progress_message(format!("Checking {} branches...", check_items.len()))
-        );
-    }
-
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
         .iter()
