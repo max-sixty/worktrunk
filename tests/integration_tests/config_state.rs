@@ -932,12 +932,23 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let mut json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+    // Sort log arrays by filename (mtime ties produce platform-dependent order)
+    for key in ["command_log", "hook_output"] {
+        if let Some(arr) = json.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.sort_by(|a, b| a["file"].as_str().cmp(&b["file"].as_str()));
+        }
+    }
+
+    // Normalize dynamic fields before snapshotting
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
     let mut settings = insta::Settings::clone_current();
-    // File sizes and modification times vary across environments
     settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
     settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
     settings.bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+        assert_snapshot!(normalized, @r#"
         {
           "ci_status": [],
           "command_log": [
