@@ -195,10 +195,6 @@ pub(super) struct RepoCache {
     /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
     /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
     /// followed by prepare_worktree_removal).
-    ///
-    /// TODO: `handle_branch_only_output` creates a fresh `Repository::current()` for
-    /// branch-only removals, bypassing this cache. Thread the pre-computed reason
-    /// through `RemoveResult::BranchOnly` to eliminate that redundant check.
     pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
 
     /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.

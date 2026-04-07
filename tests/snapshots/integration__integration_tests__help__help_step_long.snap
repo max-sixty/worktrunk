@@ -69,14 +69,14 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 Commit with LLM-generated message:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
 
 Manual merge workflow with review between steps:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step commit[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step squash[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step rebase[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step push[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step squash[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step rebase[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step push[0m
 
 [1m[32mOperations[0m
 
@@ -107,10 +107,10 @@ Custom command templates configured in user config ([2m~/.config/worktrunk/conf
 [107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2mport = [0m[2m[32m"echo http://localhost:{{ branch | hash_port }}"[0m
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step deploy                            # run the alias[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step deploy [0m[2m[36m--dry-run[0m[2m                  # show expanded command[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # pass extra template variables[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy                            # run the alias[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--dry-run[0m[2m                  # show expanded command[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # pass extra template variables[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require command approval on first run, same as project hooks. User-config aliases are trusted.
 

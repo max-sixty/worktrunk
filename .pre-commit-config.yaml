@@ -57,7 +57,8 @@ repos:
         entry: '\\x1b\['
         # format.rs strips ANSI codes injected by wrap_ansi crate
         # picker tests verify ANSI dimming behavior
-        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/)'
+        # src/testing: validate_ansi_codes tests raw escape sequences
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/)'
       - id: no-std-canonicalize-in-tests
         name: no-std-canonicalize-in-tests
         description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
@@ -76,7 +77,7 @@ repos:
         # src/config/{test,expansion,mod}.rs: TestRepo test fixtures use git init directly
         # src/config/user/tests.rs: TestRepo test fixtures use git init directly
         # src/styling/mod.rs: terminal width detection probes should be silent/quick
-        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|tests/|benches/)'
+        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|src/testing/|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

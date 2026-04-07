@@ -42,6 +42,12 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "picker/mod.rs",
     // JSON output for wt switch --format=json
     "handle_switch.rs",
+    // JSON output for wt config show --format=json
+    "config/show.rs",
+    // JSON output for wt step for-each --format=json
+    "for_each.rs",
+    // JSON output for wt merge --format=json
+    "merge.rs",
 ];
 
 /// Substrings that indicate the line is a special case (e.g., in a comment or test reference)

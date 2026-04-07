@@ -1256,7 +1256,13 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 /// entries (pruned + branch deleted), and orphan branches without worktrees (deleted).
 /// Skips the main/primary worktree, locked worktrees, and worktrees younger than
 /// `min_age`. Removes the current worktree last to trigger cd to primary.
-pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> anyhow::Result<()> {
+pub fn step_prune(
+    dry_run: bool,
+    yes: bool,
+    min_age: &str,
+    foreground: bool,
+    format: crate::cli::SwitchFormat,
+) -> anyhow::Result<()> {
     let min_age_duration =
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
@@ -1639,6 +1645,28 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         // Sort by original check order for deterministic output regardless of
         // channel completion order.
         dry_run_info.sort_by_key(|(c, _)| c.check_idx);
+
+        if format == crate::cli::SwitchFormat::Json {
+            let items: Vec<serde_json::Value> = dry_run_info
+                .iter()
+                .map(|(c, info)| {
+                    serde_json::json!({
+                        "branch": c.branch,
+                        "path": c.path,
+                        "kind": match c.kind {
+                            CandidateKind::Current => "current",
+                            CandidateKind::Other => "worktree",
+                            CandidateKind::BranchOnly => "branch_only",
+                        },
+                        "reason": info.reason_desc,
+                        "target": info.effective_target,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&items)?);
+            return Ok(());
+        }
+
         let mut dry_candidates = Vec::new();
         for (candidate, info) in dry_run_info {
             eprintln!(
@@ -1722,7 +1750,23 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         removed.push(current);
     }
 
-    if removed.is_empty() {
+    if format == crate::cli::SwitchFormat::Json {
+        let items: Vec<serde_json::Value> = removed
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "branch": c.branch,
+                    "path": c.path,
+                    "kind": match c.kind {
+                        CandidateKind::Current => "current",
+                        CandidateKind::Other => "worktree",
+                        CandidateKind::BranchOnly => "branch_only",
+                    },
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&items)?);
+    } else if removed.is_empty() {
         if skipped_young.is_empty() {
             eprintln!("{}", info_message("No merged worktrees to remove"));
         }

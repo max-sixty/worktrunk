@@ -216,6 +216,14 @@ pub enum RemoveResult {
         deletion_mode: BranchDeletionMode,
         /// True if the worktree was pruned before returning this result.
         pruned: bool,
+        /// Integration target for display. May be the effective target (e.g.,
+        /// `origin/main` when upstream is ahead) or the local default branch.
+        /// `None` when no default branch is configured.
+        target_branch: Option<String>,
+        /// Pre-computed integration reason, same as `RemovedWorktree`.
+        /// Computed in `prepare_worktree_removal` so the output handler
+        /// doesn't need to re-derive a `Repository` for the check.
+        integration_reason: Option<worktrunk::git::IntegrationReason>,
     },
 }
 
@@ -363,17 +371,23 @@ mod tests {
             branch_name: "stale-branch".to_string(),
             deletion_mode: BranchDeletionMode::Keep,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         match result {
             RemoveResult::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
+                target_branch,
+                integration_reason,
             } => {
                 assert_eq!(branch_name, "stale-branch");
                 assert!(deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
                 assert!(!pruned);
+                assert!(target_branch.is_none());
+                assert!(integration_reason.is_none());
             }
             _ => panic!("Expected BranchOnly variant"),
         }
@@ -385,16 +399,22 @@ mod tests {
             branch_name: "pruned-branch".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: true,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
         };
         match result {
             RemoveResult::BranchOnly {
                 branch_name,
                 deletion_mode,
                 pruned,
+                target_branch,
+                integration_reason,
             } => {
                 assert_eq!(branch_name, "pruned-branch");
                 assert!(!deletion_mode.should_keep());
                 assert!(pruned);
+                assert_eq!(target_branch.as_deref(), Some("main"));
+                assert!(integration_reason.is_none());
             }
             _ => panic!("Expected BranchOnly variant"),
         }

@@ -41,6 +41,8 @@ pub struct MergeOptions<'a> {
     pub yes: bool,
     /// CLI override for stage mode. None = use effective config default.
     pub stage: Option<super::commit::StageMode>,
+    /// Output format (text or json).
+    pub format: crate::cli::SwitchFormat,
 }
 
 /// Collect all commands that will be executed during merge.
@@ -85,6 +87,7 @@ fn collect_merge_commands(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    let json_mode = opts.format == crate::cli::SwitchFormat::Json;
     let MergeOptions {
         target,
         squash: squash_opt,
@@ -95,6 +98,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         verify: verify_opt,
         yes,
         stage,
+        ..
     } = opts;
 
     // Load config once, run LLM setup prompt if committing, then reuse config
@@ -304,7 +308,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
-        let integration_reason = compute_integration_reason(
+        let (integration_reason, _) = compute_integration_reason(
             repo,
             Some(&current_branch),
             Some(&target_branch),
@@ -358,6 +362,18 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         for steps in prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)? {
             spawn_hook_pipeline(&ctx, steps)?;
         }
+    }
+
+    if json_mode {
+        let output = serde_json::json!({
+            "branch": current_branch,
+            "target": target_branch,
+            "committed": committed,
+            "squashed": squashed,
+            "rebased": rebased,
+            "removed": removed,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
     Ok(())

@@ -439,6 +439,12 @@ pub(crate) struct RemoveArgs {
     /// artifacts). Without this flag, removal fails if untracked files exist.
     #[arg(short, long)]
     pub(crate) force: bool,
+
+    /// Output format
+    ///
+    /// JSON prints structured result to stdout after removal completes.
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: SwitchFormat,
 }
 
 #[derive(Args)]
@@ -512,6 +518,12 @@ pub(crate) struct MergeArgs {
     /// What to stage before committing [default: all]
     #[arg(long)]
     pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Output format
+    ///
+    /// JSON prints structured result to stdout after merge completes.
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: SwitchFormat,
 }
 
 #[derive(Subcommand)]
