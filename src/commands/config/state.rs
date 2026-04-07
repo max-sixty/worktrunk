@@ -155,7 +155,7 @@ fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std:
         .collect();
 
     let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &rows);
-    write!(out, "{}", rendered.trim_end())?;
+    writeln!(out, "{}", rendered.trim_end())?;
 
     Ok(())
 }
