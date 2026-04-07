@@ -84,15 +84,22 @@ where
     overrides
 }
 
+/// Cached absolute forms of any inherited relative `GIT_*` path variables.
+/// Computed once from the startup cwd and process environment, since neither
+/// changes during the process lifetime.
+static GIT_ENV_OVERRIDES: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
+
 /// For each inherited `GIT_*` path variable that is set to a *relative* path,
 /// produce an absolute form resolved against the startup cwd. Returns the
 /// `(var, absolute_value)` pairs that should be applied to a child process's
 /// environment to shadow the inherited relative values.
-fn inherited_git_env_overrides() -> Vec<(&'static str, OsString)> {
-    let Some(cwd) = startup_cwd() else {
-        return Vec::new();
-    };
-    compute_git_env_overrides(cwd, |var| std::env::var_os(var))
+fn inherited_git_env_overrides() -> &'static [(&'static str, OsString)] {
+    GIT_ENV_OVERRIDES.get_or_init(|| {
+        let Some(cwd) = startup_cwd() else {
+            return Vec::new();
+        };
+        compute_git_env_overrides(cwd, |var| std::env::var_os(var))
+    })
 }
 
 /// Monotonic epoch for trace timestamps.
