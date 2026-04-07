@@ -826,7 +826,6 @@ pub fn step_copy_ignored(
         }
     }
 
-
     // Show summary
     let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(

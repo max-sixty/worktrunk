@@ -143,7 +143,6 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
                 });
             } else {
                 log::debug!("skipping non-regular file: {}", src_path.display());
-
             }
         }
     }
