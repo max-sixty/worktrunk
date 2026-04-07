@@ -178,8 +178,6 @@ pub struct SourcedStep {
 /// - Multiple unnamed steps from the same source repeat the label (`user → user`)
 /// - Source prefix was dropped for named steps (`user:bg` → `bg`) — less
 ///   informative when both user and project hooks are present
-/// - Combined hook-type messages were split (`post-switch: X; post-start: Y`
-///   → two separate lines) — more verbose for the common create case
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     let mut parts = Vec::new();
     for step in steps {
@@ -204,35 +202,50 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     parts.join(" → ")
 }
 
-/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
+/// Announce one or more pipelines as a single combined status line.
 ///
-/// Serializes the pipeline steps to JSON and spawns `wt hook run-pipeline`
-/// as a detached process, piping the spec to stdin. The background
-/// process expands templates just-in-time and executes each step via
-/// the detected shell.
-///
-/// Used for all post-* background hooks regardless of config format.
-pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
-    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
-
-    if steps.is_empty() {
-        return Ok(());
+/// Pipelines with the same hook type are grouped: "Running post-start: user, project"
+/// Different hook types are separated with ";": "Running post-remove: docs; post-switch: zellij-tab"
+fn announce_pipelines(pipelines: &[&[SourcedStep]]) {
+    if pipelines.is_empty() {
+        return;
     }
 
-    let hook_type = steps[0].hook_type;
-    let source = steps[0].source;
-    let display_path = steps[0].display_path.as_ref();
+    // Group adjacent pipelines by hook type to avoid repeating it.
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < pipelines.len() {
+        let hook_type = pipelines[i][0].hook_type;
+        let mut summaries = vec![format_pipeline_summary(pipelines[i])];
+        while i + 1 < pipelines.len() && pipelines[i + 1][0].hook_type == hook_type {
+            i += 1;
+            summaries.push(format_pipeline_summary(pipelines[i]));
+        }
+        parts.push(format!("{hook_type}: {}", summaries.join(", ")));
+        i += 1;
+    }
+    let combined = parts.join("; ");
 
-    // Show summary: "Running post-start: install → build, lint"
-    let summary = format_pipeline_summary(&steps);
+    let display_path = pipelines
+        .iter()
+        .find_map(|steps| steps[0].display_path.as_ref());
+
     let message = match display_path {
         Some(path) => {
             let path_display = format_path_for_display(path);
-            cformat!("Running {hook_type}: {summary} @ <bold>{path_display}</>")
+            cformat!("Running {combined} @ <bold>{path_display}</>")
         }
-        None => format!("Running {hook_type}: {summary}"),
+        None => format!("Running {combined}"),
     };
     eprintln!("{}", progress_message(message));
+}
+
+/// Spawn a single pipeline as a background process (no announcement).
+fn spawn_pipeline_process(ctx: CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
+
+    let hook_type = steps[0].hook_type;
+    let source = steps[0].source;
 
     // Extract base context from the first command. All steps share the same base context,
     // but per-step metadata (hook_name) is stripped — it gets injected per-step by the
@@ -303,6 +316,45 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
     }
 
+    Ok(())
+}
+
+/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
+///
+/// Announces the pipeline and spawns it as a detached process.
+/// For spawning multiple pipelines with a single combined announcement,
+/// use [`spawn_hook_pipelines_combined`] instead.
+pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+    if steps.is_empty() {
+        return Ok(());
+    }
+    announce_pipelines(&[&steps]);
+    spawn_pipeline_process(*ctx, steps)
+}
+
+/// Spawn multiple hook pipelines with a single combined status line.
+///
+/// Produces one announcement for all pipelines:
+/// "Running post-remove: docs; post-switch: zellij-tab @ path"
+///
+/// Each pipeline is still spawned as an independent background process.
+pub fn spawn_hook_pipelines_combined(
+    pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
+) -> anyhow::Result<()> {
+    let non_empty: Vec<_> = pipelines
+        .into_iter()
+        .filter(|(_, steps)| !steps.is_empty())
+        .collect();
+    if non_empty.is_empty() {
+        return Ok(());
+    }
+
+    let step_refs: Vec<&[SourcedStep]> = non_empty.iter().map(|(_, s)| s.as_slice()).collect();
+    announce_pipelines(&step_refs);
+
+    for (ctx, steps) in non_empty {
+        spawn_pipeline_process(ctx, steps)?;
+    }
     Ok(())
 }
 

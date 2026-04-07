@@ -14,7 +14,7 @@ use crate::commands::branch_deletion::{
 };
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipelines_combined,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -848,21 +848,26 @@ fn spawn_hooks_after_remove(
     // branch since both post-remove and post-switch are consequences of that removal.
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
 
-    // Post-remove hooks.
+    // Collect post-remove and post-switch hooks for a single combined announcement.
+    let mut pipelines: Vec<(CommandContext, Vec<_>)> = Vec::new();
     for steps in prepare_background_hooks(
         &remove_ctx,
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
     )? {
-        spawn_hook_pipeline(&remove_ctx, steps)?;
+        pipelines.push((remove_ctx, steps));
     }
 
     // Post-switch: only when the user actually changed directory.
-    // Uses its own context for template variable preparation (dest branch),
-    // but spawned under remove_ctx (removed branch) for log naming.
-    if changed_directory {
-        let dest_branch = repo.worktree_at(main_path).branch()?;
+    // Uses its own context with the destination branch for template variables.
+    // dest_branch hoisted so it outlives the pipelines vec.
+    let dest_branch = if changed_directory {
+        Some(repo.worktree_at(main_path).branch()?)
+    } else {
+        None
+    };
+    if let Some(ref dest_branch) = dest_branch {
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
         for steps in prepare_background_hooks(
@@ -871,9 +876,11 @@ fn spawn_hooks_after_remove(
             &[],
             display_path,
         )? {
-            spawn_hook_pipeline(&switch_ctx, steps)?;
+            pipelines.push((switch_ctx, steps));
         }
     }
+
+    spawn_hook_pipelines_combined(pipelines)?;
 
     Ok(())
 }
