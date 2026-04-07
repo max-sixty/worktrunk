@@ -13,8 +13,6 @@ Recommended:
 $ wt config plugins claude install
 ```
 
-This wraps the marketplace flow for you and installs the same plugin automatically.
-
 Manual equivalent:
 
 ```bash
