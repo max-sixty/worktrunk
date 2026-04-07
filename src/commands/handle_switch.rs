@@ -27,7 +27,6 @@ use crate::output::{
 /// Structured output for `wt switch --format=json`.
 #[derive(Serialize)]
 struct SwitchJsonOutput {
-    /// "created", "existing", or "already_at"
     action: &'static str,
     /// Branch name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,37 +46,30 @@ struct SwitchJsonOutput {
 
 impl SwitchJsonOutput {
     fn from_result(result: &SwitchResult, branch_info: &SwitchBranchInfo) -> Self {
-        match result {
-            SwitchResult::AlreadyAt(path) => Self {
-                action: "already_at",
-                branch: branch_info.branch.clone(),
-                path: path.clone(),
-                created_branch: None,
-                base_branch: None,
-                from_remote: None,
-            },
-            SwitchResult::Existing { path } => Self {
-                action: "existing",
-                branch: branch_info.branch.clone(),
-                path: path.clone(),
-                created_branch: None,
-                base_branch: None,
-                from_remote: None,
-            },
+        let (action, path, created_branch, base_branch, from_remote) = match result {
+            SwitchResult::AlreadyAt(path) => ("already_at", path, None, None, None),
+            SwitchResult::Existing { path } => ("existing", path, None, None, None),
             SwitchResult::Created {
                 path,
                 created_branch,
                 base_branch,
                 from_remote,
                 ..
-            } => Self {
-                action: "created",
-                branch: branch_info.branch.clone(),
-                path: path.clone(),
-                created_branch: Some(*created_branch),
-                base_branch: base_branch.clone(),
-                from_remote: from_remote.clone(),
-            },
+            } => (
+                "created",
+                path,
+                Some(*created_branch),
+                base_branch.clone(),
+                from_remote.clone(),
+            ),
+        };
+        Self {
+            action,
+            branch: branch_info.branch.clone(),
+            path: path.clone(),
+            created_branch,
+            base_branch,
+            from_remote,
         }
     }
 }
@@ -363,9 +355,9 @@ pub fn handle_switch(
     // --format=json: write structured result to stdout. All behavior (hooks,
     // --execute, shell integration) proceeds normally — format only affects output.
     if format == SwitchFormat::Json {
-        let output = SwitchJsonOutput::from_result(&result, &branch_info);
-        serde_json::to_writer(std::io::stdout(), &output)?;
-        println!();
+        let json = SwitchJsonOutput::from_result(&result, &branch_info);
+        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+        println!("{json}");
     }
 
     // Early exit for benchmarking time-to-first-output
