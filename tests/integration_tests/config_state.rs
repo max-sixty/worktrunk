@@ -1892,10 +1892,12 @@ fn test_logs_get_json_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json["command_log"], serde_json::json!([]));
-    assert_eq!(json["hook_output"], serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "hook_output": []
+    }
+    "#);
 }
 
 #[rstest]
@@ -1909,30 +1911,23 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
 
-    let cmd_log = json["command_log"].as_array().unwrap();
-    assert_eq!(cmd_log.len(), 1);
-    assert_eq!(cmd_log[0]["file"], "commands.jsonl");
-    assert!(cmd_log[0]["size"].as_u64().unwrap() > 0);
-    assert!(cmd_log[0]["modified_at"].as_u64().is_some());
-
-    let hook_out = json["hook_output"].as_array().unwrap();
-    assert_eq!(hook_out.len(), 1);
-    assert_eq!(hook_out[0]["file"], "main-user-post-start-server.log");
+    // Redact dynamic timestamps and sizes
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }
 
 #[rstest]
 fn test_ci_status_get_json(repo: TestRepo) {
-    // Without CI tools, should return null (no status detected)
     let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json, serde_json::json!(null));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
 }
 
 #[rstest]
@@ -1941,9 +1936,7 @@ fn test_marker_get_json_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json, serde_json::json!(null));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
 }
 
 #[rstest]
@@ -1958,11 +1951,13 @@ fn test_marker_get_json_with_value(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json["branch"], "main");
-    assert_eq!(json["marker"], "🚧 WIP");
-    assert_eq!(json["set_at"], TEST_EPOCH);
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "main",
+      "marker": "🚧 WIP",
+      "set_at": 1735776000
+    }
+    "#);
 }
 
 #[rstest]
@@ -1971,9 +1966,7 @@ fn test_vars_list_json_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json, serde_json::json!({}));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"{}");
 }
 
 #[rstest]
@@ -1985,10 +1978,12 @@ fn test_vars_list_json_with_values(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json["env"], "staging");
-    assert_eq!(json["port"], "3000");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "env": "staging",
+      "port": "3000"
+    }
+    "#);
 }
 
 #[rstest]
@@ -1997,9 +1992,7 @@ fn test_hints_get_json_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json, serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
 }
 
 #[rstest]
@@ -2010,9 +2003,9 @@ fn test_hints_get_json_with_values(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    let hints = json.as_array().unwrap();
-    assert_eq!(hints.len(), 1);
-    assert_eq!(hints[0], "worktree-path");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    [
+      "worktree-path"
+    ]
+    "#);
 }

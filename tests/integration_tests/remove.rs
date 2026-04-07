@@ -4,6 +4,7 @@ use crate::common::{
     setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -2737,17 +2738,14 @@ fn test_remove_json(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    // Always outputs an array (even for single removal)
-    let items = json.as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["branch"], "feature");
-    assert_eq!(items[0]["kind"], "worktree");
-    assert!(items[0]["path"].as_str().is_some());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }
 
-/// Test removing current worktree (no branch arg) with --format=json
 #[rstest]
 fn test_remove_json_current(mut repo: TestRepo) {
     repo.commit("initial");
@@ -2760,9 +2758,10 @@ fn test_remove_json_current(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    let items = json.as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["branch"], "feature");
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }

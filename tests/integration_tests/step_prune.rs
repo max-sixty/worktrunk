@@ -3,6 +3,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -624,20 +625,17 @@ fn test_prune_dry_run_json(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    let items = json.as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["branch"], "merged-a");
-    assert_eq!(items[0]["kind"], "worktree");
-    assert!(items[0]["reason"].as_str().is_some());
-    assert!(items[0]["target"].as_str().is_some());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }
 
 #[rstest]
 fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
     repo.commit("initial");
-    // Create a worktree with a unique commit (not merged into main)
     repo.add_worktree_with_commit("feature", "f.txt", "content", "feature commit");
 
     let output = repo
@@ -652,9 +650,7 @@ fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json, serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
 }
 
 #[rstest]
@@ -675,9 +671,10 @@ fn test_prune_json_actual_removal(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    let items = json.as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["branch"], "merged-a");
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }

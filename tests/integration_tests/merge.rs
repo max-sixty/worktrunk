@@ -4,6 +4,7 @@ use crate::common::{
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file, wait_for_file_content,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -2724,10 +2725,14 @@ fn test_merge_json(repo: TestRepo) {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json["branch"], "feature");
-    assert_eq!(json["target"], "main");
-    assert!(json["squashed"].is_boolean());
-    assert!(json["removed"].is_boolean());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "feature",
+      "committed": false,
+      "rebased": false,
+      "removed": true,
+      "squashed": false,
+      "target": "main"
+    }
+    "#);
 }
