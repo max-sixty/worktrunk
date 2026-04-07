@@ -252,16 +252,6 @@ To capture traces, run with RUST_LOG=debug:
     entries
 }
 
-/// Known repo-wide commands guarded by OnceCell in RepoCache.
-/// These should run at most once per `wt` invocation.
-const REPO_WIDE_PATTERNS: &[(&str, &str)] = &[
-    ("--is-bare-repository", "is_bare()"),
-    ("config --get worktrunk.default-branch", "default_branch()"),
-    ("checkout.defaultRemote", "primary_remote()"),
-    ("--get-regexp remote", "primary_remote() fallback"),
-    ("sparse-checkout list", "sparse_checkout_paths()"),
-];
-
 /// Truncate a string for display, respecting UTF-8 char boundaries.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -277,11 +267,10 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// Analyze trace entries for cache effectiveness and report findings.
 ///
-/// Three analyses:
-/// 1. Repo-wide OnceCell commands — should appear at most once
-/// 2. Same-context duplicates — commands that ran multiple times for the
+/// Two analyses:
+/// 1. Same-context duplicates — commands that ran multiple times for the
 ///    same worktree, indicating missing or bypassed caches
-/// 3. Summary — total commands, unique commands, duplicate counts
+/// 2. Summary — total commands, unique commands, duplicate counts
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     use std::collections::{BTreeMap, HashMap, HashSet};
     use worktrunk::trace::TraceEntryKind;
@@ -301,29 +290,7 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         }
     }
 
-    // === Section 1: Repo-wide OnceCell commands ===
-    println!("=== Repo-wide commands (should appear at most once) ===");
-    println!();
-    for (pattern, cache_field) in REPO_WIDE_PATTERNS {
-        let matching: Vec<_> = cmd_counts
-            .iter()
-            .filter(|(cmd, _)| cmd.contains(pattern))
-            .collect();
-
-        for (cmd, count) in &matching {
-            let status = if **count == 1 { "ok" } else { "DUPLICATE" };
-            println!(
-                "  {status:>9}  {}x  {cache_field:<30}  {}",
-                count,
-                truncate(cmd, 60)
-            );
-        }
-        if matching.is_empty() {
-            println!("  {:>9}  0x  {cache_field:<30}  (not called)", "skip");
-        }
-    }
-
-    // === Section 2: Same-context duplicates ===
+    // === Same-context duplicates ===
     let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
     for ((cmd, ctx), count) in &pair_counts {
         if *count > 1 {
@@ -334,7 +301,7 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     if !cmd_ctx_info.is_empty() {
         println!(
             "\
-\n=== Same-context duplicates (potential cache misses) ===
+=== Same-context duplicates (potential cache misses) ===
 
 Commands that ran multiple times for the SAME worktree.
 These are the strongest signal of missing/bypassed caches.
@@ -372,7 +339,7 @@ These are the strongest signal of missing/bypassed caches.
         println!("  Total extra calls from same-context duplicates: {total_wasted}");
     }
 
-    // === Section 3: Summary ===
+    // === Summary ===
     let dup_count: usize = cmd_counts.values().filter(|c| **c > 1).count();
     let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
     println!(
