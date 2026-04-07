@@ -742,6 +742,7 @@ fn remove_result_to_json(result: &RemoveResult) -> serde_json::Value {
             branch_name,
             deletion_mode,
             pruned,
+            ..
         } => serde_json::json!({
             "kind": "branch_only",
             "branch": branch_name,
