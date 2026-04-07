@@ -115,6 +115,26 @@ fn stream_exit_result(
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Per-worktree and keyed values use `DashMap` with explicit `Entry` matching:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;   // errors propagate naturally
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
+///
+/// This holds the shard lock across check-and-insert (no TOCTOU gap) and
+/// propagates errors via `?` without swallowing them into fallbacks.
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
@@ -162,12 +182,13 @@ pub(super) struct RepoCache {
     pub(super) tree_shas: DashMap<String, String>,
 
     // ========== Per-worktree values (keyed by path) ==========
+    /// Per-worktree git directory: worktree_path -> canonicalized git dir
+    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
+    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
     /// Worktree root paths: worktree_path -> canonicalized root
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
-    /// Git directory per worktree: worktree_path -> canonicalized git dir
-    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
 }
 
 /// Result of resolving a worktree name.
