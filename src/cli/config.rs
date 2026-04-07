@@ -571,13 +571,11 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ## Display
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-```
-Branch    Status   Path
-main      ^        ~/code/myproject
-feature   🚧↑      ~/code/myproject.feature
-bugfix    🤖!↑⇡    ~/code/myproject.bugfix
+<!-- wt list (markers) -->
+```console
+wt list
 ```
 
 ## Use cases
