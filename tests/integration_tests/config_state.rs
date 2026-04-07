@@ -37,11 +37,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    let safe_branch = sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, json).unwrap();
 }
@@ -1990,6 +1986,31 @@ fn test_ci_status_get_json(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
+    repo.commit("initial");
+    let head = repo.head_sha();
+
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(&head, "<SHA>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }
 
 #[rstest]
