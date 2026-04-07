@@ -30,12 +30,9 @@
 //! For `wt list`, steps 1-4 are sufficient — each branch uses its
 //! associated remote.
 //!
-//! For `wt switch pr:N`, the API call tries the primary remote's
-//! owner/repo first. If the PR is not found (404), it retries with
-//! other configured remotes — this handles fork setups where origin
-//! points to the user's fork but the PR lives on the upstream repo.
-//! The API response provides the base repo's identity, and
-//! `Repository::find_remote_for_repo` matches it back to a local remote by
+//! For `wt switch pr:N`, the API call uses owner/repo from the primary
+//! remote's raw URL. The API response provides the base repo's identity,
+//! and `Repository::find_remote_for_repo` matches it back to a local remote by
 //! owner/repo (host is not required to match).
 //!
 //! ## Where each piece is used
