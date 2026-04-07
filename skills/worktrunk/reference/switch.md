@@ -69,6 +69,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+<!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
 
 **Preview tabs** — toggle with number keys:
 
