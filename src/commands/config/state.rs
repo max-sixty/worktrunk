@@ -16,7 +16,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use crate::cli::OutputFormat;
+use crate::cli::{OutputFormat, SwitchFormat};
 use crate::commands::process::HookLog;
 use worktrunk::utils::epoch_now;
 
@@ -108,6 +108,23 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 /// Check if a filename belongs to the command audit log (`.jsonl` / `.jsonl.old`).
 fn is_command_log_file(name: &str) -> bool {
     name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+}
+
+/// Convert a log directory entry to a JSON object with file, size, and modified_at.
+fn log_entry_to_json(entry: &std::fs::DirEntry) -> serde_json::Value {
+    let path = entry.path();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let meta = entry.metadata().ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let modified = meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    serde_json::json!({ "file": name, "size": size, "modified_at": modified })
 }
 
 /// Render a table of log file entries, or "(none)" if empty.
@@ -227,10 +244,46 @@ pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow:
 ///
 /// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
 /// - `internal:op` for internal operations (e.g., `internal:remove`)
-pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_logs_get(
+    hook: Option<String>,
+    branch: Option<String>,
+    format: SwitchFormat,
+) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
     match hook {
+        None if format == SwitchFormat::Json => {
+            let log_dir = repo.wt_logs_dir();
+            let (command_log, hook_output) = if log_dir.exists() {
+                let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+                    .collect();
+                entries.sort_by(|a, b| {
+                    let a_time = a.metadata().and_then(|m| m.modified()).ok();
+                    let b_time = b.metadata().and_then(|m| m.modified()).ok();
+                    b_time.cmp(&a_time)
+                });
+                let mut cmd_log = Vec::new();
+                let mut hook_out = Vec::new();
+                for entry in &entries {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if is_command_log_file(&name) {
+                        cmd_log.push(log_entry_to_json(entry));
+                    } else {
+                        hook_out.push(log_entry_to_json(entry));
+                    }
+                }
+                (cmd_log, hook_out)
+            } else {
+                (vec![], vec![])
+            };
+            let output = serde_json::json!({
+                "command_log": command_log,
+                "hook_output": hook_output,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
         None => {
             // No hook specified, show all log files
             let mut out = String::new();
@@ -310,7 +363,11 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
 // ==================== State Get/Set/Clear Commands ====================
 
 /// Handle the state get command
-pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_state_get(
+    key: &str,
+    branch: Option<String>,
+    format: SwitchFormat,
+) -> anyhow::Result<()> {
     use super::super::list::ci_status::PrStatus;
 
     let repo = Repository::current()?;
@@ -333,9 +390,32 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 Some(b) => b,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
-            match repo.branch_marker(&branch_name) {
-                Some(marker) => println!("{marker}"),
-                None => println!(""),
+            if format == SwitchFormat::Json {
+                // Read raw config to get both marker and set_at
+                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                let raw = repo
+                    .run_command(&["config", "--get", &config_key])
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let output = match raw {
+                    Some(json_str) => {
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&json_str).unwrap_or_default();
+                        serde_json::json!({
+                            "branch": branch_name,
+                            "marker": parsed.get("marker").and_then(|v| v.as_str()),
+                            "set_at": parsed.get("set_at").and_then(|v| v.as_u64()),
+                        })
+                    }
+                    None => serde_json::json!(null),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                match repo.branch_marker(&branch_name) {
+                    Some(marker) => println!("{marker}"),
+                    None => println!(""),
+                }
             }
         }
         "ci-status" => {
@@ -371,12 +451,32 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             }
 
             let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
-            let ci_status = PrStatus::detect(&repo, &ci_branch, &head)
-                .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
-                    s.ci_status
-                });
-            let status_str: &'static str = ci_status.into();
-            println!("{status_str}");
+            let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
+
+            if format == SwitchFormat::Json {
+                let output = match pr_status {
+                    Some(ref s) => serde_json::json!({
+                        "status": <&'static str>::from(s.ci_status),
+                        "source": s.source,
+                        "stale": s.is_stale,
+                        "url": s.url,
+                    }),
+                    None => serde_json::json!({
+                        "status": "no-ci",
+                        "source": null,
+                        "stale": false,
+                        "url": null,
+                    }),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                let ci_status = pr_status
+                    .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
+                        s.ci_status
+                    });
+                let status_str: &'static str = ci_status.into();
+                println!("{status_str}");
+            }
         }
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
@@ -772,35 +872,14 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
                 b_time.cmp(&a_time)
             });
 
-            let to_json = |entry: &std::fs::DirEntry| -> serde_json::Value {
-                let path = entry.path();
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let meta = entry.metadata().ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs());
-
-                serde_json::json!({
-                    "file": name,
-                    "size": size,
-                    "modified_at": modified
-                })
-            };
-
             let mut cmd_log = Vec::new();
             let mut hook_out = Vec::new();
             for entry in &all_entries {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if is_command_log_file(&name) {
-                    cmd_log.push(to_json(entry));
+                    cmd_log.push(log_entry_to_json(entry));
                 } else {
-                    hook_out.push(to_json(entry));
+                    hook_out.push(log_entry_to_json(entry));
                 }
             }
             (cmd_log, hook_out)
@@ -1021,7 +1100,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 }
 
 /// Handle vars list
-pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
@@ -1029,7 +1108,14 @@ pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
     };
 
     let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
-    if entries.is_empty() {
+
+    if format == SwitchFormat::Json {
+        let obj: serde_json::Map<String, serde_json::Value> = entries
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+    } else if entries.is_empty() {
         eprintln!(
             "{}",
             info_message(cformat!("No variables for <bold>{branch_name}</>"))

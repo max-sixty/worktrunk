@@ -64,7 +64,8 @@ use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, VarsAction,
+    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
+    VarsAction,
 };
 use worktrunk::HookType;
 
@@ -367,39 +368,52 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
 fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
     match action {
         StateCommand::DefaultBranch { action } => match action {
-            Some(DefaultBranchAction::Get) | None => handle_state_get("default-branch", None),
+            Some(DefaultBranchAction::Get) | None => {
+                handle_state_get("default-branch", None, SwitchFormat::Text)
+            }
             Some(DefaultBranchAction::Set { branch }) => {
                 handle_state_set("default-branch", branch, None)
             }
             Some(DefaultBranchAction::Clear) => handle_state_clear("default-branch", None, false),
         },
         StateCommand::PreviousBranch { action } => match action {
-            Some(PreviousBranchAction::Get) | None => handle_state_get("previous-branch", None),
+            Some(PreviousBranchAction::Get) | None => {
+                handle_state_get("previous-branch", None, SwitchFormat::Text)
+            }
             Some(PreviousBranchAction::Set { branch }) => {
                 handle_state_set("previous-branch", branch, None)
             }
             Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
         },
         StateCommand::CiStatus { action } => match action {
-            Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
-            None => handle_state_get("ci-status", None),
+            Some(CiStatusAction::Get { branch, format }) => {
+                handle_state_get("ci-status", branch, format)
+            }
+            None => handle_state_get("ci-status", None, SwitchFormat::Text),
             Some(CiStatusAction::Clear { branch, all }) => {
                 handle_state_clear("ci-status", branch, all)
             }
         },
         StateCommand::Marker { action } => match action {
-            Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
-            None => handle_state_get("marker", None),
+            Some(MarkerAction::Get { branch, format }) => {
+                handle_state_get("marker", branch, format)
+            }
+            None => handle_state_get("marker", None, SwitchFormat::Text),
             Some(MarkerAction::Set { value, branch }) => handle_state_set("marker", value, branch),
             Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
         },
         StateCommand::Logs { action } => match action {
-            Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
-            None => handle_logs_get(None, None),
+            Some(LogsAction::Get {
+                hook,
+                branch,
+                format,
+            }) => handle_logs_get(hook, branch, format),
+            None => handle_logs_get(None, None, SwitchFormat::Text),
             Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
         },
         StateCommand::Hints { action } => match action {
-            Some(HintsAction::Get) | None => handle_hints_get(),
+            Some(HintsAction::Get { format }) => handle_hints_get(format),
+            None => handle_hints_get(SwitchFormat::Text),
             Some(HintsAction::Clear { name }) => handle_hints_clear(name),
         },
         StateCommand::Vars { action } => match action {
@@ -408,7 +422,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
                 assignment: (key, value),
                 branch,
             } => handle_vars_set(&key, &value, branch),
-            VarsAction::List { branch } => handle_vars_list(branch),
+            VarsAction::List { branch, format } => handle_vars_list(branch, format),
             VarsAction::Clear { key, all, branch } => {
                 handle_vars_clear(key.as_deref(), all, branch)
             }

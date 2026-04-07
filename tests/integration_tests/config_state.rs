@@ -1881,3 +1881,139 @@ fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
         "vars key should be 'port', not a mangled key from bad split"
     );
 }
+
+// ============================================================================
+// --format=json on individual subcommands
+// ============================================================================
+
+#[rstest]
+fn test_logs_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json["command_log"], serde_json::json!([]));
+    assert_eq!(json["hook_output"], serde_json::json!([]));
+}
+
+#[rstest]
+fn test_logs_get_json_with_files(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
+    std::fs::write(log_dir.join("main-user-post-start-server.log"), "output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+
+    let cmd_log = json["command_log"].as_array().unwrap();
+    assert_eq!(cmd_log.len(), 1);
+    assert_eq!(cmd_log[0]["file"], "commands.jsonl");
+    assert!(cmd_log[0]["size"].as_u64().unwrap() > 0);
+    assert!(cmd_log[0]["modified_at"].as_u64().is_some());
+
+    let hook_out = json["hook_output"].as_array().unwrap();
+    assert_eq!(hook_out.len(), 1);
+    assert_eq!(hook_out[0]["file"], "main-user-post-start-server.log");
+}
+
+#[rstest]
+fn test_ci_status_get_json(repo: TestRepo) {
+    // Without CI tools, should return no-ci
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json["status"], "no-ci");
+    assert_eq!(json["stale"], false);
+}
+
+#[rstest]
+fn test_marker_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json, serde_json::json!(null));
+}
+
+#[rstest]
+fn test_marker_get_json_with_value(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.marker",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ]);
+
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json["branch"], "main");
+    assert_eq!(json["marker"], "🚧 WIP");
+    assert_eq!(json["set_at"], TEST_EPOCH);
+}
+
+#[rstest]
+fn test_vars_list_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json, serde_json::json!({}));
+}
+
+#[rstest]
+fn test_vars_list_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "staging"]);
+    repo.run_git(&["config", "worktrunk.state.main.vars.port", "3000"]);
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json["env"], "staging");
+    assert_eq!(json["port"], "3000");
+}
+
+#[rstest]
+fn test_hints_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json, serde_json::json!([]));
+}
+
+#[rstest]
+fn test_hints_get_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let hints = json.as_array().unwrap();
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0], "worktree-path");
+}
