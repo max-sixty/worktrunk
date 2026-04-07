@@ -153,6 +153,9 @@ pub(super) struct RepoCache {
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Cached because forge detection may query the same remote multiple times.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
+    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
+    pub(super) resolved_refs: DashMap<String, String>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Worktree root paths: worktree_path -> canonicalized root

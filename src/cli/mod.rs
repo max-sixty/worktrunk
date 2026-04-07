@@ -13,7 +13,7 @@ pub(crate) use list::ListSubcommand;
 pub(crate) use step::StepCommand;
 
 use clap::builder::styling::{AnsiColor, Color, Styles};
-use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::sync::OnceLock;
 use worktrunk::config::{DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS};
 
@@ -260,6 +260,244 @@ pub(crate) struct Cli {
     pub command: Option<Commands>,
 }
 
+#[derive(Args)]
+pub(crate) struct SwitchArgs {
+    /// Branch name or shortcut
+    ///
+    /// Opens interactive picker if omitted.
+    /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
+    #[arg(add = crate::completion::worktree_branch_completer())]
+    pub(crate) branch: Option<String>,
+
+    /// Include branches without worktrees
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    pub(crate) branches: bool,
+
+    /// Include remote branches
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    pub(crate) remotes: bool,
+
+    /// Create a new branch
+    #[arg(short = 'c', long, requires = "branch")]
+    pub(crate) create: bool,
+
+    /// Base branch
+    ///
+    /// Defaults to default branch.
+    #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
+    pub(crate) base: Option<String>,
+
+    /// Command to run after switch
+    ///
+    /// Replaces the wt process with the command after switching, giving
+    /// it full terminal control. Useful for launching editors, AI agents,
+    /// or other interactive tools.
+    ///
+    /// Supports [hook template variables](@/hook.md#template-variables)
+    /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
+    /// `{{ base }}` and `{{ base_worktree_path }}` require `--create`.
+    ///
+    /// Especially useful with shell aliases:
+    ///
+    /// ```sh
+    /// alias wsc='wt switch --create -x claude'
+    /// wsc feature-branch -- 'Fix GH #322'
+    /// ```
+    ///
+    /// Then `wsc feature-branch` creates the worktree and launches Claude
+    /// Code. Arguments after `--` are passed to the command, so
+    /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
+    /// starting Claude with a prompt.
+    ///
+    /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
+    /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
+    /// a tmux session named after the branch.
+    #[arg(short = 'x', long, requires = "branch")]
+    pub(crate) execute: Option<String>,
+
+    /// Additional arguments for --execute command (after --)
+    ///
+    /// Arguments after `--` are appended to the execute command.
+    /// Each argument is expanded for templates, then POSIX shell-escaped.
+    #[arg(last = true, requires = "execute")]
+    pub(crate) execute_args: Vec<String>,
+
+    /// Remove stale paths at target
+    #[arg(long, requires = "branch")]
+    pub(crate) clobber: bool,
+
+    /// Skip directory change after switching
+    ///
+    /// Hooks still run normally. Useful when hooks handle navigation
+    /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
+    ///
+    /// In picker mode (no branch argument), prints the selected branch
+    /// name and exits without switching. Useful for scripting.
+    #[arg(long, overrides_with = "cd")]
+    pub(crate) no_cd: bool,
+
+    /// Change directory after switching
+    #[arg(long, overrides_with = "no_cd", hide = true)]
+    pub(crate) cd: bool,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct ListArgs {
+    #[command(subcommand)]
+    pub(crate) subcommand: Option<ListSubcommand>,
+
+    /// Output format (table, json)
+    #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+    pub(crate) format: OutputFormat,
+
+    /// Include branches without worktrees
+    #[arg(long)]
+    pub(crate) branches: bool,
+
+    /// Include remote branches
+    #[arg(long)]
+    pub(crate) remotes: bool,
+
+    /// Show CI, diff analysis, and LLM summaries
+    #[arg(long)]
+    pub(crate) full: bool,
+
+    /// Show fast info immediately, update with slow info
+    ///
+    /// Displays local data (branches, paths, status) first, then updates
+    /// with remote data (CI, upstream) as it arrives. Use --no-progressive
+    /// to force buffered rendering. Auto-enabled for TTY.
+    #[arg(long, overrides_with = "no_progressive")]
+    pub(crate) progressive: bool,
+
+    /// Force buffered rendering
+    #[arg(long = "no-progressive", overrides_with = "progressive", hide = true)]
+    pub(crate) no_progressive: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct RemoveArgs {
+    /// Branch name [default: current]
+    #[arg(add = crate::completion::local_branches_completer())]
+    pub(crate) branches: Vec<String>,
+
+    /// Keep branch after removal
+    #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) delete_branch: bool,
+
+    /// Delete unmerged branches
+    #[arg(short = 'D', long = "force-delete")]
+    pub(crate) force_delete: bool,
+
+    /// Run removal in foreground (block until complete)
+    #[arg(long)]
+    pub(crate) foreground: bool,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// Force worktree removal
+    ///
+    /// Remove worktrees even if they contain untracked files (like build
+    /// artifacts). Without this flag, removal fails if untracked files exist.
+    #[arg(short, long)]
+    pub(crate) force: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct MergeArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub(crate) target: Option<String>,
+
+    /// Force commit squashing
+    #[arg(long, overrides_with = "no_squash", hide = true)]
+    pub(crate) squash: bool,
+
+    /// Skip commit squashing
+    #[arg(long = "no-squash", overrides_with = "squash")]
+    pub(crate) no_squash: bool,
+
+    /// Force commit and squash
+    #[arg(long, overrides_with = "no_commit", hide = true)]
+    pub(crate) commit: bool,
+
+    /// Skip commit and squash
+    #[arg(long = "no-commit", overrides_with = "commit")]
+    pub(crate) no_commit: bool,
+
+    /// Force rebasing onto target
+    #[arg(long, overrides_with = "no_rebase", hide = true)]
+    pub(crate) rebase: bool,
+
+    /// Skip rebase (fail if not already rebased)
+    #[arg(long = "no-rebase", overrides_with = "rebase")]
+    pub(crate) no_rebase: bool,
+
+    /// Force worktree removal after merge
+    #[arg(long, overrides_with = "no_remove", hide = true)]
+    pub(crate) remove: bool,
+
+    /// Keep worktree after merge
+    #[arg(long = "no-remove", overrides_with = "remove")]
+    pub(crate) no_remove: bool,
+
+    /// Create a merge commit (no fast-forward)
+    #[arg(long = "no-ff", overrides_with = "ff")]
+    pub(crate) no_ff: bool,
+
+    /// Allow fast-forward (default)
+    #[arg(long, overrides_with = "no_ff", hide = true)]
+    pub(crate) ff: bool,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Force running hooks
+    #[arg(long, overrides_with_all = ["no_hooks", "no_verify"], hide = true)]
+    pub(crate) verify: bool,
+
+    /// Skip hooks
+    #[arg(
+        long = "no-hooks",
+        overrides_with_all = ["verify", "no_verify"],
+        help_heading = "Automation"
+    )]
+    pub(crate) no_hooks: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", overrides_with_all = ["verify", "no_hooks"], hide = true)]
+    pub(crate) no_verify: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// Switch to a worktree; create if needed
@@ -379,97 +617,7 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 - [`wt merge`](@/merge.md) — Integrate changes back to the default branch
 "#
     )]
-    Switch {
-        /// Branch name or shortcut
-        ///
-        /// Opens interactive picker if omitted.
-        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
-        #[arg(add = crate::completion::worktree_branch_completer())]
-        branch: Option<String>,
-
-        /// Include branches without worktrees
-        #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
-        branches: bool,
-
-        /// Include remote branches
-        #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
-        remotes: bool,
-
-        /// Create a new branch
-        #[arg(short = 'c', long, requires = "branch")]
-        create: bool,
-
-        /// Base branch
-        ///
-        /// Defaults to default branch.
-        #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
-        base: Option<String>,
-
-        /// Command to run after switch
-        ///
-        /// Replaces the wt process with the command after switching, giving
-        /// it full terminal control. Useful for launching editors, AI agents,
-        /// or other interactive tools.
-        ///
-        /// Supports [hook template variables](@/hook.md#template-variables)
-        /// (`{{ branch }}`, `{{ worktree_path }}`, etc.) and filters.
-        /// `{{ base }}` and `{{ base_worktree_path }}` require `--create`.
-        ///
-        /// Especially useful with shell aliases:
-        ///
-        /// ```sh
-        /// alias wsc='wt switch --create -x claude'
-        /// wsc feature-branch -- 'Fix GH #322'
-        /// ```
-        ///
-        /// Then `wsc feature-branch` creates the worktree and launches Claude
-        /// Code. Arguments after `--` are passed to the command, so
-        /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
-        /// starting Claude with a prompt.
-        ///
-        /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
-        /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
-        /// a tmux session named after the branch.
-        #[arg(short = 'x', long, requires = "branch")]
-        execute: Option<String>,
-
-        /// Additional arguments for --execute command (after --)
-        ///
-        /// Arguments after `--` are appended to the execute command.
-        /// Each argument is expanded for templates, then POSIX shell-escaped.
-        #[arg(last = true, requires = "execute")]
-        execute_args: Vec<String>,
-
-        /// Remove stale paths at target
-        #[arg(long, requires = "branch")]
-        clobber: bool,
-
-        /// Skip directory change after switching
-        ///
-        /// Hooks still run normally. Useful when hooks handle navigation
-        /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
-        ///
-        /// In picker mode (no branch argument), prints the selected branch
-        /// name and exits without switching. Useful for scripting.
-        #[arg(long, overrides_with = "cd")]
-        no_cd: bool,
-
-        /// Change directory after switching
-        #[arg(long, overrides_with = "no_cd", hide = true)]
-        cd: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// Skip hooks (deprecated alias for --no-hooks)
-        #[arg(long = "no-verify", hide = true)]
-        no_verify_deprecated: bool,
-    },
+    Switch(SwitchArgs),
 
     /// List worktrees and their status
     #[command(
@@ -730,38 +878,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
     // Could fix with external_subcommand + post-parse validation, but not worth the
     // code. The `statusline` subcommand may move elsewhere anyway.
     #[command(args_conflicts_with_subcommands = true)]
-    List {
-        #[command(subcommand)]
-        subcommand: Option<ListSubcommand>,
-
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
-        format: OutputFormat,
-
-        /// Include branches without worktrees
-        #[arg(long)]
-        branches: bool,
-
-        /// Include remote branches
-        #[arg(long)]
-        remotes: bool,
-
-        /// Show CI, diff analysis, and LLM summaries
-        #[arg(long)]
-        full: bool,
-
-        /// Show fast info immediately, update with slow info
-        ///
-        /// Displays local data (branches, paths, status) first, then updates
-        /// with remote data (CI, upstream) as it arrives. Use --no-progressive
-        /// to force buffered rendering. Auto-enabled for TTY.
-        #[arg(long, overrides_with = "no_progressive")]
-        progressive: bool,
-
-        /// Force buffered rendering
-        #[arg(long = "no-progressive", overrides_with = "progressive", hide = true)]
-        no_progressive: bool,
-    },
+    List(ListArgs),
 
     /// Remove worktree; delete branch if merged
     ///
@@ -844,42 +961,7 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 - [`wt merge`](@/merge.md) — Remove worktree after merging
 - [`wt list`](@/list.md) — View all worktrees
 "#)]
-    Remove {
-        /// Branch name [default: current]
-        #[arg(add = crate::completion::local_branches_completer())]
-        branches: Vec<String>,
-
-        /// Keep branch after removal
-        #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        delete_branch: bool,
-
-        /// Delete unmerged branches
-        #[arg(short = 'D', long = "force-delete")]
-        force_delete: bool,
-
-        /// Run removal in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// Skip hooks (deprecated alias for --no-hooks)
-        #[arg(long = "no-verify", hide = true)]
-        no_verify_deprecated: bool,
-
-        /// Force worktree removal
-        ///
-        /// Remove worktrees even if they contain untracked files (like build
-        /// artifacts). Without this flag, removal fails if untracked files exist.
-        #[arg(short, long)]
-        force: bool,
-    },
+    Remove(RemoveArgs),
 
     /// Merge current branch into the target branch
     ///
@@ -962,77 +1044,7 @@ lint = "cargo clippy"
 - [`wt switch`](@/switch.md) — Navigate to other worktrees
 "#
     )]
-    Merge {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-
-        /// Force commit squashing
-        #[arg(long, overrides_with = "no_squash", hide = true)]
-        squash: bool,
-
-        /// Skip commit squashing
-        #[arg(long = "no-squash", overrides_with = "squash")]
-        no_squash: bool,
-
-        /// Force commit and squash
-        #[arg(long, overrides_with = "no_commit", hide = true)]
-        commit: bool,
-
-        /// Skip commit and squash
-        #[arg(long = "no-commit", overrides_with = "commit")]
-        no_commit: bool,
-
-        /// Force rebasing onto target
-        #[arg(long, overrides_with = "no_rebase", hide = true)]
-        rebase: bool,
-
-        /// Skip rebase (fail if not already rebased)
-        #[arg(long = "no-rebase", overrides_with = "rebase")]
-        no_rebase: bool,
-
-        /// Force worktree removal after merge
-        #[arg(long, overrides_with = "no_remove", hide = true)]
-        remove: bool,
-
-        /// Keep worktree after merge
-        #[arg(long = "no-remove", overrides_with = "remove")]
-        no_remove: bool,
-
-        /// Create a merge commit (no fast-forward)
-        #[arg(long = "no-ff", overrides_with = "ff")]
-        no_ff: bool,
-
-        /// Allow fast-forward (default)
-        #[arg(long, overrides_with = "no_ff", hide = true)]
-        ff: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Force running hooks
-        #[arg(long, overrides_with_all = ["no_hooks", "no_verify"], hide = true)]
-        verify: bool,
-
-        /// Skip hooks
-        #[arg(
-            long = "no-hooks",
-            overrides_with_all = ["verify", "no_verify"],
-            help_heading = "Automation"
-        )]
-        no_hooks: bool,
-
-        /// Skip hooks (deprecated alias for --no-hooks)
-        #[arg(long = "no-verify", overrides_with_all = ["verify", "no_hooks"], hide = true)]
-        no_verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-    },
+    Merge(MergeArgs),
     /// Deprecated: use `wt switch` instead
     ///
     /// Interactive worktree picker (now integrated into `wt switch`).

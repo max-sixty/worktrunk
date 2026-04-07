@@ -15,7 +15,6 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -24,7 +23,7 @@ use ignore::gitignore::GitignoreBuilder;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
-use worktrunk::copy::{copy_dir_recursive, copy_pool_install, create_symlink, remove_if_exists};
+use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -770,7 +769,6 @@ pub fn step_copy_ignored(
     }
 
     let verbose = verbosity();
-    let copied_count = AtomicUsize::new(0);
 
     // Show entries in verbose or dry-run mode
     if verbose >= 1 || dry_run {
@@ -800,80 +798,44 @@ pub fn step_copy_ignored(
         }
     }
 
-    copy_pool_install(|| {
-        entries_to_copy
-            .par_iter()
-            .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
-                // Paths from git ls-files are always under source_path
-                let relative = src_entry
-                    .strip_prefix(&source_path)
-                    .expect("git ls-files path under worktree");
-                let dest_entry = dest_path.join(relative);
+    let mut copied_count = 0usize;
+    for (src_entry, is_dir) in &entries_to_copy {
+        let relative = src_entry
+            .strip_prefix(&source_path)
+            .expect("git ls-files path under worktree");
+        let dest_entry = dest_path.join(relative);
 
-                if *is_dir {
-                    copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
-                        format!("copying directory {}", format_path_for_display(relative))
-                    })?;
-                    copied_count.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    if let Some(parent) = dest_entry.parent() {
-                        fs::create_dir_all(parent).with_context(|| {
-                            format!(
-                                "creating directory for {}",
-                                format_path_for_display(relative)
-                            )
-                        })?;
-                    }
-                    if force {
-                        remove_if_exists(&dest_entry)?;
-                    }
-                    // Check if source is a symlink — preserve it instead of following it
-                    let display_path = format_path_for_display(relative);
-                    let source_is_symlink = fs::symlink_metadata(src_entry)
-                        .context(format!("reading metadata for {display_path}"))?
-                        .file_type()
-                        .is_symlink();
-                    if source_is_symlink {
-                        // Skip existing symlinks for idempotent hook usage
-                        if dest_entry.symlink_metadata().is_err() {
-                            let target = fs::read_link(src_entry)
-                                .context(format!("reading symlink {display_path}"))?;
-                            create_symlink(&target, src_entry, &dest_entry)?;
-                            copied_count.fetch_add(1, Ordering::Relaxed);
-                        }
-                    } else {
-                        // Skip existing entries (files or symlinks) for idempotent hook usage.
-                        // Check symlink_metadata (not exists()) because exists() follows symlinks
-                        // and returns false for broken ones, which would cause reflink_or_copy to
-                        // fail with ENOENT on some platforms when copying through the broken symlink.
-                        if dest_entry.symlink_metadata().is_err() {
-                            match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                                Ok(_) => {
-                                    copied_count.fetch_add(1, Ordering::Relaxed);
-                                }
-                                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                                Err(e) => {
-                                    return Err(anyhow::Error::from(e)
-                                        .context(format!("copying {display_path}")));
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(())
-            })
-    })?;
+        if *is_dir {
+            copied_count +=
+                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+                    format!("copying directory {}", format_path_for_display(relative))
+                })?;
+        } else {
+            if let Some(parent) = dest_entry.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "creating directory for {}",
+                        format_path_for_display(relative)
+                    )
+                })?;
+            }
+            let is_symlink = fs::symlink_metadata(src_entry)
+                .with_context(|| {
+                    format!("reading metadata for {}", format_path_for_display(relative))
+                })?
+                .file_type()
+                .is_symlink();
+            if copy_leaf(src_entry, &dest_entry, is_symlink, force)? {
+                copied_count += 1;
+            }
+        }
+    }
 
     // Show summary
-    let copied_count = copied_count.load(Ordering::Relaxed);
-    let entry_word = if copied_count == 1 {
-        "entry"
-    } else {
-        "entries"
-    };
+    let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(
         "{}",
-        success_message(format!("Copied {copied_count} {entry_word}"))
+        success_message(format!("Copied {copied_count} {file_word}"))
     );
 
     Ok(())
@@ -1781,19 +1743,6 @@ pub fn step_relocate(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_remove_if_exists_nonexistent() {
-        // NotFound is silently ignored
-        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
-    }
-
-    #[test]
-    fn test_remove_if_exists_not_a_file() {
-        // Trying to remove a directory with remove_file produces a non-NotFound error
-        let dir = std::env::temp_dir();
-        assert!(remove_if_exists(&dir).is_err());
-    }
 
     #[test]
     fn test_move_entry_file() {

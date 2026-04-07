@@ -16,7 +16,6 @@
 //! wt-perf setup picker-test
 //! ```
 
-use std::collections::HashMap;
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
@@ -216,10 +215,11 @@ fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::T
         },
         _ => {
             if std::io::stdin().is_terminal() {
-                eprintln!("Reading from stdin... (pipe trace data or use Ctrl+D to end)");
-                eprintln!();
                 eprintln!(
-                    "Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+                    "\
+Reading from stdin... (pipe trace data or use Ctrl+D to end)
+
+Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
                 );
             }
 
@@ -235,14 +235,17 @@ fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::T
     let entries = worktrunk::trace::parse_lines(&input);
 
     if entries.is_empty() {
-        eprintln!("No trace entries found in input.");
-        eprintln!();
-        eprintln!("Trace lines should look like:");
-        eprintln!("  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true");
-        eprintln!("  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"");
-        eprintln!();
-        eprintln!("To capture traces, run with RUST_LOG=debug:");
-        eprintln!("  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>");
+        eprintln!(
+            "\
+No trace entries found in input.
+
+Trace lines should look like:
+  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true
+  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"
+
+To capture traces, run with RUST_LOG=debug:
+  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+        );
         std::process::exit(1);
     }
 
@@ -262,14 +265,14 @@ const REPO_WIDE_PATTERNS: &[(&str, &str)] = &[
 /// Truncate a string for display, respecting UTF-8 char boundaries.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        return s.to_string();
+        s.to_string()
+    } else {
+        let mut boundary = max - 3;
+        while !s.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!("{}...", &s[..boundary])
     }
-    // Find the last char boundary at or before max-3
-    let mut end = max - 3;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}...", &s[..end])
 }
 
 /// Analyze trace entries for cache effectiveness and report findings.
@@ -278,16 +281,15 @@ fn truncate(s: &str, max: usize) -> String {
 /// 1. Repo-wide OnceCell commands — should appear at most once
 /// 2. Same-context duplicates — commands that ran multiple times for the
 ///    same worktree, indicating missing or bypassed caches
-/// 3. All duplicate commands — full picture sorted by count
+/// 3. Summary — total commands, unique commands, duplicate counts
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use worktrunk::trace::TraceEntryKind;
 
-    // Collect (command, context) pairs
     let mut total_commands = 0;
     let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
     let mut pair_counts: HashMap<(&str, &str), usize> = HashMap::new();
-    let mut contexts: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut contexts: HashSet<&str> = HashSet::new();
 
     for entry in entries {
         if let TraceEntryKind::Command { command, .. } = &entry.kind {
@@ -322,8 +324,6 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     }
 
     // === Section 2: Same-context duplicates ===
-    // Group by command: for each command, find the max count across contexts
-    // and which contexts have duplicates
     let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
     for ((cmd, ctx), count) in &pair_counts {
         if *count > 1 {
@@ -332,14 +332,15 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     }
 
     if !cmd_ctx_info.is_empty() {
-        println!();
-        println!("=== Same-context duplicates (potential cache misses) ===");
-        println!();
-        println!("Commands that ran multiple times for the SAME worktree.");
-        println!("These are the strongest signal of missing/bypassed caches.");
-        println!();
+        println!(
+            "\
+\n=== Same-context duplicates (potential cache misses) ===
 
-        // Sort by max-per-context descending
+Commands that ran multiple times for the SAME worktree.
+These are the strongest signal of missing/bypassed caches.
+"
+        );
+
         let mut sorted: Vec<_> = cmd_ctx_info.iter().collect();
         sorted.sort_by(|a, b| {
             let max_a = a.1.iter().map(|(_, c)| c).max().unwrap();
@@ -372,20 +373,15 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     }
 
     // === Section 3: Summary ===
-    println!();
-    println!("=== Summary ===");
-    println!();
-    println!(
-        "  {} commands total, {} unique, {} contexts",
-        total_commands,
-        cmd_counts.len(),
-        contexts.len()
-    );
-
     let dup_count: usize = cmd_counts.values().filter(|c| **c > 1).count();
     let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
     println!(
-        "  {} commands ran more than once ({} extra calls)",
-        dup_count, dup_total
+        "\
+\n=== Summary ===
+
+  {total_commands} commands total, {} unique, {} contexts
+  {dup_count} commands ran more than once ({dup_total} extra calls)",
+        cmd_counts.len(),
+        contexts.len()
     );
 }
