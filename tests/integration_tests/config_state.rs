@@ -635,7 +635,13 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [32m✓[39m [32mCleared previous branch[39m
+    [32m✓[39m [32mCleared [1m1[22m marker[39m
+    [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m variable[39m
+    [32m✓[39m [32mCleared [1m1[22m log file[39m
+    ");
 
     // Verify everything was cleared
     assert!(
@@ -693,7 +699,7 @@ fn test_state_clear_all_cleans_trash(repo: TestRepo) {
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m3[22m trash entries[39m");
 
     // Trash directory itself should be removed (empty after cleanup)
     assert!(!trash_dir.exists(), "Trash directory should be cleaned up");
