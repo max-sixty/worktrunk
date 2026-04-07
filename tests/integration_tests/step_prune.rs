@@ -194,12 +194,9 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
     repo.add_worktree("detached-integrated");
     repo.detach_head_in_worktree("detached-integrated");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     // Worktree was removed (non-current — no placeholder)
     let parent = repo.root_path().parent().unwrap();
