@@ -406,6 +406,25 @@ use std::process::Command;
 pub fn wt_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_wt"))
 }
+
+/// Path to a workspace member binary (e.g., `wt-perf`, `mock-stub`).
+///
+/// These are binaries from other workspace packages (not the main `wt` crate),
+/// so `CARGO_BIN_EXE_<name>` isn't available. Derives the path from the test
+/// executable's location in `target/debug/deps/`.
+pub fn workspace_bin(name: &str) -> PathBuf {
+    let mut path = std::env::current_exe().expect("failed to get test executable path");
+    path.pop(); // Remove test binary name
+    path.pop(); // Remove deps/
+
+    #[cfg(windows)]
+    path.push(format!("{name}.exe"));
+
+    #[cfg(not(windows))]
+    path.push(name);
+
+    path
+}
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
 use worktrunk::path::to_posix_path;
@@ -668,6 +687,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// This helper mirrors the environment preparation performed by `wt_command`
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
+///
+/// This is intentionally more thorough than `wt_perf::isolate_cmd()`:
+/// integration tests need full determinism (timestamps, locale, mock commands,
+/// wide COLUMNS for path display) while benchmarks only need host config stripped.
 ///
 /// ## Related: `TestRepo::test_env_vars()`
 ///

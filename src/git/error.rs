@@ -962,7 +962,7 @@ impl std::fmt::Display for WorktrunkError {
                 error,
                 ..
             } => {
-                // Note: Callers that support --no-verify should add the hint themselves
+                // Note: Callers that support --no-hooks should add the hint themselves
                 if let Some(name) = command_name {
                     write!(
                         f,
@@ -1005,7 +1005,7 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
     })
 }
 
-/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-verify.
+/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-hooks.
 ///
 /// ## When to use
 ///
@@ -1017,7 +1017,7 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
 /// ## When NOT to use
 ///
 /// Don't use for `wt hook <type>` - the user explicitly asked to run hooks,
-/// so suggesting `--no-verify` makes no sense.
+/// so suggesting `--no-hooks` makes no sense.
 pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
     // Extract hook_type first (if applicable), then decide whether to wrap
     let hook_type = err
@@ -1037,8 +1037,8 @@ pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Wrapper that displays a HookCommandFailed error with the --no-verify hint.
-/// Created by `add_hook_skip_hint()` for commands that support `--no-verify`.
+/// Wrapper that displays a HookCommandFailed error with the --no-hooks hint.
+/// Created by `add_hook_skip_hint()` for commands that support `--no-hooks`.
 #[derive(Debug)]
 pub struct HookErrorWithHint {
     inner: anyhow::Error,
@@ -1054,7 +1054,7 @@ impl std::fmt::Display for HookErrorWithHint {
             f,
             "\n{}",
             hint_message(cformat!(
-                "To skip {} hooks, re-run with <underline>--no-verify</>",
+                "To skip {} hooks, re-run with <underline>--no-hooks</>",
                 self.hook_type
             ))
         )
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn snapshot_add_hook_skip_hint() {
-        // Wraps HookCommandFailed with --no-verify hint
+        // Wraps HookCommandFailed with --no-hooks hint
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("test".into()),
@@ -1189,7 +1189,7 @@ mod tests {
         .into();
         assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
         [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
-        [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-verify[24m[22m
+        [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
         // pre-commit hook type
@@ -1202,25 +1202,25 @@ mod tests {
         .into();
         assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
         [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
-        [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-verify[24m[22m
+        [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
-        // Passes through non-hook errors unchanged (no --no-verify hint)
+        // Passes through non-hook errors unchanged (no --no-hooks hint)
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "test".into(),
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::Other {
             message: "some error".into(),
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
     }
 
     #[test]

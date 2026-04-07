@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use super::{DiffStats, LineDiff, Repository};
 
@@ -154,28 +155,27 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        // Check cache first
-        if let Some(cached) = self.cache.merge_base.get(&key) {
-            return Ok(cached.clone());
+        match self.cache.merge_base.entry(key) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
+                let output = self.run_command_output(&["merge-base", commit1, commit2])?;
+
+                let result = if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                } else if output.status.code() == Some(1) {
+                    None
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!(
+                        "git merge-base failed for {commit1} {commit2}: {}",
+                        stderr.trim()
+                    );
+                };
+
+                Ok(e.insert(result).clone())
+            }
         }
-
-        // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-        let output = self.run_command_output(&["merge-base", commit1, commit2])?;
-
-        let result = if output.status.success() {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        } else if output.status.code() == Some(1) {
-            None
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "git merge-base failed for {commit1} {commit2}: {}",
-                stderr.trim()
-            );
-        };
-
-        self.cache.merge_base.insert(key, result.clone());
-        Ok(result)
     }
 
     /// Calculate commits ahead and behind between two refs.

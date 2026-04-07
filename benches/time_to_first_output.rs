@@ -38,7 +38,7 @@ fn bench_first_output(c: &mut Criterion) {
     // remove: exits after validation, before approval/output
     group.bench_function("remove", |b| {
         b.iter(|| {
-            let output = make_cmd(&["remove", "--yes", "--no-verify", "--force", "feature-wt-1"])
+            let output = make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
                 .output()
                 .unwrap();
             assert!(
@@ -52,7 +52,7 @@ fn bench_first_output(c: &mut Criterion) {
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         b.iter(|| {
-            let output = make_cmd(&["switch", "--yes", "--no-verify", "feature-wt-1"])
+            let output = make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
                 .output()
                 .unwrap();
             assert!(

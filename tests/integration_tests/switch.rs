@@ -720,7 +720,7 @@ echo 'repo={{ repo }}'
     });
 }
 
-// --no-verify flag tests
+// --no-hooks flag tests
 #[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
     snapshot_switch(
@@ -731,7 +731,7 @@ fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
             "no-hooks-test",
             "--execute",
             "echo 'execute command runs'",
-            "--no-verify",
+            "--no-hooks",
         ],
     );
 }
@@ -770,11 +770,11 @@ approved-commands = ["{}"]
     )
     .unwrap();
 
-    // With --no-verify, the post-start command should be skipped
+    // With --no-hooks, the post-start command should be skipped
     snapshot_switch(
         "switch_no_hooks_skips_post_start",
         &repo,
-        &["--create", "no-post-start", "--no-verify"],
+        &["--create", "no-post-start", "--no-hooks"],
     );
 }
 
@@ -782,7 +782,7 @@ approved-commands = ["{}"]
 fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
     repo.add_worktree("existing-no-hooks");
 
-    // With --no-verify, the --execute command should still run
+    // With --no-hooks, the --execute command should still run
     snapshot_switch(
         "switch_no_hooks_existing",
         &repo,
@@ -790,7 +790,7 @@ fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
             "existing-no-hooks",
             "--execute",
             "echo 'execute still runs'",
-            "--no-verify",
+            "--no-hooks",
         ],
     );
 }
@@ -810,14 +810,36 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // With --no-verify, even --yes shouldn't execute config commands
+    // With --no-hooks, even --yes shouldn't execute config commands
     // (HOME is automatically set to repo.home_path() by configure_wt_cmd)
     snapshot_switch(
         "switch_no_hooks_with_yes",
         &repo,
-        &["--create", "yes-no-hooks", "--yes", "--no-verify"],
+        &["--create", "yes-no-hooks", "--yes", "--no-hooks"],
     );
 }
+
+// --no-verify backward compatibility
+#[rstest]
+fn test_switch_no_verify_deprecated_still_works(repo: TestRepo) {
+    // --no-verify should still work but emit a deprecation warning
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "deprecated-flag-test", "--no-verify"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
+    );
+}
+
 // Branch inference and special branch tests
 #[rstest]
 fn test_switch_create_no_remote(repo: TestRepo) {
@@ -3635,6 +3657,103 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
 
     // Verify switching to the relative-path worktree works
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
+}
+
+// -- JSON format tests --
+
+#[rstest]
+fn test_switch_format_json_create(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "json-test",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "json-test");
+    assert!(json["path"].as_str().unwrap().contains("json-test"));
+    assert_eq!(json["created_branch"], true);
+}
+
+#[rstest]
+fn test_switch_format_json_existing(mut repo: TestRepo) {
+    // Create worktree first
+    repo.add_worktree("existing-json");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "existing-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "existing");
+    assert_eq!(json["branch"], "existing-json");
+    // created_branch should be absent for existing switches
+    assert!(json.get("created_branch").is_none());
+}
+
+#[rstest]
+fn test_switch_format_json_already_at(mut repo: TestRepo) {
+    // Create worktree and switch to it
+    let path = repo.add_worktree("already-json");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&path)
+        .args([
+            "switch",
+            "already-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    assert_eq!(json["branch"], "already-json");
+}
+
+#[rstest]
+fn test_switch_format_table_rejected_by_clap(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "table-test",
+            "--no-cd",
+            "--yes",
+            "--format=table",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid value"), "stderr: {stderr}");
 }
 
 /// Test that `[switch] cd = false` config is respected when no flags provided

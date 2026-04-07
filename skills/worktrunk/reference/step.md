@@ -145,7 +145,7 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
 
 Global Options:
@@ -232,7 +232,7 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
 
 Global Options:

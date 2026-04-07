@@ -152,17 +152,14 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .spawn()
         .ok()?;
 
-    // Take stdout handle before wait_timeout (which reaps the process)
-    let mut stdout_handle = child.stdout.take()?;
-
     let timeout = Duration::from_secs(2);
 
     match child.wait_timeout(timeout) {
         Ok(Some(_status)) => {
-            // Process finished - read stdout (use lossy decode for robustness)
+            // Child exited: pipe write ends are closed, safe to read sequentially.
             use std::io::Read;
             let mut buf = Vec::new();
-            let _ = stdout_handle.read_to_end(&mut buf);
+            child.stdout.as_mut()?.read_to_end(&mut buf).ok()?;
             let stdout = String::from_utf8_lossy(&buf);
             Some(stdout.contains("__WT_COMPINIT_YES__"))
         }

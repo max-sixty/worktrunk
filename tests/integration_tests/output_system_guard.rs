@@ -40,6 +40,8 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "step_commands.rs",
     // --no-cd flag: branch name output for scripting
     "picker/mod.rs",
+    // JSON output for wt switch --format=json
+    "handle_switch.rs",
 ];
 
 /// Substrings that indicate the line is a special case (e.g., in a comment or test reference)

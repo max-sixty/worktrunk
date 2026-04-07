@@ -25,6 +25,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -60,6 +61,7 @@ Clears all stored state:
 - All CI status cache
 - All hints
 - All log files
+- Stale trash from worktree removal ([2m.git/wt/trash/[0m)
 
 Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
 to clear specific state.

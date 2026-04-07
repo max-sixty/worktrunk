@@ -20,17 +20,7 @@ use std::path::Path;
 
 /// Path to the mock-stub binary, built by `cargo test`.
 fn mock_stub_binary() -> std::path::PathBuf {
-    let mut path = std::env::current_exe().expect("failed to get test executable path");
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove deps/
-
-    #[cfg(windows)]
-    path.push("mock-stub.exe");
-
-    #[cfg(not(windows))]
-    path.push("mock-stub");
-
-    path
+    super::workspace_bin("mock-stub")
 }
 
 /// Builder for mock command configuration.

@@ -3,17 +3,10 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn wt_perf_bin() -> std::path::PathBuf {
-    // Build and get path to wt-perf binary
-    let output = Command::new("cargo")
-        .args(["build", "-p", "wt-perf"])
-        .output()
-        .expect("Failed to build wt-perf");
-    assert!(output.status.success(), "Failed to build wt-perf");
+use crate::common::workspace_bin;
 
-    std::env::current_dir()
-        .unwrap()
-        .join("target/debug/wt-perf")
+fn wt_perf_bin() -> std::path::PathBuf {
+    workspace_bin("wt-perf")
 }
 
 /// Test that the binary produces Chrome Trace Format JSON for sample trace input.

@@ -1,7 +1,7 @@
 [workspace]
 members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub so `cargo test` builds its binary (via its integration test)
-default-members = [".", "tests/helpers/mock-stub"]
+# Include mock-stub and wt-perf so `cargo test` builds their binaries
+default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 [package]
 name = "worktrunk"
@@ -136,7 +136,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.47.1", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.47.2", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.27"
