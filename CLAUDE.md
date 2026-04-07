@@ -242,8 +242,8 @@ When no structured alternative exists, document the fragility inline.
 
 Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Same operation on same branch overwrites the previous log.
 
-- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
-- **Background removal**: `{branch}-remove.log`
+- **Background hooks**: `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` (source: `user` or `project`)
+- **Background removal**: `{branch}-{hash}-remove.log`
 
 ## Coverage
 

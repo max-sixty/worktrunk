@@ -957,7 +957,7 @@ $ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 View a specific hook log:
 ```bash
-$ cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
+$ cat "$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log"
 ```
 
 Clear all logs:

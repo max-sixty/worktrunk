@@ -927,7 +927,7 @@ Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 View a specific hook log:
-{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log__WT_QUOT__") }}
+{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log__WT_QUOT__") }}
 
 Clear all logs:
 {{ terminal(cmd="wt config state logs clear") }}
