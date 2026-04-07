@@ -81,6 +81,40 @@ fn test_prune_requires_confirmation(mut repo: TestRepo) {
     );
 }
 
+/// Without --yes, prune removes worktrees when user accepts the confirmation prompt.
+#[rstest]
+fn test_prune_confirmation_accepted(mut repo: TestRepo) {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    repo.commit("initial");
+    repo.add_worktree("merged-branch");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "prune", "--min-age=0s"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn wt");
+    {
+        let stdin = child.stdin.as_mut().expect("failed to get stdin");
+        stdin.write_all(b"y\n").expect("failed to write to stdin");
+    }
+    let output = child.wait_with_output().expect("failed to wait");
+    assert!(output.status.success(), "prune should succeed on accept");
+
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.merged-branch");
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should be removed after confirmation"
+    );
+}
+
 /// Prune actually removes merged worktrees
 #[rstest]
 fn test_prune_removes_merged(mut repo: TestRepo) {
