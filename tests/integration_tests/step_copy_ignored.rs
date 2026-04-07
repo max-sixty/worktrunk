@@ -828,6 +828,27 @@ fn test_copy_ignored_verbose_directory(mut repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_copy_ignored_counts_files_not_entries(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a directory with multiple files — the summary should count
+    // individual files, not top-level entries.
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(target_dir.join("debug/deps")).unwrap();
+    fs::write(target_dir.join("debug/output"), "bin1").unwrap();
+    fs::write(target_dir.join("debug/deps/libfoo.rlib"), "lib").unwrap();
+    fs::write(target_dir.join("debug/deps/libbar.rlib"), "lib").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
+}
+
 /// Test idempotent behavior with broken symlinks after interrupted copy (GitHub issue #1084)
 ///
 /// When ctrl+c interrupts a copy, broken symlinks may remain at the destination.

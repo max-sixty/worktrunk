@@ -16,6 +16,7 @@ We are in **maturing** mode:
 - Breaking changes to external interfaces require justification (significant improvement, not just cleanup)
 - Prefer deprecation warnings over silent breaks
 - No Rust library compatibility concerns (this is a CLI tool only)
+- **MSRV policy: latest stable − 1** — bumped during weekly tend maintenance (see `running-tend` skill)
 
 **External interfaces to protect:**
 - **Config file format** (`wt.toml`, user config) — avoid breaking changes; provide migration guidance when necessary

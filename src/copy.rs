@@ -51,10 +51,10 @@ pub fn lower_process_priority() {
 
 /// Copy a single file or symlink, using reflink (COW) when possible.
 ///
-/// Returns `true` if the entry was copied, `false` if skipped (destination
-/// already exists). When `force` is true, existing entries are removed before
-/// copying.
-pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyhow::Result<bool> {
+/// Detects symlinks via `symlink_metadata` on the source. Returns `true` if
+/// the entry was copied, `false` if skipped (destination already exists).
+/// When `force` is true, existing entries are removed before copying.
+pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<bool> {
     if force {
         remove_if_exists(dest)?;
     }
@@ -63,6 +63,12 @@ pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyh
     if dest.symlink_metadata().is_ok() {
         return Ok(false);
     }
+
+    let is_symlink = src
+        .symlink_metadata()
+        .with_context(|| format!("reading metadata for {}", src.display()))?
+        .file_type()
+        .is_symlink();
 
     if is_symlink {
         let target =
@@ -84,7 +90,6 @@ pub fn copy_leaf(src: &Path, dest: &Path, is_symlink: bool, force: bool) -> anyh
 struct CopyLeaf {
     src: PathBuf,
     dest: PathBuf,
-    is_symlink: bool,
 }
 
 /// Copy a directory tree using reflink (COW) per file.
@@ -123,7 +128,6 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
                 leaves.push(CopyLeaf {
                     src: src_path,
                     dest: dest_path,
-                    is_symlink: file_type.is_symlink(),
                 });
             } else {
                 log::debug!("skipping non-regular file: {}", src_path.display());
@@ -137,7 +141,7 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                if copy_leaf(&leaf.src, &leaf.dest, leaf.is_symlink, force)? {
+                if copy_leaf(&leaf.src, &leaf.dest, force)? {
                     copied.fetch_add(1, Ordering::Relaxed);
                 }
                 Ok(())

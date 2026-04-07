@@ -819,13 +819,7 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            let is_symlink = fs::symlink_metadata(src_entry)
-                .with_context(|| {
-                    format!("reading metadata for {}", format_path_for_display(relative))
-                })?
-                .file_type()
-                .is_symlink();
-            if copy_leaf(src_entry, &dest_entry, is_symlink, force)? {
+            if copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
             }
         }
@@ -906,11 +900,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
         copy_dir_recursive(src, dest, true)?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        reflink_copy::reflink_or_copy(src, dest).context(format!(
-            "copying {} to {}",
-            src.display(),
-            dest.display()
-        ))?;
+        copy_leaf(src, dest, true)?;
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
