@@ -39,12 +39,28 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 /// Check if a file in `.git/wt/logs/` is a worktrunk log file.
 ///
-/// Matches `.log` (hook output), `.jsonl` (command audit log), and `.jsonl.old` (rotated).
+/// Matches `.log` (hook output + verbose), `.jsonl`/`.jsonl.old` (command audit log),
+/// and known diagnostic files.
 fn is_wt_log_file(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+    name.ends_with(".log")
+        || name.ends_with(".jsonl")
+        || name.ends_with(".jsonl.old")
+        || is_diagnostic_file(name)
+}
+
+/// Check if a file is a diagnostic file (`verbose.log` or `diagnostic.md`).
+///
+/// These are created by `-vv` and are separate from hook output and the command audit log.
+fn is_diagnostic_file(name: &str) -> bool {
+    name == "verbose.log" || name == "diagnostic.md"
+}
+
+/// Check if a file is a hook output log (branch-specific `.log` files, not diagnostic).
+fn is_hook_output_file(name: &str) -> bool {
+    name.ends_with(".log") && !is_diagnostic_file(name)
 }
 
 /// Clear stale entries from the wt/trash directory.
@@ -177,15 +193,20 @@ fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std:
     Ok(())
 }
 
-/// Render the COMMAND LOG section into the output buffer.
-pub(super) fn render_command_log(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+/// Render a single log section: heading, then filtered entries from the logs directory.
+fn render_log_section(
+    out: &mut String,
+    repo: &Repository,
+    heading: &str,
+    filter: impl Fn(&str) -> bool,
+) -> anyhow::Result<()> {
     let log_dir = repo.wt_logs_dir();
     let log_dir_display = format_path_for_display(&log_dir);
 
     writeln!(
         out,
         "{}",
-        format_heading("COMMAND LOG", Some(&format!("@ {log_dir_display}")))
+        format_heading(heading, Some(&format!("@ {log_dir_display}")))
     )?;
 
     if !log_dir.exists() {
@@ -195,41 +216,20 @@ pub(super) fn render_command_log(out: &mut String, repo: &Repository) -> anyhow:
 
     let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            e.path().is_file() && is_command_log_file(&name)
-        })
+        .filter(|e| e.path().is_file() && filter(&e.file_name().to_string_lossy()))
         .collect();
 
     render_log_table(out, &mut entries)?;
     Ok(())
 }
 
-/// Render the HOOK OUTPUT section into the output buffer.
-pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let log_dir = repo.wt_logs_dir();
-    let log_dir_display = format_path_for_display(&log_dir);
-
-    writeln!(
-        out,
-        "{}",
-        format_heading("HOOK OUTPUT", Some(&format!("@ {log_dir_display}")))
-    )?;
-
-    if !log_dir.exists() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-        return Ok(());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            e.path().is_file() && is_wt_log_file(&e.path()) && !is_command_log_file(&name)
-        })
-        .collect();
-
-    render_log_table(out, &mut entries)?;
+/// Render all three log sections (command log, hook output, diagnostic) into a buffer.
+pub(super) fn render_all_log_sections(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    render_log_section(out, repo, "COMMAND LOG", is_command_log_file)?;
+    writeln!(out)?;
+    render_log_section(out, repo, "HOOK OUTPUT", is_hook_output_file)?;
+    writeln!(out)?;
+    render_log_section(out, repo, "DIAGNOSTIC", is_diagnostic_file)?;
     Ok(())
 }
 
@@ -287,9 +287,7 @@ pub fn handle_logs_get(
         None => {
             // No hook specified, show all log files
             let mut out = String::new();
-            render_command_log(&mut out, &repo)?;
-            writeln!(out)?;
-            render_hook_output(&mut out, &repo)?;
+            render_all_log_sections(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -470,9 +468,7 @@ pub fn handle_state_get(
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
             let mut out = String::new();
-            render_command_log(&mut out, &repo)?;
-            writeln!(out)?;
-            render_hook_output(&mut out, &repo)?;
+            render_all_log_sections(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -846,35 +842,41 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get log files, partitioned into command log and hook output
+    // Get log files, partitioned into command log, hook output, and diagnostic
     let log_dir = repo.wt_logs_dir();
-    let (command_log, hook_output): (Vec<serde_json::Value>, Vec<serde_json::Value>) =
-        if log_dir.exists() {
-            let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-                .collect();
+    let (command_log, hook_output, diagnostic): (
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+    ) = if log_dir.exists() {
+        let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+            .collect();
 
-            all_entries.sort_by(|a, b| {
-                let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time.cmp(&a_time)
-            });
+        all_entries.sort_by(|a, b| {
+            let a_time = a.metadata().and_then(|m| m.modified()).ok();
+            let b_time = b.metadata().and_then(|m| m.modified()).ok();
+            b_time.cmp(&a_time)
+        });
 
-            let mut cmd_log = Vec::new();
-            let mut hook_out = Vec::new();
-            for entry in &all_entries {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if is_command_log_file(&name) {
-                    cmd_log.push(log_entry_to_json(entry));
-                } else {
-                    hook_out.push(log_entry_to_json(entry));
-                }
+        let mut cmd_log = Vec::new();
+        let mut hook_out = Vec::new();
+        let mut diagnostic = Vec::new();
+        for entry in &all_entries {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_command_log_file(&name) {
+                cmd_log.push(log_entry_to_json(entry));
+            } else if is_diagnostic_file(&name) {
+                diagnostic.push(log_entry_to_json(entry));
+            } else {
+                hook_out.push(log_entry_to_json(entry));
             }
-            (cmd_log, hook_out)
-        } else {
-            (vec![], vec![])
-        };
+        }
+        (cmd_log, hook_out, diagnostic)
+    } else {
+        (vec![], vec![], vec![])
+    };
 
     // Get vars data (all branches) — collect into BTreeMap for sorted output
     let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
@@ -902,6 +904,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
+        "diagnostic": diagnostic,
         "hints": hints
     });
 
@@ -1018,12 +1021,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show command log
-    render_command_log(&mut out, repo)?;
-    writeln!(out)?;
-
-    // Show hook output logs
-    render_hook_output(&mut out, repo)?;
+    // Show log files
+    render_all_log_sections(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out, true) {

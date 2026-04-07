@@ -60,7 +60,7 @@ View and manage logs from background operations.
 
 [1m[32mWhat's logged[0m
 
-Two kinds of logs live in [2m.git/wt/logs/[0m:
+Three kinds of logs live in [2m.git/wt/logs/[0m:
 
 [32mCommand log (`commands.jsonl`)[0m
 
@@ -74,6 +74,15 @@ All hook executions and LLM commands are recorded automatically — one JSON obj
  Background removal [2m{branch}-remove.log[0m                     
 
 Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
+
+[32mDiagnostic files[0m
+
+     File                  Created when             
+ ───────────── ──────────────────────────────────── 
+ [2mverbose.log[0m   Running with [2m-vv[0m                     
+ [2mdiagnostic.md[0m Running with [2m-vv[0m when warnings occur 
+
+[2mverbose.log[0m is overwritten on each [2m-vv[0m run. [2mdiagnostic.md[0m is a markdown report for pasting into GitHub issues — written only when warnings occur.
 
 [1m[32mLocation[0m
 
