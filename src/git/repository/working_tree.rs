@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
@@ -183,17 +184,26 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
-        let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-        let path = PathBuf::from(stdout.trim());
+        match self.repo.cache.git_dirs.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let path = PathBuf::from(stdout.trim());
 
-        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
-        let absolute_path = if path.is_relative() {
-            self.path.join(&path)
-        } else {
-            path
-        };
-        canonicalize(&absolute_path).context("Failed to resolve git directory")
+                // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+                let absolute_path = if path.is_relative() {
+                    self.path.join(&path)
+                } else {
+                    path
+                };
+                let resolved =
+                    canonicalize(&absolute_path).context("Failed to resolve git directory")?;
+
+                Ok(e.insert(resolved).clone())
+            }
+        }
     }
 
     /// Check if a rebase is in progress.

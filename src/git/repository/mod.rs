@@ -155,6 +155,9 @@ pub(super) struct RepoCache {
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
 
     // ========== Per-worktree values (keyed by path) ==========
+    /// Per-worktree git directory: worktree_path -> canonicalized git dir
+    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
+    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
     /// Worktree root paths: worktree_path -> canonicalized root
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
