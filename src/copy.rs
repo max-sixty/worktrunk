@@ -78,8 +78,13 @@ pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<bool> {
         match reflink_copy::reflink_or_copy(src, dest) {
             Ok(_) => {
                 // Preserve file permissions (especially the execute bit).
-                // reflink_or_copy does not guarantee permission preservation
-                // across all filesystems and operating systems.
+                //
+                // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
+                // only — the destination gets umask-based permissions, losing
+                // execute bits. std::fs::copy's fallback preserves permissions
+                // via fchmod, creating an asymmetry in reflink_or_copy.
+                //
+                // Refs: ioctl_ficlonerange(2), LWN Articles/331808
                 #[cfg(unix)]
                 {
                     let perms = fs::metadata(src)
