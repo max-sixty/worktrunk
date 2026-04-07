@@ -1558,25 +1558,21 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         .map(|item| item.integration_ref.clone())
         .collect();
 
-    if !integration_refs.is_empty() {
-        let repo_clone = repo.clone();
-        let target = integration_target.clone();
-        let tx_worker = tx;
-        // Intentionally detached: if the main thread returns early (error in
-        // the recv loop), remaining rayon tasks silently fail to send on the
-        // closed channel and the thread cleans up on its own.
-        std::thread::spawn(move || {
-            integration_refs
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(idx, ref_name)| {
-                    let result = repo_clone.integration_reason(&ref_name, &target);
-                    let _ = tx_worker.send((idx, result));
-                });
-        });
-    } else {
-        drop(tx);
-    }
+    // Intentionally detached: if the main thread returns early (error in
+    // the recv loop), remaining rayon tasks silently fail to send on the
+    // closed channel and the thread cleans up on its own. Empty
+    // integration_refs produces an empty par_iter that completes immediately.
+    let repo_clone = repo.clone();
+    let target = integration_target.clone();
+    std::thread::spawn(move || {
+        integration_refs
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(idx, ref_name)| {
+                let result = repo_clone.integration_reason(&ref_name, &target);
+                let _ = tx.send((idx, result));
+            });
+    });
 
     // Collect integration context alongside candidates for dry-run display.
     struct DryRunInfo {
