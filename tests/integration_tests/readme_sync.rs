@@ -388,6 +388,9 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
         "wt list --branches --full" => {
             Some("integration__integration_tests__list__readme_example_list_branches.snap")
         }
+        "wt list (markers)" => {
+            Some("integration__integration_tests__list__readme_example_list_marker.snap")
+        }
         _ => None,
     }
 }

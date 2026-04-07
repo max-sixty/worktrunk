@@ -1,17 +1,13 @@
 ---
-source: tests/integration_tests/step_prune.rs
+source: tests/integration_tests/list.rs
 info:
   program: wt
   args:
-    - step
-    - prune
-    - "--yes"
-    - "--min-age=0s"
-    - "--foreground"
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "500"
+    COLUMNS: "98"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -26,7 +22,6 @@ info:
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
-    RAYON_NUM_THREADS: "1"
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
@@ -46,9 +41,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+  [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main             [2m^[22m[2m⇡[22m                         [32m⇡1[0m      [2m33323bc1[0m  [2m1d[0m    [2mInitial commit
++ feature-api      [2m↑[22m 🤖              [32m↑1[0m               [2m70343f03[0m  [2m1d[0m    [2mAdd REST API endpoints
++ review-ui      [36m?[39m [2m↑[22m 💬              [32m↑1[0m               [2ma585d6ed[0m  [2m1d[0m    [2mAdd dashboard component
++ wip-docs       [36m?[39m [2m–[22m                                  [2m33323bc1[0m  [2m1d[0m    [2mInitial commit
+
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
 
 ----- stderr -----
-[36m◎[39m [36mRemoving worktree @ [1m_REPO_.detached-integrated[22m... (detached HEAD, no branch to delete)[39m
-[32m✓[39m [32mRemoved worktree @ [1m_REPO_.detached-integrated[22m (detached HEAD, no branch to delete)[39m
-[32m✓ Removed branch [1mdetached-integrated[22m (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
-[32m✓[39m [32mPruned 1 worktree, 1 branch[39m

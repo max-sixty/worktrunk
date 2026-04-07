@@ -1294,6 +1294,97 @@ fn test_copy_ignored_preserves_directory_permissions(mut repo: TestRepo) {
     );
 }
 
+/// Test that file executable permissions are preserved during copy (GitHub issue #1936)
+///
+/// When copying gitignored files, the destination files should have the same
+/// permissions as the source files. For example, a file with mode 0755 (executable)
+/// should not become 0644 in the destination.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let feature_path = repo.add_worktree("feature");
+
+    // Create an ignored directory with an executable file (simulates node_modules binaries)
+    let bin_dir = repo.root_path().join("node_modules/.bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("playwright"), "#!/bin/sh\necho playwright").unwrap();
+    fs::set_permissions(
+        bin_dir.join("playwright"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    // Also create a non-executable file for comparison
+    fs::write(bin_dir.join("config.json"), r#"{"key": "value"}"#).unwrap();
+
+    // Create a top-level ignored executable file (exercises the individual file copy
+    // path in step_commands.rs, separate from the recursive directory copy in copy.rs)
+    fs::write(
+        repo.root_path().join("run-tests.sh"),
+        "#!/bin/sh\necho running tests",
+    )
+    .unwrap();
+    fs::set_permissions(
+        repo.root_path().join("run-tests.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    // Add to .gitignore
+    fs::write(
+        repo.root_path().join(".gitignore"),
+        "node_modules\nrun-tests.sh\n",
+    )
+    .unwrap();
+
+    // Run copy-ignored
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify executable file inside directory was copied with permissions preserved
+    // (exercises copy.rs copy_dir_recursive_inner path)
+    let dest_exec = feature_path.join("node_modules/.bin/playwright");
+    assert!(dest_exec.exists(), "executable file should be copied");
+    let dest_mode = fs::metadata(&dest_exec).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dest_mode, 0o755,
+        "Executable file permissions should be preserved (expected 0755, got {dest_mode:04o})"
+    );
+
+    // Verify non-executable file retains its permissions too
+    let dest_config = feature_path.join("node_modules/.bin/config.json");
+    assert!(dest_config.exists(), "non-executable file should be copied");
+    let config_mode = fs::metadata(&dest_config).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        config_mode, 0o644,
+        "Non-executable file permissions should be preserved (expected 0644, got {config_mode:04o})"
+    );
+
+    // Verify top-level executable file was copied with permissions preserved
+    // (exercises step_commands.rs individual file copy path)
+    let dest_script = feature_path.join("run-tests.sh");
+    assert!(
+        dest_script.exists(),
+        "top-level executable should be copied"
+    );
+    let script_mode = fs::metadata(&dest_script).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        script_mode, 0o755,
+        "Top-level executable permissions should be preserved (expected 0755, got {script_mode:04o})"
+    );
+}
+
 /// Test that VCS metadata directories are excluded from copy-ignored (GitHub issue #1249)
 ///
 /// VCS metadata directories like `.jj` (Jujutsu), `.hg` (Mercurial) contain internal

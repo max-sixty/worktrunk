@@ -425,7 +425,6 @@ $ wt config plugins opencode install
     /// Manage internal data and cache
     #[command(
         after_long_help = r#"State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ## Keys
 
@@ -450,7 +449,7 @@ $ wt config state default-branch set main
 
 Set a marker for current branch:
 ```console
-$ wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
 ```
 
 Store arbitrary data:
@@ -572,13 +571,11 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ## Display
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-```
-Branch    Status   Path
-main      ^        ~/code/myproject
-feature   🚧↑      ~/code/myproject.feature
-bugfix    🤖!↑⇡    ~/code/myproject.bugfix
+<!-- wt list (markers) -->
+```console
+wt list
 ```
 
 ## Use cases
@@ -925,7 +922,7 @@ $ wt config state marker get --branch=feature
 
 Set marker for current branch:
 ```console
-$ wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
 ```
 
 Set marker for a specific branch:

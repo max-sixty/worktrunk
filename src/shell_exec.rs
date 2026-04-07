@@ -24,6 +24,84 @@ use crate::sync::Semaphore;
 /// Prevents resource exhaustion when spawning many parallel git commands.
 static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 
+/// The working directory at `wt` startup. Captured once so relative `GIT_*`
+/// path variables inherited from a parent `git` process can be resolved to
+/// absolute paths regardless of each subsequent child command's `current_dir`.
+static STARTUP_CWD: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// `GIT_*` environment variables that name paths used by git for repository
+/// discovery and I/O. When git invokes shell aliases (`alias.x = "!cmd"`) it
+/// may set some of these to *relative* paths (e.g. `GIT_DIR=.git`), which
+/// then resolve against whatever `current_dir` a child process happens to
+/// run in — not the directory where `wt` was invoked. Normalizing them to
+/// absolute paths keeps git's alias context without breaking discovery.
+const INHERITED_GIT_PATH_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+];
+
+/// Record the current working directory at `wt` startup so relative `GIT_*`
+/// path variables inherited from a parent process can later be resolved to
+/// absolute paths by [`Cmd`]'s env setup.
+///
+/// Call once during `wt` startup, before any code changes the process's
+/// working directory. Subsequent calls are no-ops.
+pub fn init_startup_cwd() {
+    STARTUP_CWD.get_or_init(|| std::env::current_dir().ok());
+}
+
+fn startup_cwd() -> Option<&'static PathBuf> {
+    STARTUP_CWD
+        .get_or_init(|| std::env::current_dir().ok())
+        .as_ref()
+}
+
+/// Pure helper: given a base directory and a lookup function for environment
+/// variables, compute the `(var, absolute_value)` overrides that should be
+/// applied to a child process's environment to shadow any inherited relative
+/// `GIT_*` path variables. Absolute values and unset variables are skipped.
+///
+/// Factored out from [`inherited_git_env_overrides`] so it can be unit-tested
+/// without touching process-wide state.
+fn compute_git_env_overrides<F>(base: &std::path::Path, lookup: F) -> Vec<(&'static str, OsString)>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let mut overrides = Vec::new();
+    for var in INHERITED_GIT_PATH_VARS {
+        let Some(value) = lookup(var) else {
+            continue;
+        };
+        let path = std::path::Path::new(&value);
+        if path.is_absolute() {
+            continue;
+        }
+        overrides.push((*var, base.join(path).into_os_string()));
+    }
+    overrides
+}
+
+/// Cached absolute forms of any inherited relative `GIT_*` path variables.
+/// Computed once from the startup cwd and process environment, since neither
+/// changes during the process lifetime.
+static GIT_ENV_OVERRIDES: OnceLock<Vec<(&'static str, OsString)>> = OnceLock::new();
+
+/// For each inherited `GIT_*` path variable that is set to a *relative* path,
+/// produce an absolute form resolved against the startup cwd. Returns the
+/// `(var, absolute_value)` pairs that should be applied to a child process's
+/// environment to shadow the inherited relative values.
+fn inherited_git_env_overrides() -> &'static [(&'static str, OsString)] {
+    GIT_ENV_OVERRIDES.get_or_init(|| {
+        let Some(cwd) = startup_cwd() else {
+            return Vec::new();
+        };
+        compute_git_env_overrides(cwd, |var| std::env::var_os(var))
+    })
+}
+
 /// Monotonic epoch for trace timestamps.
 ///
 /// Using `Instant` instead of `SystemTime` ensures monotonic timestamps even if
@@ -465,6 +543,14 @@ impl Cmd {
     fn apply_common_settings(&self, cmd: &mut Command) {
         if let Some(dir) = &self.current_dir {
             cmd.current_dir(dir);
+        }
+
+        // Normalize inherited relative `GIT_*` path variables (e.g. the
+        // `GIT_DIR=.git` git sets for shell aliases) to absolute paths
+        // resolved against the startup cwd, so they don't re-resolve against
+        // the child's `current_dir`. See issue #1914.
+        for (key, val) in inherited_git_env_overrides() {
+            cmd.env(key, val);
         }
 
         for (key, val) in &self.envs {
@@ -938,6 +1024,63 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_compute_git_env_overrides() {
+        // Use a platform-appropriate absolute base path so `Path::is_absolute`
+        // behaves the same on Windows and Unix (Unix-style `/abs/...` paths
+        // are not absolute on Windows).
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let base = base_buf.as_path();
+        let abs_work = std::env::temp_dir().join("wt-test-abs-work");
+        let env: std::collections::HashMap<&str, OsString> = [
+            // relative — should be resolved against base
+            ("GIT_DIR", OsString::from(".git")),
+            // absolute — should be skipped
+            ("GIT_WORK_TREE", abs_work.clone().into_os_string()),
+            // relative with parent traversal
+            ("GIT_INDEX_FILE", OsString::from("../index")),
+            // unrelated var — should not appear
+            ("GIT_AUTHOR_NAME", OsString::from("Test User")),
+        ]
+        .into_iter()
+        .collect();
+
+        let overrides = compute_git_env_overrides(base, |var| env.get(var).cloned());
+
+        // Unset GIT_COMMON_DIR / GIT_OBJECT_DIRECTORY are skipped, absolute
+        // GIT_WORK_TREE is skipped, unrelated vars are never consulted.
+        assert_eq!(overrides.len(), 2);
+        let as_map: std::collections::HashMap<_, _> = overrides.into_iter().collect();
+        assert_eq!(
+            as_map.get("GIT_DIR"),
+            Some(&base.join(".git").into_os_string())
+        );
+        assert_eq!(
+            as_map.get("GIT_INDEX_FILE"),
+            Some(&base.join("../index").into_os_string())
+        );
+    }
+
+    #[test]
+    fn test_compute_git_env_overrides_all_absolute() {
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let abs_git = std::env::temp_dir().join("wt-test-abs.git");
+        let env: std::collections::HashMap<&str, OsString> =
+            [("GIT_DIR", abs_git.into_os_string())]
+                .into_iter()
+                .collect();
+
+        let overrides = compute_git_env_overrides(base_buf.as_path(), |var| env.get(var).cloned());
+        assert!(overrides.is_empty());
+    }
+
+    #[test]
+    fn test_compute_git_env_overrides_all_unset() {
+        let base_buf = std::env::temp_dir().join("wt-test-startup-cwd");
+        let overrides = compute_git_env_overrides(base_buf.as_path(), |_| None);
+        assert!(overrides.is_empty());
+    }
 
     #[test]
     fn test_max_concurrent_commands_defaults() {
