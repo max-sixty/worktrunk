@@ -115,7 +115,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 |----------|---------|------------|
 | `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
 | `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
-| `.git/wt/logs/*.log` | Background command output | Hooks, background `wt remove` |
+| `.git/wt/logs/{branch}-*.log` | Background hook output | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/verbose.log` | Debug log for issue reporting | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` when warnings occur |
@@ -123,7 +123,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all worktrunk keys from `.git/config`, deletes CI cache, clears logs, and removes stale trash.
+**To remove:** `wt config state clear` removes all worktrunk data — config keys, CI cache, markers, hints, variables, logs, and stale trash.
 
 ### What Worktrunk does NOT create
 
@@ -156,7 +156,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ### Other cleanup
 
-- `wt config state clear` — removes cached state from `.git/config`, clears CI cache/logs, and removes stale trash from worktree removal
+- `wt config state clear` — removes all worktrunk data from `.git/` (config keys, CI cache, markers, hints, variables, logs, stale trash)
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
@@ -191,7 +191,7 @@ Use `--yes` to bypass prompts (useful for CI/automation).
 
 ### Command log
 
-All hook executions and LLM commands are recorded in `.git/wt/logs/commands.jsonl` — one JSON object per line with timestamp, command, exit code, and duration. This provides a debugging trail without requiring `-vv` verbose output. The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
+All hook executions and LLM commands are recorded in `.git/wt/logs/commands.jsonl` — one JSON object per line. Fields: `ts` (timestamp), `wt` (the wt command that triggered it), `label` (what ran, e.g., `pre-merge user:lint`), `cmd` (shell command), `exit` (exit code, `null` for background), `dur_ms` (duration, `null` for background). The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
 
 View the log with `wt config state logs get`, or query directly:
 

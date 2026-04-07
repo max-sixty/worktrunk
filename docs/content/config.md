@@ -570,7 +570,7 @@ State is stored in `.git/` (config entries and log files), separate from configu
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **vars**: <span class="badge-experimental"></span> Custom variables per branch
-- **logs**: Background operation logs
+- **logs**: Operation and debug logs
 
 ### Examples
 
@@ -607,7 +607,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
   <b><span class=c>ci-status</span></b>        CI status cache
   <b><span class=c>marker</span></b>           Branch markers
-  <b><span class=c>logs</span></b>             Background operation logs
+  <b><span class=c>logs</span></b>             Operation and debug logs
   <b><span class=c>hints</span></b>            One-time hints shown in this repo
   <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
   <b><span class=c>get</span></b>              Get all stored state
@@ -873,9 +873,9 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
 ## wt config state logs
 
-Background operation logs.
+Operation and debug logs.
 
-View and manage logs from background operations.
+View and manage log files — hook output, command audit trail, and debug diagnostics.
 
 ### What's logged
 
@@ -883,7 +883,18 @@ Three kinds of logs live in `.git/wt/logs/`:
 
 #### Command log (`commands.jsonl`)
 
-All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
+| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
+| `cmd` | Shell command executed |
+| `exit` | Exit code (`null` for background commands) |
+| `dur_ms` | Duration in milliseconds (`null` for background commands) |
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
 
 #### Hook output logs
 
@@ -892,7 +903,7 @@ All hook executions and LLM commands are recorded automatically — one JSON obj
 | post-start hooks | `{branch}-{source}-post-start-{name}.log` |
 | Background removal | `{branch}-remove.log` |
 
-Source is `user` or `project` depending on where the hook is defined.
+Source is `user` or `project` depending on where the hook is defined. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
 
 #### Diagnostic files
 
@@ -905,13 +916,7 @@ Source is `user` or `project` depending on where the hook is defined.
 
 ### Location
 
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
-
-### Behavior
-
-- **Overwrites** — Same operation on same branch overwrites previous log
-- **Persists** — Logs from deleted branches remain until manually cleared
-- **Shared** — All worktrees write to the same log directory
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
 
 ### Examples
 
@@ -930,13 +935,13 @@ Clear all logs:
 ### Command reference
 
 {% terminal() %}
-wt config state logs - Background operation logs
+wt config state logs - Operation and debug logs
 
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>    Get log file paths
-  <b><span class=c>clear</span></b>  Clear background operation logs
+  <b><span class=c>clear</span></b>  Clear all log files
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

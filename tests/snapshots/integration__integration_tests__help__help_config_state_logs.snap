@@ -34,13 +34,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state logs - Background operation logs
+wt config state logs - Operation and debug logs
 
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
   [1m[36mget[0m    Get log file paths
-  [1m[36mclear[0m  Clear background operation logs
+  [1m[36mclear[0m  Clear all log files
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
@@ -56,7 +56,7 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
-View and manage logs from background operations.
+View and manage log files — hook output, command audit trail, and debug diagnostics.
 
 [1m[32mWhat's logged[0m
 
@@ -64,7 +64,18 @@ Three kinds of logs live in [2m.git/wt/logs/[0m:
 
 [32mCommand log (`commands.jsonl`)[0m
 
-All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to [2mcommands.jsonl.old[0m at 1MB (~2MB total).
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to [2mcommands.jsonl.old[0m at 1MB (~2MB total). Fields:
+
+ Field                             Description                             
+ ────── ────────────────────────────────────────────────────────────────── 
+ [2mts[0m     ISO 8601 timestamp                                                 
+ [2mwt[0m     The [2mwt[0m command that triggered this (e.g., [2mwt hook pre-merge --yes[0m) 
+ [2mlabel[0m  What ran (e.g., [2mpre-merge user:lint[0m, [2mcommit.generation[0m)            
+ [2mcmd[0m    Shell command executed                                             
+ [2mexit[0m   Exit code ([2mnull[0m for background commands)                           
+ [2mdur_ms[0m Duration in milliseconds ([2mnull[0m for background commands)            
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
 
 [32mHook output logs[0m
 
@@ -73,7 +84,7 @@ All hook executions and LLM commands are recorded automatically — one JSON obj
  post-start hooks   [2m{branch}-{source}-post-start-{name}.log[0m 
  Background removal [2m{branch}-remove.log[0m                     
 
-Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
+Source is [2muser[0m or [2mproject[0m depending on where the hook is defined. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
 
 [32mDiagnostic files[0m
 
@@ -86,13 +97,7 @@ Source is [2muser[0m or [2mproject[0m depending on where the hook is defined
 
 [1m[32mLocation[0m
 
-All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directory).
-
-[1m[32mBehavior[0m
-
-- [1mOverwrites[0m — Same operation on same branch overwrites previous log
-- [1mPersists[0m — Logs from deleted branches remain until manually cleared
-- [1mShared[0m — All worktrees write to the same log directory
+All logs are stored in [2m.git/wt/logs/[0m (in the main worktree's git directory). All worktrees write to the same directory.
 
 [1m[32mExamples[0m
 
