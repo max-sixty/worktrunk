@@ -334,7 +334,13 @@ fn maybe_print_worktree_path_hint(created_branch: bool) {
 
     if let Ok(repo) = worktrunk::git::Repository::current() {
         let has_custom_config = UserConfig::load()
-            .map(|c| c.has_custom_worktree_path())
+            .map(|c| {
+                c.has_custom_worktree_path()
+                    || repo
+                        .project_identifier()
+                        .ok()
+                        .is_some_and(|p| c.has_project_worktree_path(&p))
+            })
             .unwrap_or(false);
         if !has_custom_config && !repo.has_shown_hint("worktree-path") {
             let hint = hint_message(cformat!(

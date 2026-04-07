@@ -49,9 +49,17 @@ impl UserConfig {
             .unwrap_or_else(default_worktree_path)
     }
 
-    /// Returns true if the user has explicitly set a custom worktree-path.
+    /// Returns true if the user has explicitly set a custom global worktree-path.
     pub fn has_custom_worktree_path(&self) -> bool {
         self.configs.worktree_path.is_some()
+    }
+
+    /// Returns true if the given project has an explicit worktree-path override.
+    pub fn has_project_worktree_path(&self, project: &str) -> bool {
+        self.projects
+            .get(project)
+            .and_then(|p| p.overrides.worktree_path.as_ref())
+            .is_some()
     }
 
     /// Returns the worktree path template for a specific project.
