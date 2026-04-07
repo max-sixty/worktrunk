@@ -1925,15 +1925,14 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
 
 #[rstest]
 fn test_ci_status_get_json(repo: TestRepo) {
-    // Without CI tools, should return no-ci
+    // Without CI tools, should return null (no status detected)
     let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    assert_eq!(json["status"], "no-ci");
-    assert_eq!(json["stale"], false);
+    assert_eq!(json, serde_json::json!(null));
 }
 
 #[rstest]

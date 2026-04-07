@@ -2746,3 +2746,23 @@ fn test_remove_json(mut repo: TestRepo) {
     assert_eq!(items[0]["kind"], "worktree");
     assert!(items[0]["path"].as_str().is_some());
 }
+
+/// Test removing current worktree (no branch arg) with --format=json
+#[rstest]
+fn test_remove_json_current(mut repo: TestRepo) {
+    repo.commit("initial");
+    let feature_wt = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--format=json", "--yes", "--foreground"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature");
+}

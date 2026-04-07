@@ -656,3 +656,28 @@ fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     assert_eq!(json, serde_json::json!([]));
 }
+
+#[rstest]
+fn test_prune_json_actual_removal(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "merged-a");
+}

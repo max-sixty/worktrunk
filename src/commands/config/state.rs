@@ -454,20 +454,9 @@ pub fn handle_state_get(
             let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
 
             if format == SwitchFormat::Json {
-                let output = match pr_status {
-                    Some(ref s) => serde_json::json!({
-                        "status": <&'static str>::from(s.ci_status),
-                        "source": s.source,
-                        "stale": s.is_stale,
-                        "url": s.url,
-                    }),
-                    None => serde_json::json!({
-                        "status": "no-ci",
-                        "source": null,
-                        "stale": false,
-                        "url": null,
-                    }),
-                };
+                let output = pr_status
+                    .as_ref()
+                    .map(|s| super::super::list::json_output::JsonCi::from(s));
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 let ci_status = pr_status
