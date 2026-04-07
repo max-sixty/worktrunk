@@ -469,21 +469,15 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Path is dynamic (temp dir), so check pattern instead of exact snapshot
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Path separator varies by platform, so check for either / or \
-    assert!(
-        stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
-        "Expected .git/wt/logs or .git\\wt\\logs in output: {stderr}"
-    );
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -502,21 +496,20 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Verify both sections are present
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Command log section shows jsonl file
-    assert!(stderr.contains("commands.jsonl"));
-    // Hook output section shows .log files
-    assert!(stderr.contains("feature-post-start-npm.log"));
-    assert!(stderr.contains("bugfix-remove.log"));
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+              File      Size  Age   
+         ────────────── ──── ────── 
+         commands.jsonl 19B  future
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+                    File            Size  Age   
+         ────────────────────────── ──── ────── 
+         bugfix-remove.log          13B  future 
+         feature-post-start-npm.log 15B  future
+        ");
+    });
 }
 
 #[rstest]
@@ -530,23 +523,18 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Both sections should show "(none)" since no log files exist
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("DIAGNOSTIC"),
-        "Expected DIAGNOSTIC heading: {stderr}"
-    );
-    // Count "(none)" occurrences — should appear three times (once per section)
-    let none_count = stderr.matches("(none)").count();
-    assert_eq!(none_count, 3, "Expected three (none) entries: {stderr}");
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]

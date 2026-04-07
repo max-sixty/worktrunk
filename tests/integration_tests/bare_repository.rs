@@ -284,6 +284,240 @@ fn test_bare_repo_with_repo_path_variable() {
     );
 }
 
+/// Regression test for #1914: when `wt` is invoked via a git shell alias
+/// (`alias.wt = "!wt"`), git exports `GIT_DIR` — sometimes as a *relative*
+/// path like `.git`. That relative path would otherwise re-resolve against
+/// every child command's `current_dir`, breaking worktrunk's repo discovery
+/// in bare-layout repositories. Worktrunk normalizes inherited relative
+/// `GIT_*` path variables at startup so `{{ repo_path }}` resolves
+/// identically whether `wt` is invoked directly or via a git alias.
+#[test]
+fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
+    let test = BareRepoTest::new();
+
+    // Configure a user-level alias that prints repo_path. We use user config
+    // (not project config) so it's discoverable even when the command is
+    // launched from the bare repo's parent directory.
+    let user_config = test.temp_path().join("user-config.toml");
+    fs::write(
+        &user_config,
+        "[aliases]\nprint-repo-path = \"echo REPO_PATH={{ repo_path }}\"\n",
+    )
+    .unwrap();
+
+    // Create a linked worktree so there's somewhere to run from.
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Helper: run `wt step print-repo-path --yes` and extract the
+    // `REPO_PATH=...` value emitted by the alias. We compare these as-is
+    // so platform-specific path formatting (e.g. msys-style paths that
+    // Git Bash uses on Windows for `echo`) doesn't affect the test — we
+    // only assert that both invocations produce the *same* value.
+    let extract_repo_path = |out: &std::process::Output| -> String {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        combined
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("REPO_PATH=").map(str::to_owned))
+            .unwrap_or_else(|| panic!("no REPO_PATH= line in output:\n{combined}"))
+    };
+
+    // Baseline: invoke `wt` normally from the main worktree.
+    let mut baseline = wt_command();
+    test.configure_wt_cmd(&mut baseline);
+    baseline
+        .env("WORKTRUNK_CONFIG_PATH", &user_config)
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&main_worktree);
+    let baseline_out = baseline.output().unwrap();
+    assert!(
+        baseline_out.status.success(),
+        "baseline wt failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&baseline_out.stdout),
+        String::from_utf8_lossy(&baseline_out.stderr)
+    );
+    let baseline_repo_path = extract_repo_path(&baseline_out);
+
+    // Simulate a git alias invocation: git sets GIT_DIR (and GIT_PREFIX) for
+    // shell aliases. From a linked worktree, git sets GIT_DIR to the
+    // per-worktree admin dir — use a relative spelling to exercise the bug.
+    let worktree_git_dir = test.bare_repo_path().join("worktrees").join("main");
+    assert!(
+        worktree_git_dir.exists(),
+        "expected linked worktree admin dir at {worktree_git_dir:?}"
+    );
+    // Relative path from main_worktree to its per-worktree admin dir.
+    let relative_git_dir = PathBuf::from("..").join("worktrees").join("main");
+
+    let mut via_alias = wt_command();
+    test.configure_wt_cmd(&mut via_alias);
+    via_alias
+        .env("WORKTRUNK_CONFIG_PATH", &user_config)
+        .env("GIT_DIR", &relative_git_dir)
+        .env("GIT_PREFIX", "")
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&main_worktree);
+    let via_alias_out = via_alias.output().unwrap();
+    assert!(
+        via_alias_out.status.success(),
+        "wt via git alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&via_alias_out.stdout),
+        String::from_utf8_lossy(&via_alias_out.stderr)
+    );
+    let via_alias_repo_path = extract_repo_path(&via_alias_out);
+
+    assert_eq!(
+        baseline_repo_path, via_alias_repo_path,
+        "repo_path differed when invoked via a simulated git alias \
+         (relative GIT_DIR was not normalized — see #1914)"
+    );
+}
+
+/// Companion to `test_bare_repo_repo_path_with_inherited_relative_git_dir`
+/// that exercises the full `git wt …` → `sh -c` → `wt` path using a *real*
+/// git alias instead of hand-crafted `GIT_*` env vars.
+///
+/// To actually trigger #1914, the layout must match the issue reporter's:
+/// `repo/.git` is the bare repository and `repo/main` is a linked worktree.
+/// Running `git wt …` from `repo/` causes git to export `GIT_DIR=.git`
+/// (relative), which is the bug vector — `BareRepoTest` uses a different
+/// layout (`repo/` *is* the bare) where git exports an absolute `GIT_DIR`
+/// and the bug doesn't reproduce, so we build the layout by hand here.
+///
+/// Unix-only: git aliases execute via `sh -c`, and shell-quoting the wt
+/// binary path for Windows' bundled sh is fiddly. The underlying fix in
+/// `shell_exec.rs` has no platform-specific code, so the simulated-env
+/// companion test still exercises the normalization on Windows.
+#[cfg(not(windows))]
+#[test]
+fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
+    use crate::common::{configure_git_env, wt_bin};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let temp_path = canonicalize(temp_dir.path()).unwrap();
+
+    // Isolated gitconfig so we don't leak the user's real git settings.
+    let git_config_path = temp_path.join("test-gitconfig");
+    fs::write(
+        &git_config_path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [init]\n\tdefaultBranch = main\n",
+    )
+    .unwrap();
+
+    // Layout: repo/.git (bare) + repo/main (linked worktree).
+    let repo_dir = temp_path.join("repo");
+    fs::create_dir(&repo_dir).unwrap();
+    let bare_git = repo_dir.join(".git");
+
+    let git = |dir: &Path| configure_git_env(Cmd::new("git"), &git_config_path).current_dir(dir);
+
+    git(&temp_path)
+        .args(["init", "--bare", "--initial-branch", "main"])
+        .arg(bare_git.to_str().unwrap())
+        .run()
+        .unwrap();
+    git(&bare_git)
+        .args(["worktree", "add", "../main"])
+        .run()
+        .unwrap();
+
+    let main_worktree = repo_dir.join("main");
+    fs::write(main_worktree.join("a.txt"), "hello").unwrap();
+    git(&main_worktree).args(["add", "a.txt"]).run().unwrap();
+    git(&main_worktree)
+        .args(["commit", "-m", "Initial commit"])
+        .run()
+        .unwrap();
+
+    // wt config with worktree-path template and the `print-repo-path` alias.
+    let user_config = temp_path.join("test-config.toml");
+    fs::write(
+        &user_config,
+        "worktree-path = \"{{ branch }}\"\n\
+         [aliases]\nprint-repo-path = \"echo REPO_PATH={{ repo_path }}\"\n",
+    )
+    .unwrap();
+    let approvals_path = temp_path.join("test-approvals.toml");
+
+    // Register the real git alias in the bare repo's config.
+    let wt_path = wt_bin();
+    let wt_path_lossy = wt_path.to_string_lossy();
+    let wt_path_escaped = shell_escape::unix::escape(wt_path_lossy);
+    git(&bare_git)
+        .args(["config", "alias.wt", &format!("!{wt_path_escaped}")])
+        .run()
+        .unwrap();
+
+    let extract_repo_path = |out: &std::process::Output| -> String {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        combined
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("REPO_PATH=").map(str::to_owned))
+            .unwrap_or_else(|| panic!("no REPO_PATH= line in output:\n{combined}"))
+    };
+
+    // Shared wt env applied to both the direct and aliased invocations.
+    let apply_wt_env = |cmd: &mut Command| {
+        configure_git_cmd(cmd, &git_config_path);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config)
+            .env(
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                "/etc/xdg/worktrunk/config.toml",
+            )
+            .env("WORKTRUNK_APPROVALS_PATH", &approvals_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+    };
+
+    // Baseline: invoke `wt` directly from `repo/`. Git discovers the bare
+    // `.git` automatically without exporting any `GIT_*` path vars.
+    let mut baseline = Command::new(wt_bin());
+    apply_wt_env(&mut baseline);
+    baseline
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&repo_dir);
+    let baseline_out = baseline.output().unwrap();
+    assert!(
+        baseline_out.status.success(),
+        "baseline wt failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&baseline_out.stdout),
+        String::from_utf8_lossy(&baseline_out.stderr)
+    );
+    let baseline_repo_path = extract_repo_path(&baseline_out);
+
+    // Via the real git alias: `git wt step print-repo-path --yes`. From the
+    // `repo/` dir (not inside the worktree), git sets `GIT_DIR=.git`
+    // (relative) when exporting the alias environment — the exact bug vector
+    // from #1914.
+    let mut via_alias = Command::new("git");
+    apply_wt_env(&mut via_alias);
+    via_alias
+        .args(["wt", "step", "print-repo-path", "--yes"])
+        .current_dir(&repo_dir);
+    let via_alias_out = via_alias.output().unwrap();
+    assert!(
+        via_alias_out.status.success(),
+        "git wt via real alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&via_alias_out.stdout),
+        String::from_utf8_lossy(&via_alias_out.stderr)
+    );
+    let via_alias_repo_path = extract_repo_path(&via_alias_out);
+
+    assert_eq!(
+        baseline_repo_path, via_alias_repo_path,
+        "repo_path differed when invoked via a real `git wt` alias — see #1914"
+    );
+}
+
 #[rstest]
 fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
     // This test verifies that bare repos behave identically to normal repos
