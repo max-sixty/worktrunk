@@ -37,8 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/worktree-create.sh\"",
-            "timeout": 30000
+            "command": "jq -r '.worktree_name // .branch // empty' | xargs -I{} wt switch --create {} --no-cd --format=json | jq -r '.path'"
           }
         ]
       }
@@ -48,8 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/worktree-remove.sh\"",
-            "timeout": 30000
+            "command": "jq -r '.worktree_path' | xargs wt remove -D --foreground"
           }
         ]
       }

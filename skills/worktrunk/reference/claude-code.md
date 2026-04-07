@@ -56,8 +56,6 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
 
-The hook scripts do not pass `--yes` — worktrunk's approval prompts still run, giving visibility into what branches and worktrees are being created or deleted. `wt switch --format=json` provides the structured output Claude Code needs (the worktree path) without bypassing interactive confirmation.
-
 ## Statusline
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. This may fetch CI status from the network when the cache is stale (often ~1–2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
