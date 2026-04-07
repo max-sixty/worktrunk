@@ -115,12 +115,7 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cannot determine default branch"),
-        "Expected error message about cannot determine default branch, got: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch. To configure, run [1mwt config state default-branch set BRANCH[22m[39m");
 }
 
 #[rstest]
@@ -275,8 +270,10 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not found") || stderr.contains("nonexistent"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+    [2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+    ");
 }
 
 #[rstest]
@@ -495,18 +492,20 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    state_get_settings().bind(|| {
+    let mut settings = state_get_settings();
+    // File sizes and ages vary across environments
+    settings.add_filter(r"(?m)\d+[BK]\s+\S+\s*$", "<SIZE>  <AGE>");
+    settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
         [36mCOMMAND LOG[39m @ <PATH>
               File      Size  Age   
          ────────────── ──── ────── 
-         commands.jsonl 19B  future
-
+         commands.jsonl <SIZE>  <AGE>
         [36mHOOK OUTPUT[39m @ <PATH>
                     File            Size  Age   
          ────────────────────────── ──── ────── 
-         bugfix-remove.log          13B  future 
-         feature-post-start-npm.log 15B  future
+         bugfix-remove.log          <SIZE>  <AGE>
+         feature-post-start-npm.log <SIZE>  <AGE>
         ");
     });
 }
@@ -1120,10 +1119,10 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Output goes to stdout
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("worktree-path"));
-    assert!(stdout.contains("another-hint"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    worktree-path
+    another-hint
+    ");
 }
 
 #[rstest]
@@ -1301,25 +1300,11 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Check key parts separately (ANSI bold codes may appear around values)
-    assert!(
-        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
-        "Expected spec echo in error: {}",
-        stderr
-    );
-    // The expected filename now includes hash suffixes
-    let expected_filename = hook_log_filename("main", "user", "post-start", "server");
-    assert!(
-        stderr.contains(&format!("Expected: {expected_filename}")),
-        "Expected filename in error: {}",
-        stderr
-    );
-    assert!(
-        stderr.contains("Available:"),
-        "Expected list of available logs: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mNo log file matches [1muser:post-start:server[22m for branch [1mmain[22m[39m
+    [107m [0m Expected: main-vfz-user-post-start-server-f4t.log
+    [107m [0m Available: main-vfz-user-post-start-other-4n1.log
+    ");
 }
 
 #[rstest]
@@ -1330,12 +1315,7 @@ fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log directory exists"),
-        "Expected 'No log directory exists' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mNo log directory exists. Run a background hook first to create logs.[39m");
 }
 
 #[rstest]
@@ -1352,12 +1332,7 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log files for branch"),
-        "Expected 'No log files for branch' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mNo log files for branch [1mmain[22m. Run a background hook first.[39m");
 }
 
 #[rstest]
@@ -1399,12 +1374,7 @@ fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Expected 'Invalid log spec' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mInvalid log spec: [1muser[22m. Format: source:hook-type:name or internal:op[39m");
 }
 
 #[rstest]
@@ -1414,12 +1384,7 @@ fn test_state_logs_get_hook_rejects_colons_in_name(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Colons in hook names should be rejected: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mInvalid log spec: [1muser:post-start:my:server[22m. Format: source:hook-type:name or internal:op[39m");
 }
 
 #[rstest]
@@ -1429,12 +1394,7 @@ fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown source"),
-        "Expected 'Unknown source' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mUnknown source: [1minvalid[22m. Valid: user, project[39m");
 }
 
 #[rstest]
@@ -1444,12 +1404,7 @@ fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown hook type"),
-        "Expected 'Unknown hook type' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mUnknown hook type: [1minvalid[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove[39m");
 }
 
 // ============================================================================
@@ -1463,8 +1418,7 @@ fn test_vars_set_and_get(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Set"), "Expected success message: {stderr}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet [1menv[22m for [1mmain[22m[39m");
 
     // Get the value
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1511,23 +1465,17 @@ fn test_vars_list(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tstaging"),
-        "Expected env key: {stdout}"
-    );
-    assert!(stdout.contains("port\t3000"), "Expected port key: {stdout}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    env	staging
+    port	3000
+    ");
 }
 
 #[rstest]
 fn test_vars_list_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected empty message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1540,11 +1488,7 @@ fn test_vars_clear_single_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mmain[22m[39m");
 
     // Verify it's gone
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1567,16 +1511,11 @@ fn test_vars_clear_all(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared") && stderr.contains("2"),
-        "Expected clear 2 entries: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m variables for [1mmain[22m[39m");
 
     // Verify all gone
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No variables"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1585,11 +1524,7 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid key"),
-        "Expected invalid key error: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, hyphens, and underscores[39m"#);
 }
 
 #[rstest]
@@ -1731,11 +1666,7 @@ fn test_vars_clear_nonexistent_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variable"),
-        "Expected 'No variable' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variable [1mnonexistent[22m for [1mmain[22m");
 }
 
 #[rstest]
@@ -1745,11 +1676,7 @@ fn test_vars_clear_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected 'No variables' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1766,11 +1693,7 @@ fn test_vars_list_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tproduction"),
-        "Expected vars entry: {stdout}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"env	production");
 }
 
 #[rstest]
@@ -1787,11 +1710,7 @@ fn test_vars_clear_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mfeature[22m[39m");
 }
 
 #[rstest]

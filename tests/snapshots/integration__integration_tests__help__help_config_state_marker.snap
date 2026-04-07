@@ -61,12 +61,9 @@ Custom status text or emoji shown in the [2mwt list[0m Status column.
 
 [1m[32mDisplay[0m
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-[107m [0m [2mBranch    Status   Path[0m
-[107m [0m [2mmain      ^        ~/code/myproject[0m
-[107m [0m [2mfeature   🚧↑      ~/code/myproject.feature[0m
-[107m [0m [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
 
 [1m[32mUse cases[0m
 

@@ -902,6 +902,7 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
         copy_leaf(src, dest, true)?;
+
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())

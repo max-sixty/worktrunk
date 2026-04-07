@@ -2145,6 +2145,46 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     });
 }
 
+/// Generate config state marker example: `wt list` with user markers
+///
+/// Shows how user markers appear in the Status column alongside git symbols.
+/// Used by `wt config state marker --help` and docs via placeholder expansion.
+/// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
+#[rstest]
+fn test_readme_example_list_marker(mut repo: TestRepo) {
+    remove_fixture_worktrees(&mut repo);
+
+    repo.commit_with_age("Initial commit", DAY);
+
+    // Branch ahead of main with commits and user marker 🤖
+    let _feature_wt = repo.add_worktree_with_commit(
+        "feature-api",
+        "api.rs",
+        "// API implementation",
+        "Add REST API endpoints",
+    );
+    repo.set_marker("feature-api", "🤖");
+
+    // Branch with uncommitted changes and user marker 💬
+    let review_wt = repo.add_worktree_with_commit(
+        "review-ui",
+        "component.tsx",
+        "// UI component",
+        "Add dashboard component",
+    );
+    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
+    repo.set_marker("review-ui", "💬");
+
+    // Branch with uncommitted changes only (no user marker)
+    let wip_wt = repo.add_worktree("wip-docs");
+    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+
+    assert_cmd_snapshot!(
+        "readme_example_list_marker",
+        list_snapshots::command_readme(&repo, repo.root_path())
+    );
+}
+
 /// Generate tips-patterns.md example: dev server per worktree workflow
 ///
 /// Uses the realistic README example repo and adds URL config.

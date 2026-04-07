@@ -45,4 +45,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #9999...[39m
-[31m✗[39m [31mPR #9999 not found[39m
+[31m✗[39m [31mPR #9999 not found on owner/test-repo (origin). If the PR is on a different repository, run `gh repo set-default` to set the default or configure a different primary remote.[39m

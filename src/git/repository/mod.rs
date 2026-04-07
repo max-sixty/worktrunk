@@ -37,7 +37,7 @@ use dunce::canonicalize;
 use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
@@ -186,6 +186,20 @@ pub(super) struct RepoCache {
     /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
     /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
     pub(super) resolved_refs: DashMap<String, String>,
+    /// Effective integration targets: local_target -> effective ref (may be upstream).
+    /// Cached because `integration_reason()` calls `effective_integration_target()` for
+    /// every branch, but the result depends only on the target ref's relationship with
+    /// its upstream — stable for the duration of a command.
+    pub(super) effective_integration_targets: DashMap<String, String>,
+    /// Integration reason cache: (branch, target) -> (effective_target, reason).
+    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
+    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
+    /// followed by prepare_worktree_removal).
+    ///
+    /// TODO: `handle_branch_only_output` creates a fresh `Repository::current()` for
+    /// branch-only removals, bypassing this cache. Thread the pre-computed reason
+    /// through `RemoveResult::BranchOnly` to eliminate that redundant check.
+    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
 
     /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
     /// The tree SHA for a given ref doesn't change during a command.
