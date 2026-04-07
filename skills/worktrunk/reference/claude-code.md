@@ -8,6 +8,14 @@ The worktrunk Claude Code plugin provides three features:
 
 ## Installation
 
+Recommended:
+
+```bash
+$ wt config plugins claude install
+```
+
+Manual equivalent:
+
 ```bash
 $ claude plugin marketplace add max-sixty/worktrunk
 $ claude plugin install worktrunk@worktrunk
