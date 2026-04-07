@@ -819,13 +819,7 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            let is_symlink = fs::symlink_metadata(src_entry)
-                .with_context(|| {
-                    format!("reading metadata for {}", format_path_for_display(relative))
-                })?
-                .file_type()
-                .is_symlink();
-            if copy_leaf(src_entry, &dest_entry, is_symlink, force)? {
+            if copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
             }
         }
