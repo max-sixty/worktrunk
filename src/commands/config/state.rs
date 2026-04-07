@@ -376,8 +376,6 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             let status_str: &'static str = ci_status.into();
             println!("{status_str}");
         }
-        // Unreachable: StateCommand::Logs routes to handle_logs_get directly
-        "logs" => unreachable!("logs is handled by StateCommand::Logs"),
         _ => {
             anyhow::bail!(
                 "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
