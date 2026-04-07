@@ -919,6 +919,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "ci_status": [],
       "command_log": [],
       "default_branch": "main",
+      "diagnostic": [],
       "hints": [],
       "hook_output": [],
       "markers": [],
@@ -975,6 +976,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
       ],
       "command_log": [],
       "default_branch": "main",
+      "diagnostic": [],
       "hints": [],
       "hook_output": [],
       "markers": [
@@ -1035,6 +1037,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             }
           ],
           "default_branch": "main",
+          "diagnostic": [],
           "hints": [],
           "hook_output": [
             {
