@@ -59,7 +59,7 @@ Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMM
 
 Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m git[0m[2m rebase $([0m[2m[34mwt[0m[2m config state default-branch)[0m
+[107m [0m [2m[0m[2m[34mgit[0m[2m rebase $([0m[2m[34mwt[0m[2m config state default-branch)[0m
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclear[0m then [2mget[0m to re-detect.
 

@@ -75,6 +75,6 @@ Markers appear at the end of the Status column, after git symbols:
 
 Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m git[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.

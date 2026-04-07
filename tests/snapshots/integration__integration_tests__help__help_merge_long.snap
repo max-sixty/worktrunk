@@ -94,27 +94,27 @@ Unlike [2mgit merge[0m, this merges the current branch into the target branch 
 
 Merge to the default branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
 
 Merge to a different branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge develop[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge develop[0m
 
 Keep the worktree after merging:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
 
 Preserve commit history (no squash):
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
 
 Create a merge commit — semi-linear history:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
 
 [1m[32mPipeline[0m
 

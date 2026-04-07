@@ -93,19 +93,19 @@ and columns fill in as results arrive.
 
 List all worktrees:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
 
 Include CI status, line diffs, and LLM summaries:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m[2m[0m
 
 Include branches that don't have worktrees:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m[2m[0m
 
 Output as JSON for scripting:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m[0m
 
 [1m[32mColumns[0m
 
@@ -209,31 +209,31 @@ These appear across all columns while the table is loading:
 Query structured data with [2m--format=json[0m:
 
 [107m [0m [2m# Current worktree path (for scripts)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[36m-r[0m[2m [0m[2m[32m'.[] | select(.is_current) | .path'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches with uncommitted changes[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.working_tree.modified)'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.working_tree.modified)'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Worktrees with merge conflicts[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.operation_state == "conflicts")'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.operation_state == "conflicts")'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches ahead of main (needs merging)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main.ahead > 0) | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main.ahead > 0) | .branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Integrated branches (safe to remove)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main_state == "integrated" or [0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.main_state == "integrated" or [0m
 [107m [0m [2m[32m.main_state == "empty") | .branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Branches without worktrees[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--branches[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.kind == "branch") | [0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--branches[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.kind == "branch") | [0m
 [107m [0m [2m[32m.branch'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Worktrees ahead of remote (needs pushing)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.remote.ahead > 0) | {branch, [0m
-[107m [0m [2m[32mahead: .remote.ahead}'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.remote.ahead > 0) | {branch, ahead: [0m
+[107m [0m [2m[32m.remote.ahead}'[0m[2m[0m
 [107m [0m [2m[0m
 [107m [0m [2m# Stale CI (local changes not reflected in CI)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--full[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.ci.stale) | .branch'[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--format=json[0m[2m [0m[2m[36m--full[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mjq[0m[2m [0m[2m[32m'.[] | select(.ci.stale) | .branch'[0m[2m[0m
 
 [1mFields:[0m
 

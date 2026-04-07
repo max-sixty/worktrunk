@@ -60,13 +60,13 @@ Project hooks require approval on first run to prevent untrusted projects from r
 [1m[32mExamples[0m
 
 Pre-approve all commands for current project:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals add[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals add[0m
 
 Clear approvals for current project:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals clear[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear[0m
 
 Clear global approvals:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
 
 [1m[32mHow approvals work[0m
 

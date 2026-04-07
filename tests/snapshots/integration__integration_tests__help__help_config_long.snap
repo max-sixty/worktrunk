@@ -64,19 +64,19 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 Install shell integration (required for directory switching):
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config shell install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
 
 Create user config file with documented examples:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config create[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create[0m
 
 Create project config file ([2m.config/wt.toml[0m) for hooks:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config create [0m[2m[36m--project[0m[2m[0m
 
 Show current configuration and file locations:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config show[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config show[0m
 
 [1m[32mConfiguration files[0m
 
@@ -413,7 +413,7 @@ Aliases defined here are shared with teammates. For personal aliases, use the us
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config shell install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config shell install[0m
 
 For manual setup, see [2mwt config shell init --help[0m.
 
@@ -447,7 +447,7 @@ Note the single underscore after [2mWORKTRUNK[0m and double underscores betwee
 
 Override the LLM command in CI to use a mock:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m WORKTRUNK_COMMIT__GENERATION__COMMAND=[0m[2m[32m"echo 'test: automated commit'"[0m[2m[0m[2m wt merge[0m
+[107m [0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND=[0m[2m[32m"echo 'test: automated commit'"[0m[2m [0m[2m[34mwt[0m[2m merge[0m
 
 [32mOther environment variables[0m
 

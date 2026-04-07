@@ -64,7 +64,7 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
 [1m[32mExample[0m
 
 [107m [0m [2m# from ~/project (main worktree)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step promote feature[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step promote feature[0m
 
 Before:
 
