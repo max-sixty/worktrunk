@@ -4,6 +4,7 @@ use crate::common::{
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file, wait_for_file_content,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -2703,4 +2704,35 @@ fn test_merge_post_merge_pipeline_serial_ordering(mut repo: TestRepo) {
         content.contains("STEP_ONE_DONE"),
         "Step 2 should see step 1's output (serial pipeline), got: {content}"
     );
+}
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_merge_json(repo: TestRepo) {
+    let (repo, feature_wt) = merge_scenario(repo);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "--format=json", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "feature",
+      "committed": false,
+      "rebased": false,
+      "removed": true,
+      "squashed": false,
+      "target": "main"
+    }
+    "#);
 }

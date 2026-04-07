@@ -3,6 +3,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -603,4 +604,178 @@ fn test_prune_skips_default_branch_orphan() {
         branches.contains("main"),
         "Default branch 'main' should not have been pruned"
     );
+}
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_prune_dry_run_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree_with_commit("feature", "f.txt", "content", "feature commit");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
+}
+
+#[rstest]
+fn test_prune_json_actual_removal(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_prune_dry_run_json_current_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("current-merged");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_dry_run_json_orphan_branch(repo: TestRepo) {
+    repo.commit("initial");
+    // Orphan branch: integrated but no worktree
+    repo.create_branch("orphan-integrated");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_prune_json_current_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("current-merged");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_json_orphan_branch(repo: TestRepo) {
+    repo.commit("initial");
+    repo.create_branch("orphan-integrated");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
 }

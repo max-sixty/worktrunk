@@ -114,6 +114,17 @@ Automation:
       --no-hooks
           Skip hooks
 
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after removal completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
 Global Options:
   -C <path>
           Working directory for this command

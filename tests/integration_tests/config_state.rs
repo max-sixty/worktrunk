@@ -37,11 +37,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    let safe_branch = sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, json).unwrap();
 }
@@ -233,6 +229,56 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No previous branch to clear");
+}
+
+// ============================================================================
+// bare subcommand defaults (no action → implicit get)
+// ============================================================================
+
+/// `wt config state ci-status` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_ci_status(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "ci-status"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// `wt config state marker` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_marker(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "marker"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+}
+
+/// `wt config state logs` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_logs(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "logs"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+/// `wt config state hints` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_hints(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "hints"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -1892,4 +1938,157 @@ fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
         branch_item["vars"]["port"], "5000",
         "vars key should be 'port', not a mangled key from bad split"
     );
+}
+
+// ============================================================================
+// --format=json on individual subcommands
+// ============================================================================
+
+#[rstest]
+fn test_logs_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "hook_output": []
+    }
+    "#);
+}
+
+#[rstest]
+fn test_logs_get_json_with_files(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
+    std::fs::write(log_dir.join("main-user-post-start-server.log"), "output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Redact dynamic timestamps and sizes
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_ci_status_get_json(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
+    repo.commit("initial");
+    let head = repo.head_sha();
+
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(&head, "<SHA>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_marker_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_marker_get_json_with_value(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.marker",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ]);
+
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "main",
+      "marker": "🚧 WIP",
+      "set_at": 1735776000
+    }
+    "#);
+}
+
+#[rstest]
+fn test_vars_list_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"{}");
+}
+
+#[rstest]
+fn test_vars_list_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "staging"]);
+    repo.run_git(&["config", "worktrunk.state.main.vars.port", "3000"]);
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "env": "staging",
+      "port": "3000"
+    }
+    "#);
+}
+
+#[rstest]
+fn test_hints_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
+}
+
+#[rstest]
+fn test_hints_get_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    [
+      "worktree-path"
+    ]
+    "#);
 }

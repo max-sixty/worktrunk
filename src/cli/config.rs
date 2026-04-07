@@ -1,5 +1,6 @@
 use clap::Subcommand;
 
+use super::SwitchFormat;
 use crate::commands::Shell;
 
 #[derive(Subcommand)]
@@ -376,6 +377,10 @@ This tests:
         /// Run diagnostic checks (CI tools, commit generation, version)
         #[arg(long)]
         full: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Update deprecated config settings
@@ -867,6 +872,10 @@ $ wt config state ci-status clear && wt config state ci-status get
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Clear CI status cache
@@ -915,6 +924,10 @@ $ wt config state marker get --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Set marker for a branch
@@ -1011,6 +1024,15 @@ $ wt config state logs get --hook=user:post-start:server --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(
+            long,
+            default_value = "text",
+            conflicts_with = "hook",
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// Clear background operation logs
@@ -1030,7 +1052,11 @@ List shown hints:
 $ wt config state hints
 ```"#
     )]
-    Get,
+    Get {
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
+    },
 
     /// Clear hints (re-show on next trigger)
     #[command(
@@ -1120,6 +1146,10 @@ $ wt config state vars list --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Clear a key or all keys

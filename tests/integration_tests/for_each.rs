@@ -118,3 +118,54 @@ fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
         None,
     ));
 }
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_for_each_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "for-each", "--format=json", "--", "true"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(items.len() >= 2, "expected at least 2 worktrees");
+    for item in items {
+        assert_eq!(item["success"], true);
+        assert_eq!(item["exit_code"], 0);
+        assert!(item["path"].as_str().is_some());
+    }
+    // feature worktree should be in results
+    assert!(
+        items.iter().any(|i| i["branch"] == "feature"),
+        "feature branch should be in results"
+    );
+}
+
+#[rstest]
+fn test_for_each_json_with_failure(repo: TestRepo) {
+    repo.commit("initial");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "for-each", "--format=json", "--", "false"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+    // All should be failures
+    for item in items {
+        assert_eq!(item["success"], false);
+    }
+}
