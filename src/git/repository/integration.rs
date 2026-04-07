@@ -4,6 +4,7 @@
 //! (same commit, ancestor, trees match, etc.).
 
 use anyhow::Context;
+use dashmap::mapref::entry::Entry;
 
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
@@ -31,15 +32,21 @@ impl Repository {
     /// qualified form to ensure we reference the branch, not a same-named tag.
     /// Otherwise returns the original ref unchanged (for HEAD, SHAs, remote refs).
     fn resolve_preferring_branch(&self, r: &str) -> String {
-        let qualified = format!("refs/heads/{r}");
-        if self
-            .run_command(&["rev-parse", "--verify", "-q", &qualified])
-            .is_ok()
-        {
-            qualified
-        } else {
-            r.to_string()
-        }
+        self.cache
+            .resolved_refs
+            .entry(r.to_string())
+            .or_insert_with(|| {
+                let qualified = format!("refs/heads/{r}");
+                if self
+                    .run_command(&["rev-parse", "--verify", "-q", &qualified])
+                    .is_ok()
+                {
+                    qualified
+                } else {
+                    r.to_string()
+                }
+            })
+            .clone()
     }
 
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
@@ -350,10 +357,17 @@ impl Repository {
             .clone()
     }
 
-    /// Parse a tree ref to get its SHA.
+    /// Parse a tree ref to get its SHA (cached).
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        self.run_command(&["rev-parse", spec])
-            .map(|output| output.trim().to_string())
+        match self.cache.tree_shas.entry(spec.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let sha = self
+                    .run_command(&["rev-parse", spec])
+                    .map(|output| output.trim().to_string())?;
+                Ok(e.insert(sha).clone())
+            }
+        }
     }
 
     /// Check if a branch is integrated into a target.

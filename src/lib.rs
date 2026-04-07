@@ -20,5 +20,8 @@ pub mod sync;
 pub mod trace;
 pub mod utils;
 
+#[doc(hidden)]
+pub mod testing;
+
 // Re-export HookType for convenience
 pub use git::HookType;

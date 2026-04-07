@@ -47,6 +47,38 @@ fn is_wt_log_file(path: &std::path::Path) -> bool {
     name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
 }
 
+/// Clear stale entries from the wt/trash directory.
+///
+/// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
+/// then deletes them in a background process. If the background `rm -rf` fails
+/// or is killed, entries accumulate. This cleans them up.
+fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
+    let trash_dir = repo.wt_trash_dir();
+
+    if !trash_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&trash_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+        cleared += 1;
+    }
+
+    // Remove the trash directory itself if empty
+    if std::fs::read_dir(&trash_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&trash_dir);
+    }
+
+    Ok(cleared)
+}
+
 /// Clear all log files from the wt/logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     let log_dir = repo.wt_logs_dir();
@@ -123,7 +155,7 @@ fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std:
         .collect();
 
     let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &rows);
-    write!(out, "{}", rendered.trim_end())?;
+    writeln!(out, "{}", rendered.trim_end())?;
 
     Ok(())
 }
@@ -563,6 +595,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 
     // Clear default branch cache
     if matches!(repo.clear_default_branch_cache(), Ok(true)) {
+        eprintln!("{}", success_message("Cleared default branch cache"));
         cleared_any = true;
     }
 
@@ -571,6 +604,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         .run_command(&["config", "--unset", "worktrunk.history"])
         .is_ok()
     {
+        eprintln!("{}", success_message("Cleared previous branch"));
         cleared_any = true;
     }
 
@@ -578,40 +612,90 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     let markers_output = repo
         .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .unwrap_or_default();
+    let mut markers_cleared = 0;
     for line in markers_output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
             let _ = repo.run_command(&["config", "--unset", config_key]);
-            cleared_any = true;
+            markers_cleared += 1;
         }
+    }
+    if markers_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{markers_cleared}</> marker{}",
+                if markers_cleared == 1 { "" } else { "s" }
+            ))
+        );
+        cleared_any = true;
     }
 
     // Clear all CI status cache
     let ci_cleared = CachedCiStatus::clear_all(&repo);
     if ci_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{ci_cleared}</> CI cache entr{}",
+                if ci_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all vars data
     let vars_cleared = clear_all_vars(&repo)?;
     if vars_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{vars_cleared}</> variable{}",
+                if vars_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all logs
     let logs_cleared = clear_logs(&repo)?;
     if logs_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{logs_cleared}</> log file{}",
+                if logs_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all hints
     let hints_cleared = repo.clear_all_hints()?;
     if hints_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{hints_cleared}</> hint{}",
+                if hints_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
-    if cleared_any {
-        eprintln!("{}", success_message("Cleared all stored state"));
-    } else {
+    // Clear stale trash from worktree removal
+    let trash_cleared = clear_trash(&repo)?;
+    if trash_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{trash_cleared}</> trash entr{}",
+                if trash_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        cleared_any = true;
+    }
+
+    if !cleared_any {
         eprintln!("{}", info_message("No stored state to clear"));
     }
 

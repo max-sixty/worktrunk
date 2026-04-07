@@ -58,59 +58,47 @@ mod tests {
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
     use std::fs;
-    use worktrunk::shell_exec::Cmd;
-
-    fn git_init(dir: &std::path::Path, args: &[&str]) {
-        Cmd::new("git")
-            .args(args.iter().copied())
-            .current_dir(dir)
-            .run()
-            .unwrap();
-    }
-
-    fn configure_test_identity(repo: &Repository) {
-        repo.run_command(&["config", "user.name", "Test"]).unwrap();
-        repo.run_command(&["config", "user.email", "test@test.com"])
-            .unwrap();
-    }
+    use worktrunk::testing::{TestRepo, set_test_identity};
 
     /// Create a minimal temp git repo (for cache-only tests that don't need branches).
-    fn temp_repo() -> (tempfile::TempDir, Repository) {
-        let dir = tempfile::tempdir().unwrap();
-        git_init(dir.path(), &["init", "--initial-branch=main"]);
-        let repo = Repository::at(dir.path()).unwrap();
-        configure_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
+    fn temp_repo() -> (TestRepo, Repository) {
+        let t = TestRepo::new();
+        set_test_identity(&t.repo);
+        t.repo
+            .run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
-        (dir, repo)
+        let repo = Repository::at(t.path()).unwrap();
+        (t, repo)
     }
 
     /// Create a temp repo with main branch, default-branch config, and a real commit.
-    fn temp_repo_configured() -> (tempfile::TempDir, Repository, String) {
-        let dir = tempfile::tempdir().unwrap();
-        git_init(dir.path(), &["init", "--initial-branch=main"]);
-        let repo = Repository::at(dir.path()).unwrap();
-        configure_test_identity(&repo);
-        repo.run_command(&["config", "worktrunk.default-branch", "main"])
+    fn temp_repo_configured() -> (TestRepo, Repository, String) {
+        let t = TestRepo::new();
+        set_test_identity(&t.repo);
+        t.repo
+            .run_command(&["config", "worktrunk.default-branch", "main"])
             .unwrap();
-        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
-        repo.run_command(&["add", "README.md"]).unwrap();
-        repo.run_command(&["commit", "-m", "initial commit"])
+        fs::write(t.path().join("README.md"), "# Project\n").unwrap();
+        t.repo.run_command(&["add", "README.md"]).unwrap();
+        t.repo
+            .run_command(&["commit", "-m", "initial commit"])
             .unwrap();
-        let head = repo
+        let head = t
+            .repo
             .run_command(&["rev-parse", "HEAD"])
             .unwrap()
             .trim()
             .to_string();
-        (dir, repo, head)
+        let repo = Repository::at(t.path()).unwrap();
+        (t, repo, head)
     }
 
     /// Create a temp repo with main + feature branch that has real changes.
-    fn temp_repo_with_feature() -> (tempfile::TempDir, Repository, String) {
-        let (dir, repo, _) = temp_repo_configured();
+    fn temp_repo_with_feature() -> (TestRepo, Repository, String) {
+        let (t, repo, _) = temp_repo_configured();
 
         repo.run_command(&["checkout", "-b", "feature"]).unwrap();
-        fs::write(dir.path().join("new.txt"), "new content\n").unwrap();
+        fs::write(t.path().join("new.txt"), "new content\n").unwrap();
         repo.run_command(&["add", "new.txt"]).unwrap();
         repo.run_command(&["commit", "-m", "add new file"]).unwrap();
 
@@ -119,8 +107,8 @@ mod tests {
             .unwrap()
             .trim()
             .to_string();
-        let repo = Repository::at(dir.path()).unwrap();
-        (dir, repo, head)
+        let repo = Repository::at(t.path()).unwrap();
+        (t, repo, head)
     }
 
     fn feature_item(head: &str, path: &std::path::Path) -> ListItem {
@@ -135,7 +123,7 @@ mod tests {
     #[test]
     fn test_cache_roundtrip() {
         use crate::summary::{CachedSummary, read_cache, write_cache};
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         let branch = "feature/test-branch";
         let cached = CachedSummary {
             summary: "Add tests\n\nThis adds unit tests for cache.".to_string(),
@@ -155,7 +143,7 @@ mod tests {
     #[test]
     fn test_write_cache_handles_unwritable_path() {
         use crate::summary::{CachedSummary, read_cache, write_cache};
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         // Block cache directory creation by placing a file where the directory should be
         let wt_dir = repo.wt_dir();
         fs::create_dir_all(&wt_dir).unwrap();
@@ -181,7 +169,7 @@ mod tests {
         use crate::summary::{CachedSummary, cache_dir, read_cache, write_cache};
         use std::os::unix::fs::PermissionsExt;
 
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         let cache_path = cache_dir(&repo);
         fs::create_dir_all(&cache_path).unwrap();
         // Make directory read-only so file writes fail
@@ -203,7 +191,7 @@ mod tests {
     #[test]
     fn test_cache_invalidation_by_hash() {
         use crate::summary::{CachedSummary, read_cache, write_cache};
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         let branch = "main";
         let cached = CachedSummary {
             summary: "Old summary".to_string(),
@@ -219,7 +207,7 @@ mod tests {
     #[test]
     fn test_cache_file_uses_sanitized_branch() {
         use crate::summary::cache_file;
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         let path = cache_file(&repo, "feature/my-branch");
         let filename = path.file_name().unwrap().to_str().unwrap();
         assert!(filename.starts_with("feature-my-branch-"));
@@ -229,7 +217,7 @@ mod tests {
     #[test]
     fn test_cache_dir_under_git() {
         use crate::summary::cache_dir;
-        let (_dir, repo) = temp_repo();
+        let (_t, repo) = temp_repo();
         let dir = cache_dir(&repo);
         assert!(dir.to_str().unwrap().contains("wt"));
         assert!(dir.to_str().unwrap().contains("summaries"));
@@ -339,9 +327,9 @@ mod tests {
     #[test]
     fn test_compute_combined_diff_with_branch_changes() {
         use crate::summary::compute_combined_diff;
-        let (dir, repo, head) = temp_repo_with_feature();
+        let (t, repo, head) = temp_repo_with_feature();
 
-        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
+        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         assert!(combined.diff.contains("new.txt"));
@@ -351,21 +339,21 @@ mod tests {
     #[test]
     fn test_compute_combined_diff_default_branch_no_changes() {
         use crate::summary::compute_combined_diff;
-        let (dir, repo, head) = temp_repo_configured();
+        let (t, repo, head) = temp_repo_configured();
 
-        let result = compute_combined_diff("main", &head, Some(dir.path()), &repo);
+        let result = compute_combined_diff("main", &head, Some(t.path()), &repo);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_compute_combined_diff_with_uncommitted_changes() {
         use crate::summary::compute_combined_diff;
-        let (dir, repo, head) = temp_repo_with_feature();
+        let (t, repo, head) = temp_repo_with_feature();
         // Add uncommitted changes
-        fs::write(dir.path().join("uncommitted.txt"), "wip\n").unwrap();
+        fs::write(t.path().join("uncommitted.txt"), "wip\n").unwrap();
         repo.run_command(&["add", "uncommitted.txt"]).unwrap();
 
-        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
+        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
         assert!(result.is_some());
         let combined = result.unwrap();
         // Should contain both the branch diff and the working tree diff
@@ -376,7 +364,7 @@ mod tests {
     #[test]
     fn test_compute_combined_diff_branch_only_no_worktree() {
         use crate::summary::compute_combined_diff;
-        let (_dir, repo, head) = temp_repo_with_feature();
+        let (_t, repo, head) = temp_repo_with_feature();
         // Branch-only item (no worktree data) — only branch diff included
         let result = compute_combined_diff("feature", &head, None, &repo);
         assert!(result.is_some());
@@ -392,9 +380,13 @@ mod tests {
         // "master", "develop", "trunk"). This ensures default_branch() returns
         // None, exercising the code path where branch diff is skipped.
         let dir = tempfile::tempdir().unwrap();
-        git_init(dir.path(), &["init", "--initial-branch=init-branch"]);
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["init", "--initial-branch=init-branch"])
+            .current_dir(dir.path())
+            .run()
+            .unwrap();
         let setup_repo = Repository::at(dir.path()).unwrap();
-        configure_test_identity(&setup_repo);
+        set_test_identity(&setup_repo);
         fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
         setup_repo.run_command(&["add", "README.md"]).unwrap();
         setup_repo
@@ -435,12 +427,12 @@ mod tests {
 
     #[test]
     fn test_generate_summary_calls_llm() {
-        let (dir, repo, head) = temp_repo_with_feature();
+        let (t, repo, head) = temp_repo_with_feature();
 
         let summary = crate::summary::generate_summary(
             "feature",
             &head,
-            Some(dir.path()),
+            Some(t.path()),
             "cat >/dev/null && echo 'Add new file'",
             &repo,
         );
@@ -449,12 +441,12 @@ mod tests {
 
     #[test]
     fn test_generate_summary_caches_result() {
-        let (dir, repo, head) = temp_repo_with_feature();
+        let (t, repo, head) = temp_repo_with_feature();
 
         let summary1 = crate::summary::generate_summary(
             "feature",
             &head,
-            Some(dir.path()),
+            Some(t.path()),
             "cat >/dev/null && echo 'Add new file'",
             &repo,
         );
@@ -464,7 +456,7 @@ mod tests {
         let summary2 = crate::summary::generate_summary(
             "feature",
             &head,
-            Some(dir.path()),
+            Some(t.path()),
             "cat >/dev/null && echo 'Different output'",
             &repo,
         );
@@ -473,12 +465,12 @@ mod tests {
 
     #[test]
     fn test_generate_summary_no_changes() {
-        let (dir, repo, head) = temp_repo_configured();
+        let (t, repo, head) = temp_repo_configured();
 
         let summary = crate::summary::generate_summary(
             "main",
             &head,
-            Some(dir.path()),
+            Some(t.path()),
             "echo 'should not run'",
             &repo,
         );
@@ -487,12 +479,12 @@ mod tests {
 
     #[test]
     fn test_generate_summary_llm_error() {
-        let (dir, repo, head) = temp_repo_with_feature();
+        let (t, repo, head) = temp_repo_with_feature();
 
         let summary = crate::summary::generate_summary(
             "feature",
             &head,
-            Some(dir.path()),
+            Some(t.path()),
             "cat >/dev/null && echo 'fail' >&2 && exit 1",
             &repo,
         );
@@ -501,8 +493,8 @@ mod tests {
 
     #[test]
     fn test_generate_and_cache_summary_populates_cache() {
-        let (dir, repo, head) = temp_repo_with_feature();
-        let item = feature_item(&head, dir.path());
+        let (t, repo, head) = temp_repo_with_feature();
+        let item = feature_item(&head, t.path());
         let cache: DashMap<PreviewCacheKey, String> = DashMap::new();
 
         generate_and_cache_summary(

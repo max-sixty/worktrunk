@@ -208,7 +208,7 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2mcommit = [0m[2m[33mtrue[0m[2m      [0m[2m# Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2mrebase = [0m[2m[33mtrue[0m[2m      [0m[2m# Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2mremove = [0m[2m[33mtrue[0m[2m      [0m[2m# Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-verify to skip)[0m
+[107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2mff = [0m[2m[33mtrue[0m[2m          [0m[2m# Fast-forward merge (--no-ff to create a merge commit instead)[0m
 
 [32mSwitch[0m

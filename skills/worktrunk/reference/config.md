@@ -186,7 +186,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-verify to skip)
+verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
@@ -567,7 +567,6 @@ Global Options:
 Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ### Keys
 
@@ -592,7 +591,7 @@ $ wt config state default-branch set main
 
 Set a marker for current branch:
 ```bash
-$ wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
 ```
 
 Store arbitrary data:

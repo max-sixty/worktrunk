@@ -32,7 +32,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
-$ wt switch --create temp --no-verify      # Skip hooks
+$ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
 ## Shortcuts
@@ -184,8 +184,20 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
+
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
+          WorktreeCreate hooks).
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>

@@ -873,15 +873,10 @@ mod tests {
         "#);
     }
 
-    fn test_repo() -> (tempfile::TempDir, Repository) {
-        let tmp = tempfile::tempdir().unwrap();
-        worktrunk::shell_exec::Cmd::new("git")
-            .args(["init", "-b", "main"])
-            .current_dir(tmp.path())
-            .run()
-            .unwrap();
-        let repo = Repository::at(tmp.path()).unwrap();
-        (tmp, repo)
+    fn test_repo() -> (worktrunk::testing::TestRepo, Repository) {
+        let t = worktrunk::testing::TestRepo::new();
+        let repo = Repository::at(t.path()).unwrap();
+        (t, repo)
     }
 
     #[test]

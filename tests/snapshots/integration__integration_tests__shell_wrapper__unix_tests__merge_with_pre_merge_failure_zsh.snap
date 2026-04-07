@@ -10,4 +10,4 @@ expression: "&output.combined"
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1
 ✗ Test suite failed: 3 tests failing
 [31m✗[39m [31mpre-merge command failed: [1mtest[22m: exit status: 1[39m
-[2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-verify[24m[22m
+[2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
