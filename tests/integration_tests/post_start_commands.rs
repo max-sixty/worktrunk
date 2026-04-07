@@ -897,28 +897,25 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    // 2 log files: runner log + per-command log (cmd-0, unnamed single command)
+    wait_for_file_count(&log_dir, "log", 2);
 
-    // Find the log file
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
+    // Find the command log file (contains "cmd-0" in name, not "runner")
+    let cmd_log = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
-        .collect();
-
-    assert_eq!(
-        log_files.len(),
-        1,
-        "Should have exactly one log file, found: {:?}",
-        log_files
-    );
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("cmd-0"))
+        })
+        .expect("Should have a cmd-0 log file");
 
     // Wait for content to be written (background command might still be writing)
-    let log_file = &log_files[0];
-    wait_for_file_content(log_file);
+    wait_for_file_content(&cmd_log);
 
-    let log_contents = fs::read_to_string(log_file).unwrap();
+    let log_contents = fs::read_to_string(&cmd_log).unwrap();
 
     // Verify both stdout and stderr were captured
     assert_snapshot!(log_contents, @"
@@ -982,35 +979,34 @@ approved-commands = [
 
     snapshot_switch("post_start_separate_logs", &repo, &["--create", "feature"]);
 
-    // Map configs run as a concurrent group in one pipeline runner process,
-    // producing a single log file. Wait for it and verify all outputs are present.
+    // Each command gets its own log file (task1, task2, task3) plus one runner log.
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    wait_for_file_count(&log_dir, "log", 4);
 
-    let log_file = fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
-        .expect("should have one log file");
+    // Verify each task's output is in its own log file.
+    for (task, expected) in [
+        ("task1", "TASK1_OUTPUT"),
+        ("task2", "TASK2_OUTPUT"),
+        ("task3", "TASK3_OUTPUT"),
+    ] {
+        let log_file = fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(&format!("post-start-{task}"))
+            })
+            .unwrap_or_else(|| panic!("should have log file for {task}"));
 
-    // Poll for all outputs — concurrent commands may flush at different times.
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(15);
-    loop {
-        let contents = fs::read_to_string(log_file.path()).unwrap_or_default();
-        if contents.contains("TASK1_OUTPUT")
-            && contents.contains("TASK2_OUTPUT")
-            && contents.contains("TASK3_OUTPUT")
-        {
-            break;
-        }
+        wait_for_file_content(&log_file.path());
+        let contents = fs::read_to_string(log_file.path()).unwrap();
         assert!(
-            start.elapsed() < timeout,
-            "Timed out waiting for all outputs in log. Got: {contents}"
+            contents.contains(expected),
+            "Log for {task} should contain {expected}, got: {contents}"
         );
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 

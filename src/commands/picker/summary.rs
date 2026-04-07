@@ -63,7 +63,6 @@ mod tests {
     /// Create a minimal temp git repo (for cache-only tests that don't need branches).
     fn temp_repo() -> (TestRepo, Repository) {
         let t = TestRepo::new();
-        set_test_identity(&t.repo);
         t.repo
             .run_command(&["commit", "--allow-empty", "-m", "init"])
             .unwrap();
@@ -74,7 +73,6 @@ mod tests {
     /// Create a temp repo with main branch, default-branch config, and a real commit.
     fn temp_repo_configured() -> (TestRepo, Repository, String) {
         let t = TestRepo::new();
-        set_test_identity(&t.repo);
         t.repo
             .run_command(&["config", "worktrunk.default-branch", "main"])
             .unwrap();

@@ -311,32 +311,38 @@ impl Repository {
     /// Used by both `wt list` and `wt remove` to ensure consistent integration detection.
     ///
     pub fn effective_integration_target(&self, local_target: &str) -> String {
-        // Get the upstream ref for the local target (e.g., origin/main for main)
-        let upstream = match self.branch(local_target).upstream() {
-            Ok(Some(upstream)) => upstream,
-            _ => return local_target.to_string(),
-        };
+        self.cache
+            .effective_integration_targets
+            .entry(local_target.to_string())
+            .or_insert_with(|| {
+                // Get the upstream ref for the local target (e.g., origin/main for main)
+                let upstream = match self.branch(local_target).upstream() {
+                    Ok(Some(upstream)) => upstream,
+                    _ => return local_target.to_string(),
+                };
 
-        // If local and upstream are the same commit, prefer local for clearer messaging
-        if self.same_commit(local_target, &upstream).unwrap_or(false) {
-            return local_target.to_string();
-        }
+                // If local and upstream are the same commit, prefer local for clearer messaging
+                if self.same_commit(local_target, &upstream).unwrap_or(false) {
+                    return local_target.to_string();
+                }
 
-        // If upstream contains commits not present in local, prefer upstream so
-        // remotely merged branches still count as integrated after a fetch.
-        if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
-            return upstream;
-        }
+                // If upstream contains commits not present in local, prefer upstream so
+                // remotely merged branches still count as integrated after a fetch.
+                if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
+                    return upstream;
+                }
 
-        // If upstream is strictly behind local, local is more complete.
-        if self.is_ancestor(&upstream, local_target).unwrap_or(false) {
-            return local_target.to_string();
-        }
+                // If upstream is strictly behind local, local is more complete.
+                if self.is_ancestor(&upstream, local_target).unwrap_or(false) {
+                    return local_target.to_string();
+                }
 
-        // Local and upstream have diverged (neither is ancestor of the other).
-        // Prefer upstream so remote merges are still visible to integration
-        // checks even while local has extra commits.
-        upstream
+                // Local and upstream have diverged (neither is ancestor of the other).
+                // Prefer upstream so remote merges are still visible to integration
+                // checks even while local has extra commits.
+                upstream
+            })
+            .clone()
     }
 
     /// Get the cached integration target for this repository.
@@ -400,8 +406,19 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
-        let effective_target = self.effective_integration_target(target);
-        let signals = compute_integration_lazy(self, branch, &effective_target)?;
-        Ok((effective_target, check_integration(&signals)))
+        use dashmap::mapref::entry::Entry;
+        match self
+            .cache
+            .integration_reasons
+            .entry((branch.to_string(), target.to_string()))
+        {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let effective_target = self.effective_integration_target(target);
+                let signals = compute_integration_lazy(self, branch, &effective_target)?;
+                let result = (effective_target, check_integration(&signals));
+                Ok(e.insert(result).clone())
+            }
+        }
     }
 }
