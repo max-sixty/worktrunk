@@ -687,6 +687,9 @@ fn test_state_clear_all_cleans_trash(repo: TestRepo) {
     )
     .unwrap();
     std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+    // Stray file directly in trash (not inside a subdirectory) — exercises the
+    // non-directory branch in clear_trash's `if path.is_dir()` guard.
+    std::fs::write(trash_dir.join("stray-file.txt"), "stale").unwrap();
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());

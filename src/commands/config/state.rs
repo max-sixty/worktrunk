@@ -65,8 +65,10 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
         let path = entry.path();
         if path.is_dir() {
             std::fs::remove_dir_all(&path)?;
-            cleared += 1;
+        } else {
+            std::fs::remove_file(&path)?;
         }
+        cleared += 1;
     }
 
     // Remove the trash directory itself if empty
