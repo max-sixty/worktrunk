@@ -377,7 +377,7 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             println!("{status_str}");
         }
         // Unreachable: StateCommand::Logs routes to handle_logs_get directly
-        "logs" => handle_logs_get(None, None)?,
+        "logs" => unreachable!("logs is handled by StateCommand::Logs"),
         _ => {
             anyhow::bail!(
                 "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"

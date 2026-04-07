@@ -925,10 +925,10 @@ The command log appends entries and is not branch-specific — it records all ac
 
 | Operation | Log file |
 |-----------|----------|
-| post-start hooks | `{branch}-{source}-post-start-{name}.log` |
+| Background hooks | `{branch}-{source}-{hook-type}-{name}.log` |
 | Background removal | `{branch}-remove.log` |
 
-Source is `user` or `project` depending on where the hook is defined. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
 
 #### Diagnostic files
 
