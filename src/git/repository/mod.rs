@@ -159,7 +159,6 @@ pub(super) struct RepoCache {
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
-
     // ========== Potential additions (from cache-effectiveness analysis) ==========
     //
     // TODO: Cache `resolve_preferring_branch()` results. Currently runs
