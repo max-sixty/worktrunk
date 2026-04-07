@@ -2715,3 +2715,34 @@ fn restore_dir_permissions(dir: &std::path::Path) {
         }
     }
 }
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_remove_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "feature",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    // Multi-branch removal outputs an array
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "feature");
+    assert_eq!(items[0]["kind"], "worktree");
+    assert!(items[0]["path"].as_str().is_some());
+}

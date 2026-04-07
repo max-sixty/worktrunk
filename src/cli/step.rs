@@ -452,6 +452,10 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
+
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
@@ -558,6 +562,10 @@ $ wt step prune
         /// Run removal in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Move worktrees to expected paths

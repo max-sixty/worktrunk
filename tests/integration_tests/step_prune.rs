@@ -602,3 +602,57 @@ fn test_prune_skips_default_branch_orphan() {
         "Default branch 'main' should not have been pruned"
     );
 }
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_prune_dry_run_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["branch"], "merged-a");
+    assert_eq!(items[0]["kind"], "worktree");
+    assert!(items[0]["reason"].as_str().is_some());
+    assert!(items[0]["target"].as_str().is_some());
+}
+
+#[rstest]
+fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
+    repo.commit("initial");
+    // Create a worktree with a unique commit (not merged into main)
+    repo.add_worktree_with_commit("feature", "f.txt", "content", "feature commit");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json, serde_json::json!([]));
+}

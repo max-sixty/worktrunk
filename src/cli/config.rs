@@ -377,6 +377,10 @@ This tests:
         /// Run diagnostic checks (CI tools, commit generation, version)
         #[arg(long)]
         full: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Update deprecated config settings

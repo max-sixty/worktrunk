@@ -333,7 +333,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
         StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
-        StepCommand::ForEach { args } => step_for_each(args),
+        StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
                 commands::PromoteResult::Promoted => (),
@@ -352,7 +352,8 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             yes,
             min_age,
             foreground,
-        } => step_prune(dry_run, yes, &min_age, foreground),
+            format,
+        } => step_prune(dry_run, yes, &min_age, foreground, format),
         StepCommand::Relocate {
             branches,
             dry_run,
@@ -492,7 +493,7 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
     match action {
         ConfigCommand::Shell { action } => handle_config_shell_command(action),
         ConfigCommand::Create { project } => handle_config_create(project),
-        ConfigCommand::Show { full } => handle_config_show(full),
+        ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { yes } => handle_config_update(yes),
         ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
@@ -723,7 +724,35 @@ fn validate_remove_targets(
     plans
 }
 
+/// Convert a RemoveResult to a JSON value for structured output.
+fn remove_result_to_json(result: &RemoveResult) -> serde_json::Value {
+    match result {
+        RemoveResult::RemovedWorktree {
+            worktree_path,
+            branch_name,
+            deletion_mode,
+            ..
+        } => serde_json::json!({
+            "kind": "worktree",
+            "branch": branch_name,
+            "path": worktree_path,
+            "branch_deleted": !deletion_mode.should_keep(),
+        }),
+        RemoveResult::BranchOnly {
+            branch_name,
+            deletion_mode,
+            pruned,
+        } => serde_json::json!({
+            "kind": "branch_only",
+            "branch": branch_name,
+            "pruned": pruned,
+            "branch_deleted": !deletion_mode.should_keep(),
+        }),
+    }
+}
+
 fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
+    let json_mode = args.format == SwitchFormat::Json;
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
         .context("Failed to load config")
@@ -791,7 +820,14 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(args.yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false)
+                if json_mode {
+                    let json = remove_result_to_json(&result);
+                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                    println!("{}", serde_json::to_string_pretty(&json)?);
+                    Ok(())
+                } else {
+                    handle_remove_output(&result, args.foreground, run_hooks, false)
+                }
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(
@@ -817,15 +853,30 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // but hooks execute in each target worktree.
                 let run_hooks = verify && approve_remove(args.yes)?;
 
+                let mut json_items: Vec<serde_json::Value> = Vec::new();
+
                 // Execute all validated plans: others first, branch-only next, current last
-                for result in plans.others {
-                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                for result in &plans.others {
+                    if json_mode {
+                        json_items.push(remove_result_to_json(result));
+                    }
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
-                for result in plans.branch_only {
-                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                for result in &plans.branch_only {
+                    if json_mode {
+                        json_items.push(remove_result_to_json(result));
+                    }
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
-                if let Some(result) = plans.current {
-                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                if let Some(ref result) = plans.current {
+                    if json_mode {
+                        json_items.push(remove_result_to_json(result));
+                    }
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
+                }
+
+                if json_mode {
+                    println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
 
                 if !plans.errors.is_empty() {
@@ -990,6 +1041,7 @@ fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
         verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
         yes: args.yes,
         stage: args.stage,
+        format: args.format,
     })
 }
 

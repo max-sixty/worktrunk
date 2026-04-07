@@ -2704,3 +2704,30 @@ fn test_merge_post_merge_pipeline_serial_ordering(mut repo: TestRepo) {
         "Step 2 should see step 1's output (serial pipeline), got: {content}"
     );
 }
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_merge_json(repo: TestRepo) {
+    let (repo, feature_wt) = merge_scenario(repo);
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "--format=json", "--yes", "--no-hooks"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(json["branch"], "feature");
+    assert_eq!(json["target"], "main");
+    assert!(json["squashed"].is_boolean());
+    assert!(json["removed"].is_boolean());
+}
