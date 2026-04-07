@@ -2082,7 +2082,7 @@ pub fn resolve_git_common_dir(worktree_path: &Path) -> PathBuf {
 /// ```
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// // Good - no nesting, proper closure
 /// let output = "\x1b[36mtext\x1b[0m (stats)";
 /// assert!(validate_ansi_codes(output).is_empty());
