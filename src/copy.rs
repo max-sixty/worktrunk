@@ -76,7 +76,24 @@ pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<bool> {
         create_symlink(&target, src, dest)?;
     } else {
         match reflink_copy::reflink_or_copy(src, dest) {
-            Ok(_) => {}
+            Ok(_) => {
+                // Preserve file permissions (especially the execute bit).
+                //
+                // On btrfs/XFS, reflink (FICLONE ioctl) clones data extents
+                // only — the destination gets umask-based permissions, losing
+                // execute bits. std::fs::copy's fallback preserves permissions
+                // via fchmod, creating an asymmetry in reflink_or_copy.
+                //
+                // Refs: ioctl_ficlonerange(2), LWN Articles/331808
+                #[cfg(unix)]
+                {
+                    let perms = fs::metadata(src)
+                        .context("reading source file permissions")?
+                        .permissions();
+                    fs::set_permissions(dest, perms)
+                        .context("setting destination file permissions")?;
+                }
+            }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));

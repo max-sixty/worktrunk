@@ -194,7 +194,12 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
     repo.add_worktree("detached-integrated");
     repo.detach_head_in_worktree("detached-integrated");
 
-    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    let mut cmd = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes", "--min-age=0s", "--foreground"],
+        None,
+    );
     cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
     assert_cmd_snapshot!(cmd);
 
