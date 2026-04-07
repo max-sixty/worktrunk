@@ -650,6 +650,13 @@ impl TestRepo {
         let root = canonicalize(&root).unwrap();
         let repo = Repository::at(&root).unwrap();
 
+        // Also set identity in local config so unit tests that commit via
+        // repo.run_command() work without GIT_CONFIG_GLOBAL.
+        repo.run_command(&["config", "user.name", "Test User"])
+            .unwrap();
+        repo.run_command(&["config", "user.email", "test@example.com"])
+            .unwrap();
+
         Self {
             temp_dir,
             root,
