@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_name // .branch // empty' | xargs -I{} wt switch --create {} --no-cd --format=json | jq -r '.path'"
+            "command": "jq -r '.name' | xargs -I{} wt switch --create {} --no-cd --format=json | jq -r '.path'"
           }
         ]
       }
