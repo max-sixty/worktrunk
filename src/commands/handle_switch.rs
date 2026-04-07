@@ -237,27 +237,25 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    for steps in super::hooks::prepare_background_hooks(
+    let mut all_groups: Vec<Vec<super::hooks::SourcedStep>> = Vec::new();
+
+    all_groups.extend(super::hooks::prepare_background_hooks(
         &ctx,
         HookType::PostSwitch,
         extra_vars,
         hooks_display_path,
-    )? {
-        super::hooks::spawn_hook_pipeline(&ctx, steps)?;
-    }
+    )?);
 
     if matches!(result, SwitchResult::Created { .. }) {
-        for steps in super::hooks::prepare_background_hooks(
+        all_groups.extend(super::hooks::prepare_background_hooks(
             &ctx,
             HookType::PostStart,
             extra_vars,
             hooks_display_path,
-        )? {
-            super::hooks::spawn_hook_pipeline(&ctx, steps)?;
-        }
+        )?);
     }
 
-    Ok(())
+    super::hooks::announce_and_spawn_background_hooks(&ctx, all_groups)
 }
 
 /// Handle the switch command.

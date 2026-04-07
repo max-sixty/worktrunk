@@ -178,8 +178,6 @@ pub struct SourcedStep {
 /// - Multiple unnamed steps from the same source repeat the label (`user → user`)
 /// - Source prefix was dropped for named steps (`user:bg` → `bg`) — less
 ///   informative when both user and project hooks are present
-/// - Combined hook-type messages were split (`post-switch: X; post-start: Y`
-///   → two separate lines) — more verbose for the common create case
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     let mut parts = Vec::new();
     for step in steps {
@@ -204,26 +202,74 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     parts.join(" → ")
 }
 
+/// Announce and spawn background hooks for one or more hook types.
+///
+/// Displays a single combined summary line covering all hook types, then
+/// spawns each source group as an independent pipeline. Use this instead
+/// of calling `spawn_hook_pipeline` directly when multiple hook types
+/// fire together (e.g., post-switch + post-start on create).
+///
+/// Example output: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
+pub fn announce_and_spawn_background_hooks(
+    ctx: &CommandContext,
+    groups: Vec<Vec<SourcedStep>>,
+) -> anyhow::Result<()> {
+    if groups.iter().all(|g| g.is_empty()) {
+        return Ok(());
+    }
+
+    // Build combined summary, merging groups with the same hook type:
+    // "post-switch: zellij-tab; post-start: deps, assets, docs"
+    let display_path = groups
+        .iter()
+        .flat_map(|g| g.iter())
+        .find_map(|s| s.display_path.as_ref());
+
+    // Merge summaries by hook type so user+project for the same type
+    // shows "post-start: user_bg, project" not "post-start: user_bg; post-start: project".
+    let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
+    for group in &groups {
+        let hook_type = group[0].hook_type;
+        let summary = format_pipeline_summary(group);
+        if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
+            entry.1.push(summary);
+        } else {
+            type_summaries.push((hook_type, vec![summary]));
+        }
+    }
+
+    let combined: String = type_summaries
+        .iter()
+        .map(|(ht, summaries)| format!("{ht}: {}", summaries.join(", ")))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let message = match display_path {
+        Some(path) => {
+            let path_display = format_path_for_display(path);
+            cformat!("Running {combined} @ <bold>{path_display}</>")
+        }
+        None => format!("Running {combined}"),
+    };
+    eprintln!("{}", progress_message(message));
+
+    for group in groups {
+        spawn_hook_pipeline_quiet(ctx, group)?;
+    }
+
+    Ok(())
+}
+
 /// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
 ///
-/// Serializes the pipeline steps to JSON and spawns `wt hook run-pipeline`
-/// as a detached process, piping the spec to stdin. The background
-/// process expands templates just-in-time and executes each step via
-/// the detected shell.
-///
-/// Used for all post-* background hooks regardless of config format.
+/// Displays a summary line and spawns the pipeline. For multiple hook types
+/// that should share a single display line, use `announce_and_spawn_background_hooks`.
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
-    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
-
     if steps.is_empty() {
         return Ok(());
     }
 
     let hook_type = steps[0].hook_type;
-    let source = steps[0].source;
     let display_path = steps[0].display_path.as_ref();
-
-    // Show summary: "Running post-start: install → build, lint"
     let summary = format_pipeline_summary(&steps);
     let message = match display_path {
         Some(path) => {
@@ -233,6 +279,18 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
         None => format!("Running {hook_type}: {summary}"),
     };
     eprintln!("{}", progress_message(message));
+
+    spawn_hook_pipeline_quiet(ctx, steps)
+}
+
+/// Spawn a hook pipeline without displaying a summary line.
+///
+/// Used by `announce_and_spawn_background_hooks` which handles display separately.
+fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+    use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
+
+    let hook_type = steps[0].hook_type;
+    let source = steps[0].source;
 
     // Extract base context from the first command. All steps share the same base context,
     // but per-step metadata (hook_name) is stripped — it gets injected per-step by the
@@ -272,18 +330,19 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
     let spec = PipelineSpec {
         worktree_path: ctx.worktree_path.to_path_buf(),
         branch: ctx.branch_or_head().to_string(),
-        hook_type: hook_type.to_string(),
-        source: source.to_string(),
+        hook_type,
+        source,
         context,
         steps: spec_steps,
+        log_dir: ctx.repo.wt_logs_dir(),
     };
 
     let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
 
     let wt_bin = std::env::current_exe().context("failed to resolve wt binary path")?;
 
-    let hook_log = HookLog::hook(source, hook_type, "pipeline");
-    let log_label = format!("{hook_type} {source} pipeline");
+    let hook_log = HookLog::hook(source, hook_type, "runner");
+    let log_label = format!("{hook_type} {source} runner");
 
     if let Err(err) = spawn_detached_exec(
         ctx.repo,
