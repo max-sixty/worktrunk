@@ -229,9 +229,6 @@ pub fn announce_and_spawn_background_hooks(
     // shows "post-start: user_bg, project" not "post-start: user_bg; post-start: project".
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
     for group in &groups {
-        if group.is_empty() {
-            continue;
-        }
         let hook_type = group[0].hook_type;
         let summary = format_pipeline_summary(group);
         if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
@@ -291,10 +288,6 @@ pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> any
 /// Used by `announce_and_spawn_background_hooks` which handles display separately.
 fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
-
-    if steps.is_empty() {
-        return Ok(());
-    }
 
     let hook_type = steps[0].hook_type;
     let source = steps[0].source;
