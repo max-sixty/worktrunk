@@ -2766,3 +2766,60 @@ fn test_remove_json_current(mut repo: TestRepo) {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
+
+#[rstest]
+fn test_remove_json_branch_only(repo: TestRepo) {
+    repo.commit("initial");
+    // Create a branch without a worktree (already merged into main)
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "orphan-branch",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_remove_json_multi_with_branch_only(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("wt-feature");
+    // Create a branch without a worktree
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "wt-feature",
+            "orphan-branch",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}

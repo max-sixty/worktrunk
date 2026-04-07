@@ -235,6 +235,56 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
 }
 
 // ============================================================================
+// bare subcommand defaults (no action → implicit get)
+// ============================================================================
+
+/// `wt config state ci-status` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_ci_status(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "ci-status"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// `wt config state marker` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_marker(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "marker"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+}
+
+/// `wt config state logs` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_logs(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "logs"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+/// `wt config state hints` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_hints(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "hints"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+// ============================================================================
 // ci-status
 // ============================================================================
 
