@@ -115,6 +115,26 @@ fn stream_exit_result(
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Per-worktree and keyed values use `DashMap` with explicit `Entry` matching:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;   // errors propagate naturally
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
+///
+/// This holds the shard lock across check-and-insert (no TOCTOU gap) and
+/// propagates errors via `?` without swallowing them into fallbacks.
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
