@@ -112,7 +112,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::testutil::TestRepo;
+    use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
         TestRepo::new()

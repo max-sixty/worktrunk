@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
 use crate::git::HookType;
-use crate::testutil::TestRepo;
+use crate::testing::TestRepo;
 
 fn test_repo() -> TestRepo {
     TestRepo::new()

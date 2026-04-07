@@ -208,7 +208,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::shell_exec::Cmd;
-    use crate::testutil::set_test_identity;
+    use crate::testing::set_test_identity;
     use ansi_str::AnsiStr;
 
     fn git_init(path: &Path) {

@@ -1,7 +1,11 @@
-//! Shared test utilities for unit tests within the worktrunk crate.
+//! Shared test fixtures for worktrunk unit tests.
 //!
 //! Provides lightweight git repository fixtures for tests that need a real
 //! `.git` directory (template expansion, config resolution, work item generation).
+//!
+//! This module is `#[doc(hidden)] pub` so both library (`src/`) and binary
+//! (`src/commands/`) unit tests can use it — `#[cfg(test)]` modules are only
+//! visible within their own crate.
 //!
 //! For integration tests, use `tests/common/mod.rs` (`TestRepo`) instead — it
 //! provides full CLI isolation, snapshot filters, and mock commands.
@@ -17,6 +21,12 @@ use crate::shell_exec::Cmd;
 pub struct TestRepo {
     _dir: tempfile::TempDir,
     pub repo: Repository,
+}
+
+impl Default for TestRepo {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestRepo {

@@ -4,7 +4,7 @@
 //! edge cases in template variable substitution.
 
 use super::expand_template;
-use crate::testutil::TestRepo;
+use crate::testing::TestRepo;
 use std::collections::HashMap;
 
 fn test_repo() -> TestRepo {
