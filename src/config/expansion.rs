@@ -537,6 +537,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use crate::shell_exec::Cmd;
     use crate::testutil::TestRepo;
 
     fn test_repo() -> TestRepo {
@@ -1141,15 +1142,15 @@ mod tests {
         let test = test_repo();
 
         // Set vars data via git config
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.port", "3000"])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1197,32 +1198,32 @@ mod tests {
         let test = test_repo();
 
         // Store a JSON object as a vars value
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"port": 3000, "debug": true}"#,
             ])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
 
         // Store a JSON array
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.tags",
                 r#"["alpha", "beta"]"#,
             ])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
 
         // Store a plain string (not JSON)
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1268,14 +1269,14 @@ mod tests {
     fn test_expand_template_vars_json_shell_escape() {
         let test = test_repo();
 
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"name": "my project", "cmd": "echo hello"}"#,
             ])
             .current_dir(test.path())
-            .status()
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
