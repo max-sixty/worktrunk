@@ -121,20 +121,30 @@ fn stream_exit_result(
 /// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
 /// initialization, no key.
 ///
-/// Per-worktree and keyed values use `DashMap` with explicit `Entry` matching:
+/// Keyed values use `DashMap`. Both patterns hold the shard lock across
+/// check-and-insert (no TOCTOU gap). Choose based on whether computation
+/// is fallible:
+///
+/// **Infallible** — use `entry().or_insert_with()`:
+///
+/// ```rust,ignore
+/// self.cache.some_map
+///     .entry(key)
+///     .or_insert_with(|| compute())
+///     .clone()
+/// ```
+///
+/// **Fallible** — use explicit `Entry` matching to propagate errors:
 ///
 /// ```rust,ignore
 /// match self.cache.some_map.entry(key) {
 ///     Entry::Occupied(e) => Ok(e.get().clone()),
 ///     Entry::Vacant(e) => {
-///         let value = compute()?;   // errors propagate naturally
+///         let value = compute()?;
 ///         Ok(e.insert(value).clone())
 ///     }
 /// }
 /// ```
-///
-/// This holds the shard lock across check-and-insert (no TOCTOU gap) and
-/// propagates errors via `?` without swallowing them into fallbacks.
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
