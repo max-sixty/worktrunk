@@ -7,6 +7,16 @@ The worktrunk Claude Code plugin provides two features:
 
 ## Installation
 
+Recommended:
+
+```bash
+$ wt config plugins claude install
+```
+
+This wraps the marketplace flow for you and installs the same plugin automatically.
+
+Manual equivalent:
+
 ```bash
 $ claude plugin marketplace add max-sixty/worktrunk
 $ claude plugin install worktrunk@worktrunk
