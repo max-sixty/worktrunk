@@ -267,6 +267,10 @@ For each uncovered function/method, either write a test or document why it's int
 
 **Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
 
+### "N functions have mismatched data" Warning
+
+`cargo llvm-cov` emits this warning (typically 5–20 functions) because it merges profiles from multiple compilation targets with minor codegen differences. Expected, harmless, no suppression flag exists. See [LLVM #97574](https://github.com/llvm/llvm-project/issues/97574).
+
 ## Benchmarks
 
 Benchmarks measure `wt list` performance across worktree counts and repository sizes.
