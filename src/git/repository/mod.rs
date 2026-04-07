@@ -164,12 +164,6 @@ pub(super) struct RepoCache {
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
     // ========== Potential additions (from cache-effectiveness analysis) ==========
     //
-    // TODO: Cache `resolve_preferring_branch()` results. Currently runs
-    //   `git rev-parse --verify -q refs/heads/{ref}` on every integration check
-    //   call — 113x for "main" in a single `wt list` with 18 worktrees. A
-    //   `DashMap<String, String>` (unresolved ref → resolved ref) would reduce
-    //   this to ~1x per distinct ref. (~112 calls saved, biggest single win)
-    //
     // TODO: Cache `rev_parse_tree()` results. `trees_match()` resolves
     //   `refs/heads/main^{tree}` per worktree, but the tree SHA of main doesn't
     //   change during a command. A `DashMap<String, String>` (tree spec → SHA)
@@ -177,9 +171,10 @@ pub(super) struct RepoCache {
     //
     // TODO: Normalize merge-base cache keys by ref format. Currently
     //   `merge_base("main", SHA)` and `merge_base("refs/heads/main", SHA)`
-    //   produce different cache keys for the same operation. May resolve
-    //   itself once `resolve_preferring_branch` is cached (callers will
-    //   consistently use the resolved form). (~5 calls saved)
+    //   produce different cache keys for the same operation.
+    //   `resolve_preferring_branch` is now cached (#1948), so callers going
+    //   through integration.rs use resolved refs — but direct callers of
+    //   `merge_base()` with bare names still create separate keys. (~5 calls saved)
     //
     // TODO: Cache `WorkingTree::git_dir()`. Runs `git rev-parse --git-dir`
     //   2x per worktree from different code paths. A `DashMap<PathBuf, PathBuf>`
