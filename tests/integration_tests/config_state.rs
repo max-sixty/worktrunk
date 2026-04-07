@@ -476,6 +476,9 @@ fn test_state_get_logs_empty(repo: TestRepo) {
 
         [36mHOOK OUTPUT[39m @ <PATH>
         [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
         ");
     });
 }
@@ -508,6 +511,9 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
          ────────────────────────── ──── ────── 
          bugfix-remove.log          13B  future 
          feature-post-start-npm.log 15B  future
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
         ");
     });
 }
@@ -525,14 +531,14 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
     assert!(output.status.success());
     state_get_settings().bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
 
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
 
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
         ");
     });
 }
