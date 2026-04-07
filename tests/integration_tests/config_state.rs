@@ -914,17 +914,18 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 fn test_state_get_json_empty(repo: TestRepo) {
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], serde_json::Value::Null);
-    assert_eq!(json["markers"], serde_json::json!([]));
-    assert_eq!(json["ci_status"], serde_json::json!([]));
-    assert_eq!(json["hints"], serde_json::json!([]));
-    assert_eq!(json["command_log"], serde_json::json!([]));
-    assert_eq!(json["hook_output"], serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [],
+      "command_log": [],
+      "default_branch": "main",
+      "hints": [],
+      "hook_output": [],
+      "markers": [],
+      "previous_branch": null,
+      "vars": []
+    }
+    "#);
 }
 
 #[rstest]
@@ -962,34 +963,37 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], "feature");
-
-    // Check markers
-    let markers = json["markers"].as_array().unwrap();
-    assert_eq!(markers.len(), 1);
-    assert_eq!(markers[0]["branch"], "feature");
-    assert_eq!(markers[0]["marker"], "🚧 WIP");
-    assert_eq!(markers[0]["set_at"], TEST_EPOCH);
-
-    // Check vars data
-    let vars = json["vars"].as_array().unwrap();
-    assert_eq!(vars.len(), 1);
-    assert_eq!(vars[0]["branch"], "main");
-    assert_eq!(vars[0]["key"], "env");
-    assert_eq!(vars[0]["value"], "staging");
-
-    // Check CI status
-    let ci_status = json["ci_status"].as_array().unwrap();
-    assert_eq!(ci_status.len(), 1);
-    assert_eq!(ci_status[0]["branch"], "feature");
-    assert_eq!(ci_status[0]["status"], "passed");
-    assert_eq!(ci_status[0]["checked_at"], TEST_EPOCH);
-    assert_eq!(ci_status[0]["head"], "abc12345def67890");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [
+        {
+          "branch": "feature",
+          "checked_at": 1735776000,
+          "head": "abc12345def67890",
+          "status": "passed"
+        }
+      ],
+      "command_log": [],
+      "default_branch": "main",
+      "hints": [],
+      "hook_output": [],
+      "markers": [
+        {
+          "branch": "feature",
+          "marker": "🚧 WIP",
+          "set_at": 1735776000
+        }
+      ],
+      "previous_branch": "feature",
+      "vars": [
+        {
+          "branch": "main",
+          "key": "env",
+          "value": "staging"
+        }
+      ]
+    }
+    "#);
 }
 
 #[rstest]
@@ -1004,31 +1008,52 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
-    // Check command_log — should contain the commands.jsonl file
-    let command_log = json["command_log"].as_array().unwrap();
-    assert_eq!(command_log.len(), 1);
-    assert_eq!(command_log[0]["file"], "commands.jsonl");
-
-    // Check hook_output — should contain the .log files
-    let hook_output = json["hook_output"].as_array().unwrap();
-    assert_eq!(hook_output.len(), 2);
-    let log_files: Vec<&str> = hook_output
-        .iter()
-        .map(|l| l["file"].as_str().unwrap())
-        .collect();
-    assert!(log_files.contains(&"feature-post-start-npm.log"));
-    assert!(log_files.contains(&"bugfix-remove.log"));
-
-    // Each entry should have file, size, and modified_at
-    for entry in command_log.iter().chain(hook_output.iter()) {
-        assert!(entry.get("file").is_some());
-        assert!(entry.get("size").is_some());
-        assert!(entry.get("modified_at").is_some());
+    // Sort log arrays by filename (mtime ties produce platform-dependent order)
+    for key in ["command_log", "hook_output"] {
+        if let Some(arr) = json.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.sort_by(|a, b| a["file"].as_str().cmp(&b["file"].as_str()));
+        }
     }
+
+    // Normalize dynamic fields before snapshotting
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(normalized, @r#"
+        {
+          "ci_status": [],
+          "command_log": [
+            {
+              "file": "commands.jsonl",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            }
+          ],
+          "default_branch": "main",
+          "hints": [],
+          "hook_output": [
+            {
+              "file": "bugfix-remove.log",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            },
+            {
+              "file": "feature-post-start-npm.log",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            }
+          ],
+          "markers": [],
+          "previous_branch": null,
+          "vars": []
+        }
+        "#);
+    });
 }
 
 // ============================================================================
