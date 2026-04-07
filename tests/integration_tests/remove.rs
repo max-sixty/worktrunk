@@ -2746,6 +2746,7 @@ fn test_remove_json(mut repo: TestRepo) {
     });
 }
 
+#[cfg(not(target_os = "windows"))] // foreground removal with cwd inside the worktree hits directory locking
 #[rstest]
 fn test_remove_json_current(mut repo: TestRepo) {
     repo.commit("initial");
