@@ -1,6 +1,7 @@
 use crate::common::{
     DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -3135,7 +3136,10 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 /// and spurious "default branch does not exist locally" warnings.
 #[test]
 fn test_list_empty_repo() {
-    let repo = TestRepo::empty();
+    let mut repo = TestRepo::empty();
+    let guard =
+        setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
+    repo.set_lifetime_guard(Box::new(guard));
     // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
