@@ -1,4 +1,64 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
+
+#[derive(Args)]
+pub struct CommitArgs {
+    /// Branch to operate on (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    pub(crate) branch: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+#[derive(Args)]
+pub struct SquashArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub(crate) target: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
 
 /// Run individual operations
 #[derive(Subcommand)]
@@ -44,33 +104,7 @@ $ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
-    Commit {
-        /// Branch to operate on (defaults to current worktree)
-        #[arg(short, long, add = crate::completion::worktree_only_completer())]
-        branch: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// Skip hooks (deprecated alias for --no-hooks)
-        #[arg(long = "no-verify", hide = true)]
-        no_verify_deprecated: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Commit(CommitArgs),
 
     /// Squash commits since branching
     ///
@@ -110,35 +144,7 @@ $ wt step squash --show-prompt | less
 ```
 "#
     )]
-    Squash {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// Skip hooks (deprecated alias for --no-hooks)
-        #[arg(long = "no-verify", hide = true)]
-        no_verify_deprecated: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Squash(SquashArgs),
 
     /// Fast-forward target to current branch
     #[command(

@@ -18,6 +18,9 @@ dunce = "1"
 # For CLI
 clap = { version = "4", features = ["derive"] }
 
+# For JSON output
+serde_json = "1"
+
 # For trace parsing (reuse worktrunk's trace module)
 worktrunk = { path = "../../.." }
 

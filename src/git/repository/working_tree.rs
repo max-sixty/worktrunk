@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
@@ -119,30 +120,24 @@ impl<'a> WorkingTree<'a> {
     /// Result is cached in the repository's shared cache (keyed by worktree path).
     /// Errors (e.g., permission denied, corrupted `.git`) are propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        // Check cache first
-        if let Some(cached) = self.repo.cache.current_branches.get(&self.path) {
-            return Ok(cached.clone());
+        match self.repo.cache.current_branches.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
+                // or "HEAD" when detached. Fails on unborn branches (no commits yet),
+                // so fall back to symbolic-ref which works in all cases except detached HEAD.
+                let result = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])
+                {
+                    Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
+                    Err(_) => self
+                        .run_command(&["symbolic-ref", "--short", "HEAD"])
+                        .ok()
+                        .map(|s| s.trim().to_owned()),
+                };
+
+                Ok(e.insert(result).clone())
+            }
         }
-
-        // Not cached - use plumbing command to get current branch.
-        // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
-        // or "HEAD" when detached. Fails on unborn branches (no commits yet),
-        // so fall back to symbolic-ref which works in all cases except detached HEAD.
-        let result = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"]) {
-            Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
-            Err(_) => self
-                .run_command(&["symbolic-ref", "--short", "HEAD"])
-                .ok()
-                .map(|s| s.trim().to_owned()),
-        };
-
-        // Cache the successful result
-        self.repo
-            .cache
-            .current_branches
-            .insert(self.path.clone(), result.clone());
-
-        Ok(result)
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -164,36 +159,45 @@ impl<'a> WorkingTree<'a> {
     /// This could be the main worktree or a linked worktree.
     /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn root(&self) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .repo
-            .cache
-            .worktree_roots
-            .entry(self.path.clone())
-            .or_insert_with(|| {
-                self.run_command(&["rev-parse", "--show-toplevel"])
+        match self.repo.cache.worktree_roots.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let root = self
+                    .run_command(&["rev-parse", "--show-toplevel"])
                     .ok()
                     .map(|s| PathBuf::from(s.trim()))
                     .and_then(|p| canonicalize(&p).ok())
-                    .unwrap_or_else(|| self.path.clone())
-            })
-            .clone())
+                    .unwrap_or_else(|| self.path.clone());
+
+                Ok(e.insert(root).clone())
+            }
+        }
     }
 
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
-        let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-        let path = PathBuf::from(stdout.trim());
+        match self.repo.cache.git_dirs.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let path = PathBuf::from(stdout.trim());
 
-        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
-        let absolute_path = if path.is_relative() {
-            self.path.join(&path)
-        } else {
-            path
-        };
-        canonicalize(&absolute_path).context("Failed to resolve git directory")
+                // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+                let absolute_path = if path.is_relative() {
+                    self.path.join(&path)
+                } else {
+                    path
+                };
+                let resolved =
+                    canonicalize(&absolute_path).context("Failed to resolve git directory")?;
+
+                Ok(e.insert(resolved).clone())
+            }
+        }
     }
 
     /// Check if a rebase is in progress.

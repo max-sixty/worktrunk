@@ -63,8 +63,8 @@ use output::handle_remove_output;
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction,
-    StateCommand, StepCommand, VarsAction,
+    HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
+    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -272,46 +272,34 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
 
 fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
-        StepCommand::Commit {
-            branch,
-            yes,
-            verify,
-            no_verify_deprecated,
-            stage,
-            show_prompt,
-        } => {
-            let verify = resolve_verify(verify, no_verify_deprecated);
-            step_commit(branch, yes, verify, stage, show_prompt)
+        StepCommand::Commit(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            step_commit(args.branch, args.yes, verify, args.stage, args.show_prompt)
         }
-        StepCommand::Squash {
-            target,
-            yes,
-            verify,
-            no_verify_deprecated,
-            stage,
-            show_prompt,
-        } => {
-            let verify = resolve_verify(verify, no_verify_deprecated);
+        StepCommand::Squash(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
             // Handle --show-prompt early: just build and output the prompt
-            if show_prompt {
-                commands::step_show_squash_prompt(target.as_deref())
+            if args.show_prompt {
+                commands::step_show_squash_prompt(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(target.as_deref(), yes, verify, stage).map(|result| match result {
-                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                    SquashResult::NoCommitsAhead(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            ))
-                        );
-                    }
-                    SquashResult::AlreadySingleCommit => {
-                        eprintln!(
-                            "{}",
-                            info_message("Nothing to squash; already a single commit")
-                        );
+                handle_squash(args.target.as_deref(), args.yes, verify, args.stage).map(|result| {
+                    match result {
+                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
+                        }
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
                     }
                 })
             }
@@ -513,16 +501,8 @@ fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
     }
 }
 
-fn handle_list_command(
-    subcommand: Option<ListSubcommand>,
-    format: OutputFormat,
-    branches: bool,
-    remotes: bool,
-    full: bool,
-    progressive: bool,
-    no_progressive: bool,
-) -> anyhow::Result<()> {
-    match subcommand {
+fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
+    match args.subcommand {
         Some(ListSubcommand::Statusline {
             format,
             claude_code,
@@ -538,8 +518,15 @@ fn handle_list_command(
         }
         None => {
             let (repo, _recovered) = current_or_recover()?;
-            let render_mode = RenderMode::detect(flag_pair(progressive, no_progressive));
-            handle_list(repo, format, branches, remotes, full, render_mode)
+            let render_mode = RenderMode::detect(flag_pair(args.progressive, args.no_progressive));
+            handle_list(
+                repo,
+                args.format,
+                args.branches,
+                args.remotes,
+                args.full,
+                render_mode,
+            )
         }
     }
 }
@@ -559,39 +546,25 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
-struct SwitchCommandArgs {
-    branch: Option<String>,
-    branches: bool,
-    remotes: bool,
-    create: bool,
-    base: Option<String>,
-    execute: Option<String>,
-    execute_args: Vec<String>,
-    yes: bool,
-    clobber: bool,
-    cd: bool,
-    no_cd: bool,
-    verify: bool,
-}
-
-fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
+fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
+    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
-            let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
+            let change_dir_flag = flag_pair(args.cd, args.no_cd);
 
-            let Some(branch) = spec.branch else {
+            let Some(branch) = args.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_picker(spec.branches, spec.remotes, change_dir_flag);
+                    return handle_picker(args.branches, args.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes, change_dir_flag);
+                    let _ = (args.branches, args.remotes, change_dir_flag);
 
                     print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
@@ -601,29 +574,19 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             handle_switch(
                 SwitchOptions {
                     branch: &branch,
-                    create: spec.create,
-                    base: spec.base.as_deref(),
-                    execute: spec.execute.as_deref(),
-                    execute_args: &spec.execute_args,
-                    yes: spec.yes,
-                    clobber: spec.clobber,
+                    create: args.create,
+                    base: args.base.as_deref(),
+                    execute: args.execute.as_deref(),
+                    execute_args: &args.execute_args,
+                    yes: args.yes,
+                    clobber: args.clobber,
                     change_dir: change_dir_flag,
-                    verify: spec.verify,
+                    verify,
                 },
                 &mut config,
                 &binary_name(),
             )
         })
-}
-
-struct RemoveCommandArgs {
-    branches: Vec<String>,
-    delete_branch: bool,
-    force_delete: bool,
-    foreground: bool,
-    verify: bool,
-    yes: bool,
-    force: bool,
 }
 
 /// Validated removal plans, categorized for ordered execution.
@@ -745,12 +708,13 @@ fn validate_remove_targets(
     plans
 }
 
-fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
+fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
+    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
             // Validate conflicting flags
-            if !spec.delete_branch && spec.force_delete {
+            if !args.delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
                     message: "Cannot use --force-delete with --no-delete-branch".into(),
                 }
@@ -790,15 +754,15 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 Ok(approved)
             };
 
-            let branches = spec.branches;
+            let branches = args.branches;
 
             if branches.is_empty() {
                 // Single worktree removal: validate FIRST, then approve, then execute
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!spec.delete_branch, spec.force_delete),
-                        spec.force,
+                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        args.force,
                         &config,
                         None,
                     )
@@ -810,18 +774,18 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = spec.verify && approve_remove(spec.yes)?;
+                let run_hooks = verify && approve_remove(args.yes)?;
 
-                handle_remove_output(&result, spec.foreground, run_hooks, false)
+                handle_remove_output(&result, args.foreground, run_hooks, false)
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(
                     &repo,
                     branches,
                     &config,
-                    !spec.delete_branch,
-                    spec.force_delete,
-                    spec.force,
+                    !args.delete_branch,
+                    args.force_delete,
+                    args.force,
                 );
 
                 if !plans.has_valid_plans() {
@@ -836,17 +800,17 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 // Approve hooks (only if we have valid plans)
                 // TODO(pre-remove-context): Approval context uses current worktree,
                 // but hooks execute in each target worktree.
-                let run_hooks = spec.verify && approve_remove(spec.yes)?;
+                let run_hooks = verify && approve_remove(args.yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 for result in plans.others {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
                 }
                 for result in plans.branch_only {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
                 }
                 if let Some(result) = plans.current {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                    handle_remove_output(&result, args.foreground, run_hooks, false)?;
                 }
 
                 if !plans.errors.is_empty() {
@@ -994,112 +958,36 @@ fn init_logging(verbose_level: u8) {
         .init();
 }
 
+fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
+    if args.no_verify {
+        eprintln!(
+            "{}",
+            warning_message("--no-verify is deprecated; use --no-hooks instead")
+        );
+    }
+    handle_merge(MergeOptions {
+        target: args.target.as_deref(),
+        squash: flag_pair(args.squash, args.no_squash),
+        commit: flag_pair(args.commit, args.no_commit),
+        rebase: flag_pair(args.rebase, args.no_rebase),
+        remove: flag_pair(args.remove, args.no_remove),
+        ff: flag_pair(args.ff, args.no_ff),
+        verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
+        yes: args.yes,
+        stage: args.stage,
+    })
+}
+
 fn dispatch_command(command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
-        Commands::List {
-            subcommand,
-            format,
-            branches,
-            remotes,
-            full,
-            progressive,
-            no_progressive,
-        } => handle_list_command(
-            subcommand,
-            format,
-            branches,
-            remotes,
-            full,
-            progressive,
-            no_progressive,
-        ),
-        Commands::Switch {
-            branch,
-            branches,
-            remotes,
-            create,
-            base,
-            execute,
-            execute_args,
-            yes,
-            clobber,
-            cd,
-            no_cd,
-            verify,
-            no_verify_deprecated,
-        } => handle_switch_command(SwitchCommandArgs {
-            branch,
-            branches,
-            remotes,
-            create,
-            base,
-            execute,
-            execute_args,
-            yes,
-            clobber,
-            cd,
-            no_cd,
-            verify: resolve_verify(verify, no_verify_deprecated),
-        }),
-        Commands::Remove {
-            branches,
-            delete_branch,
-            force_delete,
-            foreground,
-            verify,
-            no_verify_deprecated,
-            yes,
-            force,
-        } => handle_remove_command(RemoveCommandArgs {
-            branches,
-            delete_branch,
-            force_delete,
-            foreground,
-            verify: resolve_verify(verify, no_verify_deprecated),
-            yes,
-            force,
-        }),
-        Commands::Merge {
-            target,
-            squash,
-            no_squash,
-            commit,
-            no_commit,
-            rebase,
-            no_rebase,
-            remove,
-            no_remove,
-            no_ff,
-            ff,
-            verify,
-            no_hooks,
-            no_verify,
-            yes,
-            stage,
-        } => {
-            // Merge uses flag_pair, so resolve_verify doesn't apply directly
-            if no_verify {
-                eprintln!(
-                    "{}",
-                    warning_message("--no-verify is deprecated; use --no-hooks instead")
-                );
-            }
-            handle_merge(MergeOptions {
-                target: target.as_deref(),
-                squash: flag_pair(squash, no_squash),
-                commit: flag_pair(commit, no_commit),
-                rebase: flag_pair(rebase, no_rebase),
-                remove: flag_pair(remove, no_remove),
-                ff: flag_pair(ff, no_ff),
-                verify: flag_pair(verify, no_hooks || no_verify),
-                yes,
-                stage,
-            })
-        }
+        Commands::List(args) => handle_list_command(args),
+        Commands::Switch(args) => handle_switch_command(args),
+        Commands::Remove(args) => handle_remove_command(args),
+        Commands::Merge(args) => handle_merge_command(args),
     }
 }
 
