@@ -521,12 +521,7 @@ fn test_prune_stale_plus_young_non_dry_run(mut repo: TestRepo) {
     repo.add_worktree("young-branch");
 
     // Default min-age (1h) — young-branch is skipped, stale-branch is removed
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes"],
-        None
-    ));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None));
 }
 
 /// Prune detects squash-merged branches when target later modified the same files (#1818).
