@@ -10,4 +10,4 @@ expression: "&output.combined"
   Installed 24 packages in 1.2s
 [32m✓[39m [32mCreated branch [1mfeature-x[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-x[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[36m◎[39m [36mRunning post-start: [1mdev[22m[39m
+[36m◎[39m [36mRunning post-start: [1mproject:dev[22m[39m
