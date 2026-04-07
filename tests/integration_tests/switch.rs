@@ -3659,6 +3659,103 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
 }
 
+// -- JSON format tests --
+
+#[rstest]
+fn test_switch_format_json_create(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "json-test",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "json-test");
+    assert!(json["path"].as_str().unwrap().contains("json-test"));
+    assert_eq!(json["created_branch"], true);
+}
+
+#[rstest]
+fn test_switch_format_json_existing(mut repo: TestRepo) {
+    // Create worktree first
+    repo.add_worktree("existing-json");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "existing-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "existing");
+    assert_eq!(json["branch"], "existing-json");
+    // created_branch should be absent for existing switches
+    assert!(json.get("created_branch").is_none());
+}
+
+#[rstest]
+fn test_switch_format_json_already_at(mut repo: TestRepo) {
+    // Create worktree and switch to it
+    let path = repo.add_worktree("already-json");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&path)
+        .args([
+            "switch",
+            "already-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    assert_eq!(json["branch"], "already-json");
+}
+
+#[rstest]
+fn test_switch_format_table_rejected_by_clap(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "table-test",
+            "--no-cd",
+            "--yes",
+            "--format=table",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid value"), "stderr: {stderr}");
+}
+
 /// Test that `[switch] cd = false` config is respected when no flags provided
 #[rstest]
 fn test_switch_no_cd_config_default(repo: TestRepo) {

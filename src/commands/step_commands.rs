@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
+use crossbeam_channel as chan;
 use ignore::gitignore::GitignoreBuilder;
 use rayon::prelude::*;
 use worktrunk::HookType;
@@ -1277,6 +1278,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
     // Gather candidates: integrated worktrees + integrated branch-only refs
     struct Candidate {
+        /// Original index in check_items (for deterministic output ordering)
+        check_idx: usize,
         /// Branch name (None for detached HEAD worktrees)
         branch: Option<String>,
         /// Display label: branch name or abbreviated commit SHA
@@ -1359,9 +1362,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         approved
     };
 
-    let mut candidates: Vec<Candidate> = Vec::new(); // dry-run collects here
-    let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
-    let mut deferred_current: Option<Candidate> = None; // current worktree removed last
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count
     // in the orphan branch scan below.
@@ -1486,21 +1488,50 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         });
     }
 
-    let integration_results: Vec<anyhow::Result<_>> = check_items
-        .par_iter()
-        .map(|item| {
-            let (effective_target, reason) =
-                repo.integration_reason(&item.integration_ref, &integration_target)?;
-            Ok((effective_target, reason))
-        })
+    // Phase 1: Parallel integration checks with streaming results.
+    //
+    // Spawn integration checks on a background thread via rayon par_iter,
+    // sending each result through a channel as it completes. The main thread
+    // processes results as they arrive for age filtering and candidate
+    // collection, overlapping with still-running checks.
+    let (tx, rx) = chan::unbounded();
+    let integration_refs: Vec<String> = check_items
+        .iter()
+        .map(|item| item.integration_ref.clone())
         .collect();
 
-    // Process results sequentially (removals must be serial)
-    for (item, result) in check_items.iter().zip(integration_results) {
+    // Intentionally detached: if the main thread returns early (error in
+    // the recv loop), remaining rayon tasks silently fail to send on the
+    // closed channel and the thread cleans up on its own. Empty
+    // integration_refs produces an empty par_iter that completes immediately.
+    let repo_clone = repo.clone();
+    let target = integration_target.clone();
+    std::thread::spawn(move || {
+        integration_refs
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(idx, ref_name)| {
+                let result = repo_clone.integration_reason(&ref_name, &target);
+                let _ = tx.send((idx, result));
+            });
+    });
+
+    // Collect integration context alongside candidates for dry-run display.
+    struct DryRunInfo {
+        reason_desc: String,
+        effective_target: String,
+        suffix: &'static str,
+    }
+    let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = Vec::new();
+
+    // Process results as they arrive from the channel.
+    for (idx, result) in rx {
         let (effective_target, reason) = result?;
         let Some(reason) = reason else {
             continue;
         };
+
+        let item = &check_items[idx];
 
         // Linked worktrees need special handling: age check via filesystem
         // metadata, current-worktree deferral, and path-based candidates.
@@ -1534,6 +1565,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
             let is_current = wt_path == current_root;
             let candidate = Candidate {
+                check_idx: idx,
                 branch: if wt.detached { None } else { wt.branch.clone() },
                 label,
                 path: Some(wt.path.clone()),
@@ -1544,20 +1576,16 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 },
             };
             if dry_run {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "<bold>{}</> — {} {}",
-                        candidate.label,
-                        reason.description(),
-                        effective_target
-                    ))
-                );
-                candidates.push(candidate);
+                let info = DryRunInfo {
+                    reason_desc: reason.description().to_string(),
+                    effective_target,
+                    suffix: "",
+                };
+                dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-                removed.push(candidate);
+            } else {
+                candidates.push(candidate);
             }
             continue;
         }
@@ -1588,26 +1616,66 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         }
 
         let candidate = Candidate {
+            check_idx: idx,
             label: branch.clone(),
             branch: Some(branch.clone()),
             path: None,
             kind: CandidateKind::BranchOnly,
         };
         if dry_run {
+            let info = DryRunInfo {
+                reason_desc: reason.description().to_string(),
+                effective_target,
+                suffix,
+            };
+            dry_run_info.push((candidate, info));
+        } else {
+            candidates.push(candidate);
+        }
+    }
+
+    if dry_run {
+        // Sort by original check order for deterministic output regardless of
+        // channel completion order.
+        dry_run_info.sort_by_key(|(c, _)| c.check_idx);
+        let mut dry_candidates = Vec::new();
+        for (candidate, info) in dry_run_info {
             eprintln!(
                 "{}",
                 info_message(cformat!(
                     "<bold>{}</>{} — {} {}",
-                    branch,
-                    suffix,
-                    reason.description(),
-                    effective_target
+                    candidate.label,
+                    info.suffix,
+                    info.reason_desc,
+                    info.effective_target
                 ))
             );
-            candidates.push(candidate);
-        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
-            removed.push(candidate);
+            dry_candidates.push(candidate);
         }
+
+        // Report skipped worktrees (after candidates, before summary)
+        if !skipped_young.is_empty() {
+            let names = skipped_young.join(", ");
+            eprintln!(
+                "{}",
+                info_message(format!("Skipped {names} (younger than {min_age})"))
+            );
+        }
+
+        if dry_candidates.is_empty() {
+            if skipped_young.is_empty() {
+                eprintln!("{}", info_message("No merged worktrees to remove"));
+            }
+            return Ok(());
+        }
+        eprintln!(
+            "{}",
+            hint_message(format!(
+                "{} would be removed (dry run)",
+                prune_summary(&dry_candidates)
+            ))
+        );
+        return Ok(());
     }
 
     // Report skipped worktrees
@@ -1619,22 +1687,32 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         );
     }
 
-    if dry_run {
-        if candidates.is_empty() {
-            if skipped_young.is_empty() {
-                eprintln!("{}", info_message("No merged worktrees to remove"));
+    // Phase 2: Parallel batch removal of confirmed candidates.
+    //
+    // Sort by original check order so output is deterministic when rayon
+    // happens to process items sequentially (small candidate counts). With
+    // many candidates, printed output from handle_remove_output may arrive
+    // in completion order — each eprintln! is line-atomic so messages don't
+    // interleave within a line.
+    candidates.sort_by_key(|c| c.check_idx);
+    let mut removed: Vec<Candidate> = if candidates.is_empty() {
+        Vec::new()
+    } else {
+        let results: Vec<(Candidate, anyhow::Result<bool>)> = candidates
+            .into_par_iter()
+            .map(|candidate| {
+                let result = try_remove(&candidate, &repo, &config, foreground, run_hooks);
+                (candidate, result)
+            })
+            .collect();
+        let mut removed = Vec::new();
+        for (candidate, result) in results {
+            if result? {
+                removed.push(candidate);
             }
-            return Ok(());
         }
-        eprintln!(
-            "{}",
-            hint_message(format!(
-                "{} would be removed (dry run)",
-                prune_summary(&candidates)
-            ))
-        );
-        return Ok(());
-    }
+        removed
+    };
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current

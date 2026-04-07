@@ -582,6 +582,7 @@ fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
                     clobber: args.clobber,
                     change_dir: change_dir_flag,
                     verify,
+                    format: args.format,
                 },
                 &mut config,
                 &binary_name(),
