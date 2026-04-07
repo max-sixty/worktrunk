@@ -23,16 +23,11 @@ pub struct TestRepo {
     pub repo: Repository,
 }
 
-impl Default for TestRepo {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TestRepo {
     /// Create a new repo with `git init -b main`.
     ///
     /// Uses explicit `-b main` for determinism regardless of system git config.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         Cmd::new("git")
