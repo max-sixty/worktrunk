@@ -58,4 +58,4 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
-[36m◎[39m [36mRunning post-start: [1msetup[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning post-start: [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m

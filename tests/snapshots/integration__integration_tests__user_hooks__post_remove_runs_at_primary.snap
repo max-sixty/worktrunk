@@ -46,4 +46,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (--force-delete)[39m
-[36m◎[39m [36mRunning post-remove: [1mcleanup[22m @ [1m_REPO_[22m[39m
+[36m◎[39m [36mRunning post-remove: [1muser:cleanup[22m @ [1m_REPO_[22m[39m

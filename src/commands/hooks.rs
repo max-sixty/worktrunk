@@ -169,37 +169,57 @@ pub struct SourcedStep {
 
 /// Format a summary description of a pipeline for display.
 ///
-/// Shows step names/counts with `→` separating serial steps.
-/// Named steps show their name; unnamed steps show their source (`user`/`project`).
-/// Example: "install → build, lint"
+/// Named steps show as `source:name`; unnamed steps are collapsed into a single
+/// `source ×N` count. Serial steps are separated by `;`, concurrent steps by `,`.
+/// Example: "user:install; user:build, user:lint"
 ///
-/// TODO: Rethink hook display presentation. Current issues:
-/// - Arrows (`→`) add visual noise and aren't obviously meaningful to users
-/// - Multiple unnamed steps from the same source repeat the label (`user → user`)
-/// - Source prefix was dropped for named steps (`user:bg` → `bg`) — less
-///   informative when both user and project hooks are present
+/// TODO: The `source:` prefix on named steps may be too verbose when only one
+/// source is present (e.g., `user:bg` vs just `bg`). Consider prefixing only
+/// when both user and project hooks exist for the same hook type.
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
-    let mut parts = Vec::new();
+    // All steps in a group share the same source.
+    let source_label = steps[0].source.to_string();
+
+    // Collect named labels per step (None = unnamed).
+    let mut parts: Vec<String> = Vec::new();
+    let mut unnamed_count: usize = 0;
+
     for step in steps {
-        let source_label = step.source.to_string();
-        match &step.step {
-            PreparedStep::Single(cmd) => {
-                let label = cmd.name.as_deref().unwrap_or(&source_label);
-                parts.push(cformat!("<bold>{}</>", label));
+        let step_names: Vec<Option<&str>> = match &step.step {
+            PreparedStep::Single(cmd) => vec![cmd.name.as_deref()],
+            PreparedStep::Concurrent(cmds) => cmds.iter().map(|c| c.name.as_deref()).collect(),
+        };
+
+        let named: Vec<_> = step_names
+            .iter()
+            .filter_map(|n| n.map(|name| cformat!("<bold>{source_label}:{name}</>")))
+            .collect();
+        unnamed_count += step_names.iter().filter(|n| n.is_none()).count();
+
+        if !named.is_empty() {
+            // Flush any pending unnamed count before named labels.
+            if unnamed_count > 0 {
+                parts.push(format_unnamed(&source_label, unnamed_count));
+                unnamed_count = 0;
             }
-            PreparedStep::Concurrent(cmds) => {
-                let names: Vec<String> = cmds
-                    .iter()
-                    .map(|c| {
-                        let label = c.name.as_deref().unwrap_or(&source_label);
-                        cformat!("<bold>{}</>", label)
-                    })
-                    .collect();
-                parts.push(names.join(", "));
-            }
+            parts.push(named.join(", "));
         }
     }
-    parts.join(" → ")
+
+    // Flush trailing unnamed count.
+    if unnamed_count > 0 {
+        parts.push(format_unnamed(&source_label, unnamed_count));
+    }
+
+    parts.join("; ")
+}
+
+fn format_unnamed(source_label: &str, count: usize) -> String {
+    if count == 1 {
+        cformat!("<bold>{source_label}</>")
+    } else {
+        cformat!("<bold>{source_label}</> ×{count}")
+    }
 }
 
 /// Announce and spawn background hooks for one or more hook types.
@@ -617,6 +637,8 @@ fn expand_lazy_template(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_hook_source_display() {
@@ -703,11 +725,7 @@ mod tests {
             ])),
         ];
         let summary = format_pipeline_summary(&steps);
-        // Contains arrow and names (stripped of ANSI for assertion)
-        assert!(summary.contains("→"));
-        assert!(summary.contains("install"));
-        assert!(summary.contains("build"));
-        assert!(summary.contains("lint"));
+        assert_snapshot!(summary.ansi_strip(), @"user:install; user:build, user:lint");
     }
 
     #[test]
@@ -717,9 +735,48 @@ mod tests {
             make_sourced_step(PreparedStep::Single(make_cmd(None, "npm run build"))),
         ];
         let summary = format_pipeline_summary(&steps);
-        // Unnamed steps show source name ("user" from make_sourced_step)
-        assert!(summary.contains("user"));
-        assert!(summary.contains("→"));
+        assert_snapshot!(summary.ansi_strip(), @"user ×2");
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_mixed_named_unnamed() {
+        let steps = vec![
+            make_sourced_step(PreparedStep::Single(make_cmd(None, "npm install"))),
+            make_sourced_step(PreparedStep::Single(make_cmd(Some("bg"), "npm run dev"))),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        assert_snapshot!(summary.ansi_strip(), @"user; user:bg");
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_single_unnamed() {
+        let steps = vec![make_sourced_step(PreparedStep::Single(make_cmd(
+            None,
+            "npm install",
+        )))];
+        let summary = format_pipeline_summary(&steps);
+        assert_snapshot!(summary.ansi_strip(), @"user");
+    }
+
+    #[test]
+    fn test_format_pipeline_summary_concurrent_then_concurrent() {
+        // The canonical pipeline: two concurrent groups in sequence.
+        // post-start = [
+        //     { install = "npm install", setup = "setup-db" },
+        //     { build = "npm run build", lint = "npm run lint" },
+        // ]
+        let steps = vec![
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_cmd(Some("install"), "npm install"),
+                make_cmd(Some("setup"), "setup-db"),
+            ])),
+            make_sourced_step(PreparedStep::Concurrent(vec![
+                make_cmd(Some("build"), "npm run build"),
+                make_cmd(Some("lint"), "npm run lint"),
+            ])),
+        ];
+        let summary = format_pipeline_summary(&steps);
+        assert_snapshot!(summary.ansi_strip(), @"user:install, user:setup; user:build, user:lint");
     }
 
     #[test]

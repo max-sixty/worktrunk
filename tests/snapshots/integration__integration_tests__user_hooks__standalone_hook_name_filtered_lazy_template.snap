@@ -45,4 +45,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-start: [1mdb[22m[39m
+[36m◎[39m [36mRunning post-start: [1muser:db[22m[39m
