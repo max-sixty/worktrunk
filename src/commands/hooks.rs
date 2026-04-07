@@ -209,26 +209,33 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
 /// of calling `spawn_hook_pipeline` directly when multiple hook types
 /// fire together (e.g., post-switch + post-start on create).
 ///
+/// Each pipeline carries its own `CommandContext` so that different hook types
+/// can use different contexts (e.g., post-remove uses the removed branch while
+/// post-switch uses the destination branch).
+///
 /// Example output: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
 pub fn announce_and_spawn_background_hooks(
-    ctx: &CommandContext,
-    groups: Vec<Vec<SourcedStep>>,
+    pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
 ) -> anyhow::Result<()> {
-    if groups.iter().all(|g| g.is_empty()) {
+    let non_empty: Vec<_> = pipelines
+        .into_iter()
+        .filter(|(_, steps)| !steps.is_empty())
+        .collect();
+    if non_empty.is_empty() {
         return Ok(());
     }
 
     // Build combined summary, merging groups with the same hook type:
     // "post-switch: zellij-tab; post-start: deps, assets, docs"
-    let display_path = groups
+    let display_path = non_empty
         .iter()
-        .flat_map(|g| g.iter())
+        .flat_map(|(_, g)| g.iter())
         .find_map(|s| s.display_path.as_ref());
 
     // Merge summaries by hook type so user+project for the same type
     // shows "post-start: user_bg, project" not "post-start: user_bg; post-start: project".
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
-    for group in &groups {
+    for (_, group) in &non_empty {
         let hook_type = group[0].hook_type;
         let summary = format_pipeline_summary(group);
         if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
@@ -252,8 +259,8 @@ pub fn announce_and_spawn_background_hooks(
     };
     eprintln!("{}", progress_message(message));
 
-    for group in groups {
-        spawn_hook_pipeline_quiet(ctx, group)?;
+    for (ctx, group) in non_empty {
+        spawn_hook_pipeline_quiet(&ctx, group)?;
     }
 
     Ok(())
