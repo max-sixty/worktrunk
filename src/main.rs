@@ -272,46 +272,34 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
 
 fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
-        StepCommand::Commit {
-            branch,
-            yes,
-            verify,
-            no_verify_deprecated,
-            stage,
-            show_prompt,
-        } => {
-            let verify = resolve_verify(verify, no_verify_deprecated);
-            step_commit(branch, yes, verify, stage, show_prompt)
+        StepCommand::Commit(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            step_commit(args.branch, args.yes, verify, args.stage, args.show_prompt)
         }
-        StepCommand::Squash {
-            target,
-            yes,
-            verify,
-            no_verify_deprecated,
-            stage,
-            show_prompt,
-        } => {
-            let verify = resolve_verify(verify, no_verify_deprecated);
+        StepCommand::Squash(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
             // Handle --show-prompt early: just build and output the prompt
-            if show_prompt {
-                commands::step_show_squash_prompt(target.as_deref())
+            if args.show_prompt {
+                commands::step_show_squash_prompt(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(target.as_deref(), yes, verify, stage).map(|result| match result {
-                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                    SquashResult::NoCommitsAhead(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            ))
-                        );
-                    }
-                    SquashResult::AlreadySingleCommit => {
-                        eprintln!(
-                            "{}",
-                            info_message("Nothing to squash; already a single commit")
-                        );
+                handle_squash(args.target.as_deref(), args.yes, verify, args.stage).map(|result| {
+                    match result {
+                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
+                        }
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
                     }
                 })
             }
