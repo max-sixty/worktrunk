@@ -356,10 +356,16 @@ impl Repository {
             .clone()
     }
 
-    /// Parse a tree ref to get its SHA.
+    /// Parse a tree ref to get its SHA (cached).
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        self.run_command(&["rev-parse", spec])
-            .map(|output| output.trim().to_string())
+        if let Some(cached) = self.cache.tree_shas.get(spec) {
+            return Ok(cached.clone());
+        }
+        let sha = self
+            .run_command(&["rev-parse", spec])
+            .map(|output| output.trim().to_string())?;
+        self.cache.tree_shas.insert(spec.to_string(), sha.clone());
+        Ok(sha)
     }
 
     /// Check if a branch is integrated into a target.

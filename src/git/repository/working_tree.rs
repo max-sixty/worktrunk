@@ -183,7 +183,11 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
+        if let Some(cached) = self.repo.cache.git_dirs.get(&self.path) {
+            return Ok(cached.clone());
+        }
         let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
         let path = PathBuf::from(stdout.trim());
 
@@ -193,7 +197,12 @@ impl<'a> WorkingTree<'a> {
         } else {
             path
         };
-        canonicalize(&absolute_path).context("Failed to resolve git directory")
+        let resolved = canonicalize(&absolute_path).context("Failed to resolve git directory")?;
+        self.repo
+            .cache
+            .git_dirs
+            .insert(self.path.clone(), resolved.clone());
+        Ok(resolved)
     }
 
     /// Check if a rebase is in progress.
