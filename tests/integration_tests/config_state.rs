@@ -676,6 +676,30 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_clear_all_cleans_trash(repo: TestRepo) {
+    // Create trash directory with stale entries (simulating failed background rm)
+    let git_dir = repo.root_path().join(".git");
+    let trash_dir = git_dir.join("wt/trash");
+    std::fs::create_dir_all(trash_dir.join("myproject.feature-1234567890/target")).unwrap();
+    std::fs::write(
+        trash_dir.join("myproject.feature-1234567890/target/.rustc_info.json"),
+        "{}",
+    )
+    .unwrap();
+    std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+    // Stray file directly in trash (not inside a subdirectory) — exercises the
+    // non-directory branch in clear_trash's `if path.is_dir()` guard.
+    std::fs::write(trash_dir.join("stray-file.txt"), "stale").unwrap();
+
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
+
+    // Trash directory itself should be removed (empty after cleanup)
+    assert!(!trash_dir.exists(), "Trash directory should be cleaned up");
+}
+
+#[rstest]
 fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
     // First clear to ensure nothing exists
     wt_state_clear_all_cmd(&repo).output().unwrap();
