@@ -110,10 +110,11 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
 | `.git/wt/logs/*.log` | Background command output | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
+| `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all worktrunk keys from `.git/config`, deletes CI cache, and clears logs.
+**To remove:** `wt config state clear` removes all worktrunk keys from `.git/config`, deletes CI cache, clears logs, and removes stale trash.
 
 ### What Worktrunk does NOT create
 
@@ -146,7 +147,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ### Other cleanup
 
-- `wt config state clear` — removes cached state from `.git/config` and clears CI cache/logs
+- `wt config state clear` — removes cached state from `.git/config`, clears CI cache/logs, and removes stale trash from worktree removal
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.

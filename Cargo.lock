@@ -3268,6 +3268,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dunce",
+ "serde_json",
  "tempfile",
  "worktrunk",
 ]

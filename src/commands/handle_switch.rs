@@ -1,13 +1,16 @@
 //! Switch command handler.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{UserConfig, expand_template, template_references_var, validate_template};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
+
+use crate::cli::SwitchFormat;
 
 use super::command_approval::approve_hooks;
 use super::command_executor::{CommandContext, build_hook_context};
@@ -21,6 +24,56 @@ use crate::output::{
     prompt_shell_integration,
 };
 
+/// Structured output for `wt switch --format=json`.
+#[derive(Serialize)]
+struct SwitchJsonOutput {
+    action: &'static str,
+    /// Branch name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+    /// Absolute worktree path
+    path: PathBuf,
+    /// True if branch was created (--create flag)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_branch: Option<bool>,
+    /// Base branch when creating (e.g., "main")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_branch: Option<String>,
+    /// Remote tracking branch if auto-created
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_remote: Option<String>,
+}
+
+impl SwitchJsonOutput {
+    fn from_result(result: &SwitchResult, branch_info: &SwitchBranchInfo) -> Self {
+        let (action, path, created_branch, base_branch, from_remote) = match result {
+            SwitchResult::AlreadyAt(path) => ("already_at", path, None, None, None),
+            SwitchResult::Existing { path } => ("existing", path, None, None, None),
+            SwitchResult::Created {
+                path,
+                created_branch,
+                base_branch,
+                from_remote,
+                ..
+            } => (
+                "created",
+                path,
+                Some(*created_branch),
+                base_branch.clone(),
+                from_remote.clone(),
+            ),
+        };
+        Self {
+            action,
+            branch: branch_info.branch.clone(),
+            path: path.clone(),
+            created_branch,
+            base_branch,
+            from_remote,
+        }
+    }
+}
+
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
     pub branch: &'a str,
@@ -33,6 +86,7 @@ pub struct SwitchOptions<'a> {
     /// Resolved from --cd/--no-cd flags: Some(true) = cd, Some(false) = no cd, None = use config
     pub change_dir: Option<bool>,
     pub verify: bool,
+    pub format: crate::cli::SwitchFormat,
 }
 
 /// Run pre-switch hooks before branch resolution or worktree creation.
@@ -222,6 +276,7 @@ pub fn handle_switch(
         clobber,
         change_dir: change_dir_flag,
         verify,
+        format,
     } = opts;
 
     let (repo, is_recovered) = current_or_recover().context("Failed to switch worktree")?;
@@ -296,6 +351,14 @@ pub fn handle_switch(
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
+
+    // --format=json: write structured result to stdout. All behavior (hooks,
+    // --execute, shell integration) proceeds normally — format only affects output.
+    if format == SwitchFormat::Json {
+        let json = SwitchJsonOutput::from_result(&result, &branch_info);
+        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+        println!("{json}");
+    }
 
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {

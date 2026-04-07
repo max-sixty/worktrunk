@@ -61,6 +61,7 @@ Clears all stored state:
 - All CI status cache
 - All hints
 - All log files
+- Stale trash from worktree removal ([2m.git/wt/trash/[0m)
 
 Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
 to clear specific state.

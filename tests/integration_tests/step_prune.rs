@@ -140,12 +140,9 @@ fn test_prune_multiple(mut repo: TestRepo) {
     repo.add_worktree("merged-b");
     repo.add_worktree("merged-c");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     // All merged worktrees removed (non-current — no placeholders)
     let parent = repo.root_path().parent().unwrap();
@@ -223,12 +220,9 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
     repo.add_worktree("detached-b");
     repo.detach_head_in_worktree("detached-b");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     let parent = repo.root_path().parent().unwrap();
     assert!(
@@ -291,6 +285,7 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     // Far-future epoch: branches appear ~5 years old, passing the default 1h guard
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
     cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
 
     assert_cmd_snapshot!(cmd);
 }
@@ -325,12 +320,9 @@ fn test_prune_mixed_worktree_and_orphan_branch(mut repo: TestRepo) {
     // Worktree candidate: integrated worktree at the same commit as main.
     repo.add_worktree("merged-mixed");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     let parent = repo.root_path().parent().unwrap();
     assert!(
@@ -513,6 +505,23 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
         &["prune", "--dry-run"],
         None
     ));
+}
+
+/// Non-dry-run variant of `test_prune_stale_plus_young`: exercises the skipped_young
+/// message in the non-dry-run removal path.
+#[rstest]
+fn test_prune_stale_plus_young_non_dry_run(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Stale worktree: directory deleted, but git metadata remains → candidate
+    let wt_path = repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Regular merged worktree: with default epoch it appears "young"
+    repo.add_worktree("young-branch");
+
+    // Default min-age (1h) — young-branch is skipped, stale-branch is removed
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None));
 }
 
 /// Prune detects squash-merged branches when target later modified the same files (#1818).

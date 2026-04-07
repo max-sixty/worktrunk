@@ -261,12 +261,10 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Analyze trace entries for cache effectiveness and report findings.
+/// Analyze trace entries for cache effectiveness.
 ///
-/// Two analyses:
-/// 1. Same-context duplicates — commands that ran multiple times for the
-///    same worktree, indicating missing or bypassed caches
-/// 2. Summary — total commands, unique commands, duplicate counts
+/// Outputs structured JSON to stdout (composable with jq) and a human-readable
+/// report to stderr.
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     use std::collections::{BTreeMap, HashMap, HashSet};
     use worktrunk::trace::TraceEntryKind;
@@ -286,7 +284,7 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         }
     }
 
-    // === Same-context duplicates ===
+    // Build structured duplicates list
     let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
     for ((cmd, ctx), count) in &pair_counts {
         if *count > 1 {
@@ -294,56 +292,69 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         }
     }
 
+    // Build JSON output
+    let mut duplicates = Vec::new();
+    let mut total_extra = 0usize;
+    for (cmd, ctx_list) in &cmd_ctx_info {
+        let max_count = *ctx_list.iter().map(|(_, c)| c).max().unwrap();
+        let extra: usize = ctx_list.iter().map(|(_, c)| c - 1).sum();
+        total_extra += extra;
+        let contexts: Vec<_> = ctx_list
+            .iter()
+            .map(|(ctx, count)| serde_json::json!({"context": ctx, "count": count}))
+            .collect();
+        duplicates.push(serde_json::json!({
+            "command": cmd,
+            "max_per_context": max_count,
+            "extra_calls": extra,
+            "contexts": contexts,
+        }));
+    }
+    duplicates.sort_by(|a, b| {
+        b["max_per_context"]
+            .as_u64()
+            .cmp(&a["max_per_context"].as_u64())
+    });
+
+    let dup_count = cmd_counts.values().filter(|c| **c > 1).count();
+    let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
+
+    let output = serde_json::json!({
+        "total_commands": total_commands,
+        "unique_commands": cmd_counts.len(),
+        "contexts": contexts.len(),
+        "duplicated_commands": dup_count,
+        "total_extra_calls": dup_total,
+        "same_context_duplicates": duplicates,
+        "same_context_extra_calls": total_extra,
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+
+    // Human-readable report to stderr
     if !cmd_ctx_info.is_empty() {
-        println!(
+        eprintln!(
             "\
 === Same-context duplicates (potential cache misses) ===
-
-Commands that ran multiple times for the SAME worktree.
-These are the strongest signal of missing/bypassed caches.
 "
         );
-
-        let mut sorted: Vec<_> = cmd_ctx_info.iter().collect();
-        sorted.sort_by(|a, b| {
-            let max_a = a.1.iter().map(|(_, c)| c).max().unwrap();
-            let max_b = b.1.iter().map(|(_, c)| c).max().unwrap();
-            max_b.cmp(max_a)
-        });
-
-        let mut total_wasted = 0usize;
-        for (cmd, ctx_list) in &sorted {
-            let max_count = ctx_list.iter().map(|(_, c)| c).max().unwrap();
-            let extra: usize = ctx_list.iter().map(|(_, c)| c - 1).sum();
-            total_wasted += extra;
-            println!(
-                "  {} (max {}x/context, {} extra calls)",
-                truncate(cmd, 70),
-                max_count,
-                extra
+        for dup in &duplicates {
+            eprintln!(
+                "  {} (max {}x/context, {} extra)",
+                truncate(dup["command"].as_str().unwrap(), 70),
+                dup["max_per_context"],
+                dup["extra_calls"]
             );
-            let mut sorted_ctx: Vec<_> = ctx_list.to_vec();
-            sorted_ctx.sort_by(|a, b| b.1.cmp(&a.1));
-            for (ctx, count) in sorted_ctx.iter().take(3) {
-                println!("      {}x in [{}]", count, ctx);
-            }
-            if sorted_ctx.len() > 3 {
-                println!("      ... and {} more contexts", sorted_ctx.len() - 3);
-            }
         }
-        println!();
-        println!("  Total extra calls from same-context duplicates: {total_wasted}");
+        eprintln!();
+        eprintln!("  Total extra calls: {total_extra}");
     }
 
-    // === Summary ===
-    let dup_count: usize = cmd_counts.values().filter(|c| **c > 1).count();
-    let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
-    println!(
+    eprintln!(
         "\
 \n=== Summary ===
 
-  {total_commands} commands total, {} unique, {} contexts
-  {dup_count} commands ran more than once ({dup_total} extra calls)",
+  {total_commands} commands, {} unique, {} contexts
+  {dup_count} duplicated ({dup_total} extra calls)",
         cmd_counts.len(),
         contexts.len()
     );
