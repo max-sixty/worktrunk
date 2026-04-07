@@ -99,40 +99,41 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                     }));
                 }
             }
-            Err(CommandError::SpawnFailed(err)) => {
-                eprintln!(
-                    "{}",
-                    error_message(cformat!("Failed in <bold>{display_name}</> (spawn failed)"))
-                );
-                eprintln!("{}", format_with_gutter(&err, None));
+            Err(err) => {
+                let (exit_code, error_detail) = match &err {
+                    CommandError::SpawnFailed(e) => {
+                        eprintln!(
+                            "{}",
+                            error_message(cformat!(
+                                "Failed in <bold>{display_name}</> (spawn failed)"
+                            ))
+                        );
+                        eprintln!("{}", format_with_gutter(e, None));
+                        (None, Some(e.clone()))
+                    }
+                    CommandError::ExitCode(code) => {
+                        let exit_info = code
+                            .map(|c| format!(" (exit code {c})"))
+                            .unwrap_or_default();
+                        eprintln!(
+                            "{}",
+                            error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
+                        );
+                        (*code, None)
+                    }
+                };
                 failed.push(display_name.to_string());
                 if json_mode {
-                    json_results.push(serde_json::json!({
-                        "branch": wt.branch,
-                        "path": wt.path,
-                        "exit_code": null,
-                        "success": false,
-                        "error": err,
-                    }));
-                }
-            }
-            Err(CommandError::ExitCode(exit_code)) => {
-                // stderr already streamed to terminal; just show failure message
-                let exit_info = exit_code
-                    .map(|code| format!(" (exit code {code})"))
-                    .unwrap_or_default();
-                eprintln!(
-                    "{}",
-                    error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
-                );
-                failed.push(display_name.to_string());
-                if json_mode {
-                    json_results.push(serde_json::json!({
+                    let mut entry = serde_json::json!({
                         "branch": wt.branch,
                         "path": wt.path,
                         "exit_code": exit_code,
                         "success": false,
-                    }));
+                    });
+                    if let Some(e) = error_detail {
+                        entry["error"] = serde_json::Value::String(e);
+                    }
+                    json_results.push(entry);
                 }
             }
         }
