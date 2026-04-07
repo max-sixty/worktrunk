@@ -562,7 +562,6 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ### Keys
 
@@ -582,7 +581,7 @@ Set the default branch manually:
 {{ terminal(cmd="wt config state default-branch set main") }}
 
 Set a marker for current branch:
-{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧 WIP__WT_QUOT__") }}
+{{ terminal(cmd="wt config state marker set 🚧") }}
 
 Store arbitrary data:
 {{ terminal(cmd="wt config state vars set env=staging") }}

@@ -567,7 +567,6 @@ Global Options:
 Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ### Keys
 
@@ -592,7 +591,7 @@ $ wt config state default-branch set main
 
 Set a marker for current branch:
 ```bash
-$ wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
 ```
 
 Store arbitrary data:
