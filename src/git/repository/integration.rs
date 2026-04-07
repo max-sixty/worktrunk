@@ -4,6 +4,7 @@
 //! (same commit, ancestor, trees match, etc.).
 
 use anyhow::Context;
+use dashmap::mapref::entry::Entry;
 
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
@@ -358,14 +359,15 @@ impl Repository {
 
     /// Parse a tree ref to get its SHA (cached).
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        if let Some(cached) = self.cache.tree_shas.get(spec) {
-            return Ok(cached.clone());
+        match self.cache.tree_shas.entry(spec.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let sha = self
+                    .run_command(&["rev-parse", spec])
+                    .map(|output| output.trim().to_string())?;
+                Ok(e.insert(sha).clone())
+            }
         }
-        let sha = self
-            .run_command(&["rev-parse", spec])
-            .map(|output| output.trim().to_string())?;
-        self.cache.tree_shas.insert(spec.to_string(), sha.clone());
-        Ok(sha)
     }
 
     /// Check if a branch is integrated into a target.
