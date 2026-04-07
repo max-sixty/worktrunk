@@ -607,7 +607,7 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
 
 ## What's logged
 
-Two kinds of logs live in `.git/wt/logs/`:
+Three kinds of files live in `.git/wt/logs/`:
 
 ### Command log (`commands.jsonl`)
 
@@ -621,6 +621,17 @@ All hook executions and LLM commands are recorded automatically — one JSON obj
 | Background removal | `{branch}-remove.log` |
 
 Source is `user` or `project` depending on where the hook is defined.
+
+### Diagnostic files
+
+Created by `-vv` for issue reporting:
+
+| File | Contents |
+|------|----------|
+| `verbose.log` | Debug log output from the command run |
+| `diagnostic.md` | Structured report (environment, config, worktrees) for pasting into GitHub issues |
+
+These are overwritten on each `-vv` invocation.
 
 ## Location
 
