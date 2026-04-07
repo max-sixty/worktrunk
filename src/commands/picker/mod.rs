@@ -869,6 +869,8 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 
@@ -894,6 +896,8 @@ pub mod tests {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 

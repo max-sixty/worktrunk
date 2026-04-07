@@ -304,7 +304,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
-        let integration_reason = compute_integration_reason(
+        let (integration_reason, _) = compute_integration_reason(
             repo,
             Some(&current_branch),
             Some(&target_branch),

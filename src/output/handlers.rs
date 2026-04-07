@@ -9,9 +9,7 @@ use color_print::cformat;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
-use crate::commands::branch_deletion::{
-    BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
-};
+use crate::commands::branch_deletion::{BranchDeletionOutcome, BranchDeletionResult};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::hooks::{
     HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
@@ -728,7 +726,16 @@ pub fn handle_remove_output(
             branch_name,
             deletion_mode,
             pruned,
-        } => handle_branch_only_output(branch_name, *deletion_mode, *pruned, quiet),
+            target_branch,
+            integration_reason,
+        } => handle_branch_only_output(
+            branch_name,
+            *deletion_mode,
+            *pruned,
+            *integration_reason,
+            target_branch.as_deref(),
+            quiet,
+        ),
     }
 }
 
@@ -740,6 +747,8 @@ fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
     pruned: bool,
+    integration_reason: Option<IntegrationReason>,
+    target_branch: Option<&str>,
     quiet: bool,
 ) -> anyhow::Result<()> {
     let branch_info = if pruned {
@@ -755,15 +764,34 @@ fn handle_branch_only_output(
         return Ok(());
     }
 
-    let repo = worktrunk::git::Repository::current()?;
+    let check_target = target_branch.unwrap_or("HEAD");
 
-    // Get default branch for integration check and reason display
-    // Falls back to HEAD if default branch can't be determined
-    let default_branch = repo.default_branch();
-    let check_target = default_branch.as_deref().unwrap_or("HEAD");
+    // Decide outcome from pre-computed integration (computed in prepare_worktree_removal).
+    let outcome = if deletion_mode.is_force() {
+        Some(BranchDeletionOutcome::ForceDeleted)
+    } else {
+        integration_reason.map(BranchDeletionOutcome::Integrated)
+    };
 
-    let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
-    let deletion = handle_branch_deletion_result(result, branch_name)?;
+    let deletion = if let Some(outcome) = outcome {
+        let repo = worktrunk::git::Repository::current()?;
+        let result = repo.run_command(&["branch", "-D", branch_name]);
+        handle_branch_deletion_result(
+            result.map(|_| BranchDeletionResult {
+                outcome,
+                integration_target: check_target.to_string(),
+            }),
+            branch_name,
+        )?
+    } else {
+        BranchDeletionDisplay {
+            result: BranchDeletionResult {
+                outcome: BranchDeletionOutcome::NotDeleted,
+                integration_target: check_target.to_string(),
+            },
+            show_unmerged_hint: true,
+        }
+    };
 
     if matches!(deletion.result.outcome, BranchDeletionOutcome::NotDeleted) {
         eprintln!("{}", info_message(&branch_info));
