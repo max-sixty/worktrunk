@@ -498,18 +498,20 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     assert!(output.status.success());
     let mut settings = state_get_settings();
     // File sizes and ages vary across environments
-    settings.add_filter(r"(?m)\d+[BK]\s+\S+\s*$", "<SIZE>  <AGE>");
+    settings.add_filter(r"(?m)\d+[BK]\s+\S+[ \t]*$", "<SIZE>  <AGE>");
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
         [36mCOMMAND LOG[39m @ <PATH>
               File      Size  Age   
          ────────────── ──── ────── 
          commands.jsonl <SIZE>  <AGE>
+
         [36mHOOK OUTPUT[39m @ <PATH>
                     File            Size  Age   
          ────────────────────────── ──── ────── 
          bugfix-remove.log          <SIZE>  <AGE>
          feature-post-start-npm.log <SIZE>  <AGE>
+
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
         ");
