@@ -1749,7 +1749,23 @@ pub fn step_prune(
         removed.push(current);
     }
 
-    if removed.is_empty() {
+    if format == crate::cli::SwitchFormat::Json {
+        let items: Vec<serde_json::Value> = removed
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "branch": c.branch,
+                    "path": c.path,
+                    "kind": match c.kind {
+                        CandidateKind::Current => "current",
+                        CandidateKind::Other => "worktree",
+                        CandidateKind::BranchOnly => "branch_only",
+                    },
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&items)?);
+    } else if removed.is_empty() {
         if skipped_young.is_empty() {
             eprintln!("{}", info_message("No merged worktrees to remove"));
         }
