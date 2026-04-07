@@ -766,6 +766,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - All CI status cache
 - All hints
 - All log files
+- Stale trash from worktree removal (`.git/wt/trash/`)
 
 Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
 to clear specific state."#)]

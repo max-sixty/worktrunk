@@ -47,6 +47,36 @@ fn is_wt_log_file(path: &std::path::Path) -> bool {
     name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
 }
 
+/// Clear stale entries from the wt/trash directory.
+///
+/// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
+/// then deletes them in a background process. If the background `rm -rf` fails
+/// or is killed, entries accumulate. This cleans them up.
+fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
+    let trash_dir = repo.wt_trash_dir();
+
+    if !trash_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&trash_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+            cleared += 1;
+        }
+    }
+
+    // Remove the trash directory itself if empty
+    if std::fs::read_dir(&trash_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&trash_dir);
+    }
+
+    Ok(cleared)
+}
+
 /// Clear all log files from the wt/logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     let log_dir = repo.wt_logs_dir();
@@ -606,6 +636,12 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     // Clear all hints
     let hints_cleared = repo.clear_all_hints()?;
     if hints_cleared > 0 {
+        cleared_any = true;
+    }
+
+    // Clear stale trash from worktree removal
+    let trash_cleared = clear_trash(&repo)?;
+    if trash_cleared > 0 {
         cleared_any = true;
     }
 
