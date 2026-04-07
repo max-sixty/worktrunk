@@ -12,7 +12,6 @@ pub mod approval_save;
 pub mod approval_ui;
 pub mod approvals;
 pub mod bare_repository;
-pub mod cache_effectiveness;
 pub mod cache_sharing;
 pub mod ci_status;
 pub mod column_alignment_verification;
