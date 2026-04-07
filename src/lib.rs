@@ -20,5 +20,8 @@ pub mod sync;
 pub mod trace;
 pub mod utils;
 
+#[cfg(test)]
+pub(crate) mod testutil;
+
 // Re-export HookType for convenience
 pub use git::HookType;

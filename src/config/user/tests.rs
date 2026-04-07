@@ -1,26 +1,7 @@
 use super::*;
 use crate::config::HooksConfig;
-use crate::git::{HookType, Repository};
-use crate::shell_exec::Cmd;
-
-/// Test fixture that creates a real temporary git repository.
-struct TestRepo {
-    _dir: tempfile::TempDir,
-    repo: Repository,
-}
-
-impl TestRepo {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        Cmd::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .run()
-            .unwrap();
-        let repo = Repository::at(dir.path()).unwrap();
-        Self { _dir: dir, repo }
-    }
-}
+use crate::git::HookType;
+use crate::testutil::TestRepo;
 
 fn test_repo() -> TestRepo {
     TestRepo::new()

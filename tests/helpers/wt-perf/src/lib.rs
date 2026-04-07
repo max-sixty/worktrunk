@@ -150,6 +150,11 @@ pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
 /// Removes `GIT_*`, `WORKTRUNK_*`, `SHELL`, and `NO_COLOR` env vars, then sets
 /// config/system/approvals paths. Pass a `user_config_path` to use a real config
 /// file (e.g., with hooks); `None` points at a nonexistent path (defaults only).
+///
+/// This is intentionally minimal compared to `tests/common::configure_cli_command()`:
+/// benchmarks need realistic timing without host config interference, while
+/// integration tests need full determinism (timestamps, locale, mock commands,
+/// snapshot filters). Coupling them would make benchmarks slower or tests flaky.
 pub fn isolate_cmd(cmd: &mut std::process::Command, user_config_path: Option<&Path>) {
     for (key, _) in std::env::vars() {
         if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {

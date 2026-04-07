@@ -23,6 +23,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -95,7 +96,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
 
 [1m[32mGlobal Options:[0m
@@ -135,7 +136,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-verify[0m[2m      # Skip hooks[0m[2m[0m
+[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m[2m[0m
 
 [1m[32mShortcuts[0m
 

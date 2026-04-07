@@ -295,7 +295,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
-$ wt switch --create temp --no-verify      # Skip hooks
+$ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
 ## Shortcuts
@@ -463,8 +463,12 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
+
+        /// Skip hooks (deprecated alias for --no-hooks)
+        #[arg(long = "no-verify", hide = true)]
+        no_verify_deprecated: bool,
     },
 
     /// List worktrees and their status
@@ -862,8 +866,12 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
         yes: bool,
 
         /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+        #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
         verify: bool,
+
+        /// Skip hooks (deprecated alias for --no-hooks)
+        #[arg(long = "no-verify", hide = true)]
+        no_verify_deprecated: bool,
 
         /// Force worktree removal
         ///
@@ -1006,15 +1014,19 @@ lint = "cargo clippy"
         yes: bool,
 
         /// Force running hooks
-        #[arg(long, overrides_with = "no_verify", hide = true)]
+        #[arg(long, overrides_with_all = ["no_hooks", "no_verify"], hide = true)]
         verify: bool,
 
         /// Skip hooks
         #[arg(
-            long = "no-verify",
-            overrides_with = "verify",
+            long = "no-hooks",
+            overrides_with_all = ["verify", "no_verify"],
             help_heading = "Automation"
         )]
+        no_hooks: bool,
+
+        /// Skip hooks (deprecated alias for --no-hooks)
+        #[arg(long = "no-verify", overrides_with_all = ["verify", "no_hooks"], hide = true)]
         no_verify: bool,
 
         /// What to stage before committing [default: all]
@@ -1167,7 +1179,7 @@ Project commands require approval on first run:
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
 - Use `--yes` to bypass prompts — useful for CI and automation
-- Use `--no-verify` to skip hooks
+- Use `--no-hooks` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
@@ -1196,7 +1208,7 @@ For pre-* hooks, commands in a table run sequentially. For post-* hooks, they ru
 | Approval | Required | Not required |
 | Execution order | After user hooks | First |
 
-Skip all hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
+Skip all hooks with `--no-hooks`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 ## Template variables
 
@@ -1758,7 +1770,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-verify to skip)
+verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 

@@ -1716,7 +1716,7 @@ approved-commands = ["echo 'hook ran' > {}"]
 }
 
 #[rstest]
-fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_pre_remove_hook_skipped_with_no_hooks(mut repo: TestRepo) {
     use std::thread;
 
     // Create a marker file that the hook would create
@@ -1741,27 +1741,27 @@ approved-commands = ["echo 'hook ran' > {}"]
     // Create a worktree to remove
     let worktree_path = repo.add_worktree("feature-skip");
 
-    // Remove with --no-verify to skip hooks
+    // Remove with --no-hooks to skip hooks
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
-        &["--foreground", "--no-verify", "feature-skip"],
+        &["--foreground", "--no-hooks", "feature-skip"],
         None
     ));
 
     // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
     thread::sleep(Duration::from_millis(500));
 
-    // Marker file should NOT exist - --no-verify skips the hook
+    // Marker file should NOT exist - --no-hooks skips the hook
     assert!(
         !marker_file.exists(),
-        "Pre-remove hook should NOT run with --no-verify"
+        "Pre-remove hook should NOT run with --no-hooks"
     );
 
     // Worktree should be removed (removal itself succeeds)
     assert!(
         !worktree_path.exists(),
-        "Worktree should be removed even with --no-verify"
+        "Worktree should be removed even with --no-hooks"
     );
 }
 

@@ -3,10 +3,9 @@ source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - switch
-    - "--create"
-    - feature
-    - "--no-verify"
+    - step
+    - commit
+    - "--no-hooks"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -22,6 +21,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -29,12 +29,14 @@ info:
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_COMMIT__GENERATION__COMMAND: "cat >/dev/null && echo 'feat: test commit'"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -44,8 +46,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
-[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
+[33m▲[39m [33mAuto-staging 1 untracked path:[39m
+[107m [0m new_file.txt
+[36m◎[39m [36mGenerating commit message and committing changes... [90m(1 file, [32m+1[39m[39m[90m)[39m[39m
+[107m [0m [1mfeat: test commit[22m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m

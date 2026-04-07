@@ -403,7 +403,7 @@ fn test_bare_repo_merge_workflow() {
         "merge",
         "main",        // Explicitly specify target branch
         "--no-squash", // Skip squash to avoid LLM dependency
-        "--no-verify", // Skip pre-merge hooks
+        "--no-hooks",  // Skip pre-merge hooks
     ])
     .current_dir(&feature_worktree);
 
@@ -1208,7 +1208,7 @@ fn test_bare_repo_merge_preserves_default_branch_worktree() {
         "merge",
         "feature",     // Target = feature branch
         "--no-squash", // Skip squash to avoid LLM dependency
-        "--no-verify", // Skip hooks
+        "--no-hooks",  // Skip hooks
     ])
     .current_dir(&main_worktree);
 

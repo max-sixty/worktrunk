@@ -142,6 +142,20 @@ fn warn_select_deprecated() {
     );
 }
 
+/// Resolve the `--no-hooks` / `--no-verify` pair: emit a deprecation warning
+/// if the old flag was used, then return the effective verify value.
+fn resolve_verify(verify: bool, no_verify_deprecated: bool) -> bool {
+    if no_verify_deprecated {
+        eprintln!(
+            "{}",
+            warning_message("--no-verify is deprecated; use --no-hooks instead")
+        );
+        false
+    } else {
+        verify
+    }
+}
+
 fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
     match action {
         HookCommand::Show {
@@ -262,16 +276,22 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             branch,
             yes,
             verify,
+            no_verify_deprecated,
             stage,
             show_prompt,
-        } => step_commit(branch, yes, verify, stage, show_prompt),
+        } => {
+            let verify = resolve_verify(verify, no_verify_deprecated);
+            step_commit(branch, yes, verify, stage, show_prompt)
+        }
         StepCommand::Squash {
             target,
             yes,
             verify,
+            no_verify_deprecated,
             stage,
             show_prompt,
         } => {
+            let verify = resolve_verify(verify, no_verify_deprecated);
             // Handle --show-prompt early: just build and output the prompt
             if show_prompt {
                 commands::step_show_squash_prompt(target.as_deref())
@@ -1010,6 +1030,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             cd,
             no_cd,
             verify,
+            no_verify_deprecated,
         } => handle_switch_command(SwitchCommandArgs {
             branch,
             branches,
@@ -1022,7 +1043,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             clobber,
             cd,
             no_cd,
-            verify,
+            verify: resolve_verify(verify, no_verify_deprecated),
         }),
         Commands::Remove {
             branches,
@@ -1030,6 +1051,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             force_delete,
             foreground,
             verify,
+            no_verify_deprecated,
             yes,
             force,
         } => handle_remove_command(RemoveCommandArgs {
@@ -1037,7 +1059,7 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             delete_branch,
             force_delete,
             foreground,
-            verify,
+            verify: resolve_verify(verify, no_verify_deprecated),
             yes,
             force,
         }),
@@ -1054,20 +1076,30 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
             no_ff,
             ff,
             verify,
+            no_hooks,
             no_verify,
             yes,
             stage,
-        } => handle_merge(MergeOptions {
-            target: target.as_deref(),
-            squash: flag_pair(squash, no_squash),
-            commit: flag_pair(commit, no_commit),
-            rebase: flag_pair(rebase, no_rebase),
-            remove: flag_pair(remove, no_remove),
-            ff: flag_pair(ff, no_ff),
-            verify: flag_pair(verify, no_verify),
-            yes,
-            stage,
-        }),
+        } => {
+            // Merge uses flag_pair, so resolve_verify doesn't apply directly
+            if no_verify {
+                eprintln!(
+                    "{}",
+                    warning_message("--no-verify is deprecated; use --no-hooks instead")
+                );
+            }
+            handle_merge(MergeOptions {
+                target: target.as_deref(),
+                squash: flag_pair(squash, no_squash),
+                commit: flag_pair(commit, no_commit),
+                rebase: flag_pair(rebase, no_rebase),
+                remove: flag_pair(remove, no_remove),
+                ff: flag_pair(ff, no_ff),
+                verify: flag_pair(verify, no_hooks || no_verify),
+                yes,
+                stage,
+            })
+        }
     }
 }
 

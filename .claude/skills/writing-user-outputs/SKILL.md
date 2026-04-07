@@ -355,7 +355,7 @@ acknowledges state without changing anything.
 | Hint ↳                                          | Info ○                                |
 | ------------------------------------------------ | ------------------------------------- |
 | "To continue, run `wt merge`"                    | "Already up to date with main"        |
-| "Commit or stash changes first"                  | "Skipping hooks (--no-verify)"        |
+| "Commit or stash changes first"                  | "Skipping hooks (--no-hooks)"         |
 | "Branch can be deleted"                           | "Worktree preserved (main worktree)"  |
 | "Failed command, exit code 128:"                   |                                       |
 
