@@ -507,6 +507,28 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     ));
 }
 
+/// Non-dry-run variant of `test_prune_stale_plus_young`: exercises the skipped_young
+/// message in the non-dry-run removal path.
+#[rstest]
+fn test_prune_stale_plus_young_non_dry_run(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Stale worktree: directory deleted, but git metadata remains → candidate
+    let wt_path = repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Regular merged worktree: with default epoch it appears "young"
+    repo.add_worktree("young-branch");
+
+    // Default min-age (1h) — young-branch is skipped, stale-branch is removed
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["prune", "--yes"],
+        None
+    ));
+}
+
 /// Prune detects squash-merged branches when target later modified the same files (#1818).
 ///
 /// When `git merge-tree --write-tree` conflicts because the branch and target both
