@@ -187,6 +187,10 @@ pub(super) struct RepoCache {
     /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
     pub(super) resolved_refs: DashMap<String, String>,
 
+    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
+    /// The tree SHA for a given ref doesn't change during a command.
+    pub(super) tree_shas: DashMap<String, String>,
+
     // ========== Per-worktree values (keyed by path) ==========
     /// Per-worktree git directory: worktree_path -> canonicalized git dir
     /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
