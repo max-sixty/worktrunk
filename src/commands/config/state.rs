@@ -39,12 +39,23 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 /// Check if a file in `.git/wt/logs/` is a worktrunk log file.
 ///
-/// Matches `.log` (hook output), `.jsonl` (command audit log), and `.jsonl.old` (rotated).
+/// Matches `.log` (hook output + verbose), `.jsonl`/`.jsonl.old` (command audit log),
+/// and known diagnostic files.
 fn is_wt_log_file(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+    name.ends_with(".log")
+        || name.ends_with(".jsonl")
+        || name.ends_with(".jsonl.old")
+        || is_diagnostic_file(name)
+}
+
+/// Check if a file is a diagnostic file (`verbose.log` or `diagnostic.md`).
+///
+/// These are created by `-vv` and are separate from hook output and the command audit log.
+fn is_diagnostic_file(name: &str) -> bool {
+    name == "verbose.log" || name == "diagnostic.md"
 }
 
 /// Clear stale entries from the wt/trash directory.
@@ -208,7 +219,38 @@ pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow:
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            e.path().is_file() && is_wt_log_file(&e.path()) && !is_command_log_file(&name)
+            e.path().is_file()
+                && is_wt_log_file(&e.path())
+                && !is_command_log_file(&name)
+                && !is_diagnostic_file(&name)
+        })
+        .collect();
+
+    render_log_table(out, &mut entries)?;
+    Ok(())
+}
+
+/// Render the DIAGNOSTIC section into the output buffer.
+pub(super) fn render_diagnostic_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    let log_dir_display = format_path_for_display(&log_dir);
+
+    writeln!(
+        out,
+        "{}",
+        format_heading("DIAGNOSTIC", Some(&format!("@ {log_dir_display}")))
+    )?;
+
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            e.path().is_file() && is_diagnostic_file(&name)
         })
         .collect();
 
@@ -237,6 +279,8 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
             render_command_log(&mut out, &repo)?;
             writeln!(out)?;
             render_hook_output(&mut out, &repo)?;
+            writeln!(out)?;
+            render_diagnostic_files(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -384,6 +428,8 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             render_command_log(&mut out, &repo)?;
             writeln!(out)?;
             render_hook_output(&mut out, &repo)?;
+            writeln!(out)?;
+            render_diagnostic_files(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -757,56 +803,62 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get log files, partitioned into command log and hook output
+    // Get log files, partitioned into command log, hook output, and diagnostic
     let log_dir = repo.wt_logs_dir();
-    let (command_log, hook_output): (Vec<serde_json::Value>, Vec<serde_json::Value>) =
-        if log_dir.exists() {
-            let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-                .collect();
+    let (command_log, hook_output, diagnostic): (
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+    ) = if log_dir.exists() {
+        let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+            .collect();
 
-            all_entries.sort_by(|a, b| {
-                let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time.cmp(&a_time)
-            });
+        all_entries.sort_by(|a, b| {
+            let a_time = a.metadata().and_then(|m| m.modified()).ok();
+            let b_time = b.metadata().and_then(|m| m.modified()).ok();
+            b_time.cmp(&a_time)
+        });
 
-            let to_json = |entry: &std::fs::DirEntry| -> serde_json::Value {
-                let path = entry.path();
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let meta = entry.metadata().ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs());
+        let to_json = |entry: &std::fs::DirEntry| -> serde_json::Value {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
 
-                serde_json::json!({
-                    "file": name,
-                    "size": size,
-                    "modified_at": modified
-                })
-            };
-
-            let mut cmd_log = Vec::new();
-            let mut hook_out = Vec::new();
-            for entry in &all_entries {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if is_command_log_file(&name) {
-                    cmd_log.push(to_json(entry));
-                } else {
-                    hook_out.push(to_json(entry));
-                }
-            }
-            (cmd_log, hook_out)
-        } else {
-            (vec![], vec![])
+            serde_json::json!({
+                "file": name,
+                "size": size,
+                "modified_at": modified
+            })
         };
+
+        let mut cmd_log = Vec::new();
+        let mut hook_out = Vec::new();
+        let mut diagnostic = Vec::new();
+        for entry in &all_entries {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_command_log_file(&name) {
+                cmd_log.push(to_json(entry));
+            } else if is_diagnostic_file(&name) {
+                diagnostic.push(to_json(entry));
+            } else {
+                hook_out.push(to_json(entry));
+            }
+        }
+        (cmd_log, hook_out, diagnostic)
+    } else {
+        (vec![], vec![], vec![])
+    };
 
     // Get vars data (all branches) — collect into BTreeMap for sorted output
     let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
@@ -834,6 +886,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
+        "diagnostic": diagnostic,
         "hints": hints
     });
 
@@ -956,6 +1009,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show hook output logs
     render_hook_output(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show diagnostic files
+    render_diagnostic_files(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out, true) {

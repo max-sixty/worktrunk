@@ -24,9 +24,10 @@ fn internal_log_filename(branch: &str, op: &str) -> String {
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // COMMAND LOG / HOOK OUTPUT paths vary per test (temp dir), normalize for stable snapshots
+    // COMMAND LOG / HOOK OUTPUT / DIAGNOSTIC paths vary per test (temp dir), normalize for stable snapshots
     settings.add_filter(r"(COMMAND LOG\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings.add_filter(r"(HOOK OUTPUT\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings.add_filter(r"(DIAGNOSTIC\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings
 }
 
@@ -478,6 +479,10 @@ fn test_state_get_logs_empty(repo: TestRepo) {
         stderr.contains("HOOK OUTPUT"),
         "Expected HOOK OUTPUT heading: {stderr}"
     );
+    assert!(
+        stderr.contains("DIAGNOSTIC"),
+        "Expected DIAGNOSTIC heading: {stderr}"
+    );
     // Path separator varies by platform, so check for either / or \
     assert!(
         stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
@@ -511,6 +516,10 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
         stderr.contains("HOOK OUTPUT"),
         "Expected HOOK OUTPUT heading: {stderr}"
     );
+    assert!(
+        stderr.contains("DIAGNOSTIC"),
+        "Expected DIAGNOSTIC heading: {stderr}"
+    );
     // Command log section shows jsonl file
     assert!(stderr.contains("commands.jsonl"));
     // Hook output section shows .log files
@@ -539,9 +548,73 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
         stderr.contains("HOOK OUTPUT"),
         "Expected HOOK OUTPUT heading: {stderr}"
     );
-    // Count "(none)" occurrences — should appear twice (once per section)
+    assert!(
+        stderr.contains("DIAGNOSTIC"),
+        "Expected DIAGNOSTIC heading: {stderr}"
+    );
+    // Count "(none)" occurrences — should appear three times (once per section)
     let none_count = stderr.matches("(none)").count();
-    assert_eq!(none_count, 2, "Expected two (none) entries: {stderr}");
+    assert_eq!(none_count, 3, "Expected three (none) entries: {stderr}");
+}
+
+#[rstest]
+fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
+    // Create wt/logs directory with diagnostic files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("verbose.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
+    // Also add a hook output file to verify separation
+    std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
+    assert!(stderr.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
+    assert!(
+        stderr.contains("verbose.log"),
+        "Expected verbose.log in output"
+    );
+    assert!(
+        stderr.contains("diagnostic.md"),
+        "Expected diagnostic.md in output"
+    );
+
+    // Hook output should have the remove log but not the diagnostic files
+    // Split at DIAGNOSTIC heading to check what's in each section
+    let hook_section = stderr
+        .split("DIAGNOSTIC")
+        .next()
+        .unwrap()
+        .rsplit("HOOK OUTPUT")
+        .next()
+        .unwrap();
+    assert!(
+        hook_section.contains("feature-remove.log"),
+        "Expected feature-remove.log in HOOK OUTPUT: {hook_section}"
+    );
+    assert!(
+        !hook_section.contains("verbose.log"),
+        "verbose.log should not be in HOOK OUTPUT: {hook_section}"
+    );
+}
+
+#[rstest]
+fn test_state_clear_logs_includes_diagnostic_files(repo: TestRepo) {
+    // diagnostic files (.log and .md) should be cleared
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("verbose.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Report").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m log files[39m");
+    assert!(!log_dir.exists());
 }
 
 #[rstest]
@@ -748,6 +821,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
         ");
     });
