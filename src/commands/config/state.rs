@@ -456,7 +456,7 @@ pub fn handle_state_get(
             if format == SwitchFormat::Json {
                 let output = pr_status
                     .as_ref()
-                    .map(|s| super::super::list::json_output::JsonCi::from(s));
+                    .map(super::super::list::json_output::JsonCi::from);
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 let ci_status = pr_status
