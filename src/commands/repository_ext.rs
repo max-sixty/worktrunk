@@ -259,13 +259,15 @@ impl RepositoryCliExt for Repository {
         };
 
         // Pre-compute integration reason to avoid race conditions when removing
-        // multiple worktrees in background mode.
-        let (integration_reason, _) = compute_integration_reason(
+        // multiple worktrees in background mode. Use the effective target for
+        // display (e.g., origin/main when upstream is ahead).
+        let (integration_reason, effective_target) = compute_integration_reason(
             self,
             branch_name.as_deref(),
             target_branch.as_deref(),
             deletion_mode,
         );
+        let target_branch = effective_target.or(target_branch);
 
         // Compute expected_path for path mismatch detection
         // Only set if actual path differs from expected (path mismatch)

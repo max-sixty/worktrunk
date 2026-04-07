@@ -1484,6 +1484,46 @@ fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] r
     ));
 }
 
+/// Like `test_remove_squash_merged_on_remote`, but with a **worktree** (not just
+/// a branch). Tests that the `RemovedWorktree` path displays the effective target
+/// (`origin/main`) rather than the local default branch when upstream is ahead.
+#[rstest]
+fn test_remove_worktree_squash_merged_on_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Create a worktree for the feature branch
+    let _wt_path = repo.add_worktree("feature-wt-squash");
+    let wt_path = repo.worktrees["feature-wt-squash"].clone();
+    std::fs::write(wt_path.join("feature-wt.txt"), "feature content").unwrap();
+    repo.run_git_in(&wt_path, &["add", "feature-wt.txt"]);
+    repo.run_git_in(&wt_path, &["commit", "-m", "Add feature"]);
+    repo.run_git_in(&wt_path, &["push", "-u", "origin", "feature-wt-squash"]);
+
+    // Simulate GitHub squash merge on the remote
+    let github_sim = repo.home_path().join("github-sim-wt");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim-wt"],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-wt-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally — origin/main now has the squash merge, local main does not
+    repo.run_git(&["fetch", "origin"]);
+
+    // Remove the worktree — should show origin/main as the integration target
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-wt-squash"],
+        None
+    ));
+}
+
 // ============================================================================
 // Pre-Remove Hook Tests
 // ============================================================================
