@@ -804,6 +804,32 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
+/// When removing the current worktree (cd back to main), both post-remove and
+/// post-switch hooks fire. They should appear on a single combined announcement line.
+#[rstest]
+fn test_combined_post_remove_and_post_switch_hooks(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // Configure both post-remove and post-switch user hooks
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+"#,
+    );
+
+    // Remove from inside the feature worktree — triggers cd back to main,
+    // which means changed_directory=true and both hook types fire.
+    snapshot_remove(
+        "combined_post_remove_and_post_switch",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(&feature_wt),
+    );
+}
+
 // Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
 // fails is defensive code for an extremely rare race condition where config becomes
 // invalid between command startup and hook execution. This is not easily testable
