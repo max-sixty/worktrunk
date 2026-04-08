@@ -18,6 +18,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI does clean builds, so incremental compilation tracking adds I/O overhead
+  # with no benefit. Especially impactful on Windows where I/O is the bottleneck.
+  CARGO_INCREMENTAL: 0
   # Authenticate lychee requests to GitHub to avoid rate limiting
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -124,8 +127,16 @@ jobs:
         crate: worktrunk
         version: "=0.32.0"
 
+    - name: Use fast D: drive for temp files (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
+
     - name: 🧪 Pre-merge hooks
-      run: wt hook pre-merge --yes
+      run: wt hook pre-merge --yes insta doctest doc
 
     - name: 📊 Upload test timing
       if: always()
