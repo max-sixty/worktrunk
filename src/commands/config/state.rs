@@ -167,7 +167,9 @@ fn partition_log_files_json(
     entries.sort_by(|a, b| {
         let a_time = a.metadata().and_then(|m| m.modified()).ok();
         let b_time = b.metadata().and_then(|m| m.modified()).ok();
-        b_time.cmp(&a_time)
+        b_time
+            .cmp(&a_time)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
     let mut cmd_log = Vec::new();

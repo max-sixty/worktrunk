@@ -31,7 +31,6 @@
 
 pub mod mock_commands;
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -607,11 +606,6 @@ pub struct TestRepo {
     claude_installed: bool,
     /// Whether OpenCode CLI should be treated as installed
     opencode_installed: bool,
-    /// Opaque data kept alive for this repo's lifetime.
-    /// Integration tests use this to hold insta snapshot filter guards.
-    // TODO: Consider moving snapshot guard setup entirely out of TestRepo
-    // into rstest fixtures, eliminating this field.
-    _lifetime_guard: Option<Box<dyn Any>>,
 }
 
 impl TestRepo {
@@ -657,13 +651,6 @@ impl TestRepo {
         self.root_path()
     }
 
-    /// Store an opaque guard that will be kept alive for this repo's lifetime.
-    ///
-    /// Integration tests use this to hold insta snapshot filter guards.
-    pub fn set_lifetime_guard(&mut self, guard: Box<dyn Any>) {
-        self._lifetime_guard = Some(guard);
-    }
-
     /// Create a test repository from the standard fixture.
     ///
     /// The repo includes:
@@ -705,7 +692,6 @@ impl TestRepo {
             mock_bin_path: None,
             claude_installed: false,
             opencode_installed: false,
-            _lifetime_guard: None,
         };
 
         // Mock gh/glab as authenticated to prevent CI hints in test output
@@ -803,7 +789,6 @@ impl TestRepo {
             mock_bin_path: None,
             claude_installed: false,
             opencode_installed: false,
-            _lifetime_guard: None,
         }
     }
 
