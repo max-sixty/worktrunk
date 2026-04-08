@@ -632,45 +632,16 @@ impl TestRepo {
     /// commands), use [`standard()`](Self::standard) instead.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path().join("repo");
-        std::fs::create_dir(&root).unwrap();
-
-        let test_config_path = temp_dir.path().join("test-config.toml");
-        let test_approvals_path = temp_dir.path().join("test-approvals.toml");
-        let git_config_path = temp_dir.path().join("test-gitconfig");
-        write_test_gitconfig(&git_config_path);
-
-        configure_git_env(Cmd::new("git"), &git_config_path)
-            .args(["init", "-b", "main"])
-            .current_dir(&root)
-            .run()
-            .unwrap();
-
-        let root = canonicalize(&root).unwrap();
-        let repo = Repository::at(&root).unwrap();
-
+        let repo = Self::init_repo(&["init", "-b", "main"]);
         // Also set identity in local config so unit tests that commit via
         // repo.run_command() work without GIT_CONFIG_GLOBAL.
-        repo.run_command(&["config", "user.name", "Test User"])
+        repo.repo
+            .run_command(&["config", "user.name", "Test User"])
             .unwrap();
-        repo.run_command(&["config", "user.email", "test@example.com"])
+        repo.repo
+            .run_command(&["config", "user.email", "test@example.com"])
             .unwrap();
-
-        Self {
-            temp_dir,
-            root,
-            repo,
-            worktrees: HashMap::new(),
-            remote: None,
-            test_config_path,
-            test_approvals_path,
-            git_config_path,
-            mock_bin_path: None,
-            claude_installed: false,
-            opencode_installed: false,
-            _lifetime_guard: None,
-        }
+        repo
     }
 
     /// Create a repo with one initial commit on `main`.
@@ -756,23 +727,31 @@ impl TestRepo {
     /// Use this for tests that specifically need to test behavior in an
     /// uninitialized repo. Most tests should use `new()` instead.
     pub fn empty() -> Self {
+        Self::init_repo(&["init", "-q"])
+    }
+
+    /// Shared initializer for `new()` and `empty()`.
+    ///
+    /// Creates a tempdir, writes gitconfig, runs `git init` with the given
+    /// arguments, and returns a `TestRepo` with no commits and no identity
+    /// in local config. Callers add identity or other setup as needed.
+    fn init_repo(git_args: &[&str]) -> Self {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().join("repo");
         std::fs::create_dir(&root).unwrap();
-        let root = canonicalize(&root).unwrap();
 
         let test_config_path = temp_dir.path().join("test-config.toml");
         let test_approvals_path = temp_dir.path().join("test-approvals.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
-
         write_test_gitconfig(&git_config_path);
 
-        // Run git init first so Repository::at() can find the .git directory
         configure_git_env(Cmd::new("git"), &git_config_path)
-            .args(["init", "-q"])
+            .args(git_args.iter().copied())
             .current_dir(&root)
             .run()
             .unwrap();
+
+        let root = canonicalize(&root).unwrap();
 
         Self {
             temp_dir,

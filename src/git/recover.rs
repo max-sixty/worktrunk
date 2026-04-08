@@ -208,7 +208,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::shell_exec::Cmd;
-    use crate::testing::set_test_identity;
+    use crate::testing::{TestRepo, set_test_identity};
     use ansi_str::AnsiStr;
 
     fn git_init(path: &Path) {
@@ -299,15 +299,9 @@ mod tests {
 
     #[test]
     fn test_was_worktree_of_rejects_unknown_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        git_init(tmp.path());
-        let repo = Repository::at(tmp.path()).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
-
+        let test = TestRepo::with_initial_commit();
         let unknown = PathBuf::from("/nonexistent/unknown");
-        assert!(!was_worktree_of(&repo, &unknown));
+        assert!(!was_worktree_of(&test.repo, &unknown));
     }
 
     #[test]
@@ -461,13 +455,8 @@ mod tests {
     #[test]
     fn test_hint_for_repo_suggests_switch() {
         // A normal repo with a main worktree should suggest `wt switch ^`.
-        let tmp = tempfile::tempdir().unwrap();
-        git_init(tmp.path());
-        let repo = Repository::at(tmp.path()).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
-        let hint = hint_for_repo(&repo);
+        let test = TestRepo::with_initial_commit();
+        let hint = hint_for_repo(&test.repo);
         insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Try: wt switch ^");
     }
 
