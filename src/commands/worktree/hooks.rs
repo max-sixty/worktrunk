@@ -26,7 +26,7 @@ impl<'a> CommandContext<'a> {
             HookType::PreStart,
             extra_vars,
             HookFailureStrategy::FailFast,
-            None,
+            &[],
             crate::output::post_hook_display_path(self.worktree_path),
         )
     }

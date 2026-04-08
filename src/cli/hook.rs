@@ -22,12 +22,12 @@ pub enum HookCommand {
     ///
     /// Blocking — waits for completion before continuing.
     PreSwitch {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -46,12 +46,12 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostSwitch {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -75,12 +75,12 @@ pub enum HookCommand {
     /// Blocking — waits for completion before continuing.
     #[command(alias = "post-create")]
     PreStart {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -99,12 +99,12 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostStart {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -125,12 +125,12 @@ pub enum HookCommand {
 
     /// Run pre-commit hooks
     PreCommit {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -149,12 +149,12 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostCommit {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -175,12 +175,12 @@ pub enum HookCommand {
 
     /// Run pre-merge hooks
     PreMerge {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -199,12 +199,12 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostMerge {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -225,12 +225,12 @@ pub enum HookCommand {
 
     /// Run pre-remove hooks
     PreRemove {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]
@@ -249,12 +249,12 @@ pub enum HookCommand {
     ///
     /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostRemove {
-        /// Filter by command name
+        /// Filter by command name(s)
         ///
         /// Supports `user:name` or `project:name` to filter by source.
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Option<String>,
+        name: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short, long, help_heading = "Automation")]

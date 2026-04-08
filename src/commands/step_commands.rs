@@ -206,7 +206,7 @@ pub fn handle_squash(
                 project_config: proj_cfg,
                 hook_type: HookType::PreCommit,
                 extra_vars: &extra_vars,
-                name_filter: None,
+                name_filters: &[],
                 display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
             },
             HookFailureStrategy::FailFast,

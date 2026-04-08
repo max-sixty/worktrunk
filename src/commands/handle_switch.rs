@@ -148,7 +148,7 @@ pub(crate) fn run_pre_switch_hooks(
             HookType::PreSwitch,
             &extra_vars,
             HookFailureStrategy::FailFast,
-            None,
+            &[],
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }

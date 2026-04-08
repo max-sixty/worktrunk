@@ -1169,7 +1169,7 @@ fn execute_pre_remove_hooks_if_needed(
         worktrunk::HookType::PreRemove,
         &extra_vars,
         HookFailureStrategy::FailFast,
-        None,
+        &[],
         display_path,
     )
 }
