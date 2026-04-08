@@ -754,6 +754,22 @@ fn add_temp_home_filters(settings: &mut insta::Settings, temp_home: &Path) {
     );
 }
 
+/// Catch tempfile::tempdir() paths under non-standard OS temp directories.
+///
+/// `add_project_id_filters` has hardcoded patterns for standard temp locations
+/// (/tmp, /var/folders, C:/Users/.../AppData/Local/Temp). CI may use a different
+/// TEMP (e.g., D:\tmp for faster I/O on Windows). This filter uses the runtime
+/// temp directory to catch those paths.
+fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
+    let temp_dir = std::env::temp_dir();
+    let temp_dir_str = temp_dir.to_string_lossy().replace('\\', "/");
+    let temp_dir_str = temp_dir_str.trim_end_matches('/');
+    settings.add_filter(
+        &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(temp_dir_str)),
+        "[PROJECT_ID]",
+    );
+}
+
 fn add_project_id_filters(settings: &mut insta::Settings) {
     settings.add_filter(
         r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
@@ -831,6 +847,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     if let Some(temp_home) = temp_home {
         add_temp_home_filters(&mut settings, temp_home);
     }
+    add_os_temp_dir_filter(&mut settings);
     add_project_id_filters(&mut settings);
 
     add_standard_env_redactions(&mut settings);
