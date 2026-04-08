@@ -100,7 +100,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let (exit_code, error_detail) = match &err {
+                let (exit_code, error_msg) = match &err {
                     CommandError::SpawnFailed(e) => {
                         eprintln!(
                             "{}",
@@ -109,7 +109,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             ))
                         );
                         eprintln!("{}", format_with_gutter(e, None));
-                        (None, Some(e.clone()))
+                        (None, format!("spawn failed: {e}"))
                     }
                     CommandError::ExitCode(code) => {
                         let exit_info = code
@@ -119,21 +119,21 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             "{}",
                             error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
                         );
-                        (*code, None)
+                        let msg = code
+                            .map(|c| format!("exit code {c}"))
+                            .unwrap_or_else(|| "killed by signal".to_string());
+                        (*code, msg)
                     }
                 };
                 failed.push(display_name.to_string());
                 if json_mode {
-                    let mut entry = serde_json::json!({
+                    json_results.push(serde_json::json!({
                         "branch": wt.branch,
                         "path": wt.path,
                         "exit_code": exit_code,
                         "success": false,
-                    });
-                    if let Some(e) = error_detail {
-                        entry["error"] = serde_json::Value::String(e);
-                    }
-                    json_results.push(entry);
+                        "error": error_msg,
+                    }));
                 }
             }
         }

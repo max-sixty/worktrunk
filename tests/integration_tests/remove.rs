@@ -2863,3 +2863,39 @@ fn test_remove_json_multi_with_branch_only(mut repo: TestRepo) {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
+
+/// Multi-remove with current worktree in the target list exercises the
+/// `plans.current` JSON path (deferred removal, last in output).
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_remove_json_multi_with_current(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("other-feature");
+    let current_wt = repo.add_worktree("current-feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "other-feature",
+            "current-feature",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .current_dir(&current_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    // other-feature removed first (plans.others), current-feature last (plans.current)
+    assert_eq!(items[0]["branch"], "other-feature");
+    assert_eq!(items[0]["kind"], "worktree");
+    assert_eq!(items[1]["branch"], "current-feature");
+    assert_eq!(items[1]["kind"], "worktree");
+}

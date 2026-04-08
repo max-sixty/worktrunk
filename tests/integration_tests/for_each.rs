@@ -164,8 +164,10 @@ fn test_for_each_json_with_failure(repo: TestRepo) {
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     let items = json.as_array().unwrap();
     assert!(!items.is_empty());
-    // All should be failures
     for item in items {
         assert_eq!(item["success"], false);
+        assert_eq!(item["exit_code"], 1);
+        // error field is always present on failure (both ExitCode and SpawnFailed)
+        assert_eq!(item["error"], "exit code 1");
     }
 }
