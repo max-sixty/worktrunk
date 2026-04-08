@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.35.0
+
+### Improved
+
+- **`--no-verify` deprecated in favor of `--no-hooks`**: All commands (`switch`, `remove`, `merge`, `step commit`, `step squash`) now use `--no-hooks`. `--no-verify` remains as a hidden alias with a deprecation warning. ([#1932](https://github.com/max-sixty/worktrunk/pull/1932))
+
+- **JSON output**: `--format=json` on `config show`, `config state` subcommands, `switch`, `remove`, `merge`, `step prune`, and `step for-each`. ([#1969](https://github.com/max-sixty/worktrunk/pull/1969), [#1959](https://github.com/max-sixty/worktrunk/pull/1959))
+
+- **Per-command hook log files**: Each background hook command writes to its own log file instead of sharing a pipeline log. Combined hook announcements (e.g., post-remove + post-switch) display on a single status line. ([#1934](https://github.com/max-sixty/worktrunk/pull/1934), [#1980](https://github.com/max-sixty/worktrunk/pull/1980))
+
+- **Prune and list performance**: `step prune` streams integration checks and removes candidates in parallel (~3x faster on repos with many branches). Multiple caching layers (integration target, `git_dir`, `rev_parse_tree`, `resolve_preferring_branch`) reduce redundant `git rev-parse` calls during `wt list`. ([#1950](https://github.com/max-sixty/worktrunk/pull/1950), [#1957](https://github.com/max-sixty/worktrunk/pull/1957), [#1966](https://github.com/max-sixty/worktrunk/pull/1966), [#1948](https://github.com/max-sixty/worktrunk/pull/1948), [#1943](https://github.com/max-sixty/worktrunk/pull/1943))
+
+- **Itemized `state clear` output**: `wt config state clear` shows per-category counts and cleans up stale trash from incomplete worktree removals. ([#1961](https://github.com/max-sixty/worktrunk/pull/1961), [#1960](https://github.com/max-sixty/worktrunk/pull/1960))
+
+- **Hook pipeline summary**: Serial steps separated by `;` instead of `→`, repeated unnamed sources collapsed into counted form (`user ×2`), and named steps show `source:name` prefix. ([#1994](https://github.com/max-sixty/worktrunk/pull/1994))
+
+- **Copy-pasteable help text**: `--help` output strips `$ ` prompts from code examples for direct copy-paste in the terminal. ([#1992](https://github.com/max-sixty/worktrunk/pull/1992))
+
+- **Better PR lookup errors**: `wt switch pr:N` 404 errors now include the repository name and suggest `gh repo set-default` for fork workflows. Fixes [#1925](https://github.com/max-sixty/worktrunk/issues/1925). ([#1927](https://github.com/max-sixty/worktrunk/pull/1927), thanks @JustinPierce for reporting)
+
+- **Claude Code worktree hooks**: WorktreeCreate and WorktreeRemove hooks for the Claude Code plugin. ([#1959](https://github.com/max-sixty/worktrunk/pull/1959))
+
+### Fixed
+
+- **File permissions lost on copy-ignored**: `wt step copy-ignored` now preserves execute bits when copying files via reflink. Fixes [#1936](https://github.com/max-sixty/worktrunk/issues/1936). ([#1937](https://github.com/max-sixty/worktrunk/pull/1937), thanks @RileyMathews for reporting)
+
+- **Git alias breaks `wt`**: Relative `GIT_DIR`/`GIT_WORK_TREE` paths inherited from git aliases now normalized to absolute paths at startup. Fixes [#1914](https://github.com/max-sixty/worktrunk/issues/1914). ([#1915](https://github.com/max-sixty/worktrunk/pull/1915), thanks @yasuhiroki for reporting)
+
+- **Diagnostic files in state logs**: `verbose.log` and `diagnostic.md` now properly categorized in `wt config state logs` output. ([#1981](https://github.com/max-sixty/worktrunk/pull/1981))
+
+- **Integration target in removal display**: Background removal now shows `origin/main` (effective target) instead of `main` when the remote is ahead. ([#1993](https://github.com/max-sixty/worktrunk/pull/1993))
+
+- **Worktree-path hint suppression**: The "customize worktree locations" hint no longer appears when project-specific `worktree-path` is configured. ([#1941](https://github.com/max-sixty/worktrunk/pull/1941))
+
+- **State logs formatting**: Missing newline between log sections in `wt config state logs` output. ([#1968](https://github.com/max-sixty/worktrunk/pull/1968))
+
+- **Claude Code WorktreeCreate hook**: Fixed jq filter using wrong input field. ([#1964](https://github.com/max-sixty/worktrunk/pull/1964))
+
+- **OpenCode unicode escaping**: Fixed broken emoji markers depending on Bun version. ([#1935](https://github.com/max-sixty/worktrunk/pull/1935), thanks @noirbizarre)
+
+### Documentation
+
+- Clarified plugin install command. ([#1906](https://github.com/max-sixty/worktrunk/pull/1906), thanks @suyua9)
+- Fixed inaccurate logs documentation. ([#1986](https://github.com/max-sixty/worktrunk/pull/1986))
+
+### Internal
+
+- Consolidated `TestRepo` into single `src/testing` module, shared across lib and bin unit tests. ([#1944](https://github.com/max-sixty/worktrunk/pull/1944), [#1963](https://github.com/max-sixty/worktrunk/pull/1963), [#1971](https://github.com/max-sixty/worktrunk/pull/1971), [#1991](https://github.com/max-sixty/worktrunk/pull/1991))
+- Simplified dispatch, timeout, and copy pool internals. ([#1949](https://github.com/max-sixty/worktrunk/pull/1949), [#1930](https://github.com/max-sixty/worktrunk/pull/1930), [#1931](https://github.com/max-sixty/worktrunk/pull/1931))
+
 ## 0.34.2
 
 ### Improved
