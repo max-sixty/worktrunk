@@ -5,7 +5,7 @@ use std::fs;
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
 
-use crate::common::TestRepo;
+use crate::common::{BareRepoTest, TestRepo};
 
 // =============================================================================
 // is_bare() tests
@@ -34,6 +34,13 @@ fn test_is_bare_returns_false_for_normal_repo() {
     let repo = TestRepo::new();
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     assert!(!repository.is_bare().unwrap());
+}
+
+#[test]
+fn test_is_bare_returns_true_for_bare_repo() {
+    let test = BareRepoTest::new();
+    let repository = Repository::at(test.bare_repo_path().to_path_buf()).unwrap();
+    assert!(repository.is_bare().unwrap());
 }
 
 // =============================================================================
