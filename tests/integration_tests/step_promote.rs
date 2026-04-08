@@ -267,19 +267,12 @@ fn test_promote_shows_mismatch_in_list(mut repo: TestRepo) {
 /// Test error when run in a bare repository (no worktrees)
 #[test]
 fn test_promote_bare_repo_no_worktrees() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let bare_repo = temp_dir.path().join("bare.git");
-
-    // Create a bare repository
-    Cmd::new("git")
-        .args(["init", "--bare", bare_repo.to_str().unwrap()])
-        .run()
-        .unwrap();
+    let test = TestRepo::bare();
 
     // Try to run promote in the bare repo - fails with "No worktrees found"
-    let output = wt_command()
+    let output = test
+        .wt_command()
         .args(["step", "promote", "feature"])
-        .current_dir(&bare_repo)
         .output()
         .unwrap();
 

@@ -14,6 +14,7 @@
 //!
 //! - [`TestRepo::new()`] — lightweight: `git init` + identity. For unit tests.
 //! - [`TestRepo::with_initial_commit()`] — lightweight + one commit.
+//! - [`TestRepo::bare()`] — bare repository (`git init --bare`). No working tree.
 //! - [`TestRepo::at(path)`](TestRepo::at) — repo at a caller-specified path.
 //!   For tests needing multiple repos in a shared directory.
 //! - [`TestRepo::standard()`] — copies pre-built fixture with remote + worktrees.
@@ -641,6 +642,14 @@ impl TestRepo {
         test.run_git(&["add", "."]);
         test.run_git(&["commit", "-m", "init"]);
         test
+    }
+
+    /// Create a bare repository (`git init --bare`).
+    ///
+    /// Bare repos have no working tree — useful for testing error paths
+    /// and bare-repo-specific behavior (e.g., hint fallback to `wt list`).
+    pub fn bare() -> Self {
+        Self::init_repo(&["init", "--bare"])
     }
 
     /// Path to the repository working directory.

@@ -207,7 +207,6 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
     use ansi_str::AnsiStr;
 
@@ -424,14 +423,8 @@ mod tests {
     fn test_hint_for_repo_fallback_to_list() {
         // A bare repo with no worktrees has no default branch worktree,
         // so it should suggest `wt list` instead of `wt switch ^`.
-        let tmp = tempfile::tempdir().unwrap();
-        Cmd::new("git")
-            .args(["init", "--bare", "--quiet"])
-            .current_dir(tmp.path())
-            .run()
-            .unwrap();
-        let repo = Repository::at(tmp.path()).unwrap();
-        let hint = hint_for_repo(&repo);
+        let test = TestRepo::bare();
+        let hint = hint_for_repo(&test.repo);
         insta::assert_snapshot!(hint.ansi_strip(), @"Current directory was removed. Run wt list to see worktrees");
     }
 }
