@@ -127,7 +127,7 @@ jobs:
         crate: worktrunk
         version: "=0.32.0"
 
-    - name: Use fast D: drive for temp files (Windows)
+    - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
