@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -63,7 +64,7 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
 [1m[32mExample[0m
 
 [107m [0m [2m# from ~/project (main worktree)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step promote feature[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step promote feature[0m
 
 Before:
 

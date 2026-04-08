@@ -38,18 +38,17 @@ pub fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
 }
 
 impl LineDiff {
-    /// Parse `git diff --numstat` output into aggregated line totals.
-    pub fn from_numstat(output: &str) -> anyhow::Result<Self> {
-        let mut totals = LineDiff::default();
-
-        for line in output.lines() {
-            if let Some((added, deleted)) = parse_numstat_line(line) {
-                totals.added += added;
-                totals.deleted += deleted;
-            }
-        }
-
-        Ok(totals)
+    /// Parse `git diff --shortstat` output into line totals.
+    ///
+    /// Shortstat produces a single line like:
+    ///   ` 3 files changed, 45 insertions(+), 12 deletions(-)`
+    /// with optional parts omitted when zero. Extracts numbers by position
+    /// relative to the `(+)` and `(-)` markers, which are locale-independent.
+    pub fn from_shortstat(output: &str) -> Self {
+        parse_shortstat(output).map_or(Self::default(), |(_, ins, del)| Self {
+            added: ins,
+            deleted: del,
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -80,21 +79,48 @@ pub(crate) struct DiffStats {
     pub deletions: usize,
 }
 
-impl DiffStats {
-    /// Construct stats from `git diff --numstat` output.
-    pub fn from_numstat(output: &str) -> Self {
-        let mut stats = Self::default();
-        for line in output.lines() {
-            if let Some((added, deleted)) = parse_numstat_line(line) {
-                stats.files += 1;
-                stats.insertions += added;
-                stats.deletions += deleted;
-            } else if !line.trim().is_empty() {
-                // Binary file (shows as "-\t-\tfilename") - count file but not lines
-                stats.files += 1;
-            }
+/// Parse `git diff --shortstat` output into (files, insertions, deletions).
+///
+/// The format is: ` N file(s) changed, N insertion(s)(+), N deletion(s)(-)`
+/// with optional parts omitted when zero. The `(+)` and `(-)` markers are
+/// hardcoded in git's C source (`diff.c`) and not subject to localization.
+fn parse_shortstat(output: &str) -> Option<(usize, usize, usize)> {
+    let line = output.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    let mut files = 0;
+    let mut insertions = 0;
+    let mut deletions = 0;
+
+    // Split on commas: "N file(s) changed", "N insertion(s)(+)", "N deletion(s)(-)"
+    for (i, part) in line.split(',').enumerate() {
+        let num = part
+            .split_whitespace()
+            .find_map(|w| w.parse::<usize>().ok())
+            .unwrap_or(0);
+
+        if i == 0 {
+            files = num;
+        } else if part.contains("(+)") {
+            insertions = num;
+        } else if part.contains("(-)") {
+            deletions = num;
         }
-        stats
+    }
+
+    Some((files, insertions, deletions))
+}
+
+impl DiffStats {
+    /// Construct stats from `git diff --shortstat` output.
+    pub fn from_shortstat(output: &str) -> Self {
+        parse_shortstat(output).map_or(Self::default(), |(files, ins, del)| Self {
+            files,
+            insertions: ins,
+            deletions: del,
+        })
     }
 
     /// Format stats as a summary string (e.g., "3 files, +45, -12").
@@ -158,74 +184,6 @@ mod tests {
         assert_eq!(diff.deleted, 5);
         let tuple: (usize, usize) = diff.into();
         assert_eq!(tuple, (10, 5));
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_empty() {
-        let result = LineDiff::from_numstat("").unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_single_file() {
-        let output = "10\t5\tsrc/main.rs";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert_eq!(result.added, 10);
-        assert_eq!(result.deleted, 5);
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_multiple_files() {
-        let output = "10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n1\t0\tCargo.toml";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert_eq!(result.added, 31); // 10 + 20 + 1
-        assert_eq!(result.deleted, 8); // 5 + 3 + 0
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_binary_file() {
-        // Binary files show "-" for added/deleted
-        let output = "-\t-\timage.png";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_mixed_binary_and_text() {
-        let output = "10\t5\tsrc/main.rs\n-\t-\timage.png\n3\t2\tREADME.md";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert_eq!(result.added, 13); // 10 + 3, skips binary
-        assert_eq!(result.deleted, 7); // 5 + 2, skips binary
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_empty_lines() {
-        let output = "\n10\t5\tsrc/main.rs\n\n";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert_eq!(result.added, 10);
-        assert_eq!(result.deleted, 5);
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_malformed_line_missing_deleted() {
-        // Line with only added count (missing tab and deleted)
-        let output = "10";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert!(result.is_empty()); // Should skip malformed line
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_non_numeric_added() {
-        let output = "abc\t5\tsrc/main.rs";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert!(result.is_empty()); // Should skip non-numeric
-    }
-
-    #[test]
-    fn test_line_diff_from_numstat_non_numeric_deleted() {
-        let output = "10\tabc\tsrc/main.rs";
-        let result = LineDiff::from_numstat(output).unwrap();
-        assert!(result.is_empty()); // Should skip non-numeric
     }
 
     // ============================================================================
@@ -319,49 +277,80 @@ mod tests {
     }
 
     // ============================================================================
-    // DiffStats::from_numstat Tests
+    // parse_shortstat / from_shortstat Tests
     // ============================================================================
 
     #[test]
-    fn test_diff_stats_from_numstat_empty() {
-        let stats = DiffStats::from_numstat("");
+    fn test_parse_shortstat_all_parts() {
+        let output = " 23 files changed, 624 insertions(+), 160 deletions(-)";
+        let (files, ins, del) = parse_shortstat(output).unwrap();
+        assert_eq!(files, 23);
+        assert_eq!(ins, 624);
+        assert_eq!(del, 160);
+    }
+
+    #[test]
+    fn test_parse_shortstat_insertions_only() {
+        let output = " 1 file changed, 6 insertions(+)";
+        let (files, ins, del) = parse_shortstat(output).unwrap();
+        assert_eq!(files, 1);
+        assert_eq!(ins, 6);
+        assert_eq!(del, 0);
+    }
+
+    #[test]
+    fn test_parse_shortstat_deletions_only() {
+        let output = " 2 files changed, 10 deletions(-)";
+        let (files, ins, del) = parse_shortstat(output).unwrap();
+        assert_eq!(files, 2);
+        assert_eq!(ins, 0);
+        assert_eq!(del, 10);
+    }
+
+    #[test]
+    fn test_parse_shortstat_empty() {
+        assert_eq!(parse_shortstat(""), None);
+        assert_eq!(parse_shortstat("  "), None);
+        assert_eq!(parse_shortstat("\n"), None);
+    }
+
+    #[test]
+    fn test_parse_shortstat_single_file_singular() {
+        let output = " 1 file changed, 1 insertion(+), 1 deletion(-)";
+        let (files, ins, del) = parse_shortstat(output).unwrap();
+        assert_eq!(files, 1);
+        assert_eq!(ins, 1);
+        assert_eq!(del, 1);
+    }
+
+    #[test]
+    fn test_line_diff_from_shortstat() {
+        let output = " 5 files changed, 100 insertions(+), 50 deletions(-)";
+        let diff = LineDiff::from_shortstat(output);
+        assert_eq!(diff.added, 100);
+        assert_eq!(diff.deleted, 50);
+    }
+
+    #[test]
+    fn test_line_diff_from_shortstat_empty() {
+        let diff = LineDiff::from_shortstat("");
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_diff_stats_from_shortstat() {
+        let output = " 3 files changed, 45 insertions(+), 12 deletions(-)";
+        let stats = DiffStats::from_shortstat(output);
+        assert_eq!(stats.files, 3);
+        assert_eq!(stats.insertions, 45);
+        assert_eq!(stats.deletions, 12);
+    }
+
+    #[test]
+    fn test_diff_stats_from_shortstat_empty() {
+        let stats = DiffStats::from_shortstat("");
         assert_eq!(stats.files, 0);
         assert_eq!(stats.insertions, 0);
         assert_eq!(stats.deletions, 0);
-    }
-
-    #[test]
-    fn test_diff_stats_from_numstat_single_file() {
-        let stats = DiffStats::from_numstat("45\t12\tpath/to/file.rs");
-        assert_eq!(stats.files, 1);
-        assert_eq!(stats.insertions, 45);
-        assert_eq!(stats.deletions, 12);
-    }
-
-    #[test]
-    fn test_diff_stats_from_numstat_multiple_files() {
-        let output = "10\t5\tsrc/main.rs\n20\t3\tsrc/lib.rs\n15\t4\ttests/test.rs";
-        let stats = DiffStats::from_numstat(output);
-        assert_eq!(stats.files, 3);
-        assert_eq!(stats.insertions, 45);
-        assert_eq!(stats.deletions, 12);
-    }
-
-    #[test]
-    fn test_diff_stats_from_numstat_binary_file() {
-        // Binary files show as "-" for both counts - file counted, no line stats
-        let stats = DiffStats::from_numstat("-\t-\timage.png");
-        assert_eq!(stats.files, 1);
-        assert_eq!(stats.insertions, 0);
-        assert_eq!(stats.deletions, 0);
-    }
-
-    #[test]
-    fn test_diff_stats_from_numstat_mixed_binary_and_text() {
-        let output = "10\t5\tsrc/main.rs\n-\t-\tassets/logo.png\n20\t0\tsrc/lib.rs";
-        let stats = DiffStats::from_numstat(output);
-        assert_eq!(stats.files, 3);
-        assert_eq!(stats.insertions, 30);
-        assert_eq!(stats.deletions, 5);
     }
 }

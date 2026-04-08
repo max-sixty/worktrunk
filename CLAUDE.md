@@ -16,22 +16,13 @@ We are in **maturing** mode:
 - Breaking changes to external interfaces require justification (significant improvement, not just cleanup)
 - Prefer deprecation warnings over silent breaks
 - No Rust library compatibility concerns (this is a CLI tool only)
+- **MSRV policy: latest stable − 1** — bumped during weekly tend maintenance (see `running-tend` skill)
 
 **External interfaces to protect:**
 - **Config file format** (`wt.toml`, user config) — avoid breaking changes; provide migration guidance when necessary
-- **CLI flags and arguments** — use deprecation warnings; retain old flags for at least one release cycle
+- **CLI flags and arguments** — use deprecation warnings
 
-**Internal changes remain flexible:**
-- Codebase structure, dependencies, internal APIs
-- Human-readable output formatting and messages
-- Log file locations and formats
-
-When making decisions, prioritize:
-1. **Best technical solution** over backward compatibility
-2. **Clean design** over maintaining old patterns
-3. **Modern conventions** over legacy approaches
-
-Use deprecation warnings to get there smoothly when external interfaces must change.
+Everything else (internal APIs, output formatting, log locations) is flexible. Prefer the best technical solution; use deprecation warnings when external interfaces must change.
 
 ## Terminology
 
@@ -215,17 +206,7 @@ let output = Cmd::new("git")
 
 ### Real-time Output Streaming
 
-Stream command output in real-time — never buffer:
-
-```rust
-// ✅ GOOD - streaming
-for line in reader.lines() {
-    println!("{}", line);
-    stdout().flush();
-}
-// ❌ BAD - buffering
-let lines: Vec<_> = reader.lines().collect();
-```
+Responsiveness is a priority — stream command output line-by-line rather than buffering.
 
 ### Structured Output Over Error Message Parsing
 
@@ -250,28 +231,19 @@ if msg.contains("no merge base") { return Ok(true); }
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--shortstat` (localized) | `--numstat` |
+| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (markers `(+)`/`(-)` are hardcoded) |
 | `git status` | default | `--porcelain=v2` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
 
-## Background Operation Logs
+## Hook Output Logs
 
-All background logs are centralized in `.git/wt/logs/` (main worktree's git directory):
+Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Same operation on same branch overwrites the previous log.
 
-- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
-- **Background removal**: `{branch}-remove.log`
-
-Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.log`, `bugfix-remove.log`
-
-### Log Behavior
-
-- **Centralized**: All logs go to main worktree's `.git/wt/logs/`, shared across all worktrees
-- **Overwrites**: Same operation on same branch overwrites previous log (prevents accumulation)
-- **Not tracked**: Logs are in `.git/` directory, which git doesn't track
-- **Manual cleanup**: Stale logs from deleted branches persist but are bounded by branch count
+- **Background hooks**: `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` (source: `user` or `project`)
+- **Background removal**: `{branch}-{hash}-remove.log`
 
 ## Coverage
 
@@ -294,6 +266,10 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
 **Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
+
+### "N functions have mismatched data" Warning
+
+`cargo llvm-cov` emits this warning (typically 5–20 functions) because it merges profiles from multiple compilation targets with minor codegen differences. Expected, harmless, no suppression flag exists. See [LLVM #97574](https://github.com/llvm/llvm-project/issues/97574).
 
 ## Benchmarks
 
@@ -367,9 +343,7 @@ if worktree.is_dirty() {
 
 - **Use `bail!`** for business logic errors (dirty worktree, missing branch, invalid state)
 - **Use `.context()`** for wrapping I/O and external command failures
-- **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error. Panics in fallible code bypass error handling.
-- **Don't `logger.error` before raising** — include context in the error message itself
-- **Let errors propagate** — don't catch and re-raise without adding information
+- **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error
 
 ## Config Deprecation
 
@@ -428,20 +402,7 @@ Function prefixes signal return behavior and side effects.
 | `fetch_*` | `Result<T>` | Network I/O | Errors on failure | `fetch_pr_info()`, `fetch_mr_info()` |
 | `load_*` | `Result<T>` | File I/O | Errors on failure | `load_project_config()`, `load_template()` |
 
-**When to use each:**
-
-- **Bare nouns** — Value may not exist and that's fine (Rust stdlib convention)
-- **`set_*`** — Write state to storage
-- **`require_*`** — Value must exist for operation to proceed
-- **`fetch_*`** — Retrieve from external service (network)
-- **`load_*`** — Read from filesystem
-
-**Anti-patterns:**
-
-- Don't use bare nouns if the function makes network calls (use `fetch_*`)
-- Don't use bare nouns if absence is an error (use `require_*`)
-- Don't use `load_*` for computed values (use bare nouns)
-- Don't use `get_*` prefix — use bare nouns instead (Rust convention)
+Don't use `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 

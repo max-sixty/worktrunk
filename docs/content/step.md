@@ -144,7 +144,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
 
 <b><span class=g>Global Options:</span></b>
@@ -227,7 +227,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
 
 <b><span class=g>Global Options:</span></b>
@@ -358,7 +358,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -552,6 +552,16 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -689,6 +699,15 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
 <b><span class=g>Automation:</span></b>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
+
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

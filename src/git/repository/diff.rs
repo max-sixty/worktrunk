@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use super::{DiffStats, LineDiff, Repository};
 
@@ -154,28 +155,27 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        // Check cache first
-        if let Some(cached) = self.cache.merge_base.get(&key) {
-            return Ok(cached.clone());
+        match self.cache.merge_base.entry(key) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
+                let output = self.run_command_output(&["merge-base", commit1, commit2])?;
+
+                let result = if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                } else if output.status.code() == Some(1) {
+                    None
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!(
+                        "git merge-base failed for {commit1} {commit2}: {}",
+                        stderr.trim()
+                    );
+                };
+
+                Ok(e.insert(result).clone())
+            }
         }
-
-        // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-        let output = self.run_command_output(&["merge-base", commit1, commit2])?;
-
-        let result = if output.status.success() {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        } else if output.status.code() == Some(1) {
-            None
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "git merge-base failed for {commit1} {commit2}: {}",
-                stderr.trim()
-            );
-        };
-
-        self.cache.merge_base.insert(key, result.clone());
-        Ok(result)
     }
 
     /// Calculate commits ahead and behind between two refs.
@@ -296,7 +296,7 @@ impl Repository {
 
         // Use two-dot syntax with the cached merge-base
         let range = format!("{}..{}", merge_base, head);
-        let mut args = vec!["diff", "--numstat", &range];
+        let mut args = vec!["diff", "--shortstat", &range];
 
         let sparse_paths = self.sparse_checkout_paths();
         if !sparse_paths.is_empty() {
@@ -305,7 +305,7 @@ impl Repository {
         }
 
         let stdout = self.run_command(&args)?;
-        LineDiff::from_numstat(&stdout)
+        Ok(LineDiff::from_shortstat(&stdout))
     }
 
     /// Get formatted diff stats summary for display.
@@ -313,24 +313,11 @@ impl Repository {
     /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
     /// Returns empty vector if diff command fails or produces no output.
     ///
-    /// Callers should pass `--shortstat` in args for compatibility; this method
-    /// internally replaces it with `--numstat` for locale-independent parsing.
+    /// Callers pass args including `--shortstat` which produces a single summary line.
     pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        // Replace --shortstat with --numstat for locale-independent parsing
-        let args: Vec<&str> = args
-            .iter()
-            .map(|&arg| {
-                if arg == "--shortstat" {
-                    "--numstat"
-                } else {
-                    arg
-                }
-            })
-            .collect();
-
-        self.run_command(&args)
+        self.run_command(args)
             .ok()
-            .map(|output| DiffStats::from_numstat(&output).format_summary())
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
     }
 }

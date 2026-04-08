@@ -71,6 +71,24 @@ enum Commands {
         /// Path to trace log file (reads from stdin if omitted)
         file: Option<PathBuf>,
     },
+
+    /// Analyze trace logs for duplicate commands (cache effectiveness)
+    #[command(after_long_help = r#"EXAMPLES:
+  # Check cache effectiveness for wt list
+  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf cache-check
+
+  # From a file
+  wt-perf cache-check trace.log
+
+  # With a benchmark repo
+  cargo run -p wt-perf -- setup typical-8 --persist
+  RUST_LOG=debug wt -C /tmp/wt-perf-typical-8 list 2>&1 | \
+    grep wt-trace | cargo run -p wt-perf -- cache-check
+"#)]
+    CacheCheck {
+        /// Path to trace log file (reads from stdin if omitted)
+        file: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -174,49 +192,170 @@ fn main() {
         }
 
         Commands::Trace { file } => {
-            let input = match file {
-                Some(path) if path.as_os_str() != "-" => match std::fs::read_to_string(&path) {
-                    Ok(content) => content,
-                    Err(e) => {
-                        eprintln!("Error reading {}: {}", path.display(), e);
-                        std::process::exit(1);
-                    }
-                },
-                _ => {
-                    if std::io::stdin().is_terminal() {
-                        eprintln!("Reading from stdin... (pipe trace data or use Ctrl+D to end)");
-                        eprintln!();
-                        eprintln!(
-                            "Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf trace"
-                        );
-                    }
-
-                    let mut content = String::new();
-                    std::io::stdin()
-                        .lock()
-                        .read_to_string(&mut content)
-                        .expect("Failed to read stdin");
-                    content
-                }
-            };
-
-            let entries = worktrunk::trace::parse_lines(&input);
-
-            if entries.is_empty() {
-                eprintln!("No trace entries found in input.");
-                eprintln!();
-                eprintln!("Trace lines should look like:");
-                eprintln!(
-                    "  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true"
-                );
-                eprintln!("  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"");
-                eprintln!();
-                eprintln!("To capture traces, run with RUST_LOG=debug:");
-                eprintln!("  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf trace");
-                std::process::exit(1);
-            }
-
+            let entries = read_trace_entries(file.as_deref());
             println!("{}", worktrunk::trace::to_chrome_trace(&entries));
         }
+
+        Commands::CacheCheck { file } => {
+            let entries = read_trace_entries(file.as_deref());
+            cache_check(&entries);
+        }
     }
+}
+
+/// Read trace input from file or stdin, parse entries, and exit if empty.
+fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::TraceEntry> {
+    let input = match file {
+        Some(path) if path.as_os_str() != "-" => match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Error reading {}: {}", path.display(), e);
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            if std::io::stdin().is_terminal() {
+                eprintln!(
+                    "\
+Reading from stdin... (pipe trace data or use Ctrl+D to end)
+
+Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+                );
+            }
+
+            let mut content = String::new();
+            std::io::stdin()
+                .lock()
+                .read_to_string(&mut content)
+                .expect("Failed to read stdin");
+            content
+        }
+    };
+
+    let entries = worktrunk::trace::parse_lines(&input);
+
+    if entries.is_empty() {
+        eprintln!(
+            "\
+No trace entries found in input.
+
+Trace lines should look like:
+  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true
+  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"
+
+To capture traces, run with RUST_LOG=debug:
+  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+        );
+        std::process::exit(1);
+    }
+
+    entries
+}
+
+/// Truncate an ASCII string for display, appending "..." if it exceeds `max` chars.
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max - 3])
+    }
+}
+
+/// Analyze trace entries for cache effectiveness.
+///
+/// Outputs structured JSON to stdout (composable with jq) and a human-readable
+/// report to stderr.
+fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    use worktrunk::trace::TraceEntryKind;
+
+    let mut total_commands = 0;
+    let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
+    let mut pair_counts: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut contexts: HashSet<&str> = HashSet::new();
+
+    for entry in entries {
+        if let TraceEntryKind::Command { command, .. } = &entry.kind {
+            let ctx = entry.context.as_deref().unwrap_or("(none)");
+            *cmd_counts.entry(command.as_str()).or_insert(0) += 1;
+            *pair_counts.entry((command.as_str(), ctx)).or_insert(0) += 1;
+            contexts.insert(ctx);
+            total_commands += 1;
+        }
+    }
+
+    // Build structured duplicates list
+    let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
+    for ((cmd, ctx), count) in &pair_counts {
+        if *count > 1 {
+            cmd_ctx_info.entry(cmd).or_default().push((ctx, *count));
+        }
+    }
+
+    // Build JSON output
+    let mut duplicates = Vec::new();
+    let mut total_extra = 0usize;
+    for (cmd, ctx_list) in &cmd_ctx_info {
+        let max_count = *ctx_list.iter().map(|(_, c)| c).max().unwrap();
+        let extra: usize = ctx_list.iter().map(|(_, c)| c - 1).sum();
+        total_extra += extra;
+        let contexts: Vec<_> = ctx_list
+            .iter()
+            .map(|(ctx, count)| serde_json::json!({"context": ctx, "count": count}))
+            .collect();
+        duplicates.push(serde_json::json!({
+            "command": cmd,
+            "max_per_context": max_count,
+            "extra_calls": extra,
+            "contexts": contexts,
+        }));
+    }
+    duplicates.sort_by(|a, b| {
+        b["max_per_context"]
+            .as_u64()
+            .cmp(&a["max_per_context"].as_u64())
+    });
+
+    let dup_count = cmd_counts.values().filter(|c| **c > 1).count();
+    let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
+
+    let output = serde_json::json!({
+        "total_commands": total_commands,
+        "unique_commands": cmd_counts.len(),
+        "contexts": contexts.len(),
+        "duplicated_commands": dup_count,
+        "total_extra_calls": dup_total,
+        "same_context_duplicates": duplicates,
+        "same_context_extra_calls": total_extra,
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+
+    // Human-readable report to stderr
+    if !cmd_ctx_info.is_empty() {
+        eprintln!(
+            "\
+=== Same-context duplicates (potential cache misses) ===
+"
+        );
+        for dup in &duplicates {
+            eprintln!(
+                "  {} (max {}x/context, {} extra)",
+                truncate(dup["command"].as_str().unwrap(), 70),
+                dup["max_per_context"],
+                dup["extra_calls"]
+            );
+        }
+        eprintln!();
+        eprintln!("  Total extra calls: {total_extra}");
+    }
+
+    eprintln!(
+        "\
+\n=== Summary ===
+
+  {total_commands} commands, {} unique, {} contexts
+  {dup_count} duplicated ({dup_total} extra calls)",
+        cmd_counts.len(),
+        contexts.len()
+    );
 }

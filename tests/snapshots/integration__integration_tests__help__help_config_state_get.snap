@@ -25,6 +25,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -64,6 +65,6 @@ Shows all stored state including:
 - [1mVars[0m: Custom variables per branch
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 - [1mHints[0m: One-time hints that have been shown
-- [1mLog files[0m: Background operation logs
+- [1mLog files[0m: Operation and debug logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for.

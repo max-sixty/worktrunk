@@ -1,7 +1,7 @@
 //! Commit generation prompt for first-time LLM setup.
 //!
 //! Prompts users to configure LLM commit message generation when they first
-//! attempt a commit without configuration. Detects available tools (claude, codex)
+//! attempt a commit without configuration. Detects available tools (claude, codex, opencode)
 //! and offers to auto-configure the recommended settings.
 
 use std::collections::HashMap;
@@ -28,6 +28,7 @@ static RECOMMENDED_COMMANDS: LazyLock<HashMap<String, String>> =
 pub enum LlmTool {
     Claude,
     Codex,
+    OpenCode,
 }
 
 impl LlmTool {
@@ -36,6 +37,7 @@ impl LlmTool {
         match self {
             LlmTool::Claude => "claude",
             LlmTool::Codex => "codex",
+            LlmTool::OpenCode => "opencode",
         }
     }
 
@@ -44,6 +46,7 @@ impl LlmTool {
         match self {
             LlmTool::Claude => "Claude Code",
             LlmTool::Codex => "Codex",
+            LlmTool::OpenCode => "OpenCode",
         }
     }
 
@@ -121,18 +124,25 @@ fn format_command_for_display(command: &str) -> String {
     toml::Value::String(command.to_string()).to_string()
 }
 
-/// Detect available LLM tool on the system.
-///
-/// Checks for claude first (preferred), then codex.
-/// Returns None if neither is found.
-pub fn detect_llm_tool() -> Option<LlmTool> {
-    if command_exists("claude") {
+/// Inner implementation that accepts a command checker for testability.
+fn detect_llm_tool_with(checker: impl Fn(&str) -> bool) -> Option<LlmTool> {
+    if checker("claude") {
         Some(LlmTool::Claude)
-    } else if command_exists("codex") {
+    } else if checker("codex") {
         Some(LlmTool::Codex)
+    } else if checker("opencode") {
+        Some(LlmTool::OpenCode)
     } else {
         None
     }
+}
+
+/// Detect available LLM tool on the system.
+///
+/// Checks for claude first (preferred), then codex, then opencode.
+/// Returns None if none are found.
+pub fn detect_llm_tool() -> Option<LlmTool> {
+    detect_llm_tool_with(command_exists)
 }
 
 /// Prompt for commit generation configuration.
@@ -240,12 +250,14 @@ mod tests {
     fn test_llm_tool_command_name() {
         assert_eq!(LlmTool::Claude.command_name(), "claude");
         assert_eq!(LlmTool::Codex.command_name(), "codex");
+        assert_eq!(LlmTool::OpenCode.command_name(), "opencode");
     }
 
     #[test]
     fn test_llm_tool_recommended_config() {
         assert_snapshot!(LlmTool::Claude.recommended_config(), @"CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''");
         assert_snapshot!(LlmTool::Codex.recommended_config(), @r#"codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == "agent_message")] | last.item.text'"#);
+        assert_snapshot!(LlmTool::OpenCode.recommended_config(), @"opencode run -m anthropic/claude-haiku-4.5 --variant fast");
     }
 
     #[test]
@@ -290,6 +302,7 @@ mod tests {
     fn test_llm_tool_display() {
         assert_eq!(format!("{}", LlmTool::Claude), "claude");
         assert_eq!(format!("{}", LlmTool::Codex), "codex");
+        assert_eq!(format!("{}", LlmTool::OpenCode), "opencode");
     }
 
     #[test]
@@ -326,8 +339,23 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_llm_tool() {
-        // Just exercise the function - result depends on what's installed
-        let _ = detect_llm_tool();
+    fn test_detect_llm_tool_priority() {
+        // All commands exist → Claude wins (highest priority)
+        assert_eq!(detect_llm_tool_with(|_| true), Some(LlmTool::Claude));
+
+        // Claude missing → Codex wins
+        assert_eq!(
+            detect_llm_tool_with(|cmd| cmd != "claude"),
+            Some(LlmTool::Codex),
+        );
+
+        // Only OpenCode available
+        assert_eq!(
+            detect_llm_tool_with(|cmd| cmd == "opencode"),
+            Some(LlmTool::OpenCode),
+        );
+
+        // Nothing available
+        assert_eq!(detect_llm_tool_with(|_| false), None);
     }
 }

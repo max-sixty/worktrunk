@@ -118,7 +118,16 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     if !output.status.success() {
         if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
             match error_response.status.as_str() {
-                "404" => bail!("PR #{} not found", pr_number),
+                "404" => {
+                    bail!(
+                        "PR #{pr_number} not found on {}/{} ({remote}). \
+                         If the PR is on a different repository, \
+                         run `gh repo set-default` to set the default \
+                         or configure a different primary remote.",
+                        parsed.owner(),
+                        parsed.repo(),
+                    );
+                }
                 "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
                 "403" => {
                     let message_lower = error_response.message.to_lowercase();

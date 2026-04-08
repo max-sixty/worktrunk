@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -41,7 +42,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mprevious-branch[0m  Previous branch (for [1mwt switch -[0m)
   [1m[36mci-status[0m        CI status cache
   [1m[36mmarker[0m           Branch markers
-  [1m[36mlogs[0m             Background operation logs
+  [1m[36mlogs[0m             Operation and debug logs
   [1m[36mhints[0m            One-time hints shown in this repo
   [1m[36mvars[0m             [experimental] Custom variables per branch
   [1m[36mget[0m              Get all stored state
@@ -62,7 +63,6 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
           Verbose output (-v: hooks, templates; -vv: debug report)
 
 State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
-Use [2mwt config show[0m to view file-based configuration.
 
 [1m[32mKeys[0m
 
@@ -71,27 +71,27 @@ Use [2mwt config show[0m to view file-based configuration.
 - [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 - [1mvars[0m: [experimental] Custom variables per branch
-- [1mlogs[0m: Background operation logs
+- [1mlogs[0m: Operation and debug logs
 
 [1m[32mExamples[0m
 
 Get the default branch:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state default-branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch[0m
 
 Set the default branch manually:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state default-branch set main[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state default-branch set main[0m
 
 Set a marker for current branch:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state marker set [0m[2m[32m"🚧 WIP"[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state marker set 🚧[0m
 
 Store arbitrary data:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state vars set env=staging[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state vars set env=staging[0m
 
 Clear all CI status cache:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state ci-status clear [0m[2m[36m--all[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state ci-status clear [0m[2m[36m--all[0m[2m[0m
 
 Show all stored state:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state get[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state get[0m
 
 Clear all stored state:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m config state clear[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config state clear[0m

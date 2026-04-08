@@ -50,9 +50,10 @@ use commands::{
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
-    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge, handle_promote,
-    handle_rebase, handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
+    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge,
+    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
+    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
     handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
     run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
     step_relocate,
@@ -61,8 +62,9 @@ use output::handle_remove_output;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
-    ConfigPluginsCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand,
-    ListSubcommand, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, StepCommand,
+    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
+    HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
+    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
     VarsAction,
 };
 use worktrunk::HookType;
@@ -139,6 +141,20 @@ fn warn_select_deprecated() {
         "{}",
         warning_message("wt select is deprecated; use wt switch instead")
     );
+}
+
+/// Resolve the `--no-hooks` / `--no-verify` pair: emit a deprecation warning
+/// if the old flag was used, then return the effective verify value.
+fn resolve_verify(verify: bool, no_verify_deprecated: bool) -> bool {
+    if no_verify_deprecated {
+        eprintln!(
+            "{}",
+            warning_message("--no-verify is deprecated; use --no-hooks instead")
+        );
+        false
+    } else {
+        verify
+    }
 }
 
 fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
@@ -257,40 +273,34 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
 
 fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
-        StepCommand::Commit {
-            branch,
-            yes,
-            verify,
-            stage,
-            show_prompt,
-        } => step_commit(branch, yes, verify, stage, show_prompt),
-        StepCommand::Squash {
-            target,
-            yes,
-            verify,
-            stage,
-            show_prompt,
-        } => {
+        StepCommand::Commit(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            step_commit(args.branch, args.yes, verify, args.stage, args.show_prompt)
+        }
+        StepCommand::Squash(args) => {
+            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
             // Handle --show-prompt early: just build and output the prompt
-            if show_prompt {
-                commands::step_show_squash_prompt(target.as_deref())
+            if args.show_prompt {
+                commands::step_show_squash_prompt(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(target.as_deref(), yes, verify, stage).map(|result| match result {
-                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                    SquashResult::NoCommitsAhead(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            ))
-                        );
-                    }
-                    SquashResult::AlreadySingleCommit => {
-                        eprintln!(
-                            "{}",
-                            info_message("Nothing to squash; already a single commit")
-                        );
+                handle_squash(args.target.as_deref(), args.yes, verify, args.stage).map(|result| {
+                    match result {
+                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
+                        }
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
                     }
                 })
             }
@@ -323,7 +333,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             force,
         } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
         StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
-        StepCommand::ForEach { args } => step_for_each(args),
+        StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
             handle_promote(branch.as_deref()).map(|result| match result {
                 commands::PromoteResult::Promoted => (),
@@ -342,7 +352,8 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             yes,
             min_age,
             foreground,
-        } => step_prune(dry_run, yes, &min_age, foreground),
+            format,
+        } => step_prune(dry_run, yes, &min_age, foreground, format),
         StepCommand::Relocate {
             branches,
             dry_run,
@@ -358,39 +369,52 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
 fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
     match action {
         StateCommand::DefaultBranch { action } => match action {
-            Some(DefaultBranchAction::Get) | None => handle_state_get("default-branch", None),
+            Some(DefaultBranchAction::Get) | None => {
+                handle_state_get("default-branch", None, SwitchFormat::Text)
+            }
             Some(DefaultBranchAction::Set { branch }) => {
                 handle_state_set("default-branch", branch, None)
             }
             Some(DefaultBranchAction::Clear) => handle_state_clear("default-branch", None, false),
         },
         StateCommand::PreviousBranch { action } => match action {
-            Some(PreviousBranchAction::Get) | None => handle_state_get("previous-branch", None),
+            Some(PreviousBranchAction::Get) | None => {
+                handle_state_get("previous-branch", None, SwitchFormat::Text)
+            }
             Some(PreviousBranchAction::Set { branch }) => {
                 handle_state_set("previous-branch", branch, None)
             }
             Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
         },
         StateCommand::CiStatus { action } => match action {
-            Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch),
-            None => handle_state_get("ci-status", None),
+            Some(CiStatusAction::Get { branch, format }) => {
+                handle_state_get("ci-status", branch, format)
+            }
+            None => handle_state_get("ci-status", None, SwitchFormat::Text),
             Some(CiStatusAction::Clear { branch, all }) => {
                 handle_state_clear("ci-status", branch, all)
             }
         },
         StateCommand::Marker { action } => match action {
-            Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch),
-            None => handle_state_get("marker", None),
+            Some(MarkerAction::Get { branch, format }) => {
+                handle_state_get("marker", branch, format)
+            }
+            None => handle_state_get("marker", None, SwitchFormat::Text),
             Some(MarkerAction::Set { value, branch }) => handle_state_set("marker", value, branch),
             Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
         },
         StateCommand::Logs { action } => match action {
-            Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch),
-            None => handle_logs_get(None, None),
+            Some(LogsAction::Get {
+                hook,
+                branch,
+                format,
+            }) => handle_logs_get(hook, branch, format),
+            None => handle_logs_get(None, None, SwitchFormat::Text),
             Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
         },
         StateCommand::Hints { action } => match action {
-            Some(HintsAction::Get) | None => handle_hints_get(),
+            Some(HintsAction::Get { format }) => handle_hints_get(format),
+            None => handle_hints_get(SwitchFormat::Text),
             Some(HintsAction::Clear { name }) => handle_hints_clear(name),
         },
         StateCommand::Vars { action } => match action {
@@ -399,7 +423,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
                 assignment: (key, value),
                 branch,
             } => handle_vars_set(&key, &value, branch),
-            VarsAction::List { branch } => handle_vars_list(branch),
+            VarsAction::List { branch, format } => handle_vars_list(branch, format),
             VarsAction::Clear { key, all, branch } => {
                 handle_vars_clear(key.as_deref(), all, branch)
             }
@@ -469,7 +493,7 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
     match action {
         ConfigCommand::Shell { action } => handle_config_shell_command(action),
         ConfigCommand::Create { project } => handle_config_create(project),
-        ConfigCommand::Show { full } => handle_config_show(full),
+        ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { yes } => handle_config_update(yes),
         ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
@@ -485,21 +509,15 @@ fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
                 handle_claude_install_statusline(yes)
             }
         },
+        ConfigPluginsCommand::Opencode { action } => match action {
+            ConfigPluginsOpencodeCommand::Install { yes } => handle_opencode_install(yes),
+            ConfigPluginsOpencodeCommand::Uninstall { yes } => handle_opencode_uninstall(yes),
+        },
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn handle_list_command(
-    subcommand: Option<ListSubcommand>,
-    format: OutputFormat,
-    branches: bool,
-    remotes: bool,
-    full: bool,
-    hidden: bool,
-    progressive: bool,
-    no_progressive: bool,
-) -> anyhow::Result<()> {
-    match subcommand {
+fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
+    match args.subcommand {
         Some(ListSubcommand::Statusline {
             format,
             claude_code,
@@ -515,8 +533,16 @@ fn handle_list_command(
         }
         None => {
             let (repo, _recovered) = current_or_recover()?;
-            let render_mode = RenderMode::detect(flag_pair(progressive, no_progressive));
-            handle_list(repo, format, branches, remotes, full, hidden, render_mode)
+            let render_mode = RenderMode::detect(flag_pair(args.progressive, args.no_progressive));
+            handle_list(
+                repo,
+                args.format,
+                args.branches,
+                args.remotes,
+                args.full,
+                args.hidden,
+                render_mode,
+            )
         }
     }
 }
@@ -536,39 +562,25 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
-struct SwitchCommandArgs {
-    branch: Option<String>,
-    branches: bool,
-    remotes: bool,
-    create: bool,
-    base: Option<String>,
-    execute: Option<String>,
-    execute_args: Vec<String>,
-    yes: bool,
-    clobber: bool,
-    cd: bool,
-    no_cd: bool,
-    verify: bool,
-}
-
-fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
+fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
+    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
             // No branch argument: open interactive picker
-            let change_dir_flag = flag_pair(spec.cd, spec.no_cd);
+            let change_dir_flag = flag_pair(args.cd, args.no_cd);
 
-            let Some(branch) = spec.branch else {
+            let Some(branch) = args.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_picker(spec.branches, spec.remotes, change_dir_flag);
+                    return handle_picker(args.branches, args.remotes, change_dir_flag);
                 }
 
                 #[cfg(not(unix))]
                 {
                     use worktrunk::git::WorktrunkError;
                     // Suppress unused variable warnings on Windows
-                    let _ = (spec.branches, spec.remotes, change_dir_flag);
+                    let _ = (args.branches, args.remotes, change_dir_flag);
 
                     print_windows_picker_unavailable();
                     return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
@@ -578,29 +590,20 @@ fn handle_switch_command(spec: SwitchCommandArgs) -> anyhow::Result<()> {
             handle_switch(
                 SwitchOptions {
                     branch: &branch,
-                    create: spec.create,
-                    base: spec.base.as_deref(),
-                    execute: spec.execute.as_deref(),
-                    execute_args: &spec.execute_args,
-                    yes: spec.yes,
-                    clobber: spec.clobber,
+                    create: args.create,
+                    base: args.base.as_deref(),
+                    execute: args.execute.as_deref(),
+                    execute_args: &args.execute_args,
+                    yes: args.yes,
+                    clobber: args.clobber,
                     change_dir: change_dir_flag,
-                    verify: spec.verify,
+                    verify,
+                    format: args.format,
                 },
                 &mut config,
                 &binary_name(),
             )
         })
-}
-
-struct RemoveCommandArgs {
-    branches: Vec<String>,
-    delete_branch: bool,
-    force_delete: bool,
-    foreground: bool,
-    verify: bool,
-    yes: bool,
-    force: bool,
 }
 
 /// Validated removal plans, categorized for ordered execution.
@@ -722,12 +725,14 @@ fn validate_remove_targets(
     plans
 }
 
-fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
+fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
+    let json_mode = args.format == SwitchFormat::Json;
+    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
             // Validate conflicting flags
-            if !spec.delete_branch && spec.force_delete {
+            if !args.delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
                     message: "Cannot use --force-delete with --no-delete-branch".into(),
                 }
@@ -767,15 +772,15 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 Ok(approved)
             };
 
-            let branches = spec.branches;
+            let branches = args.branches;
 
             if branches.is_empty() {
                 // Single worktree removal: validate FIRST, then approve, then execute
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!spec.delete_branch, spec.force_delete),
-                        spec.force,
+                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        args.force,
                         &config,
                         None,
                     )
@@ -787,18 +792,23 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = spec.verify && approve_remove(spec.yes)?;
+                let run_hooks = verify && approve_remove(args.yes)?;
 
-                handle_remove_output(&result, spec.foreground, run_hooks, false)
+                handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                if json_mode {
+                    let json = serde_json::json!([result.to_json()]);
+                    println!("{}", serde_json::to_string_pretty(&json)?);
+                }
+                Ok(())
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
                 let plans = validate_remove_targets(
                     &repo,
                     branches,
                     &config,
-                    !spec.delete_branch,
-                    spec.force_delete,
-                    spec.force,
+                    !args.delete_branch,
+                    args.force_delete,
+                    args.force,
                 );
 
                 if !plans.has_valid_plans() {
@@ -813,17 +823,28 @@ fn handle_remove_command(spec: RemoveCommandArgs) -> anyhow::Result<()> {
                 // Approve hooks (only if we have valid plans)
                 // TODO(pre-remove-context): Approval context uses current worktree,
                 // but hooks execute in each target worktree.
-                let run_hooks = spec.verify && approve_remove(spec.yes)?;
+                let run_hooks = verify && approve_remove(args.yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
-                for result in plans.others {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                for result in &plans.others {
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
-                for result in plans.branch_only {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                for result in &plans.branch_only {
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
-                if let Some(result) = plans.current {
-                    handle_remove_output(&result, spec.foreground, run_hooks, false)?;
+                if let Some(ref result) = plans.current {
+                    handle_remove_output(result, args.foreground, run_hooks, false)?;
+                }
+
+                if json_mode {
+                    let json_items: Vec<serde_json::Value> = plans
+                        .others
+                        .iter()
+                        .chain(&plans.branch_only)
+                        .chain(plans.current.as_ref())
+                        .map(RemoveResult::to_json)
+                        .collect();
+                    println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
 
                 if !plans.errors.is_empty() {
@@ -971,102 +992,37 @@ fn init_logging(verbose_level: u8) {
         .init();
 }
 
+fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
+    if args.no_verify {
+        eprintln!(
+            "{}",
+            warning_message("--no-verify is deprecated; use --no-hooks instead")
+        );
+    }
+    handle_merge(MergeOptions {
+        target: args.target.as_deref(),
+        squash: flag_pair(args.squash, args.no_squash),
+        commit: flag_pair(args.commit, args.no_commit),
+        rebase: flag_pair(args.rebase, args.no_rebase),
+        remove: flag_pair(args.remove, args.no_remove),
+        ff: flag_pair(args.ff, args.no_ff),
+        verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
+        yes: args.yes,
+        stage: args.stage,
+        format: args.format,
+    })
+}
+
 fn dispatch_command(command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
         Commands::Hook { action } => handle_hook_command(action),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
-        Commands::List {
-            subcommand,
-            format,
-            branches,
-            remotes,
-            full,
-            hidden,
-            progressive,
-            no_progressive,
-        } => handle_list_command(
-            subcommand,
-            format,
-            branches,
-            remotes,
-            full,
-            hidden,
-            progressive,
-            no_progressive,
-        ),
-        Commands::Switch {
-            branch,
-            branches,
-            remotes,
-            create,
-            base,
-            execute,
-            execute_args,
-            yes,
-            clobber,
-            cd,
-            no_cd,
-            verify,
-        } => handle_switch_command(SwitchCommandArgs {
-            branch,
-            branches,
-            remotes,
-            create,
-            base,
-            execute,
-            execute_args,
-            yes,
-            clobber,
-            cd,
-            no_cd,
-            verify,
-        }),
-        Commands::Remove {
-            branches,
-            delete_branch,
-            force_delete,
-            foreground,
-            verify,
-            yes,
-            force,
-        } => handle_remove_command(RemoveCommandArgs {
-            branches,
-            delete_branch,
-            force_delete,
-            foreground,
-            verify,
-            yes,
-            force,
-        }),
-        Commands::Merge {
-            target,
-            squash,
-            no_squash,
-            commit,
-            no_commit,
-            rebase,
-            no_rebase,
-            remove,
-            no_remove,
-            no_ff,
-            ff,
-            verify,
-            no_verify,
-            yes,
-            stage,
-        } => handle_merge(MergeOptions {
-            target: target.as_deref(),
-            squash: flag_pair(squash, no_squash),
-            commit: flag_pair(commit, no_commit),
-            rebase: flag_pair(rebase, no_rebase),
-            remove: flag_pair(remove, no_remove),
-            ff: flag_pair(ff, no_ff),
-            verify: flag_pair(verify, no_verify),
-            yes,
-            stage,
-        }),
+        Commands::List(args) => handle_list_command(args),
+        Commands::Switch(args) => handle_switch_command(args),
+        Commands::Remove(args) => handle_remove_command(args),
+        Commands::Merge(args) => handle_merge_command(args),
     }
 }
 
@@ -1149,6 +1105,13 @@ fn print_help_to_stderr() {
 }
 
 fn main() {
+    // Capture the startup working directory before anything else. This is
+    // used by shell_exec to resolve relative `GIT_*` path variables inherited
+    // from a parent `git` (e.g. when invoked via `git wt ...` with
+    // `alias.wt = "!wt"`) against a stable reference, rather than against
+    // each child command's `current_dir`. See issue #1914.
+    worktrunk::shell_exec::init_startup_cwd();
+
     init_rayon_thread_pool();
 
     // Tell crossterm to always emit ANSI sequences

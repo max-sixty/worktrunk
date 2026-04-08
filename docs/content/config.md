@@ -127,7 +127,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 [commit.generation]
@@ -188,7 +188,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-verify to skip)
+verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
@@ -547,6 +547,16 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -563,7 +573,6 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ### Keys
 
@@ -572,7 +581,7 @@ Use `wt config show` to view file-based configuration.
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **vars**: <span class="badge-experimental"></span> Custom variables per branch
-- **logs**: Background operation logs
+- **logs**: Operation and debug logs
 
 ### Examples
 
@@ -583,7 +592,7 @@ Set the default branch manually:
 {{ terminal(cmd="wt config state default-branch set main") }}
 
 Set a marker for current branch:
-{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧 WIP__WT_QUOT__") }}
+{{ terminal(cmd="wt config state marker set 🚧") }}
 
 Store arbitrary data:
 {{ terminal(cmd="wt config state vars set env=staging") }}
@@ -609,7 +618,7 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
   <b><span class=c>ci-status</span></b>        CI status cache
   <b><span class=c>marker</span></b>           Branch markers
-  <b><span class=c>logs</span></b>             Background operation logs
+  <b><span class=c>logs</span></b>             Operation and debug logs
   <b><span class=c>hints</span></b>            One-time hints shown in this repo
   <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
   <b><span class=c>get</span></b>              Get all stored state
@@ -745,19 +754,26 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 ### Display
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-```
-Branch    Status   Path
-main      ^        ~/code/myproject
-feature   🚧↑      ~/code/myproject.feature
-bugfix    🤖!↑⇡    ~/code/myproject.bugfix
-```
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap — edit source to update -->
+
+{% terminal(cmd="wt list (markers)") %}
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+@ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
++ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>               <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
++ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>               <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
++ wip-docs       <span class=c>?</span> <span class=d>–</span>                                  <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage
@@ -868,36 +884,50 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
 ## wt config state logs
 
-Background operation logs.
+Operation and debug logs.
 
-View and manage logs from background operations.
+View and manage log files — hook output, command audit trail, and debug diagnostics.
 
 ### What's logged
 
-Two kinds of logs live in `.git/wt/logs/`:
+Three kinds of logs live in `.git/wt/logs/`:
 
 #### Command log (`commands.jsonl`)
 
-All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
+| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
+| `cmd` | Shell command executed |
+| `exit` | Exit code (`null` for background commands) |
+| `dur_ms` | Duration in milliseconds (`null` for background commands) |
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
 
 #### Hook output logs
 
 | Operation | Log file |
 |-----------|----------|
-| post-start hooks | `{branch}-{source}-post-start-{name}.log` |
-| Background removal | `{branch}-remove.log` |
+| Background hooks | `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` |
+| Background removal | `{branch}-{hash}-remove.log` |
 
-Source is `user` or `project` depending on where the hook is defined.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Hash suffixes are added by filename sanitization. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
+
+#### Diagnostic files
+
+| File | Created when |
+|------|-------------|
+| `verbose.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` when warnings occur |
+
+`verbose.log` is overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur.
 
 ### Location
 
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
-
-### Behavior
-
-- **Overwrites** — Same operation on same branch overwrites previous log
-- **Persists** — Logs from deleted branches remain until manually cleared
-- **Shared** — All worktrees write to the same log directory
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
 
 ### Examples
 
@@ -908,7 +938,7 @@ Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 View a specific hook log:
-{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log__WT_QUOT__") }}
+{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log__WT_QUOT__") }}
 
 Clear all logs:
 {{ terminal(cmd="wt config state logs clear") }}
@@ -916,13 +946,13 @@ Clear all logs:
 ### Command reference
 
 {% terminal() %}
-wt config state logs - Background operation logs
+wt config state logs - Operation and debug logs
 
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>    Get log file paths
-  <b><span class=c>clear</span></b>  Clear background operation logs
+  <b><span class=c>clear</span></b>  Clear all log files
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

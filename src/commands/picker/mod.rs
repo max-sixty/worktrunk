@@ -28,7 +28,7 @@ use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
 use super::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_prepared_hooks,
+    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
 };
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -143,13 +143,14 @@ impl PickerCollector {
                     &repo,
                 );
                 let extra_vars = remove_vars.extra_vars(hook_branch);
-                let hooks = prepare_background_hooks(
+                for steps in prepare_background_hooks(
                     &post_ctx,
                     worktrunk::HookType::PostRemove,
                     &extra_vars,
                     None, // no display path in TUI context
-                )?;
-                spawn_prepared_hooks(&post_ctx, hooks)?;
+                )? {
+                    spawn_hook_pipeline(&post_ctx, steps)?;
+                }
             }
             RemoveResult::BranchOnly {
                 branch_name,
@@ -715,39 +716,6 @@ pub mod tests {
     use super::{PickerAction, PickerCollector, resolve_identifier};
     use crate::commands::worktree::{BranchDeletionMode, RemoveResult};
     use std::fs;
-    use std::path::PathBuf;
-    use worktrunk::shell_exec::Cmd;
-
-    /// Create a git repo with one commit at `tmp/repo` and return the path.
-    fn init_test_repo(tmp: &tempfile::TempDir) -> PathBuf {
-        let repo_path = tmp.path().join("repo");
-        Cmd::new("git")
-            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        fs::write(repo_path.join("file.txt"), "hello").unwrap();
-        Cmd::new("git")
-            .args(["add", "."])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        repo_path
-    }
 
     #[test]
     fn test_preview_state_data_roundtrip() {
@@ -820,10 +788,10 @@ pub mod tests {
 
     #[test]
     fn test_execute_removal_removes_worktree_and_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
-        let wt_path = tmp.path().join("repo.feature");
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
 
         repo.run_command(&[
             "worktree",
@@ -836,7 +804,7 @@ pub mod tests {
         assert!(wt_path.exists());
 
         let result = RemoveResult::RemovedWorktree {
-            main_path: repo_path,
+            main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
@@ -857,9 +825,8 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_branch_only_deletes_integrated_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
         // Create a branch at the same commit (fully integrated into main)
         repo.run_command(&["branch", "feature"]).unwrap();
@@ -868,6 +835,8 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 
@@ -877,13 +846,12 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_branch_only_retains_unmerged_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
         // Create a branch with an unmerged commit
         repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
-        fs::write(repo_path.join("new.txt"), "unmerged work").unwrap();
+        fs::write(test.path().join("new.txt"), "unmerged work").unwrap();
         repo.run_command(&["add", "."]).unwrap();
         repo.run_command(&["commit", "-m", "unmerged work"])
             .unwrap();
@@ -893,6 +861,8 @@ pub mod tests {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 
@@ -906,10 +876,10 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_removes_detached_worktree() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
-        let wt_path = tmp.path().join("repo.detached");
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("detached");
 
         repo.run_command(&[
             "worktree",
@@ -921,7 +891,7 @@ pub mod tests {
         .unwrap();
 
         // Detach HEAD in the new worktree
-        Cmd::new("git")
+        worktrunk::shell_exec::Cmd::new("git")
             .args(["checkout", "--detach", "HEAD"])
             .current_dir(&wt_path)
             .run()
@@ -930,7 +900,7 @@ pub mod tests {
         assert!(wt_path.exists());
 
         let result = RemoveResult::RemovedWorktree {
-            main_path: repo_path,
+            main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: None,

@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -112,7 +113,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### opencode[0m
+[107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
@@ -162,7 +163,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
+[107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m

@@ -53,8 +53,8 @@
 //! For each worktree, we execute:
 //! - `git status --porcelain` - Working tree state (uses index cache)
 //! - `git rev-list --count <base>..<head>` - Ahead/behind counts (uses commit graph)
-//! - `git diff --numstat HEAD` - Working tree line diffs (uses index + tree objects)
-//! - `git diff --numstat <base>...<head>` - Branch line diffs (uses tree objects)
+//! - `git diff --shortstat HEAD` - Working tree line diffs (uses index + tree objects)
+//! - `git diff --shortstat <base>...<head>` - Branch line diffs (uses tree objects)
 //! - `git rev-parse <ref>` - Ref resolution (uses ref cache)
 //!
 //! Plus one global command:
@@ -111,7 +111,7 @@
 //! Bottlenecks:
 //! 1. `git status --porcelain` - Slowest when index is cold or many files changed
 //! 2. `git rev-list --count` - Slow without commit graph in repos with deep history
-//! 3. `git diff --numstat` - Slow for large diffs or when pack files aren't cached
+//! 3. `git diff --shortstat` - Slow for large diffs or when pack files aren't cached
 //!
 //! Optimization tips:
 //! - Run `git commit-graph write --reachable --changed-paths` to speed up commit counting

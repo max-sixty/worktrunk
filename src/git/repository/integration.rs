@@ -4,6 +4,7 @@
 //! (same commit, ancestor, trees match, etc.).
 
 use anyhow::Context;
+use dashmap::mapref::entry::Entry;
 
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
@@ -31,15 +32,21 @@ impl Repository {
     /// qualified form to ensure we reference the branch, not a same-named tag.
     /// Otherwise returns the original ref unchanged (for HEAD, SHAs, remote refs).
     fn resolve_preferring_branch(&self, r: &str) -> String {
-        let qualified = format!("refs/heads/{r}");
-        if self
-            .run_command(&["rev-parse", "--verify", "-q", &qualified])
-            .is_ok()
-        {
-            qualified
-        } else {
-            r.to_string()
-        }
+        self.cache
+            .resolved_refs
+            .entry(r.to_string())
+            .or_insert_with(|| {
+                let qualified = format!("refs/heads/{r}");
+                if self
+                    .run_command(&["rev-parse", "--verify", "-q", &qualified])
+                    .is_ok()
+                {
+                    qualified
+                } else {
+                    r.to_string()
+                }
+            })
+            .clone()
     }
 
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
@@ -304,32 +311,38 @@ impl Repository {
     /// Used by both `wt list` and `wt remove` to ensure consistent integration detection.
     ///
     pub fn effective_integration_target(&self, local_target: &str) -> String {
-        // Get the upstream ref for the local target (e.g., origin/main for main)
-        let upstream = match self.branch(local_target).upstream() {
-            Ok(Some(upstream)) => upstream,
-            _ => return local_target.to_string(),
-        };
+        self.cache
+            .effective_integration_targets
+            .entry(local_target.to_string())
+            .or_insert_with(|| {
+                // Get the upstream ref for the local target (e.g., origin/main for main)
+                let upstream = match self.branch(local_target).upstream() {
+                    Ok(Some(upstream)) => upstream,
+                    _ => return local_target.to_string(),
+                };
 
-        // If local and upstream are the same commit, prefer local for clearer messaging
-        if self.same_commit(local_target, &upstream).unwrap_or(false) {
-            return local_target.to_string();
-        }
+                // If local and upstream are the same commit, prefer local for clearer messaging
+                if self.same_commit(local_target, &upstream).unwrap_or(false) {
+                    return local_target.to_string();
+                }
 
-        // If upstream contains commits not present in local, prefer upstream so
-        // remotely merged branches still count as integrated after a fetch.
-        if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
-            return upstream;
-        }
+                // If upstream contains commits not present in local, prefer upstream so
+                // remotely merged branches still count as integrated after a fetch.
+                if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
+                    return upstream;
+                }
 
-        // If upstream is strictly behind local, local is more complete.
-        if self.is_ancestor(&upstream, local_target).unwrap_or(false) {
-            return local_target.to_string();
-        }
+                // If upstream is strictly behind local, local is more complete.
+                if self.is_ancestor(&upstream, local_target).unwrap_or(false) {
+                    return local_target.to_string();
+                }
 
-        // Local and upstream have diverged (neither is ancestor of the other).
-        // Prefer upstream so remote merges are still visible to integration
-        // checks even while local has extra commits.
-        upstream
+                // Local and upstream have diverged (neither is ancestor of the other).
+                // Prefer upstream so remote merges are still visible to integration
+                // checks even while local has extra commits.
+                upstream
+            })
+            .clone()
     }
 
     /// Get the cached integration target for this repository.
@@ -350,10 +363,17 @@ impl Repository {
             .clone()
     }
 
-    /// Parse a tree ref to get its SHA.
+    /// Parse a tree ref to get its SHA (cached).
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        self.run_command(&["rev-parse", spec])
-            .map(|output| output.trim().to_string())
+        match self.cache.tree_shas.entry(spec.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let sha = self
+                    .run_command(&["rev-parse", spec])
+                    .map(|output| output.trim().to_string())?;
+                Ok(e.insert(sha).clone())
+            }
+        }
     }
 
     /// Check if a branch is integrated into a target.
@@ -386,8 +406,19 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
-        let effective_target = self.effective_integration_target(target);
-        let signals = compute_integration_lazy(self, branch, &effective_target)?;
-        Ok((effective_target, check_integration(&signals)))
+        use dashmap::mapref::entry::Entry;
+        match self
+            .cache
+            .integration_reasons
+            .entry((branch.to_string(), target.to_string()))
+        {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let effective_target = self.effective_integration_target(target);
+                let signals = compute_integration_lazy(self, branch, &effective_target)?;
+                let result = (effective_target, check_integration(&signals));
+                Ok(e.insert(result).clone())
+            }
+        }
     }
 }

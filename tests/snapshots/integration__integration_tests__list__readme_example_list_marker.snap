@@ -1,16 +1,13 @@
 ---
-source: tests/integration_tests/user_hooks.rs
+source: tests/integration_tests/list.rs
 info:
   program: wt
   args:
-    - remove
-    - feature
-    - "--force-delete"
-    - "--no-verify"
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
-    COLUMNS: "500"
+    COLUMNS: "98"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
@@ -22,6 +19,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -35,6 +33,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -42,6 +41,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+  [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main             [2m^[22m[2m⇡[22m                         [32m⇡1[0m      [2m33323bc1[0m  [2m1d[0m    [2mInitial commit
++ feature-api      [2m↑[22m 🤖              [32m↑1[0m               [2m70343f03[0m  [2m1d[0m    [2mAdd REST API endpoints
++ review-ui      [36m?[39m [2m↑[22m 💬              [32m↑1[0m               [2ma585d6ed[0m  [2m1d[0m    [2mAdd dashboard component
++ wip-docs       [36m?[39m [2m–[22m                                  [2m33323bc1[0m  [2m1d[0m    [2mInitial commit
+
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
 
 ----- stderr -----
-[36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (--force-delete)[39m

@@ -351,20 +351,13 @@ pub fn work_items_for_branch(
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use worktrunk::shell_exec::Cmd;
 
     #[test]
     fn test_skip_url_status_suppresses_placeholder_and_task() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        Cmd::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .run()
-            .expect("git init");
-
-        let repo = Repository::at(dir.path()).expect("repo");
+        let test = worktrunk::testing::TestRepo::new();
+        let repo = Repository::at(test.path()).expect("repo");
         let wt = WorktreeInfo {
-            path: dir.path().to_path_buf(),
+            path: test.path().to_path_buf(),
             head: "deadbeef".to_string(),
             branch: Some("main".to_string()),
             bare: false,
@@ -402,16 +395,10 @@ mod tests {
 
     #[test]
     fn test_no_llm_command_skips_summary_generate() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        Cmd::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .run()
-            .expect("git init");
-
-        let repo = Repository::at(dir.path()).expect("repo");
+        let test = worktrunk::testing::TestRepo::new();
+        let repo = Repository::at(test.path()).expect("repo");
         let wt = WorktreeInfo {
-            path: dir.path().to_path_buf(),
+            path: test.path().to_path_buf(),
             head: "deadbeef".to_string(),
             branch: Some("main".to_string()),
             bare: false,

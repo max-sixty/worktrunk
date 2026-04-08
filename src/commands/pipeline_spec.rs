@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use worktrunk::HookType;
+
+use super::hook_filter::HookSource;
+
 /// Serialized specification for a background pipeline.
 ///
 /// Serialized to JSON and piped to stdin of `wt hook run-pipeline`.
@@ -11,11 +15,16 @@ use std::path::PathBuf;
 pub struct PipelineSpec {
     pub worktree_path: PathBuf,
     pub branch: String,
-    pub hook_type: String,
-    pub source: String,
+    pub hook_type: HookType,
+    pub source: HookSource,
     /// Base context variables for template expansion.
     pub context: HashMap<String, String>,
     pub steps: Vec<PipelineStepSpec>,
+    /// Directory for per-command log files.
+    ///
+    /// The pipeline runner creates one log file per command here,
+    /// named via `HookLog::hook(source, hook_type, name)`.
+    pub log_dir: PathBuf,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,11 +53,12 @@ mod tests {
         let spec = PipelineSpec {
             worktree_path: "/tmp/test-worktree".into(),
             branch: "feature/auth".into(),
-            hook_type: "post-start".into(),
-            source: "user".into(),
+            hook_type: HookType::PostStart,
+            source: HookSource::User,
             context: [("branch".into(), "feature/auth".into())]
                 .into_iter()
                 .collect(),
+            log_dir: "/tmp/test-worktree/.git/wt/logs".into(),
             steps: vec![
                 PipelineStepSpec::Single {
                     name: Some("install".into()),

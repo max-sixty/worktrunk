@@ -23,7 +23,7 @@ use worktrunk::styling::{
 };
 
 use super::state::require_user_config_path;
-use crate::cli::version_str;
+use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
 use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
 use crate::help_pager::show_help_in_pager;
@@ -31,7 +31,10 @@ use crate::llm::test_commit_generation;
 use crate::output;
 
 /// Handle the config show command
-pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
+pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()> {
+    if format == SwitchFormat::Json {
+        return handle_config_show_json();
+    }
     // Build the complete output as a string
     let mut show_output = String::new();
 
@@ -58,6 +61,12 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         render_claude_code_status(&mut show_output)?;
     }
 
+    // Render OpenCode status (only when opencode CLI is available)
+    if is_opencode_available() {
+        show_output.push('\n');
+        render_opencode_status(&mut show_output)?;
+    }
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -75,6 +84,50 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         worktrunk::styling::eprintln!("{}", show_output);
     }
 
+    Ok(())
+}
+
+/// JSON output for config show: paths, existence, and parsed config contents.
+fn handle_config_show_json() -> anyhow::Result<()> {
+    let user_path = require_user_config_path()?;
+    let user_exists = user_path.exists();
+    let user_config = if user_exists {
+        Some(serde_json::to_value(&UserConfig::load()?)?)
+    } else {
+        None
+    };
+
+    let (project_path, project_config) = if let Ok(repo) = Repository::current() {
+        let path = repo.current_worktree().root()?.join(".config/wt.toml");
+        let config = repo.load_project_config()?;
+        (
+            Some(path),
+            config.map(|c| serde_json::to_value(&c)).transpose()?,
+        )
+    } else {
+        (None, None)
+    };
+
+    let system_path = system_config_path().or_else(default_system_config_path);
+    let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
+
+    let output = serde_json::json!({
+        "user": {
+            "path": user_path,
+            "exists": user_exists,
+            "config": user_config,
+        },
+        "project": {
+            "path": project_path,
+            "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            "config": project_config,
+        },
+        "system": {
+            "path": system_path,
+            "exists": system_exists,
+        },
+    });
+    worktrunk::styling::println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -220,6 +273,46 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if OpenCode CLI is available
+fn is_opencode_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OPENCODE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("opencode").is_ok()
+}
+
+/// Render OPENCODE section (plugin status).
+/// Caller must check `is_opencode_available()` first.
+fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("OPENCODE", None))?;
+
+    // Plugin status
+    let plugin_installed = super::opencode::is_plugin_installed();
+    let plugin_exists = super::opencode::plugin_file_exists();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if plugin_exists {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
             ))
         )?;
     }

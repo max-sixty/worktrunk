@@ -897,28 +897,25 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    // 2 log files: runner log + per-command log (cmd-0, unnamed single command)
+    wait_for_file_count(&log_dir, "log", 2);
 
-    // Find the log file
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
+    // Find the command log file (contains "cmd-0" in name, not "runner")
+    let cmd_log = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
-        .collect();
-
-    assert_eq!(
-        log_files.len(),
-        1,
-        "Should have exactly one log file, found: {:?}",
-        log_files
-    );
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("cmd-0"))
+        })
+        .expect("Should have a cmd-0 log file");
 
     // Wait for content to be written (background command might still be writing)
-    let log_file = &log_files[0];
-    wait_for_file_content(log_file);
+    wait_for_file_content(&cmd_log);
 
-    let log_contents = fs::read_to_string(log_file).unwrap();
+    let log_contents = fs::read_to_string(&cmd_log).unwrap();
 
     // Verify both stdout and stderr were captured
     assert_snapshot!(log_contents, @"
@@ -982,57 +979,35 @@ approved-commands = [
 
     snapshot_switch("post_start_separate_logs", &repo, &["--create", "feature"]);
 
-    // Wait for all 3 log files to be created (poll, don't use fixed sleep)
+    // Each command gets its own log file (task1, task2, task3) plus one runner log.
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 3);
+    wait_for_file_count(&log_dir, "log", 4);
 
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
-        .collect();
+    // Verify each task's output is in its own log file.
+    for (task, expected) in [
+        ("task1", "TASK1_OUTPUT"),
+        ("task2", "TASK2_OUTPUT"),
+        ("task3", "TASK3_OUTPUT"),
+    ] {
+        let log_file = fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(&format!("post-start-{task}"))
+            })
+            .unwrap_or_else(|| panic!("should have log file for {task}"));
 
-    // Wait for content to be flushed in each log file before reading
-    for entry in &log_files {
-        wait_for_file_content(&entry.path());
-    }
-
-    // Read all log files and verify no cross-contamination
-    let mut found_outputs = vec![false, false, false];
-    for entry in log_files {
-        let contents = fs::read_to_string(entry.path()).unwrap();
-        let count_task1 = contents.matches("TASK1_OUTPUT").count();
-        let count_task2 = contents.matches("TASK2_OUTPUT").count();
-        let count_task3 = contents.matches("TASK3_OUTPUT").count();
-
-        // Each log should contain exactly one task's output
-        let total_outputs = count_task1 + count_task2 + count_task3;
-        assert_eq!(
-            total_outputs,
-            1,
-            "Each log should contain exactly one task's output, found {} in {:?}",
-            total_outputs,
-            entry.path()
+        wait_for_file_content(&log_file.path());
+        let contents = fs::read_to_string(log_file.path()).unwrap();
+        assert!(
+            contents.contains(expected),
+            "Log for {task} should contain {expected}, got: {contents}"
         );
-
-        if count_task1 == 1 {
-            found_outputs[0] = true;
-        }
-        if count_task2 == 1 {
-            found_outputs[1] = true;
-        }
-        if count_task3 == 1 {
-            found_outputs[2] = true;
-        }
     }
-
-    assert!(
-        found_outputs.iter().all(|&x| x),
-        "Should find output from all three tasks, found: {:?}",
-        found_outputs
-    );
 }
 
 #[rstest]

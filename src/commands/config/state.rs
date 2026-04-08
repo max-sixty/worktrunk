@@ -16,7 +16,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use crate::cli::OutputFormat;
+use crate::cli::{OutputFormat, SwitchFormat};
 use crate::commands::process::HookLog;
 use worktrunk::utils::epoch_now;
 
@@ -39,12 +39,60 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 /// Check if a file in `.git/wt/logs/` is a worktrunk log file.
 ///
-/// Matches `.log` (hook output), `.jsonl` (command audit log), and `.jsonl.old` (rotated).
+/// Matches `.log` (hook output + verbose), `.jsonl`/`.jsonl.old` (command audit log),
+/// and known diagnostic files.
 fn is_wt_log_file(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    name.ends_with(".log") || name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+    name.ends_with(".log")
+        || name.ends_with(".jsonl")
+        || name.ends_with(".jsonl.old")
+        || is_diagnostic_file(name)
+}
+
+/// Check if a file is a diagnostic file (`verbose.log` or `diagnostic.md`).
+///
+/// These are created by `-vv` and are separate from hook output and the command audit log.
+fn is_diagnostic_file(name: &str) -> bool {
+    name == "verbose.log" || name == "diagnostic.md"
+}
+
+/// Check if a file is a hook output log (branch-specific `.log` files, not diagnostic).
+fn is_hook_output_file(name: &str) -> bool {
+    name.ends_with(".log") && !is_diagnostic_file(name)
+}
+
+/// Clear stale entries from the wt/trash directory.
+///
+/// Worktree removal renames directories into `.git/wt/trash/` for instant UX,
+/// then deletes them in a background process. If the background `rm -rf` fails
+/// or is killed, entries accumulate. This cleans them up.
+fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
+    let trash_dir = repo.wt_trash_dir();
+
+    if !trash_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&trash_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+        cleared += 1;
+    }
+
+    // Remove the trash directory itself if empty
+    if std::fs::read_dir(&trash_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&trash_dir);
+    }
+
+    Ok(cleared)
 }
 
 /// Clear all log files from the wt/logs directory
@@ -76,6 +124,66 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 /// Check if a filename belongs to the command audit log (`.jsonl` / `.jsonl.old`).
 fn is_command_log_file(name: &str) -> bool {
     name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+}
+
+/// Convert a log directory entry to a JSON object with file, size, and modified_at.
+fn log_entry_to_json(entry: &std::fs::DirEntry) -> serde_json::Value {
+    let path = entry.path();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let meta = entry.metadata().ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let modified = meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    serde_json::json!({ "file": name, "size": size, "modified_at": modified })
+}
+
+/// Read and partition log files into command log, hook output, and diagnostic categories.
+///
+/// Reads all wt log files from the repository's log directory, sorts by modification
+/// time (newest first), and partitions into three categories as JSON values.
+fn partition_log_files_json(
+    repo: &Repository,
+) -> anyhow::Result<(
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+)> {
+    let log_dir = repo.wt_logs_dir();
+    if !log_dir.exists() {
+        return Ok((vec![], vec![], vec![]));
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+        .collect();
+
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    let mut cmd_log = Vec::new();
+    let mut hook_out = Vec::new();
+    let mut diagnostic = Vec::new();
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_command_log_file(&name) {
+            cmd_log.push(log_entry_to_json(entry));
+        } else if is_diagnostic_file(&name) {
+            diagnostic.push(log_entry_to_json(entry));
+        } else {
+            hook_out.push(log_entry_to_json(entry));
+        }
+    }
+    Ok((cmd_log, hook_out, diagnostic))
 }
 
 /// Render a table of log file entries, or "(none)" if empty.
@@ -123,20 +231,25 @@ fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std:
         .collect();
 
     let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &rows);
-    write!(out, "{}", rendered.trim_end())?;
+    writeln!(out, "{}", rendered.trim_end())?;
 
     Ok(())
 }
 
-/// Render the COMMAND LOG section into the output buffer.
-pub(super) fn render_command_log(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+/// Render a single log section: heading, then filtered entries from the logs directory.
+fn render_log_section(
+    out: &mut String,
+    repo: &Repository,
+    heading: &str,
+    filter: impl Fn(&str) -> bool,
+) -> anyhow::Result<()> {
     let log_dir = repo.wt_logs_dir();
     let log_dir_display = format_path_for_display(&log_dir);
 
     writeln!(
         out,
         "{}",
-        format_heading("COMMAND LOG", Some(&format!("@ {log_dir_display}")))
+        format_heading(heading, Some(&format!("@ {log_dir_display}")))
     )?;
 
     if !log_dir.exists() {
@@ -146,41 +259,20 @@ pub(super) fn render_command_log(out: &mut String, repo: &Repository) -> anyhow:
 
     let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            e.path().is_file() && is_command_log_file(&name)
-        })
+        .filter(|e| e.path().is_file() && filter(&e.file_name().to_string_lossy()))
         .collect();
 
     render_log_table(out, &mut entries)?;
     Ok(())
 }
 
-/// Render the HOOK OUTPUT section into the output buffer.
-pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let log_dir = repo.wt_logs_dir();
-    let log_dir_display = format_path_for_display(&log_dir);
-
-    writeln!(
-        out,
-        "{}",
-        format_heading("HOOK OUTPUT", Some(&format!("@ {log_dir_display}")))
-    )?;
-
-    if !log_dir.exists() {
-        writeln!(out, "{}", format_with_gutter("(none)", None))?;
-        return Ok(());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            e.path().is_file() && is_wt_log_file(&e.path()) && !is_command_log_file(&name)
-        })
-        .collect();
-
-    render_log_table(out, &mut entries)?;
+/// Render all three log sections (command log, hook output, diagnostic) into a buffer.
+pub(super) fn render_all_log_sections(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    render_log_section(out, repo, "COMMAND LOG", is_command_log_file)?;
+    writeln!(out)?;
+    render_log_section(out, repo, "HOOK OUTPUT", is_hook_output_file)?;
+    writeln!(out)?;
+    render_log_section(out, repo, "DIAGNOSTIC", is_diagnostic_file)?;
     Ok(())
 }
 
@@ -195,16 +287,27 @@ pub(super) fn render_hook_output(out: &mut String, repo: &Repository) -> anyhow:
 ///
 /// - `source:hook-type:name` for hook commands (e.g., `user:post-start:server`)
 /// - `internal:op` for internal operations (e.g., `internal:remove`)
-pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_logs_get(
+    hook: Option<String>,
+    branch: Option<String>,
+    format: SwitchFormat,
+) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
     match hook {
+        None if format == SwitchFormat::Json => {
+            let (command_log, hook_output, diagnostic) = partition_log_files_json(&repo)?;
+            let output = serde_json::json!({
+                "command_log": command_log,
+                "hook_output": hook_output,
+                "diagnostic": diagnostic,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
         None => {
             // No hook specified, show all log files
             let mut out = String::new();
-            render_command_log(&mut out, &repo)?;
-            writeln!(out)?;
-            render_hook_output(&mut out, &repo)?;
+            render_all_log_sections(&mut out, &repo)?;
 
             // Display through pager (fall back to stderr if pager unavailable)
             if show_help_in_pager(&out, true).is_err() {
@@ -278,7 +381,11 @@ pub fn handle_logs_get(hook: Option<String>, branch: Option<String>) -> anyhow::
 // ==================== State Get/Set/Clear Commands ====================
 
 /// Handle the state get command
-pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_state_get(
+    key: &str,
+    branch: Option<String>,
+    format: SwitchFormat,
+) -> anyhow::Result<()> {
     use super::super::list::ci_status::PrStatus;
 
     let repo = Repository::current()?;
@@ -301,9 +408,32 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
                 Some(b) => b,
                 None => repo.require_current_branch("get marker for current branch")?,
             };
-            match repo.branch_marker(&branch_name) {
-                Some(marker) => println!("{marker}"),
-                None => println!(""),
+            if format == SwitchFormat::Json {
+                // Read raw config to get both marker and set_at
+                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                let raw = repo
+                    .run_command(&["config", "--get", &config_key])
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let output = match raw {
+                    Some(json_str) => {
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(&json_str).unwrap_or_default();
+                        serde_json::json!({
+                            "branch": branch_name,
+                            "marker": parsed.get("marker").and_then(|v| v.as_str()),
+                            "set_at": parsed.get("set_at").and_then(|v| v.as_u64()),
+                        })
+                    }
+                    None => serde_json::json!(null),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                match repo.branch_marker(&branch_name) {
+                    Some(marker) => println!("{marker}"),
+                    None => println!(""),
+                }
             }
         }
         "ci-status" => {
@@ -339,23 +469,20 @@ pub fn handle_state_get(key: &str, branch: Option<String>) -> anyhow::Result<()>
             }
 
             let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
-            let ci_status = PrStatus::detect(&repo, &ci_branch, &head)
-                .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
-                    s.ci_status
-                });
-            let status_str: &'static str = ci_status.into();
-            println!("{status_str}");
-        }
-        // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
-        "logs" => {
-            let mut out = String::new();
-            render_command_log(&mut out, &repo)?;
-            writeln!(out)?;
-            render_hook_output(&mut out, &repo)?;
+            let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
 
-            // Display through pager (fall back to stderr if pager unavailable)
-            if show_help_in_pager(&out, true).is_err() {
-                eprintln!("{}", out);
+            if format == SwitchFormat::Json {
+                let output = pr_status
+                    .as_ref()
+                    .map(super::super::list::json_output::JsonCi::from);
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                let ci_status = pr_status
+                    .map_or(super::super::list::ci_status::CiStatus::NoCI, |s| {
+                        s.ci_status
+                    });
+                let status_str: &'static str = ci_status.into();
+                println!("{status_str}");
             }
         }
         _ => {
@@ -563,6 +690,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 
     // Clear default branch cache
     if matches!(repo.clear_default_branch_cache(), Ok(true)) {
+        eprintln!("{}", success_message("Cleared default branch cache"));
         cleared_any = true;
     }
 
@@ -571,6 +699,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         .run_command(&["config", "--unset", "worktrunk.history"])
         .is_ok()
     {
+        eprintln!("{}", success_message("Cleared previous branch"));
         cleared_any = true;
     }
 
@@ -578,40 +707,90 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     let markers_output = repo
         .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .unwrap_or_default();
+    let mut markers_cleared = 0;
     for line in markers_output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
             let _ = repo.run_command(&["config", "--unset", config_key]);
-            cleared_any = true;
+            markers_cleared += 1;
         }
+    }
+    if markers_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{markers_cleared}</> marker{}",
+                if markers_cleared == 1 { "" } else { "s" }
+            ))
+        );
+        cleared_any = true;
     }
 
     // Clear all CI status cache
     let ci_cleared = CachedCiStatus::clear_all(&repo);
     if ci_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{ci_cleared}</> CI cache entr{}",
+                if ci_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all vars data
     let vars_cleared = clear_all_vars(&repo)?;
     if vars_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{vars_cleared}</> variable{}",
+                if vars_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all logs
     let logs_cleared = clear_logs(&repo)?;
     if logs_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{logs_cleared}</> log file{}",
+                if logs_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
     // Clear all hints
     let hints_cleared = repo.clear_all_hints()?;
     if hints_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{hints_cleared}</> hint{}",
+                if hints_cleared == 1 { "" } else { "s" }
+            ))
+        );
         cleared_any = true;
     }
 
-    if cleared_any {
-        eprintln!("{}", success_message("Cleared all stored state"));
-    } else {
+    // Clear stale trash from worktree removal
+    let trash_cleared = clear_trash(&repo)?;
+    if trash_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{trash_cleared}</> trash entr{}",
+                if trash_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        cleared_any = true;
+    }
+
+    if !cleared_any {
         eprintln!("{}", info_message("No stored state to clear"));
     }
 
@@ -673,56 +852,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get log files, partitioned into command log and hook output
-    let log_dir = repo.wt_logs_dir();
-    let (command_log, hook_output): (Vec<serde_json::Value>, Vec<serde_json::Value>) =
-        if log_dir.exists() {
-            let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-                .collect();
-
-            all_entries.sort_by(|a, b| {
-                let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time.cmp(&a_time)
-            });
-
-            let to_json = |entry: &std::fs::DirEntry| -> serde_json::Value {
-                let path = entry.path();
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                let meta = entry.metadata().ok();
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let modified = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs());
-
-                serde_json::json!({
-                    "file": name,
-                    "size": size,
-                    "modified_at": modified
-                })
-            };
-
-            let mut cmd_log = Vec::new();
-            let mut hook_out = Vec::new();
-            for entry in &all_entries {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if is_command_log_file(&name) {
-                    cmd_log.push(to_json(entry));
-                } else {
-                    hook_out.push(to_json(entry));
-                }
-            }
-            (cmd_log, hook_out)
-        } else {
-            (vec![], vec![])
-        };
+    let (command_log, hook_output, diagnostic) = partition_log_files_json(repo)?;
 
     // Get vars data (all branches) — collect into BTreeMap for sorted output
     let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();
@@ -750,6 +880,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
+        "diagnostic": diagnostic,
         "hints": hints
     });
 
@@ -866,12 +997,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show command log
-    render_command_log(&mut out, repo)?;
-    writeln!(out)?;
-
-    // Show hook output logs
-    render_hook_output(&mut out, repo)?;
+    // Show log files
+    render_all_log_sections(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out, true) {
@@ -937,7 +1064,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
 }
 
 /// Handle vars list
-pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
+pub fn handle_vars_list(branch: Option<String>, format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let branch_name = match branch {
         Some(b) => b,
@@ -945,7 +1072,14 @@ pub fn handle_vars_list(branch: Option<String>) -> anyhow::Result<()> {
     };
 
     let entries: Vec<_> = repo.vars_entries(&branch_name).into_iter().collect();
-    if entries.is_empty() {
+
+    if format == SwitchFormat::Json {
+        let obj: serde_json::Map<String, serde_json::Value> = entries
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+    } else if entries.is_empty() {
         eprintln!(
             "{}",
             info_message(cformat!("No variables for <bold>{branch_name}</>"))

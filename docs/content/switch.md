@@ -38,7 +38,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
 5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
-{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-verify      # Skip hooks") }}
+{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
 
 ## Shortcuts
 
@@ -75,6 +75,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+<!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
 
 **Preview tabs** — toggle with number keys:
 
@@ -193,8 +194,20 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
+
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
+          WorktreeCreate hooks).
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

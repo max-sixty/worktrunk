@@ -4,7 +4,7 @@
 //! - Run for all repositories
 //! - Execute before project hooks
 //! - Don't require approval
-//! - Skipped together with project hooks via --no-verify
+//! - Skipped together with project hooks via --no-hooks
 
 use crate::common::{
     TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
@@ -115,7 +115,7 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 }
 
 #[rstest]
-fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
+fn test_no_hooks_flag_skips_all_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
     repo.commit("Add project config");
@@ -132,11 +132,11 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 "#,
     );
 
-    // Create worktree with --no-verify (skips ALL hooks)
+    // Create worktree with --no-hooks (skips ALL hooks)
     snapshot_switch(
-        "no_verify_skips_all_hooks",
+        "no_hooks_skips_all_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -145,14 +145,14 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
     let user_marker = worktree_path.join("user_marker.txt");
     assert!(
         !user_marker.exists(),
-        "User hook should be skipped with --no-verify"
+        "User hook should be skipped with --no-hooks"
     );
 
-    // Project hook should also NOT have run (--no-verify skips ALL hooks)
+    // Project hook should also NOT have run (--no-hooks skips ALL hooks)
     let project_marker = worktree_path.join("project_marker.txt");
     assert!(
         !project_marker.exists(),
-        "Project hook should also be skipped with --no-verify"
+        "Project hook should also be skipped with --no-hooks"
     );
 }
 
@@ -206,7 +206,7 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 }
 
 #[rstest]
-fn test_user_post_start_skipped_with_no_verify(repo: TestRepo) {
+fn test_user_post_start_skipped_with_no_hooks(repo: TestRepo) {
     // Write user config with post-start hook
     repo.write_test_config(
         r#"[post-start]
@@ -215,9 +215,9 @@ bg = "echo 'USER_BG' > user_bg_marker.txt"
     );
 
     snapshot_switch(
-        "user_post_start_skipped_no_verify",
+        "user_post_start_skipped_no_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
     // Wait to ensure background hook would have had time to run
@@ -227,7 +227,7 @@ bg = "echo 'USER_BG' > user_bg_marker.txt"
     let marker_file = worktree_path.join("user_bg_marker.txt");
     assert!(
         !marker_file.exists(),
-        "User post-start hook should be skipped with --no-verify"
+        "User post-start hook should be skipped with --no-hooks"
     );
 }
 
@@ -292,7 +292,7 @@ check = "exit 1"
 }
 
 #[rstest]
-fn test_user_pre_merge_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_pre_merge_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt =
         repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
@@ -305,17 +305,17 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     );
 
     snapshot_merge(
-        "user_pre_merge_skipped_no_verify",
+        "user_pre_merge_skipped_no_hooks",
         &repo,
-        &["main", "--yes", "--no-remove", "--no-verify"],
+        &["main", "--yes", "--no-remove", "--no-hooks"],
         Some(&feature_wt),
     );
 
-    // User hook should NOT have run (--no-verify skips all hooks)
+    // User hook should NOT have run (--no-hooks skips all hooks)
     let marker_file = feature_wt.join("user_premerge_marker.txt");
     assert!(
         !marker_file.exists(),
-        "User pre-merge hook should be skipped with --no-verify"
+        "User pre-merge hook should be skipped with --no-hooks"
     );
 }
 
@@ -467,13 +467,10 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
         Some(&feature_wt),
     );
 
-    // Post-merge runs in the destination (main) worktree
+    // Post-merge runs in the destination (main) worktree (poll for pipeline runner)
     let main_worktree = repo.root_path();
     let marker_file = main_worktree.join("user_postmerge.txt");
-    assert!(
-        marker_file.exists(),
-        "User post-merge hook should have run in main worktree"
-    );
+    wait_for_file(&marker_file);
 }
 
 // ============================================================================
@@ -545,7 +542,7 @@ block = "exit 1"
 }
 
 #[rstest]
-fn test_user_pre_remove_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_pre_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
@@ -556,11 +553,11 @@ block = "exit 1"
 "#,
     );
 
-    // With --no-verify, all hooks (including the failing one) should be skipped
+    // With --no-hooks, all hooks (including the failing one) should be skipped
     snapshot_remove(
-        "user_pre_remove_skipped_no_verify",
+        "user_pre_remove_skipped_no_hooks",
         &repo,
-        &["feature", "--force-delete", "--no-verify"],
+        &["feature", "--force-delete", "--no-hooks"],
         Some(repo.root_path()),
     );
 
@@ -574,7 +571,7 @@ block = "exit 1"
     }
     assert!(
         !feature_wt.exists(),
-        "Worktree should be removed when --no-verify skips failing hook"
+        "Worktree should be removed when --no-hooks skips failing hook"
     );
 }
 
@@ -726,21 +723,21 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
 }
 
 #[rstest]
-fn test_user_post_remove_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_post_remove_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
     // Write user config with post-remove hook that creates a marker
     repo.write_test_config(
         r#"[post-remove]
-marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
+marker = "echo 'SHOULD_NOT_RUN' > ../no_hooks_postremove.txt"
 "#,
     );
 
     snapshot_remove(
-        "user_post_remove_no_verify",
+        "user_post_remove_no_hooks",
         &repo,
-        &["feature", "--force-delete", "--no-verify"],
+        &["feature", "--force-delete", "--no-hooks"],
         Some(repo.root_path()),
     );
 
@@ -753,7 +750,7 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
     }
     assert!(
         !feature_wt.exists(),
-        "Worktree should be removed with --no-verify"
+        "Worktree should be removed with --no-hooks"
     );
 
     // Post-remove hook should NOT have run
@@ -761,11 +758,11 @@ marker = "echo 'SHOULD_NOT_RUN' > ../no_verify_postremove.txt"
         .root_path()
         .parent()
         .unwrap()
-        .join("no_verify_postremove.txt");
+        .join("no_hooks_postremove.txt");
     thread::sleep(Duration::from_millis(500)); // Wait to ensure hook would have run if enabled
     assert!(
         !marker_file.exists(),
-        "Post-remove hook should be skipped when --no-verify is used"
+        "Post-remove hook should be skipped when --no-hooks is used"
     );
 }
 
@@ -804,6 +801,32 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     assert!(
         contents.contains("POST_REMOVE_DURING_MERGE"),
         "Post-remove hook should run during wt merge with expected content"
+    );
+}
+
+/// When removing the current worktree (cd back to main), both post-remove and
+/// post-switch hooks fire. They should appear on a single combined announcement line.
+#[rstest]
+fn test_combined_post_remove_and_post_switch_hooks(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+
+    // Configure both post-remove and post-switch user hooks
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+"#,
+    );
+
+    // Remove from inside the feature worktree — triggers cd back to main,
+    // which means changed_directory=true and both hook types fire.
+    snapshot_remove(
+        "combined_post_remove_and_post_switch",
+        &repo,
+        &["feature", "--force-delete"],
+        Some(&feature_wt),
     );
 }
 
@@ -969,7 +992,7 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
 }
 
 #[rstest]
-fn test_user_post_commit_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_user_post_commit_skipped_with_no_hooks(mut repo: TestRepo) {
     // Create feature worktree with staged changes
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("new_file.txt"), "content").unwrap();
@@ -982,9 +1005,9 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
     );
 
     snapshot_step_commit(
-        "user_post_commit_skipped_no_verify",
+        "user_post_commit_skipped_no_hooks",
         &repo,
-        &["--no-verify"],
+        &["--no-hooks"],
         Some(&feature_wt),
     );
 
@@ -994,7 +1017,7 @@ notify = "echo 'USER_POST_COMMIT_RAN' > user_postcommit.txt"
     let marker_file = feature_wt.join("user_postcommit.txt");
     assert!(
         !marker_file.exists(),
-        "User post-commit hook should be skipped with --no-verify"
+        "User post-commit hook should be skipped with --no-hooks"
     );
 }
 
@@ -1519,20 +1542,20 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
         "wt hook post-start should succeed (spawns in background)"
     );
 
-    // Wait for log file to be created and contain output
+    // Wait for log files: runner log + per-command log (cmd-0, unnamed single command)
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    wait_for_file_count(&log_dir, "log", 2);
 
-    // Find and read the log file
-    let log_file = fs::read_dir(&log_dir)
+    // Find the command log file (contains "cmd-0" in name)
+    let cmd_log = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .find(|e| e.path().extension().is_some_and(|ext| ext == "log"))
-        .expect("Should have a log file");
+        .find(|e| e.file_name().to_string_lossy().contains("cmd-0"))
+        .expect("Should have a cmd-0 log file");
 
     // Wait for content to be written (command runs async)
-    wait_for_file_content(&log_file.path());
-    let log_content = fs::read_to_string(log_file.path()).unwrap();
+    wait_for_file_content(&cmd_log.path());
+    let log_content = fs::read_to_string(cmd_log.path()).unwrap();
 
     // Verify the hook actually ran and wrote output (not just that file was created)
     assert!(
@@ -1543,7 +1566,9 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
 
 #[rstest]
 fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
-    // Write project config with multiple named hooks (table format)
+    // Write project config with multiple named hooks (table format).
+    // Map configs run as a concurrent group in one pipeline runner,
+    // each command producing its own log file.
     repo.write_project_config(
         r#"[post-start]
 first = "echo FIRST_OUTPUT"
@@ -1563,46 +1588,29 @@ second = "echo SECOND_OUTPUT"
         "wt hook post-start should succeed (spawns in background)"
     );
 
-    // Wait for both log files to be created
+    // Wait for per-command log files: runner log + first + second
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 2);
+    wait_for_file_count(&log_dir, "log", 3);
 
-    // Collect log files and their contents
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
-        .collect();
-    assert_eq!(log_files.len(), 2, "Should have 2 log files");
+    // Verify each command's output is in its own log file
+    for (task, expected) in [("first", "FIRST_OUTPUT"), ("second", "SECOND_OUTPUT")] {
+        let log_file = fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(&format!("post-start-{task}"))
+            })
+            .unwrap_or_else(|| panic!("should have log file for {task}"));
 
-    // Wait for content in both log files
-    for log_file in &log_files {
         wait_for_file_content(&log_file.path());
-    }
-
-    // Collect all log contents
-    let mut found_first = false;
-    let mut found_second = false;
-    for log_file in &log_files {
-        let name = log_file.file_name().to_string_lossy().to_string();
         let content = fs::read_to_string(log_file.path()).unwrap();
-        if name.contains("first") {
-            assert!(
-                content.contains("FIRST_OUTPUT"),
-                "first log should contain FIRST_OUTPUT, got: {content}"
-            );
-            found_first = true;
-        }
-        if name.contains("second") {
-            assert!(
-                content.contains("SECOND_OUTPUT"),
-                "second log should contain SECOND_OUTPUT, got: {content}"
-            );
-            found_second = true;
-        }
+        assert!(
+            content.contains(expected),
+            "Log for {task} should contain {expected}, got: {content}"
+        );
     }
-    assert!(found_first, "Should have log for 'first' hook");
-    assert!(found_second, "Should have log for 'second' hook");
 }
 
 #[rstest]
@@ -2020,9 +2028,9 @@ block = "exit 1"
     );
 }
 
-/// Test that --no-verify skips the pre-switch hook
+/// Test that --no-hooks skips the pre-switch hook
 #[rstest]
-fn test_user_pre_switch_skipped_with_no_verify(repo: TestRepo) {
+fn test_user_pre_switch_skipped_with_no_hooks(repo: TestRepo) {
     // Write user config with pre-switch hook that creates a marker
     repo.write_test_config(
         r#"[pre-switch]
@@ -2031,16 +2039,16 @@ check = "echo 'SHOULD_NOT_RUN' > pre_switch_marker.txt"
     );
 
     snapshot_switch(
-        "user_pre_switch_no_verify",
+        "user_pre_switch_no_hooks",
         &repo,
-        &["--create", "feature", "--no-verify"],
+        &["--create", "feature", "--no-hooks"],
     );
 
-    // Pre-switch hook should NOT have run (--no-verify skips all hooks)
+    // Pre-switch hook should NOT have run (--no-hooks skips all hooks)
     let marker_file = repo.root_path().join("pre_switch_marker.txt");
     assert!(
         !marker_file.exists(),
-        "Pre-switch hook should be skipped with --no-verify"
+        "Pre-switch hook should be skipped with --no-hooks"
     );
 }
 

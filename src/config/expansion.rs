@@ -538,25 +538,7 @@ mod tests {
 
     use super::*;
     use crate::shell_exec::Cmd;
-
-    /// Test fixture that creates a real temporary git repository.
-    struct TestRepo {
-        _dir: tempfile::TempDir,
-        repo: Repository,
-    }
-
-    impl TestRepo {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            Cmd::new("git")
-                .args(["init"])
-                .current_dir(dir.path())
-                .run()
-                .unwrap();
-            let repo = Repository::at(dir.path()).unwrap();
-            Self { _dir: dir, repo }
-        }
-    }
+    use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
@@ -1160,15 +1142,15 @@ mod tests {
         let test = test_repo();
 
         // Set vars data via git config
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.port", "3000"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1216,32 +1198,32 @@ mod tests {
         let test = test_repo();
 
         // Store a JSON object as a vars value
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"port": 3000, "debug": true}"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         // Store a JSON array
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.tags",
                 r#"["alpha", "beta"]"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         // Store a plain string (not JSON)
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1287,14 +1269,14 @@ mod tests {
     fn test_expand_template_vars_json_shell_escape() {
         let test = test_repo();
 
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"name": "my project", "cmd": "echo hello"}"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();

@@ -24,9 +24,10 @@ fn internal_log_filename(branch: &str, op: &str) -> String {
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // COMMAND LOG / HOOK OUTPUT paths vary per test (temp dir), normalize for stable snapshots
+    // COMMAND LOG / HOOK OUTPUT / DIAGNOSTIC paths vary per test (temp dir), normalize for stable snapshots
     settings.add_filter(r"(COMMAND LOG\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings.add_filter(r"(HOOK OUTPUT\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings.add_filter(r"(DIAGNOSTIC\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings
 }
 
@@ -36,11 +37,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    let safe_branch = sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, json).unwrap();
 }
@@ -115,12 +112,7 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cannot determine default branch"),
-        "Expected error message about cannot determine default branch, got: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch. To configure, run [1mwt config state default-branch set BRANCH[22m[39m");
 }
 
 #[rstest]
@@ -240,6 +232,56 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
 }
 
 // ============================================================================
+// bare subcommand defaults (no action → implicit get)
+// ============================================================================
+
+/// `wt config state ci-status` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_ci_status(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "ci-status"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// `wt config state marker` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_marker(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "marker"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+}
+
+/// `wt config state logs` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_logs(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "logs"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+/// `wt config state hints` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_hints(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "hints"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+// ============================================================================
 // ci-status
 // ============================================================================
 
@@ -275,8 +317,10 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not found") || stderr.contains("nonexistent"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+    [2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+    ");
 }
 
 #[rstest]
@@ -468,21 +512,18 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Path is dynamic (temp dir), so check pattern instead of exact snapshot
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Path separator varies by platform, so check for either / or \
-    assert!(
-        stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
-        "Expected .git/wt/logs or .git\\wt\\logs in output: {stderr}"
-    );
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -501,21 +542,26 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Verify both sections are present
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Command log section shows jsonl file
-    assert!(stderr.contains("commands.jsonl"));
-    // Hook output section shows .log files
-    assert!(stderr.contains("feature-post-start-npm.log"));
-    assert!(stderr.contains("bugfix-remove.log"));
+    let mut settings = state_get_settings();
+    // File sizes and ages vary across environments
+    settings.add_filter(r"(?m)\d+[BK]\s+\S+[ \t]*$", "<SIZE>  <AGE>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+              File      Size  Age   
+         ────────────── ──── ────── 
+         commands.jsonl <SIZE>  <AGE>
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+                    File            Size  Age   
+         ────────────────────────── ──── ────── 
+         bugfix-remove.log          <SIZE>  <AGE>
+         feature-post-start-npm.log <SIZE>  <AGE>
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -529,19 +575,80 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Both sections should show "(none)" since no log files exist
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
+}
+
+#[rstest]
+fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
+    // Create wt/logs directory with diagnostic files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("verbose.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
+    // Also add a hook output file to verify separation
+    std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
+    assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
+    assert!(stderr.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
     assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
+        stderr.contains("verbose.log"),
+        "Expected verbose.log in output"
     );
     assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
+        stderr.contains("diagnostic.md"),
+        "Expected diagnostic.md in output"
     );
-    // Count "(none)" occurrences — should appear twice (once per section)
-    let none_count = stderr.matches("(none)").count();
-    assert_eq!(none_count, 2, "Expected two (none) entries: {stderr}");
+
+    // Hook output should have the remove log but not the diagnostic files
+    let hook_section = stderr
+        .split("DIAGNOSTIC")
+        .next()
+        .unwrap()
+        .rsplit("HOOK OUTPUT")
+        .next()
+        .unwrap();
+    assert!(
+        hook_section.contains("feature-remove.log"),
+        "Expected feature-remove.log in HOOK OUTPUT: {hook_section}"
+    );
+    assert!(
+        !hook_section.contains("verbose.log"),
+        "verbose.log should not be in HOOK OUTPUT: {hook_section}"
+    );
+}
+
+#[rstest]
+fn test_state_clear_logs_includes_diagnostic_files(repo: TestRepo) {
+    // diagnostic files (.log and .md) should be cleared
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("verbose.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Report").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(
+        String::from_utf8_lossy(&output.stderr),
+        @"[32m✓[39m [32mCleared [1m2[22m log files[39m"
+    );
+    assert!(!log_dir.exists());
 }
 
 #[rstest]
@@ -635,7 +742,13 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [32m✓[39m [32mCleared previous branch[39m
+    [32m✓[39m [32mCleared [1m1[22m marker[39m
+    [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m variable[39m
+    [32m✓[39m [32mCleared [1m1[22m log file[39m
+    ");
 
     // Verify everything was cleared
     assert!(
@@ -673,6 +786,30 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         "CI cache file should be cleared"
     );
     assert!(!log_dir.exists());
+}
+
+#[rstest]
+fn test_state_clear_all_cleans_trash(repo: TestRepo) {
+    // Create trash directory with stale entries (simulating failed background rm)
+    let git_dir = repo.root_path().join(".git");
+    let trash_dir = git_dir.join("wt/trash");
+    std::fs::create_dir_all(trash_dir.join("myproject.feature-1234567890/target")).unwrap();
+    std::fs::write(
+        trash_dir.join("myproject.feature-1234567890/target/.rustc_info.json"),
+        "{}",
+    )
+    .unwrap();
+    std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+    // Stray file directly in trash (not inside a subdirectory) — exercises the
+    // non-directory branch in clear_trash's `if path.is_dir()` guard.
+    std::fs::write(trash_dir.join("stray-file.txt"), "stale").unwrap();
+
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m3[22m trash entries[39m");
+
+    // Trash directory itself should be removed (empty after cleanup)
+    assert!(!trash_dir.exists(), "Trash directory should be cleaned up");
 }
 
 #[rstest]
@@ -718,6 +855,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
         ");
     });
@@ -820,17 +960,19 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 fn test_state_get_json_empty(repo: TestRepo) {
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], serde_json::Value::Null);
-    assert_eq!(json["markers"], serde_json::json!([]));
-    assert_eq!(json["ci_status"], serde_json::json!([]));
-    assert_eq!(json["hints"], serde_json::json!([]));
-    assert_eq!(json["command_log"], serde_json::json!([]));
-    assert_eq!(json["hook_output"], serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [],
+      "command_log": [],
+      "default_branch": "main",
+      "diagnostic": [],
+      "hints": [],
+      "hook_output": [],
+      "markers": [],
+      "previous_branch": null,
+      "vars": []
+    }
+    "#);
 }
 
 #[rstest]
@@ -868,34 +1010,38 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], "feature");
-
-    // Check markers
-    let markers = json["markers"].as_array().unwrap();
-    assert_eq!(markers.len(), 1);
-    assert_eq!(markers[0]["branch"], "feature");
-    assert_eq!(markers[0]["marker"], "🚧 WIP");
-    assert_eq!(markers[0]["set_at"], TEST_EPOCH);
-
-    // Check vars data
-    let vars = json["vars"].as_array().unwrap();
-    assert_eq!(vars.len(), 1);
-    assert_eq!(vars[0]["branch"], "main");
-    assert_eq!(vars[0]["key"], "env");
-    assert_eq!(vars[0]["value"], "staging");
-
-    // Check CI status
-    let ci_status = json["ci_status"].as_array().unwrap();
-    assert_eq!(ci_status.len(), 1);
-    assert_eq!(ci_status[0]["branch"], "feature");
-    assert_eq!(ci_status[0]["status"], "passed");
-    assert_eq!(ci_status[0]["checked_at"], TEST_EPOCH);
-    assert_eq!(ci_status[0]["head"], "abc12345def67890");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [
+        {
+          "branch": "feature",
+          "checked_at": 1735776000,
+          "head": "abc12345def67890",
+          "status": "passed"
+        }
+      ],
+      "command_log": [],
+      "default_branch": "main",
+      "diagnostic": [],
+      "hints": [],
+      "hook_output": [],
+      "markers": [
+        {
+          "branch": "feature",
+          "marker": "🚧 WIP",
+          "set_at": 1735776000
+        }
+      ],
+      "previous_branch": "feature",
+      "vars": [
+        {
+          "branch": "main",
+          "key": "env",
+          "value": "staging"
+        }
+      ]
+    }
+    "#);
 }
 
 #[rstest]
@@ -910,31 +1056,53 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
-    // Check command_log — should contain the commands.jsonl file
-    let command_log = json["command_log"].as_array().unwrap();
-    assert_eq!(command_log.len(), 1);
-    assert_eq!(command_log[0]["file"], "commands.jsonl");
-
-    // Check hook_output — should contain the .log files
-    let hook_output = json["hook_output"].as_array().unwrap();
-    assert_eq!(hook_output.len(), 2);
-    let log_files: Vec<&str> = hook_output
-        .iter()
-        .map(|l| l["file"].as_str().unwrap())
-        .collect();
-    assert!(log_files.contains(&"feature-post-start-npm.log"));
-    assert!(log_files.contains(&"bugfix-remove.log"));
-
-    // Each entry should have file, size, and modified_at
-    for entry in command_log.iter().chain(hook_output.iter()) {
-        assert!(entry.get("file").is_some());
-        assert!(entry.get("size").is_some());
-        assert!(entry.get("modified_at").is_some());
+    // Sort log arrays by filename (mtime ties produce platform-dependent order)
+    for key in ["command_log", "hook_output"] {
+        if let Some(arr) = json.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.sort_by(|a, b| a["file"].as_str().cmp(&b["file"].as_str()));
+        }
     }
+
+    // Normalize dynamic fields before snapshotting
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(normalized, @r#"
+        {
+          "ci_status": [],
+          "command_log": [
+            {
+              "file": "commands.jsonl",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            }
+          ],
+          "default_branch": "main",
+          "diagnostic": [],
+          "hints": [],
+          "hook_output": [
+            {
+              "file": "bugfix-remove.log",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            },
+            {
+              "file": "feature-post-start-npm.log",
+              "modified_at": "<MTIME>",
+              "size": "<SIZE>"
+            }
+          ],
+          "markers": [],
+          "previous_branch": null,
+          "vars": []
+        }
+        "#);
+    });
 }
 
 // ============================================================================
@@ -1101,10 +1269,10 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Output goes to stdout
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("worktree-path"));
-    assert!(stdout.contains("another-hint"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    worktree-path
+    another-hint
+    ");
 }
 
 #[rstest]
@@ -1282,25 +1450,11 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Check key parts separately (ANSI bold codes may appear around values)
-    assert!(
-        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
-        "Expected spec echo in error: {}",
-        stderr
-    );
-    // The expected filename now includes hash suffixes
-    let expected_filename = hook_log_filename("main", "user", "post-start", "server");
-    assert!(
-        stderr.contains(&format!("Expected: {expected_filename}")),
-        "Expected filename in error: {}",
-        stderr
-    );
-    assert!(
-        stderr.contains("Available:"),
-        "Expected list of available logs: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mNo log file matches [1muser:post-start:server[22m for branch [1mmain[22m[39m
+    [107m [0m Expected: main-vfz-user-post-start-server-f4t.log
+    [107m [0m Available: main-vfz-user-post-start-other-4n1.log
+    ");
 }
 
 #[rstest]
@@ -1311,12 +1465,7 @@ fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log directory exists"),
-        "Expected 'No log directory exists' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mNo log directory exists. Run a background hook first to create logs.[39m");
 }
 
 #[rstest]
@@ -1333,12 +1482,7 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log files for branch"),
-        "Expected 'No log files for branch' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mNo log files for branch [1mmain[22m. Run a background hook first.[39m");
 }
 
 #[rstest]
@@ -1380,12 +1524,7 @@ fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Expected 'Invalid log spec' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mInvalid log spec: [1muser[22m. Format: source:hook-type:name or internal:op[39m");
 }
 
 #[rstest]
@@ -1395,12 +1534,7 @@ fn test_state_logs_get_hook_rejects_colons_in_name(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Colons in hook names should be rejected: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mInvalid log spec: [1muser:post-start:my:server[22m. Format: source:hook-type:name or internal:op[39m");
 }
 
 #[rstest]
@@ -1410,12 +1544,7 @@ fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown source"),
-        "Expected 'Unknown source' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mUnknown source: [1minvalid[22m. Valid: user, project[39m");
 }
 
 #[rstest]
@@ -1425,12 +1554,7 @@ fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown hook type"),
-        "Expected 'Unknown hook type' error: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mUnknown hook type: [1minvalid[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove[39m");
 }
 
 // ============================================================================
@@ -1444,8 +1568,7 @@ fn test_vars_set_and_get(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Set"), "Expected success message: {stderr}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet [1menv[22m for [1mmain[22m[39m");
 
     // Get the value
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1492,23 +1615,17 @@ fn test_vars_list(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tstaging"),
-        "Expected env key: {stdout}"
-    );
-    assert!(stdout.contains("port\t3000"), "Expected port key: {stdout}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    env	staging
+    port	3000
+    ");
 }
 
 #[rstest]
 fn test_vars_list_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected empty message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1521,11 +1638,7 @@ fn test_vars_clear_single_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mmain[22m[39m");
 
     // Verify it's gone
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1548,16 +1661,11 @@ fn test_vars_clear_all(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared") && stderr.contains("2"),
-        "Expected clear 2 entries: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m variables for [1mmain[22m[39m");
 
     // Verify all gone
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No variables"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1566,11 +1674,7 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid key"),
-        "Expected invalid key error: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, hyphens, and underscores[39m"#);
 }
 
 #[rstest]
@@ -1712,11 +1816,7 @@ fn test_vars_clear_nonexistent_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variable"),
-        "Expected 'No variable' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variable [1mnonexistent[22m for [1mmain[22m");
 }
 
 #[rstest]
@@ -1726,11 +1826,7 @@ fn test_vars_clear_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected 'No variables' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1747,11 +1843,7 @@ fn test_vars_list_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tproduction"),
-        "Expected vars entry: {stdout}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"env	production");
 }
 
 #[rstest]
@@ -1768,11 +1860,7 @@ fn test_vars_clear_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mfeature[22m[39m");
 }
 
 #[rstest]
@@ -1850,4 +1938,158 @@ fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
         branch_item["vars"]["port"], "5000",
         "vars key should be 'port', not a mangled key from bad split"
     );
+}
+
+// ============================================================================
+// --format=json on individual subcommands
+// ============================================================================
+
+#[rstest]
+fn test_logs_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "diagnostic": [],
+      "hook_output": []
+    }
+    "#);
+}
+
+#[rstest]
+fn test_logs_get_json_with_files(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
+    std::fs::write(log_dir.join("main-user-post-start-server.log"), "output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Redact dynamic timestamps and sizes
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_ci_status_get_json(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
+    repo.commit("initial");
+    let head = repo.head_sha();
+
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(&head, "<SHA>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_marker_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_marker_get_json_with_value(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.marker",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ]);
+
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "main",
+      "marker": "🚧 WIP",
+      "set_at": 1735776000
+    }
+    "#);
+}
+
+#[rstest]
+fn test_vars_list_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"{}");
+}
+
+#[rstest]
+fn test_vars_list_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "staging"]);
+    repo.run_git(&["config", "worktrunk.state.main.vars.port", "3000"]);
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "env": "staging",
+      "port": "3000"
+    }
+    "#);
+}
+
+#[rstest]
+fn test_hints_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
+}
+
+#[rstest]
+fn test_hints_get_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    [
+      "worktree-path"
+    ]
+    "#);
 }

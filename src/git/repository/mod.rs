@@ -28,6 +28,7 @@ use crate::shell_exec::Cmd;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
+use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
 
@@ -36,7 +37,7 @@ use dunce::canonicalize;
 use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
@@ -80,6 +81,28 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Convert a child exit status into `Ok(())` or a [`StreamCommandError`].
+fn stream_exit_result(
+    status: std::process::ExitStatus,
+    buffer: &Arc<Mutex<Vec<String>>>,
+    cmd_str: &str,
+) -> anyhow::Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    let lines = buffer.lock().unwrap();
+    let exit_info = status
+        .code()
+        .map(|c| format!("exit code {c}"))
+        .unwrap_or_else(|| "killed by signal".to_string());
+    Err(StreamCommandError {
+        output: lines.join("\n"),
+        command: cmd_str.to_string(),
+        exit_info,
+    }
+    .into())
+}
+
 // ============================================================================
 // Repository Cache
 // ============================================================================
@@ -92,6 +115,36 @@ impl std::error::Error for StreamCommandError {}
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Keyed values use `DashMap`. Both patterns hold the shard lock across
+/// check-and-insert (no TOCTOU gap). Choose based on whether computation
+/// is fallible:
+///
+/// **Infallible** — use `entry().or_insert_with()`:
+///
+/// ```rust,ignore
+/// self.cache.some_map
+///     .entry(key)
+///     .or_insert_with(|| compute())
+///     .clone()
+/// ```
+///
+/// **Fallible** — use explicit `Entry` matching to propagate errors:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
@@ -130,8 +183,28 @@ pub(super) struct RepoCache {
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Cached because forge detection may query the same remote multiple times.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
+    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
+    pub(super) resolved_refs: DashMap<String, String>,
+    /// Effective integration targets: local_target -> effective ref (may be upstream).
+    /// Cached because `integration_reason()` calls `effective_integration_target()` for
+    /// every branch, but the result depends only on the target ref's relationship with
+    /// its upstream — stable for the duration of a command.
+    pub(super) effective_integration_targets: DashMap<String, String>,
+    /// Integration reason cache: (branch, target) -> (effective_target, reason).
+    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
+    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
+    /// followed by prepare_worktree_removal).
+    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
+
+    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
+    /// The tree SHA for a given ref doesn't change during a command.
+    pub(super) tree_shas: DashMap<String, String>,
 
     // ========== Per-worktree values (keyed by path) ==========
+    /// Per-worktree git directory: worktree_path -> canonicalized git dir
+    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
+    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
     /// Worktree root paths: worktree_path -> canonicalized root
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
@@ -778,49 +851,39 @@ impl Repository {
 
         let start = Instant::now();
 
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let _ = stdout_handle.join();
-                    let _ = stderr_handle.join();
+        // Phase 1: If delay threshold is enabled, wait that long for the child to
+        // exit. If it finishes before the threshold, output stays buffered (quiet).
+        if delay_ms >= 0 {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let remaining = delay.saturating_sub(start.elapsed());
 
-                    if status.success() {
-                        return Ok(());
-                    }
-                    // Failed - return buffered output as error
-                    let lines = buffer.lock().unwrap();
-                    let exit_info = status
-                        .code()
-                        .map(|c| format!("exit code {c}"))
-                        .unwrap_or_else(|| "killed by signal".to_string());
-                    return Err(StreamCommandError {
-                        output: lines.join("\n"),
-                        command: cmd_str,
-                        exit_info,
-                    }
-                    .into());
-                }
-                Ok(None) => {
-                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
-                    if delay_ms >= 0
-                        && !streaming.load(Ordering::Relaxed)
-                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
-                    {
-                        streaming.store(true, Ordering::Relaxed);
-
-                        if let Some(ref msg) = progress_message {
-                            let _ = writeln!(std::io::stderr(), "{}", msg);
-                        }
-                        for line in buffer.lock().unwrap().drain(..) {
-                            let _ = writeln!(std::io::stderr(), "{}", line);
-                        }
-                        let _ = std::io::stderr().flush();
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => bail!("Failed to wait for command: {}", e),
+            // Zero delay means "stream immediately", not "try a zero-timeout reap".
+            if !remaining.is_zero()
+                && let Some(status) = child
+                    .wait_timeout(remaining)
+                    .context("Failed to wait for command")?
+            {
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return stream_exit_result(status, &buffer, &cmd_str);
             }
+
+            // Delay threshold exceeded — switch to streaming
+            streaming.store(true, Ordering::Relaxed);
+            if let Some(ref msg) = progress_message {
+                let _ = writeln!(std::io::stderr(), "{}", msg);
+            }
+            for line in buffer.lock().unwrap().drain(..) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+            }
+            let _ = std::io::stderr().flush();
         }
+
+        // Phase 2: Block until the child exits (no polling).
+        let status = child.wait().context("Failed to wait for command")?;
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+        stream_exit_result(status, &buffer, &cmd_str)
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).

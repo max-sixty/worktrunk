@@ -53,7 +53,7 @@
 # [commit.generation]
 # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 #
-# ### opencode
+# ### OpenCode
 #
 # [commit.generation]
 # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"
@@ -103,7 +103,7 @@
 # commit = true      # Commit uncommitted changes first (--no-commit to skip)
 # rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 # remove = true      # Remove worktree after merge (--no-remove to keep)
-# verify = true      # Run project hooks (--no-verify to skip)
+# verify = true      # Run project hooks (--no-hooks to skip)
 # ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
 # ### Switch

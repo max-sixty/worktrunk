@@ -29,3 +29,6 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 
 [36mHOOK OUTPUT[39m @ <PATH>
 [107m [0m (none)
+
+[36mDIAGNOSTIC[39m @ <PATH>
+[107m [0m (none)

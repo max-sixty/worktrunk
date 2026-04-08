@@ -1,6 +1,7 @@
 use crate::common::{
     DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -2145,6 +2146,46 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     });
 }
 
+/// Generate config state marker example: `wt list` with user markers
+///
+/// Shows how user markers appear in the Status column alongside git symbols.
+/// Used by `wt config state marker --help` and docs via placeholder expansion.
+/// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
+#[rstest]
+fn test_readme_example_list_marker(mut repo: TestRepo) {
+    remove_fixture_worktrees(&mut repo);
+
+    repo.commit_with_age("Initial commit", DAY);
+
+    // Branch ahead of main with commits and user marker 🤖
+    let _feature_wt = repo.add_worktree_with_commit(
+        "feature-api",
+        "api.rs",
+        "// API implementation",
+        "Add REST API endpoints",
+    );
+    repo.set_marker("feature-api", "🤖");
+
+    // Branch with uncommitted changes and user marker 💬
+    let review_wt = repo.add_worktree_with_commit(
+        "review-ui",
+        "component.tsx",
+        "// UI component",
+        "Add dashboard component",
+    );
+    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
+    repo.set_marker("review-ui", "💬");
+
+    // Branch with uncommitted changes only (no user marker)
+    let wip_wt = repo.add_worktree("wip-docs");
+    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+
+    assert_cmd_snapshot!(
+        "readme_example_list_marker",
+        list_snapshots::command_readme(&repo, repo.root_path())
+    );
+}
+
 /// Generate tips-patterns.md example: dev server per worktree workflow
 ///
 /// Uses the realistic README example repo and adds URL config.
@@ -3095,7 +3136,10 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 /// and spurious "default branch does not exist locally" warnings.
 #[test]
 fn test_list_empty_repo() {
-    let repo = TestRepo::empty();
+    let mut repo = TestRepo::empty();
+    let guard =
+        setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
+    repo.set_lifetime_guard(Box::new(guard));
     // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors

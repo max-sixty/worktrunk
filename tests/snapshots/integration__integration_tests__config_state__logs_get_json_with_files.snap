@@ -1,0 +1,21 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+{
+  "command_log": [
+    {
+      "file": "commands.jsonl",
+      "modified_at": "<TIMESTAMP>",
+      "size": "<SIZE>"
+    }
+  ],
+  "diagnostic": [],
+  "hook_output": [
+    {
+      "file": "main-user-post-start-server.log",
+      "modified_at": "<TIMESTAMP>",
+      "size": "<SIZE>"
+    }
+  ]
+}

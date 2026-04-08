@@ -4,7 +4,7 @@
 // to complement `time_to_first_output` which exits before output.
 //
 // Benchmark variants:
-//   - remove_e2e/no_hooks       — remove with --no-verify (no hook loading)
+//   - remove_e2e/no_hooks       — remove with --no-hooks (no hook loading)
 //   - remove_e2e/with_hooks     — remove with hooks configured (user + project)
 //   - remove_e2e/first_output   — baseline: exits before output (same as time_to_first_output)
 //
@@ -112,7 +112,7 @@ fn bench_remove_e2e(c: &mut Criterion) {
     group.bench_function("first_output", |b| {
         b.iter(|| {
             let mut cmd = Command::new(binary);
-            cmd.args(["remove", "--yes", "--no-verify", "--force", "feature-wt-1"]);
+            cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
             cmd.current_dir(&repo_no_hooks);
             isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
             cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
@@ -125,14 +125,14 @@ fn bench_remove_e2e(c: &mut Criterion) {
         });
     });
 
-    // No hooks: --no-verify (skip hook loading), run from feature worktree
+    // No hooks: --no-hooks (skip hook loading), run from feature worktree
     group.bench_function("no_hooks", |b| {
         b.iter_batched(
             || recreate_worktree(&repo_no_hooks),
             |()| {
                 let wt_path = wt_name(&repo_no_hooks);
                 let mut cmd = Command::new(binary);
-                cmd.args(["remove", "--yes", "--no-verify", "--force"]);
+                cmd.args(["remove", "--yes", "--no-hooks", "--force"]);
                 cmd.current_dir(&wt_path);
                 isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
                 let output = cmd.output().unwrap();

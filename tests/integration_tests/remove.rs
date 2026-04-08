@@ -4,6 +4,7 @@ use crate::common::{
     setup_temp_snapshot_settings, wt_command,
 };
 use ansi_str::AnsiStr;
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
 use rstest::rstest;
@@ -1484,6 +1485,46 @@ fn test_remove_squash_merged_on_remote_then_advanced(#[from(repo_with_remote)] r
     ));
 }
 
+/// Like `test_remove_squash_merged_on_remote`, but with a **worktree** (not just
+/// a branch). Tests that the `RemovedWorktree` path displays the effective target
+/// (`origin/main`) rather than the local default branch when upstream is ahead.
+#[rstest]
+fn test_remove_worktree_squash_merged_on_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Create a worktree for the feature branch
+    let _wt_path = repo.add_worktree("feature-wt-squash");
+    let wt_path = repo.worktrees["feature-wt-squash"].clone();
+    std::fs::write(wt_path.join("feature-wt.txt"), "feature content").unwrap();
+    repo.run_git_in(&wt_path, &["add", "feature-wt.txt"]);
+    repo.run_git_in(&wt_path, &["commit", "-m", "Add feature"]);
+    repo.run_git_in(&wt_path, &["push", "-u", "origin", "feature-wt-squash"]);
+
+    // Simulate GitHub squash merge on the remote
+    let github_sim = repo.home_path().join("github-sim-wt");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim-wt"],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-wt-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch locally — origin/main now has the squash merge, local main does not
+    repo.run_git(&["fetch", "origin"]);
+
+    // Remove the worktree — should show origin/main as the integration target
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-wt-squash"],
+        None
+    ));
+}
+
 // ============================================================================
 // Pre-Remove Hook Tests
 // ============================================================================
@@ -1716,7 +1757,7 @@ approved-commands = ["echo 'hook ran' > {}"]
 }
 
 #[rstest]
-fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
+fn test_pre_remove_hook_skipped_with_no_hooks(mut repo: TestRepo) {
     use std::thread;
 
     // Create a marker file that the hook would create
@@ -1741,27 +1782,27 @@ approved-commands = ["echo 'hook ran' > {}"]
     // Create a worktree to remove
     let worktree_path = repo.add_worktree("feature-skip");
 
-    // Remove with --no-verify to skip hooks
+    // Remove with --no-hooks to skip hooks
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "remove",
-        &["--foreground", "--no-verify", "feature-skip"],
+        &["--foreground", "--no-hooks", "feature-skip"],
         None
     ));
 
     // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
     thread::sleep(Duration::from_millis(500));
 
-    // Marker file should NOT exist - --no-verify skips the hook
+    // Marker file should NOT exist - --no-hooks skips the hook
     assert!(
         !marker_file.exists(),
-        "Pre-remove hook should NOT run with --no-verify"
+        "Pre-remove hook should NOT run with --no-hooks"
     );
 
     // Worktree should be removed (removal itself succeeds)
     assert!(
         !worktree_path.exists(),
-        "Worktree should be removed even with --no-verify"
+        "Worktree should be removed even with --no-hooks"
     );
 }
 
@@ -2714,4 +2755,111 @@ fn restore_dir_permissions(dir: &std::path::Path) {
             }
         }
     }
+}
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_remove_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "feature",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[cfg(not(target_os = "windows"))] // foreground removal with cwd inside the worktree hits directory locking
+#[rstest]
+fn test_remove_json_current(mut repo: TestRepo) {
+    repo.commit("initial");
+    let feature_wt = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--format=json", "--yes", "--foreground"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_remove_json_branch_only(repo: TestRepo) {
+    repo.commit("initial");
+    // Create a branch without a worktree (already merged into main)
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "orphan-branch",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_remove_json_multi_with_branch_only(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("wt-feature");
+    // Create a branch without a worktree
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "wt-feature",
+            "orphan-branch",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
 }

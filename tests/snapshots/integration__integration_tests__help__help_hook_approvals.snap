@@ -24,6 +24,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -59,13 +60,13 @@ Project hooks require approval on first run to prevent untrusted projects from r
 [1m[32mExamples[0m
 
 Pre-approve all commands for current project:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals add[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals add[0m
 
 Clear approvals for current project:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals clear[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear[0m
 
 Clear global approvals:
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
 
 [1m[32mHow approvals work[0m
 

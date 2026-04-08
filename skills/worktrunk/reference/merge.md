@@ -117,8 +117,19 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
+
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after merge completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>

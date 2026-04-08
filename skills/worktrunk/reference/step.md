@@ -145,7 +145,7 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
 
 Global Options:
@@ -232,7 +232,7 @@ Automation:
   -y, --yes
           Skip approval prompts
 
-      --no-verify
+      --no-hooks
           Skip hooks
 
 Global Options:
@@ -373,7 +373,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -581,6 +581,16 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+Automation:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
 Global Options:
   -C <path>
           Working directory for this command
@@ -728,6 +738,15 @@ Options:
 Automation:
   -y, --yes
           Skip approval prompts
+
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>

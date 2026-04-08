@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
+    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_hook_pipeline,
 };
 use super::repository_ext::warn_about_untracked_files;
 
@@ -168,10 +168,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if !self.verify && any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
         if self.verify {
@@ -233,16 +230,18 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-verify)
+        // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let hooks =
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_prepared_hooks(self.ctx, hooks)?;
+            for steps in
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?
+            {
+                spawn_hook_pipeline(self.ctx, steps)?;
+            }
         }
 
         Ok(())

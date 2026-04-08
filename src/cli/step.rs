@@ -1,4 +1,64 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
+
+#[derive(Args)]
+pub struct CommitArgs {
+    /// Branch to operate on (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    pub(crate) branch: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+#[derive(Args)]
+pub struct SquashArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub(crate) target: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
 
 /// Run individual operations
 #[derive(Subcommand)]
@@ -44,29 +104,7 @@ $ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
-    Commit {
-        /// Branch to operate on (defaults to current worktree)
-        #[arg(short, long, add = crate::completion::worktree_only_completer())]
-        branch: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Commit(CommitArgs),
 
     /// Squash commits since branching
     ///
@@ -106,31 +144,7 @@ $ wt step squash --show-prompt | less
 ```
 "#
     )]
-    Squash {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Squash(SquashArgs),
 
     /// Fast-forward target to current branch
     #[command(
@@ -288,7 +302,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -438,6 +452,10 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
+
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
@@ -544,6 +562,10 @@ $ wt step prune
         /// Run removal in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Move worktrees to expected paths
