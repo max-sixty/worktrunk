@@ -742,7 +742,6 @@ impl TestRepo {
             mock_bin_path: None,
             claude_installed: false,
             opencode_installed: false,
-            _lifetime_guard: None,
         }
     }
 
