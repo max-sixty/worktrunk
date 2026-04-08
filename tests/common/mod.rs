@@ -116,10 +116,13 @@ pub fn pty_safe() {
 /// ```
 #[rstest::fixture]
 pub fn repo() -> TestRepo {
-    let mut repo = TestRepo::standard();
+    let repo = TestRepo::standard();
+    // Bind insta snapshot filters for this test thread. `mem::forget` intentionally
+    // leaks the scope guard so settings persist without storing the guard in TestRepo.
+    // Safe: each test sets its own settings, and thread-locals are cleaned up on exit.
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    repo.set_lifetime_guard(Box::new(guard));
+    std::mem::forget(guard);
     repo
 }
 

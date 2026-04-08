@@ -3136,10 +3136,10 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 /// and spurious "default branch does not exist locally" warnings.
 #[test]
 fn test_list_empty_repo() {
-    let mut repo = TestRepo::empty();
+    let repo = TestRepo::empty();
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
-    repo.set_lifetime_guard(Box::new(guard));
+    std::mem::forget(guard);
     // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
