@@ -1302,6 +1302,16 @@ pub fn step_prune(
         BranchOnly,
     }
 
+    impl CandidateKind {
+        fn as_str(&self) -> &'static str {
+            match self {
+                CandidateKind::Current => "current",
+                CandidateKind::Other => "worktree",
+                CandidateKind::BranchOnly => "branch_only",
+            }
+        }
+    }
+
     /// Build a human-readable count like "3 worktrees & branches".
     ///
     /// Worktree + branch is the default pair (matching progress messages'
@@ -1653,11 +1663,7 @@ pub fn step_prune(
                     serde_json::json!({
                         "branch": c.branch,
                         "path": c.path,
-                        "kind": match c.kind {
-                            CandidateKind::Current => "current",
-                            CandidateKind::Other => "worktree",
-                            CandidateKind::BranchOnly => "branch_only",
-                        },
+                        "kind": c.kind.as_str(),
                         "reason": info.reason_desc,
                         "target": info.effective_target,
                     })
@@ -1757,11 +1763,7 @@ pub fn step_prune(
                 serde_json::json!({
                     "branch": c.branch,
                     "path": c.path,
-                    "kind": match c.kind {
-                        CandidateKind::Current => "current",
-                        CandidateKind::Other => "worktree",
-                        CandidateKind::BranchOnly => "branch_only",
-                    },
+                    "kind": c.kind.as_str(),
                 })
             })
             .collect();

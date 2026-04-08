@@ -10,6 +10,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
       "size": "<SIZE>"
     }
   ],
+  "diagnostic": [],
   "hook_output": [
     {
       "file": "main-user-post-start-server.log",

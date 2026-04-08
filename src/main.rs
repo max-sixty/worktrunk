@@ -724,34 +724,6 @@ fn validate_remove_targets(
     plans
 }
 
-/// Convert a RemoveResult to a JSON value for structured output.
-fn remove_result_to_json(result: &RemoveResult) -> serde_json::Value {
-    match result {
-        RemoveResult::RemovedWorktree {
-            worktree_path,
-            branch_name,
-            deletion_mode,
-            ..
-        } => serde_json::json!({
-            "kind": "worktree",
-            "branch": branch_name,
-            "path": worktree_path,
-            "branch_deleted": !deletion_mode.should_keep(),
-        }),
-        RemoveResult::BranchOnly {
-            branch_name,
-            deletion_mode,
-            pruned,
-            ..
-        } => serde_json::json!({
-            "kind": "branch_only",
-            "branch": branch_name,
-            "pruned": pruned,
-            "branch_deleted": !deletion_mode.should_keep(),
-        }),
-    }
-}
-
 fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
     let json_mode = args.format == SwitchFormat::Json;
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
@@ -823,7 +795,7 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
 
                 handle_remove_output(&result, args.foreground, run_hooks, false)?;
                 if json_mode {
-                    let json = serde_json::json!([remove_result_to_json(&result)]);
+                    let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
                 }
                 Ok(())
@@ -852,29 +824,25 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // but hooks execute in each target worktree.
                 let run_hooks = verify && approve_remove(args.yes)?;
 
-                let mut json_items: Vec<serde_json::Value> = Vec::new();
-
                 // Execute all validated plans: others first, branch-only next, current last
                 for result in &plans.others {
-                    if json_mode {
-                        json_items.push(remove_result_to_json(result));
-                    }
                     handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
                 for result in &plans.branch_only {
-                    if json_mode {
-                        json_items.push(remove_result_to_json(result));
-                    }
                     handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
                 if let Some(ref result) = plans.current {
-                    if json_mode {
-                        json_items.push(remove_result_to_json(result));
-                    }
                     handle_remove_output(result, args.foreground, run_hooks, false)?;
                 }
 
                 if json_mode {
+                    let json_items: Vec<serde_json::Value> = plans
+                        .others
+                        .iter()
+                        .chain(&plans.branch_only)
+                        .chain(plans.current.as_ref())
+                        .map(RemoveResult::to_json)
+                        .collect();
                     println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
 

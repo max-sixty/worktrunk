@@ -143,6 +143,49 @@ fn log_entry_to_json(entry: &std::fs::DirEntry) -> serde_json::Value {
     serde_json::json!({ "file": name, "size": size, "modified_at": modified })
 }
 
+/// Read and partition log files into command log, hook output, and diagnostic categories.
+///
+/// Reads all wt log files from the repository's log directory, sorts by modification
+/// time (newest first), and partitions into three categories as JSON values.
+fn partition_log_files_json(
+    repo: &Repository,
+) -> anyhow::Result<(
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+)> {
+    let log_dir = repo.wt_logs_dir();
+    if !log_dir.exists() {
+        return Ok((vec![], vec![], vec![]));
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
+        .collect();
+
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    let mut cmd_log = Vec::new();
+    let mut hook_out = Vec::new();
+    let mut diagnostic = Vec::new();
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_command_log_file(&name) {
+            cmd_log.push(log_entry_to_json(entry));
+        } else if is_diagnostic_file(&name) {
+            diagnostic.push(log_entry_to_json(entry));
+        } else {
+            hook_out.push(log_entry_to_json(entry));
+        }
+    }
+    Ok((cmd_log, hook_out, diagnostic))
+}
+
 /// Render a table of log file entries, or "(none)" if empty.
 fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std::fmt::Result {
     if entries.is_empty() {
@@ -253,34 +296,11 @@ pub fn handle_logs_get(
 
     match hook {
         None if format == SwitchFormat::Json => {
-            let log_dir = repo.wt_logs_dir();
-            let (command_log, hook_output) = if log_dir.exists() {
-                let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-                    .collect();
-                entries.sort_by(|a, b| {
-                    let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                    let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                    b_time.cmp(&a_time)
-                });
-                let mut cmd_log = Vec::new();
-                let mut hook_out = Vec::new();
-                for entry in &entries {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if is_command_log_file(&name) {
-                        cmd_log.push(log_entry_to_json(entry));
-                    } else {
-                        hook_out.push(log_entry_to_json(entry));
-                    }
-                }
-                (cmd_log, hook_out)
-            } else {
-                (vec![], vec![])
-            };
+            let (command_log, hook_output, diagnostic) = partition_log_files_json(&repo)?;
             let output = serde_json::json!({
                 "command_log": command_log,
                 "hook_output": hook_output,
+                "diagnostic": diagnostic,
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
@@ -842,41 +862,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get log files, partitioned into command log, hook output, and diagnostic
-    let log_dir = repo.wt_logs_dir();
-    let (command_log, hook_output, diagnostic): (
-        Vec<serde_json::Value>,
-        Vec<serde_json::Value>,
-        Vec<serde_json::Value>,
-    ) = if log_dir.exists() {
-        let mut all_entries: Vec<_> = std::fs::read_dir(&log_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-            .collect();
-
-        all_entries.sort_by(|a, b| {
-            let a_time = a.metadata().and_then(|m| m.modified()).ok();
-            let b_time = b.metadata().and_then(|m| m.modified()).ok();
-            b_time.cmp(&a_time)
-        });
-
-        let mut cmd_log = Vec::new();
-        let mut hook_out = Vec::new();
-        let mut diagnostic = Vec::new();
-        for entry in &all_entries {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if is_command_log_file(&name) {
-                cmd_log.push(log_entry_to_json(entry));
-            } else if is_diagnostic_file(&name) {
-                diagnostic.push(log_entry_to_json(entry));
-            } else {
-                hook_out.push(log_entry_to_json(entry));
-            }
-        }
-        (cmd_log, hook_out, diagnostic)
-    } else {
-        (vec![], vec![], vec![])
-    };
+    let (command_log, hook_output, diagnostic) = partition_log_files_json(repo)?;
 
     // Get vars data (all branches) — collect into BTreeMap for sorted output
     let all_vars: std::collections::BTreeMap<_, _> = repo.all_vars_entries().into_iter().collect();

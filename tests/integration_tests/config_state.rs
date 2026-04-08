@@ -1953,6 +1953,7 @@ fn test_logs_get_json_empty(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
     {
       "command_log": [],
+      "diagnostic": [],
       "hook_output": []
     }
     "#);

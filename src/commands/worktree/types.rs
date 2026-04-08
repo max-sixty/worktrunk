@@ -227,6 +227,36 @@ pub enum RemoveResult {
     },
 }
 
+impl RemoveResult {
+    /// Convert to a JSON value for structured output.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            RemoveResult::RemovedWorktree {
+                worktree_path,
+                branch_name,
+                deletion_mode,
+                ..
+            } => serde_json::json!({
+                "kind": "worktree",
+                "branch": branch_name,
+                "path": worktree_path,
+                "branch_deleted": !deletion_mode.should_keep(),
+            }),
+            RemoveResult::BranchOnly {
+                branch_name,
+                deletion_mode,
+                pruned,
+                ..
+            } => serde_json::json!({
+                "kind": "branch_only",
+                "branch": branch_name,
+                "pruned": pruned,
+                "branch_deleted": !deletion_mode.should_keep(),
+            }),
+        }
+    }
+}
+
 /// Operation mode for worktree resolution - determines which checks are performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationMode {
