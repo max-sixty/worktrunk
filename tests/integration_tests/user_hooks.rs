@@ -1754,7 +1754,12 @@ third = "echo THIRD"
     // Run only "first" and "second" by passing multiple names — "third" should not run
     assert_cmd_snapshot!(
         "hook_multiple_name_filters",
-        make_snapshot_cmd(&repo, "hook", &["pre-merge", "first", "second", "--yes"], None)
+        make_snapshot_cmd(
+            &repo,
+            "hook",
+            &["pre-merge", "first", "second", "--yes"],
+            None
+        )
     );
 }
 
