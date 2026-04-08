@@ -762,15 +762,25 @@ fn add_temp_home_filters(settings: &mut insta::Settings, temp_home: &Path) {
 /// temp directory to catch those paths.
 fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     let temp_dir = std::env::temp_dir();
-    let temp_dir_str = temp_dir.to_string_lossy().replace('\\', "/");
-    let temp_dir_str = temp_dir_str.trim_end_matches('/');
-    settings.add_filter(
-        &format!(
-            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
-            regex::escape(temp_dir_str)
-        ),
-        "[PROJECT_ID]",
-    );
+    let canonical = canonicalize(&temp_dir).unwrap_or_else(|_| temp_dir.clone());
+
+    // Deduplicate: on macOS temp_dir=/var/folders/... canonicalizes to /private/var/folders/...
+    let mut paths: Vec<String> = Vec::new();
+    for p in [&canonical, &temp_dir] {
+        let s = p.to_string_lossy().replace('\\', "/");
+        let s = s.trim_end_matches('/').to_string();
+        if !paths.contains(&s) {
+            paths.push(s);
+        }
+    }
+
+    // Add the canonical (longer) path first so it matches before the shorter one.
+    for p in &paths {
+        settings.add_filter(
+            &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(p)),
+            "[PROJECT_ID]",
+        );
+    }
 }
 
 fn add_project_id_filters(settings: &mut insta::Settings) {
