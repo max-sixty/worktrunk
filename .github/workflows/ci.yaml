@@ -108,7 +108,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.32.0"
+        version: "=0.35.2"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -119,10 +119,7 @@ jobs:
         echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     - name: 🧪 Pre-merge hooks
-      run: |
-        wt hook pre-merge --yes insta
-        wt hook pre-merge --yes doctest
-        wt hook pre-merge --yes doc
+      run: wt hook pre-merge --yes insta doctest doc
 
     - name: 📊 Upload test timing
       if: always()
