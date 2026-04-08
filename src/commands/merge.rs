@@ -240,7 +240,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             HookType::PreMerge,
             &extra,
             HookFailureStrategy::FailFast,
-            None,
+            &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }
@@ -328,7 +328,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
         true
     };
 

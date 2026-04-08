@@ -38,7 +38,7 @@ fn run_filtered_hook(
     project_config: Option<&CommandConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
+    name_filters: &[String],
     failure_strategy: HookFailureStrategy,
 ) -> anyhow::Result<()> {
     run_hook_with_filter(
@@ -48,7 +48,7 @@ fn run_filtered_hook(
             project_config,
             hook_type,
             extra_vars,
-            name_filter,
+            name_filters,
             display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
         },
         failure_strategy,
@@ -62,11 +62,11 @@ fn run_post_hook(
     project_config: Option<&CommandConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
+    name_filters: &[String],
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
-        if name_filter.is_some() {
+        if !name_filters.is_empty() {
             // Name filtering operates on individual commands — extract matching
             // commands, convert to pipeline steps, and spawn via pipeline runner.
             let commands = prepare_hook_commands(
@@ -76,11 +76,11 @@ fn run_post_hook(
                     project_config,
                     hook_type,
                     extra_vars,
-                    name_filter,
+                    name_filters,
                     display_path: None,
                 },
             )?;
-            check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+            check_name_filter_matched(name_filters, commands.len(), user_config, project_config)?;
             let steps: Vec<SourcedStep> = commands
                 .into_iter()
                 .map(|cmd| SourcedStep {
@@ -106,7 +106,7 @@ fn run_post_hook(
         project_config,
         hook_type,
         extra_vars,
-        name_filter,
+        name_filters,
         HookFailureStrategy::Warn,
     )
 }
@@ -182,7 +182,7 @@ pub fn run_hook(
     yes: bool,
     foreground: Option<bool>,
     dry_run: bool,
-    name_filter: Option<&str>,
+    name_filters: &[String],
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
     // Derive context from current environment (branch-optional for CI compatibility)
@@ -195,8 +195,8 @@ pub fn run_hook(
 
     if !dry_run {
         // "Approve at the Gate": approve project hooks upfront
-        // Pass name_filter to only approve the targeted hook, not all hooks of this type
-        let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
+        // Pass name_filters to only approve the targeted hooks, not all hooks of this type
+        let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filters)?;
         // If declined, return early - the whole point of `wt hook` is to run hooks
         if !approved {
             eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
@@ -252,11 +252,11 @@ pub fn run_hook(
                 project_config: proj_config,
                 hook_type,
                 extra_vars: &extra_vars,
-                name_filter,
+                name_filters,
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(name_filter, commands.len(), user_config, proj_config)?;
+        check_name_filter_matched(name_filters, commands.len(), user_config, proj_config)?;
 
         for cmd in &commands {
             let label = match &cmd.prepared.name {
@@ -290,7 +290,7 @@ pub fn run_hook(
             proj_config,
             hook_type,
             &extra_vars,
-            name_filter,
+            name_filters,
             HookFailureStrategy::FailFast,
         ),
         HookType::PostStart
@@ -304,7 +304,7 @@ pub fn run_hook(
             proj_config,
             hook_type,
             &extra_vars,
-            name_filter,
+            name_filters,
         ),
     }
 }

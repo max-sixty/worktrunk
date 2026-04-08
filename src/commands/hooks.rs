@@ -84,7 +84,7 @@ pub struct HookCommandSpec<'cfg, 'vars, 'name, 'path> {
     pub project_config: Option<&'cfg CommandConfig>,
     pub hook_type: HookType,
     pub extra_vars: &'vars [(&'vars str, &'vars str)],
-    pub name_filter: Option<&'name str>,
+    pub name_filters: &'name [String],
     pub display_path: Option<&'path Path>,
 }
 
@@ -105,11 +105,14 @@ pub fn prepare_hook_commands(
         project_config,
         hook_type,
         extra_vars,
-        name_filter,
+        name_filters,
         display_path,
     } = spec;
 
-    let parsed_filter = name_filter.map(ParsedFilter::parse);
+    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+        .iter()
+        .map(|f| ParsedFilter::parse(f))
+        .collect();
     let mut commands = Vec::new();
 
     let display_path = display_path.map(|p| p.to_path_buf());
@@ -123,16 +126,13 @@ pub fn prepare_hook_commands(
     for (source, config) in sources {
         let Some(config) = config else { continue };
 
-        // Skip if filter specifies a different source
-        if !parsed_filter
-            .as_ref()
-            .is_none_or(|f| f.matches_source(source))
-        {
+        // Skip if all filters specify a different source
+        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
             continue;
         }
 
         let prepared = prepare_commands(config, ctx, extra_vars, hook_type, source)?;
-        let filtered = filter_by_name(prepared, parsed_filter.as_ref().map(|f| f.name));
+        let filtered = filter_by_name(prepared, &parsed_filters);
         commands.extend(filtered.into_iter().map(|p| SourcedCommand {
             prepared: p,
             source,
@@ -144,19 +144,39 @@ pub fn prepare_hook_commands(
     Ok(commands)
 }
 
-/// Filter commands by name (returns empty vec if name not found).
-/// Empty name matches all commands (supports `user:` to mean "all user hooks").
+/// Filter commands by name (returns empty vec if no names match).
+/// Empty slice matches all commands. Each filter's name component is checked
+/// independently — empty names (from `user:` or `project:`) match all commands
+/// from that source (source filtering is handled by the caller).
 fn filter_by_name(
     commands: Vec<PreparedCommand>,
-    name_filter: Option<&str>,
+    parsed_filters: &[ParsedFilter<'_>],
 ) -> Vec<PreparedCommand> {
-    match name_filter {
-        Some(name) if !name.is_empty() => commands
-            .into_iter()
-            .filter(|cmd| cmd.name.as_deref() == Some(name))
-            .collect(),
-        _ => commands, // None or empty = match all
+    if parsed_filters.is_empty() {
+        return commands; // No filters = match all
     }
+
+    // Collect the non-empty name parts from filters
+    let filter_names: Vec<&str> = parsed_filters
+        .iter()
+        .map(|f| f.name)
+        .filter(|n| !n.is_empty())
+        .collect();
+
+    // If all filters have empty names (e.g., just "user:" or "project:"),
+    // match all commands (source filtering already handled by caller)
+    if filter_names.is_empty() {
+        return commands;
+    }
+
+    commands
+        .into_iter()
+        .filter(|cmd| {
+            cmd.name
+                .as_deref()
+                .is_some_and(|n| filter_names.contains(&n))
+        })
+        .collect()
 }
 
 /// A pipeline step with source information, for pipeline-aware execution.
@@ -233,9 +253,14 @@ fn format_unnamed(source_label: &str, count: usize) -> String {
 /// can use different contexts (e.g., post-remove uses the removed branch while
 /// post-switch uses the destination branch).
 ///
-/// Example output: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
+/// When `show_branch` is true, includes the branch name for disambiguation in batch
+/// contexts (e.g., prune removing multiple worktrees):
+/// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
+///
+/// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
 pub fn announce_and_spawn_background_hooks(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
+    show_branch: bool,
 ) -> anyhow::Result<()> {
     let non_empty: Vec<_> = pipelines
         .into_iter()
@@ -265,9 +290,24 @@ pub fn announce_and_spawn_background_hooks(
         }
     }
 
+    // In batch contexts (prune), use the first pipeline's branch for disambiguation.
+    // This is the removed branch — it identifies the triggering event even for
+    // post-switch hooks that fire as a consequence of the removal.
+    let branch_suffix = if show_branch {
+        non_empty
+            .first()
+            .and_then(|(ctx, _)| ctx.branch)
+            .map(|b| cformat!(" for <bold>{b}</>"))
+    } else {
+        None
+    };
+
     let combined: String = type_summaries
         .iter()
-        .map(|(ht, summaries)| format!("{ht}: {}", summaries.join(", ")))
+        .map(|(ht, summaries)| {
+            let suffix = branch_suffix.as_deref().unwrap_or("");
+            format!("{ht}{suffix}: {}", summaries.join(", "))
+        })
         .collect::<Vec<_>>()
         .join("; ");
     let message = match display_path {
@@ -392,28 +432,34 @@ fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> a
     Ok(())
 }
 
-/// Check if a name filter was provided but no commands matched.
+/// Check if name filters were provided but no commands matched.
 /// Returns an error listing available command names if so.
 pub(crate) fn check_name_filter_matched(
-    name_filter: Option<&str>,
+    name_filters: &[String],
     total_commands_run: usize,
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
 ) -> anyhow::Result<()> {
-    if let Some(filter_str) = name_filter
-        && total_commands_run == 0
-    {
-        let parsed = ParsedFilter::parse(filter_str);
+    if !name_filters.is_empty() && total_commands_run == 0 {
+        // Show the combined filter string in the error
+        let filter_display = name_filters.join(", ");
+
+        // Use the first filter to determine source scope for available commands,
+        // but collect across all filters' source scopes
+        let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+            .iter()
+            .map(|f| ParsedFilter::parse(f))
+            .collect();
         let mut available = Vec::new();
 
-        // Collect available commands from sources that match the filter
         let sources = [
             (HookSource::User, user_config),
             (HookSource::Project, project_config),
         ];
         for (source, config) in sources {
             let Some(config) = config else { continue };
-            if !parsed.matches_source(source) {
+            // Include this source if any filter matches it
+            if !parsed_filters.iter().any(|f| f.matches_source(source)) {
                 continue;
             }
             available.extend(
@@ -424,7 +470,7 @@ pub(crate) fn check_name_filter_matched(
         }
 
         return Err(worktrunk::git::GitError::HookCommandNotFound {
-            name: filter_str.to_string(),
+            name: filter_display,
             available,
         }
         .into());
@@ -450,11 +496,11 @@ pub fn run_hook_with_filter(
         user_config,
         project_config,
         hook_type,
-        name_filter,
+        name_filters,
         ..
     } = spec;
 
-    check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+    check_name_filter_matched(name_filters, commands.len(), user_config, project_config)?;
 
     if commands.is_empty() {
         return Ok(());
@@ -542,7 +588,7 @@ pub fn execute_hook(
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     failure_strategy: HookFailureStrategy,
-    name_filter: Option<&str>,
+    name_filters: &[String],
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     let project_config = ctx.repo.load_project_config()?;
@@ -557,7 +603,7 @@ pub fn execute_hook(
             project_config: proj_config,
             hook_type,
             extra_vars,
-            name_filter,
+            name_filters,
             display_path,
         },
         failure_strategy,

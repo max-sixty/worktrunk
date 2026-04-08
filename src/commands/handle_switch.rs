@@ -148,7 +148,7 @@ pub(crate) fn run_pre_switch_hooks(
             HookType::PreSwitch,
             &extra_vars,
             HookFailureStrategy::FailFast,
-            None,
+            &[],
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }
@@ -262,7 +262,7 @@ pub(crate) fn spawn_switch_background_hooks(
         );
     }
 
-    super::hooks::announce_and_spawn_background_hooks(pipelines)
+    super::hooks::announce_and_spawn_background_hooks(pipelines, false)
 }
 
 /// Handle the switch command.

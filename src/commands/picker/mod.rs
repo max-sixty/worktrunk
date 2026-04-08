@@ -117,7 +117,7 @@ impl PickerCollector {
                     worktrunk::HookType::PreRemove,
                     &extra_vars,
                     HookFailureStrategy::FailFast,
-                    None,
+                    &[],
                     None, // no display path in TUI context
                 )?;
 

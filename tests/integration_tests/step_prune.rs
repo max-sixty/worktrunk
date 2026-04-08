@@ -779,3 +779,23 @@ fn test_prune_json_orphan_branch(repo: TestRepo) {
 
     assert_snapshot!(String::from_utf8_lossy(&output.stdout));
 }
+
+/// Hook announcements during prune include the branch name for disambiguation
+#[rstest]
+fn test_prune_hook_announcements_include_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Use branch names that don't collide with the fixture's feature-a/b/c
+    repo.add_worktree("merged-x");
+    repo.add_worktree("merged-y");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo done"
+"#,
+    );
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1");
+    assert_cmd_snapshot!(cmd);
+}
