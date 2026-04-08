@@ -1702,7 +1702,9 @@ pub fn step_prune(
             dry_candidates.push(candidate);
         }
 
-        // Report skipped worktrees (after candidates, before summary)
+        // Report skipped worktrees (after candidates, before summary).
+        // Sort for deterministic output regardless of channel completion order.
+        skipped_young.sort();
         if !skipped_young.is_empty() {
             let names = skipped_young.join(", ");
             eprintln!(
