@@ -762,22 +762,22 @@ fn add_temp_home_filters(settings: &mut insta::Settings, temp_home: &Path) {
 /// temp directory to catch those paths.
 fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     let temp_dir = std::env::temp_dir();
+    let temp_dir_str = temp_dir.to_string_lossy().replace('\\', "/");
+    let temp_dir_str = temp_dir_str.trim_end_matches('/');
+
     let canonical = canonicalize(&temp_dir).unwrap_or_else(|_| temp_dir.clone());
+    let canonical_str = canonical.to_string_lossy().replace('\\', "/");
+    let canonical_str = canonical_str.trim_end_matches('/');
 
-    // Deduplicate: on macOS temp_dir=/var/folders/... canonicalizes to /private/var/folders/...
-    let mut paths: Vec<String> = Vec::new();
-    for p in [&canonical, &temp_dir] {
-        let s = p.to_string_lossy().replace('\\', "/");
-        let s = s.trim_end_matches('/').to_string();
-        if !paths.contains(&s) {
-            paths.push(s);
-        }
-    }
-
-    // Add the canonical (longer) path first so it matches before the shorter one.
-    for p in &paths {
+    // Canonical (longer) path first so it matches before the shorter one
+    // (e.g., /private/var/folders/... before /var/folders/... on macOS).
+    settings.add_filter(
+        &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(canonical_str)),
+        "[PROJECT_ID]",
+    );
+    if canonical_str != temp_dir_str {
         settings.add_filter(
-            &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(p)),
+            &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(temp_dir_str)),
             "[PROJECT_ID]",
         );
     }
