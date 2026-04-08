@@ -149,7 +149,6 @@ pub fn handle_list(
     cli_branches: bool,
     cli_remotes: bool,
     cli_full: bool,
-    cli_hidden: bool,
     render_mode: RenderMode,
 ) -> anyhow::Result<()> {
     // Progressive rendering only for table format with Progressive mode
@@ -175,7 +174,6 @@ pub fn handle_list(
             cli_branches,
             cli_remotes,
             cli_full,
-            cli_hidden,
         },
         show_progress,
         render_table,

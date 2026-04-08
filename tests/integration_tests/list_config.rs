@@ -515,27 +515,6 @@ hidden = ["*/repo.tmp-*", "*/repo.scratch-*"]
 }
 
 #[rstest]
-fn test_list_hidden_flag_shows_all_worktrees(mut repo: TestRepo) {
-    // Create worktrees: one matching the hidden pattern, one not
-    repo.add_worktree("feature");
-    repo.add_worktree("tmp-scratch");
-
-    // Write config with hidden pattern
-    repo.write_test_config(
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[list]
-hidden = ["*/repo.tmp-*"]
-"#,
-    );
-
-    // Use --hidden flag to show ALL worktrees (disables filtering)
-    let mut cmd = list_snapshots::command(&repo, repo.root_path());
-    cmd.arg("--hidden");
-    assert_cmd_snapshot!(cmd);
-}
-
-#[rstest]
 fn test_list_config_hidden_by_parent_path(mut repo: TestRepo) {
     // Create worktrees in different parent directories
     let temp_dir = repo.root_path().parent().unwrap();

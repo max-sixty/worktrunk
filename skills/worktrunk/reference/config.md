@@ -165,7 +165,7 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
-hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output; use --hidden to show all
+hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output
 ```
 
 ### Commit

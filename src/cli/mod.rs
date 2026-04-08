@@ -390,11 +390,7 @@ pub(crate) struct ListArgs {
     #[arg(long)]
     pub(crate) full: bool,
 
-    /// \[experimental\] Show all items, including hidden ones
-    ///
-    /// Disables filtering by [list].hidden patterns, showing all items.
-    #[arg(long)]
-    pub(crate) hidden: bool,
+    // TODO: consider adding a flag to show hidden items (name TBD — `--hidden`, `--all`, etc.)
 
     /// Show fast info immediately, update with slow info
     ///
@@ -787,8 +783,6 @@ hidden = ["tmp-*", "*/scratch/*"]
 ```
 
 A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
-
-Use `--hidden` to bypass filtering and show everything.
 
 ---
 
@@ -1811,7 +1805,7 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
-hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output; use --hidden to show all
+hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output
 ```
 
 ### Commit

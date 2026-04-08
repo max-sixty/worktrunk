@@ -251,7 +251,6 @@ pub enum ShowConfig {
         cli_branches: bool,
         cli_remotes: bool,
         cli_full: bool,
-        cli_hidden: bool,
     },
 }
 
@@ -368,7 +367,6 @@ pub fn collect(
         skip_tasks,
         command_timeout,
         collect_deadline,
-        show_hidden,
         hidden_patterns,
     ) = match show_config {
         ShowConfig::Resolved {
@@ -383,14 +381,12 @@ pub fn collect(
             skip_tasks,
             command_timeout,
             collect_deadline,
-            false,
             None,
         ),
         ShowConfig::DeferredToParallel {
             cli_branches,
             cli_remotes,
             cli_full,
-            cli_hidden,
         } => {
             let config = repo.config();
             let show_branches = cli_branches || config.list.branches();
@@ -423,7 +419,6 @@ pub fn collect(
                 skip_tasks,
                 command_timeout,
                 collect_deadline,
-                cli_hidden,
                 hidden_patterns,
             )
         }
@@ -432,24 +427,20 @@ pub fn collect(
     // Compile hidden patterns once for use across worktrees, branches, and remotes.
     // Uses string matching (not path matching) for branch names since they contain
     // `/` separators but aren't filesystem paths.
-    let compiled_hidden: Vec<glob::Pattern> = if show_hidden {
-        Vec::new()
-    } else {
-        hidden_patterns
-            .as_ref()
-            .map(|p| {
-                p.iter()
-                    .filter_map(|s| match glob::Pattern::new(s) {
-                        Ok(pat) => Some(pat),
-                        Err(e) => {
-                            log::warn!("Invalid [list].hidden pattern {:?}: {}", s, e);
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
+    let compiled_hidden: Vec<glob::Pattern> = hidden_patterns
+        .as_ref()
+        .map(|p| {
+            p.iter()
+                .filter_map(|s| match glob::Pattern::new(s) {
+                    Ok(pat) => Some(pat),
+                    Err(e) => {
+                        log::warn!("Invalid [list].hidden pattern {:?}: {}", s, e);
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let branch_hidden =
         |name: &str| -> bool { compiled_hidden.iter().any(|pat| pat.matches(name)) };
 

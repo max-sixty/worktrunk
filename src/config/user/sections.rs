@@ -151,7 +151,7 @@ pub struct ListConfig {
     pub timeout_ms: Option<u64>,
 
     /// Glob patterns for items to hide from list output.
-    /// Matches against worktree paths and branch names. Use `--hidden` flag to view hidden items.
+    /// Matches against worktree paths and branch names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden: Option<Vec<String>>,
 }

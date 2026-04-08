@@ -145,8 +145,6 @@ hidden = ["tmp-*", "*/scratch/*"]
 
 A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
 
-Use `--hidden` to bypass filtering and show everything.
-
 ---
 
 ## JSON output
@@ -280,11 +278,6 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
 
       <b><span class=c>--full</span></b>
           Show CI, diff analysis, and LLM summaries
-
-      <b><span class=c>--hidden</span></b>
-          [experimental] Show all items, including hidden ones
-
-          Disables filtering by [list].hidden patterns, showing all items.
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info

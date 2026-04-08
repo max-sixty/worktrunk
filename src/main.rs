@@ -540,7 +540,6 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
                 args.branches,
                 args.remotes,
                 args.full,
-                args.hidden,
                 render_mode,
             )
         }
