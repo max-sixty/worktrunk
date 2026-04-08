@@ -75,12 +75,16 @@ restriction is the safety boundary, not access control on the workflow.
 - Editing a comment or issue body re-triggers the mention workflow
 
 **Does not trigger:**
-- Issues authored by `worktrunk-bot` (prevents self-triggering)
-- `worktrunk-bot`'s own comments or reviews (loop prevention)
+- `worktrunk-bot`'s own comments (workflow-level loop prevention)
 - Empty approvals on `worktrunk-bot` PRs
 - Comments on issues/PRs where `worktrunk-bot` hasn't engaged and no mention
-- Inline review comments from `worktrunk-bot` itself
 - Draft PRs
+
+**Loop prevention for bot reviews:** Bot-authored reviews and review comments
+are no longer filtered at the workflow level (removed in tend#168 to allow the
+bot to apply its own review suggestions). Instead, the prompt includes
+self-conversation loop prevention: the bot exits silently unless there is a
+distinct role boundary (e.g., reviewer on its own PR).
 
 **Routing:** Formal reviews (`pull_request_review`) → `tend-review`. Inline
 comments (`pull_request_review_comment`) and conversation comments
