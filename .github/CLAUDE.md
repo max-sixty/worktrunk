@@ -31,8 +31,6 @@ restricted to `v*` tags.
 
 ## Build environment
 
-All workflows must set `CARGO_INCREMENTAL=0`. `Swatinem/rust-cache` hashes
-`CARGO*` env vars into the cache key (via the `env-vars` input, default prefix
-`CARGO`). If one workflow sets `CARGO_INCREMENTAL=0` and another doesn't, they
-get different cache keys and won't share cached artifacts. CI does clean builds
-anyway, so incremental state is pure overhead.
+`Swatinem/rust-cache` hashes `CARGO*` and `RUST*` env vars into the cache key.
+All workflows sharing a cache must set the same env vars, or they'll get
+different keys and miss each other's caches.
