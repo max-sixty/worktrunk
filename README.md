@@ -8,6 +8,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yaml?event=push&branch=main&style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci)
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
+[![maintained with tend](https://img.shields.io/badge/maintained_with-tend-blue?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTguNSAxNGEuNS41IDAgMCAxLTEgMFY4LjdDNSA4LjMgMyA2IDMgMy41YS41LjUgMCAwIDEgLjUtLjVDNi41IDMgOCA1IDggNy41IDggNSA5LjUgMyAxMi41IDNhLjUuNSAwIDAgMSAuNS41QzEzIDYgMTEgOC4zIDguNSA4LjdaIi8+PC9zdmc+Cg==)](https://github.com/max-sixty/tend)
 
 > **March 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) at the start of the year, and has quickly become the most popular git worktree manager. It's built with love (there's no slop!). Please let me know any frictions at all; I'm intensely focused on continuing to make Worktrunk excellent, and the biggest help is folks posting problems they perceive.
 
