@@ -772,12 +772,18 @@ fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     // Canonical (longer) path first so it matches before the shorter one
     // (e.g., /private/var/folders/... before /var/folders/... on macOS).
     settings.add_filter(
-        &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(canonical_str)),
+        &format!(
+            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
+            regex::escape(canonical_str)
+        ),
         "[PROJECT_ID]",
     );
     if canonical_str != temp_dir_str {
         settings.add_filter(
-            &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(temp_dir_str)),
+            &format!(
+                r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
+                regex::escape(temp_dir_str)
+            ),
             "[PROJECT_ID]",
         );
     }
