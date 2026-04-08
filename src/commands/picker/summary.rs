@@ -58,7 +58,7 @@ mod tests {
     use super::*;
     use crate::commands::list::model::{ItemKind, WorktreeData};
     use std::fs;
-    use worktrunk::testing::{TestRepo, set_test_identity};
+    use worktrunk::testing::TestRepo;
 
     /// Create a minimal temp git repo (for cache-only tests that don't need branches).
     fn temp_repo() -> (TestRepo, Repository) {
@@ -377,36 +377,24 @@ mod tests {
         // infer_default_branch_locally() won't detect (it checks "main",
         // "master", "develop", "trunk"). This ensures default_branch() returns
         // None, exercising the code path where branch diff is skipped.
-        let dir = tempfile::tempdir().unwrap();
-        worktrunk::shell_exec::Cmd::new("git")
-            .args(["init", "--initial-branch=init-branch"])
-            .current_dir(dir.path())
-            .run()
-            .unwrap();
-        let setup_repo = Repository::at(dir.path()).unwrap();
-        set_test_identity(&setup_repo);
-        fs::write(dir.path().join("README.md"), "# Project\n").unwrap();
-        setup_repo.run_command(&["add", "README.md"]).unwrap();
-        setup_repo
-            .run_command(&["commit", "-m", "initial commit"])
-            .unwrap();
-        setup_repo
-            .run_command(&["checkout", "-b", "feature"])
-            .unwrap();
-        setup_repo
-            .run_command(&["commit", "--allow-empty", "-m", "feature commit"])
-            .unwrap();
+        let t = TestRepo::new();
+        t.commit("initial commit");
+        // Rename to exotic branch name so infer_default_branch_locally() returns None
+        t.run_git(&["branch", "-m", "main", "init-branch"]);
+        t.run_git(&["checkout", "-b", "feature"]);
+        t.run_git(&["commit", "--allow-empty", "-m", "feature commit"]);
 
         // Add uncommitted changes
-        fs::write(dir.path().join("wip.txt"), "work in progress\n").unwrap();
-        setup_repo.run_command(&["add", "wip.txt"]).unwrap();
+        fs::write(t.path().join("wip.txt"), "work in progress\n").unwrap();
+        t.repo.run_command(&["add", "wip.txt"]).unwrap();
 
-        let head = setup_repo
+        let head = t
+            .repo
             .run_command(&["rev-parse", "HEAD"])
             .unwrap()
             .trim()
             .to_string();
-        let repo = Repository::at(dir.path()).unwrap();
+        let repo = Repository::at(t.path()).unwrap();
 
         // Verify default_branch() actually returns None with these branch names
         assert!(
@@ -414,7 +402,7 @@ mod tests {
             "expected no default branch with exotic branch names"
         );
 
-        let result = compute_combined_diff("feature", &head, Some(dir.path()), &repo);
+        let result = compute_combined_diff("feature", &head, Some(t.path()), &repo);
         assert!(
             result.is_some(),
             "should include working tree diff even without default branch"

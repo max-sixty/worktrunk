@@ -208,16 +208,8 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::shell_exec::Cmd;
-    use crate::testing::{TestRepo, set_test_identity};
+    use crate::testing::TestRepo;
     use ansi_str::AnsiStr;
-
-    fn git_init(path: &Path) {
-        Cmd::new("git")
-            .args(["init", "--quiet", "-b", "main"])
-            .current_dir(path)
-            .run()
-            .unwrap();
-    }
 
     #[test]
     fn test_try_repo_at_rejects_git_file() {
@@ -229,9 +221,8 @@ mod tests {
 
     #[test]
     fn test_try_repo_at_accepts_git_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        git_init(tmp.path());
-        assert!(try_repo_at(tmp.path()).is_some());
+        let test = TestRepo::new();
+        assert!(try_repo_at(test.path()).is_some());
     }
 
     #[test]
@@ -277,24 +268,18 @@ mod tests {
     #[test]
     fn test_was_worktree_of_finds_existing_worktree() {
         let tmp = tempfile::tempdir().unwrap();
-        // Canonicalize to handle symlinks (e.g., /tmp -> /private/tmp on macOS)
         let base = dunce::canonicalize(tmp.path()).unwrap();
-        let repo_dir = base.join("repo");
-        std::fs::create_dir(&repo_dir).unwrap();
-        git_init(&repo_dir);
-        let repo = Repository::at(&repo_dir).unwrap();
-        set_test_identity(&repo);
-        // Create an initial commit so worktree add works
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
 
         // Add a linked worktree
         let wt_path = base.join("feature-wt");
         let wt_str = wt_path.to_string_lossy();
-        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
-        assert!(was_worktree_of(&repo, &wt_path));
+        assert!(was_worktree_of(&test.repo, &wt_path));
     }
 
     #[test]
@@ -318,18 +303,14 @@ mod tests {
     fn test_recover_from_path_finds_deleted_worktree() {
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
-        let repo_dir = base.join("repo");
-        std::fs::create_dir(&repo_dir).unwrap();
-        git_init(&repo_dir);
-        let repo = Repository::at(&repo_dir).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
 
         // Add a linked worktree
         let wt_path = base.join("feature-wt");
         let wt_str = wt_path.to_string_lossy();
-        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree directory (simulating external removal)
@@ -343,13 +324,8 @@ mod tests {
     fn test_recover_from_path_returns_none_for_unrelated_path() {
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
-        let repo_dir = base.join("repo");
-        std::fs::create_dir(&repo_dir).unwrap();
-        git_init(&repo_dir);
-        let repo = Repository::at(&repo_dir).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
 
         // Try to recover from a path that was never a worktree
         let unrelated = base.join("not-a-worktree");
@@ -362,29 +338,21 @@ mod tests {
         let base = dunce::canonicalize(tmp.path()).unwrap();
 
         // Create two sibling repos
-        let repo_a = base.join("alpha");
-        let repo_b = base.join("beta");
-        std::fs::create_dir(&repo_a).unwrap();
-        std::fs::create_dir(&repo_b).unwrap();
-        git_init(&repo_a);
-        git_init(&repo_b);
-        let repo_a_handle = Repository::at(&repo_a).unwrap();
-        let repo_b_handle = Repository::at(&repo_b).unwrap();
-        for repo in [&repo_a_handle, &repo_b_handle] {
-            set_test_identity(repo);
-            repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-                .unwrap();
-        }
+        let alpha = TestRepo::at(&base.join("alpha"));
+        let beta = TestRepo::at(&base.join("beta"));
+        alpha.commit("init");
+        beta.commit("init");
 
         // Add worktrees for both repos as siblings
         let wt_a = base.join("alpha.feature");
         let wt_b = base.join("beta.feature");
         let wt_a_str = wt_a.to_string_lossy();
         let wt_b_str = wt_b.to_string_lossy();
-        repo_a_handle
+        alpha
+            .repo
             .run_command(&["worktree", "add", &wt_a_str, "-b", "feature"])
             .unwrap();
-        repo_b_handle
+        beta.repo
             .run_command(&["worktree", "add", &wt_b_str, "-b", "feature"])
             .unwrap();
 
@@ -395,7 +363,7 @@ mod tests {
         let recovered = recover_from_path(&wt_b).unwrap();
         assert_eq!(
             dunce::canonicalize(recovered.repo_path().unwrap()).unwrap(),
-            repo_b
+            base.join("beta")
         );
     }
 
@@ -404,19 +372,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
 
-        let repo_dir = base.join("myrepo");
-        std::fs::create_dir(&repo_dir).unwrap();
-        git_init(&repo_dir);
-        let repo = Repository::at(&repo_dir).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
+        let test = TestRepo::at(&base.join("myrepo"));
+        test.commit("init");
 
         // Add a worktree nested under the repo
-        let wt_path = repo_dir.join(".worktrees").join("feature");
+        let wt_path = test.path().join(".worktrees").join("feature");
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
         let wt_str = wt_path.to_string_lossy();
-        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree
@@ -430,17 +394,13 @@ mod tests {
     fn test_recover_from_path_deep_pwd() {
         let tmp = tempfile::tempdir().unwrap();
         let base = dunce::canonicalize(tmp.path()).unwrap();
-        let repo_dir = base.join("repo");
-        std::fs::create_dir(&repo_dir).unwrap();
-        git_init(&repo_dir);
-        let repo = Repository::at(&repo_dir).unwrap();
-        set_test_identity(&repo);
-        repo.run_command(&["commit", "--allow-empty", "-m", "init"])
-            .unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
 
         let wt_path = base.join("feature-wt");
         let wt_str = wt_path.to_string_lossy();
-        repo.run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
             .unwrap();
 
         // Delete the worktree

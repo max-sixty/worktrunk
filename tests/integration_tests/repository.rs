@@ -3,7 +3,6 @@
 use std::fs;
 
 use worktrunk::git::Repository;
-use worktrunk::shell_exec::Cmd;
 
 use crate::common::TestRepo;
 
@@ -664,86 +663,33 @@ fn test_merge_integration_probe_already_integrated() {
 /// falling back to parent of git_common_dir for normal repos.
 #[test]
 fn test_repo_path_in_submodule() {
-    use tempfile::TempDir;
+    // Create parent and submodule-origin repos
+    let parent = TestRepo::new();
+    fs::write(parent.path().join("README.md"), "# Parent").unwrap();
+    parent.run_git(&["add", "."]);
+    parent.run_git(&["commit", "-m", "Initial commit"]);
 
-    // Create parent repository
-    let parent_temp = TempDir::new().unwrap();
-    let parent_path = parent_temp.path().join("parent");
-    fs::create_dir(&parent_path).unwrap();
-
-    // Initialize parent repo with git config
-    Cmd::new("git")
-        .args(["init", "-q"])
-        .current_dir(&parent_path)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .run()
-        .unwrap();
-
-    // Configure git user for commits
-    let parent_repo = Repository::at(&parent_path).unwrap();
-    parent_repo
-        .run_command(&["config", "user.email", "test@example.com"])
-        .unwrap();
-    parent_repo
-        .run_command(&["config", "user.name", "Test User"])
-        .unwrap();
-
-    // Create initial commit in parent
-    fs::write(parent_path.join("README.md"), "# Parent").unwrap();
-    parent_repo.run_command(&["add", "."]).unwrap();
-    parent_repo
-        .run_command(&["commit", "-m", "Initial commit"])
-        .unwrap();
-
-    // Create submodule repository (as a separate repo first)
-    let sub_temp = TempDir::new().unwrap();
-    let sub_origin_path = sub_temp.path().join("submodule-origin");
-    fs::create_dir(&sub_origin_path).unwrap();
-
-    Cmd::new("git")
-        .args(["init", "-q"])
-        .current_dir(&sub_origin_path)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .run()
-        .unwrap();
-
-    // Configure git user for submodule
-    let sub_repo = Repository::at(&sub_origin_path).unwrap();
-    sub_repo
-        .run_command(&["config", "user.email", "test@example.com"])
-        .unwrap();
-    sub_repo
-        .run_command(&["config", "user.name", "Test User"])
-        .unwrap();
-
-    // Create initial commit in submodule origin
-    fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
-    sub_repo.run_command(&["add", "."]).unwrap();
-    sub_repo
-        .run_command(&["commit", "-m", "Submodule initial commit"])
-        .unwrap();
+    let sub_origin = TestRepo::new();
+    fs::write(sub_origin.path().join("README.md"), "# Submodule").unwrap();
+    sub_origin.run_git(&["add", "."]);
+    sub_origin.run_git(&["commit", "-m", "Submodule initial commit"]);
 
     // Add submodule to parent (using local path directly, with file transport allowed)
-    parent_repo
+    parent
+        .repo
         .run_command(&[
             "-c",
             "protocol.file.allow=always",
             "submodule",
             "add",
-            sub_origin_path.to_str().unwrap(),
+            sub_origin.path().to_str().unwrap(),
             "sub",
         ])
         .unwrap();
-
-    // Commit the submodule addition
-    parent_repo
-        .run_command(&["commit", "-m", "Add submodule"])
-        .unwrap();
+    parent.run_git(&["commit", "-m", "Add submodule"]);
 
     // Now test: create Repository from inside the submodule
-    let submodule_path = parent_path.join("sub");
+    let submodule_path = parent.path().join("sub");
     assert!(
         submodule_path.exists(),
         "Submodule path should exist: {:?}",

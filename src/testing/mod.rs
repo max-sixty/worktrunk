@@ -14,6 +14,8 @@
 //!
 //! - [`TestRepo::new()`] — lightweight: `git init` + identity. For unit tests.
 //! - [`TestRepo::with_initial_commit()`] — lightweight + one commit.
+//! - [`TestRepo::at(path)`](TestRepo::at) — repo at a caller-specified path.
+//!   For tests needing multiple repos in a shared directory.
 //! - [`TestRepo::standard()`] — copies pre-built fixture with remote + worktrees.
 //!   For integration tests (used by the `repo()` rstest fixture).
 //! - [`TestRepo::empty()`] — `git init` with no commits, no branches.
@@ -566,16 +568,6 @@ pub fn set_xdg_config_path(cmd: &mut Command, home: &Path) {
     );
 }
 
-/// Set git user identity on a repository.
-///
-/// Use this for tests that manage their own repo creation (not via
-/// [`TestRepo`]) and need identity configured for commits.
-pub fn set_test_identity(repo: &Repository) {
-    repo.run_command(&["config", "user.name", "Test"]).unwrap();
-    repo.run_command(&["config", "user.email", "test@test.com"])
-        .unwrap();
-}
-
 /// Check that a git command succeeded, panicking with diagnostics if not.
 ///
 /// Use this after `git_command().run()` to ensure the command succeeded.
@@ -720,6 +712,52 @@ impl TestRepo {
         repo.setup_mock_gh();
 
         repo
+    }
+
+    /// Create a repo at a caller-specified path with identity configured.
+    ///
+    /// Unlike [`new()`](Self::new), this does not own the repo's parent
+    /// directory — the caller manages its lifetime (e.g., via their own
+    /// `TempDir`). A separate internal tempdir holds config files.
+    ///
+    /// Use for tests that need multiple repos in a shared directory
+    /// (e.g., sibling worktrees, multi-repo recovery tests).
+    pub fn at(path: &Path) -> Self {
+        std::fs::create_dir_all(path).unwrap();
+
+        let config_dir = TempDir::new().unwrap();
+        let test_config_path = config_dir.path().join("test-config.toml");
+        let test_approvals_path = config_dir.path().join("test-approvals.toml");
+        let git_config_path = config_dir.path().join("test-gitconfig");
+        write_test_gitconfig(&git_config_path);
+
+        configure_git_env(Cmd::new("git"), &git_config_path)
+            .args(["init", "-b", "main", "--quiet"])
+            .current_dir(path)
+            .run()
+            .unwrap();
+
+        let root = canonicalize(path).unwrap();
+        let repo = Repository::at(&root).unwrap();
+        repo.run_command(&["config", "user.name", "Test User"])
+            .unwrap();
+        repo.run_command(&["config", "user.email", "test@example.com"])
+            .unwrap();
+
+        Self {
+            temp_dir: config_dir,
+            root: root.clone(),
+            repo,
+            worktrees: HashMap::new(),
+            remote: None,
+            test_config_path,
+            test_approvals_path,
+            git_config_path,
+            mock_bin_path: None,
+            claude_installed: false,
+            opencode_installed: false,
+            _lifetime_guard: None,
+        }
     }
 
     /// Create an empty test repository (no commits, no branches).
