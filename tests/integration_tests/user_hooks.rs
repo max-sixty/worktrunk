@@ -1740,6 +1740,40 @@ first = "echo 'FIRST'"
     );
 }
 
+#[rstest]
+fn test_hook_multiple_name_filters(repo: TestRepo) {
+    // Write project config with three named hooks
+    repo.write_project_config(
+        r#"[pre-merge]
+first = "echo FIRST"
+second = "echo SECOND"
+third = "echo THIRD"
+"#,
+    );
+
+    // Run only "first" and "second" by passing multiple names — "third" should not run
+    assert_cmd_snapshot!(
+        "hook_multiple_name_filters",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "first", "second", "--yes"], None)
+    );
+}
+
+#[rstest]
+fn test_hook_multiple_name_filters_none_match(repo: TestRepo) {
+    // Write project config with named hooks
+    repo.write_project_config(
+        r#"[pre-merge]
+first = "echo FIRST"
+"#,
+    );
+
+    // Run with multiple names that don't match any configured hook
+    assert_cmd_snapshot!(
+        "hook_multiple_name_filters_none_match",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "foo", "bar", "--yes"], None)
+    );
+}
+
 // ============================================================================
 // Custom Variable (--var) Tests
 // ============================================================================
