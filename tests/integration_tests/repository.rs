@@ -23,7 +23,10 @@ fn test_is_bare_returns_false_when_core_bare_unset() {
     repo.run_git(&["config", "--unset", "core.bare"]);
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    assert!(!repository.is_bare().unwrap(), "repo with unset core.bare should not be detected as bare");
+    assert!(
+        !repository.is_bare().unwrap(),
+        "repo with unset core.bare should not be detected as bare"
+    );
 }
 
 #[test]
