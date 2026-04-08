@@ -576,11 +576,16 @@ impl Repository {
                     .context(path_to_logging_context(&self.git_common_dir))
                     .run()
                     .context("failed to check if repository is bare")?;
-                // --type=bool normalizes all boolean representations to true/false.
-                // Exits 0 with the value if the key exists, exits 1 if missing
-                // (defaults to non-bare).
-                Ok(output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).trim() == "true")
+                // Exit 0 = key found (value printed), 1 = key missing (not bare),
+                // 2+ = config error (corrupt file, invalid type).
+                match output.status.code() {
+                    Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+                    Some(1) => Ok(false),
+                    _ => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        bail!("git config core.bare failed: {}", stderr.trim());
+                    }
+                }
             })
             .copied()
     }
