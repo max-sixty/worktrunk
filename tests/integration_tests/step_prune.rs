@@ -501,13 +501,13 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     // Regular merged worktree: with default epoch it appears "young"
     repo.add_worktree("young-branch");
 
-    // Default min-age (1h) — young-branch is skipped, stale-branch is a candidate
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--dry-run"],
-        None
-    ));
+    // Orphan branch (no worktree) at HEAD: integrated but appears young
+    repo.create_branch("young-orphan");
+
+    // Epoch 30 minutes after GIT_COMMITTER_DATE → orphan branch appears 30min old, < 1h
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--dry-run"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400");
+    assert_cmd_snapshot!(cmd);
 }
 
 /// Non-dry-run variant of `test_prune_stale_plus_young`: exercises the skipped_young
