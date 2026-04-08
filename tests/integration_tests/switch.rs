@@ -2057,6 +2057,115 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
     });
 }
 
+/// Test fork PR when origin points to fork but `gh repo set-default` is configured
+///
+/// User scenario:
+/// 1. User forked owner/test-repo to contributor/test-repo
+/// 2. User cloned their fork, so origin = contributor/test-repo
+/// 3. User added upstream remote pointing to owner/test-repo
+/// 4. User ran `gh repo set-default owner/test-repo`
+/// 5. User runs `wt switch pr:42` where the PR is on owner/test-repo
+/// 6. Worktrunk queries the gh default repo instead of origin → success
+#[rstest]
+fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Get the bare remote's actual URL before modifying remotes
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin to the FORK (contributor's repo) — this is the bug scenario
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/contributor/test-repo.git",
+    ]);
+
+    // Add upstream remote pointing to the parent repo
+    repo.run_git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Redirect both GitHub URLs to the local bare remote for git operations
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/contributor/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Cross-repo PR: head is contributor's fork, base is owner's repo
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
+        .command("api", MockResponse::file("pr_response.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_gh_default", cmd);
+    });
+}
+
 /// Test error when PR is not found
 #[rstest]
 fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
