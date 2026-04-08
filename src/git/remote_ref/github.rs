@@ -91,9 +91,6 @@ fn gh_default_repo(repo_root: &Path) -> Option<(String, String)> {
 
     let slug = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let (owner, repo) = slug.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
     Some((owner.to_string(), repo.to_string()))
 }
 
