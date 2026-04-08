@@ -2146,24 +2146,14 @@ fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo)
 
     let mock_bin = repo.root_path().join("mock-bin");
     fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "gh");
     fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
 
-    // Write the mock config JSON directly with the triple-key format
-    // so we can verify exact mock-stub matching behavior
-    let mock_config = serde_json::json!({
-        "version": "gh version 2.0.0 (mock)",
-        "commands": {
-            "repo set-default --view": { "output": "owner/test-repo\n" },
-            "api": { "file": "pr_response.json" },
-            "_default": { "exit_code": 1 }
-        }
-    });
-    fs::write(
-        mock_bin.join("gh.json"),
-        serde_json::to_string_pretty(&mock_config).unwrap(),
-    )
-    .unwrap();
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command("repo set-default --view", MockResponse::output("owner/test-repo\n"))
+        .command("api", MockResponse::file("pr_response.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {

@@ -87,7 +87,8 @@ fn gh_default_repo(repo_root: &Path) -> Option<(String, String)> {
         .current_dir(repo_root)
         .env("GH_PROMPT_DISABLED", "1")
         .run()
-        .ok()?;
+        .ok()
+        .filter(|o| o.status.success())?;
 
     let slug = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let (owner, repo) = slug.split_once('/')?;
