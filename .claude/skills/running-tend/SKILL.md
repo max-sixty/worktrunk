@@ -107,6 +107,11 @@ Files to update:
 After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
 and verify `cargo msrv verify` passes.
 
+## README Date Check
+
+The README blockquote opens with a month+year (e.g., "**April 2026**"). During daily
+maintenance, verify the month matches the current month and update it if stale.
+
 ## Per-Workflow References
 
 - **PR review**: `@references/review-pr.md` — Rust idioms, documentation accuracy, duplication search

@@ -561,23 +561,43 @@ impl Repository {
     /// worktrees at templated paths, including the default branch.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
-    /// detect bare repos even when called from a linked worktree.
+    ///
+    /// Reads `core.bare` from git config rather than using `git rev-parse
+    /// --is-bare-repository`. The rev-parse approach is unreliable when run from
+    /// inside a `.git` directory — when `core.bare` is unset, git infers based
+    /// on directory context, and from inside `.git/` there's no working tree so
+    /// it returns `true` even for normal repos. This affects repos where
+    /// `core.bare` was never written (e.g., repos cloned by Eclipse/EGit).
+    /// Reading the config value directly avoids this false positive.
+    ///
+    /// Uses `--type=bool` to normalize all git boolean representations (`yes`,
+    /// `1`, `on`, `TRUE`) to `true`/`false`. When `core.bare` is unset (exit 1),
+    /// defaults to non-bare — matching libgit2's behavior.
+    ///
+    /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
         self.cache
             .is_bare
             .get_or_try_init(|| {
-                // Run from git_common_dir, not discovery_path. This is important for
-                // worktrees of bare repos: running from the worktree returns false,
-                // but running from the bare repo returns true.
+                // Read core.bare from git config. We run from git_common_dir so
+                // linked worktrees of bare repos correctly read the bare repo's
+                // config (not the worktree's).
                 let output = Cmd::new("git")
-                    .args(["rev-parse", "--is-bare-repository"])
+                    .args(["config", "--type=bool", "core.bare"])
                     .current_dir(&self.git_common_dir)
                     .context(path_to_logging_context(&self.git_common_dir))
                     .run()
                     .context("failed to check if repository is bare")?;
-                Ok(output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).trim() == "true")
+                // Exit 0 = key found (value printed), 1 = key missing (not bare),
+                // 2+ = config error (corrupt file, invalid type).
+                match output.status.code() {
+                    Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+                    Some(1) => Ok(false),
+                    _ => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        bail!("git config core.bare failed: {}", stderr.trim());
+                    }
+                }
             })
             .copied()
     }

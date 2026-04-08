@@ -2761,3 +2761,21 @@ fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
         "Lazy template should expand {{ vars.name }} from git config"
     );
 }
+
+/// Multi-remove hook announcements include the branch name for disambiguation
+#[rstest]
+fn test_multi_remove_hook_announcements_include_branch(repo: TestRepo) {
+    // fixture already has feature-a, feature-b, feature-c worktrees
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo done"
+"#,
+    );
+
+    snapshot_remove(
+        "multi_remove_hook_branch_context",
+        &repo,
+        &["feature-a", "feature-b", "--force-delete"],
+        Some(repo.root_path()),
+    );
+}

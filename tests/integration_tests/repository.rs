@@ -4,7 +4,43 @@ use std::fs;
 
 use worktrunk::git::Repository;
 
-use crate::common::TestRepo;
+use crate::common::{BareRepoTest, TestRepo};
+
+// =============================================================================
+// is_bare() tests
+// =============================================================================
+
+/// When `core.bare` is unset (e.g., repos cloned by Eclipse/EGit), `is_bare()`
+/// must return `false`. Before the fix for #1939, `git rev-parse
+/// --is-bare-repository` was used, which infers `true` from inside `.git/`
+/// when `core.bare` is absent.
+#[test]
+fn test_is_bare_returns_false_when_core_bare_unset() {
+    let repo = TestRepo::new();
+
+    // Simulate a repo where core.bare was never written (e.g., Eclipse/EGit)
+    repo.run_git(&["config", "--unset", "core.bare"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(
+        !repository.is_bare().unwrap(),
+        "repo with unset core.bare should not be detected as bare"
+    );
+}
+
+#[test]
+fn test_is_bare_returns_false_for_normal_repo() {
+    let repo = TestRepo::new();
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(!repository.is_bare().unwrap());
+}
+
+#[test]
+fn test_is_bare_returns_true_for_bare_repo() {
+    let test = BareRepoTest::new();
+    let repository = Repository::at(test.bare_repo_path().to_path_buf()).unwrap();
+    assert!(repository.is_bare().unwrap());
+}
 
 // =============================================================================
 // worktree_state() tests - simulate various git operation states
