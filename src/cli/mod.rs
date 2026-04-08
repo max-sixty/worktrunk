@@ -391,7 +391,6 @@ pub(crate) struct ListArgs {
     pub(crate) full: bool,
 
     // TODO: consider adding a flag to show hidden items (name TBD — `--hidden`, `--all`, etc.)
-
     /// Show fast info immediately, update with slow info
     ///
     /// Displays local data (branches, paths, status) first, then updates
