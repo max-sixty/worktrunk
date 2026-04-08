@@ -1379,7 +1379,7 @@ pub fn step_prune(
         approved
     };
 
-    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut removed: Vec<Candidate> = Vec::new();
     let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count
@@ -1505,12 +1505,14 @@ pub fn step_prune(
         });
     }
 
-    // Phase 1: Parallel integration checks with streaming results.
+    // Parallel integration checks with inline removals.
     //
     // Spawn integration checks on a background thread via rayon par_iter,
     // sending each result through a channel as it completes. The main thread
-    // processes results as they arrive for age filtering and candidate
-    // collection, overlapping with still-running checks.
+    // processes results as they arrive: age-filtering, printing "Skipped"
+    // messages, and removing candidates immediately. This overlaps integration
+    // checking with removal — output appears as soon as the first check
+    // completes instead of waiting for all checks to finish.
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
         .iter()
@@ -1573,6 +1575,12 @@ pub fn step_prune(
                 {
                     let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
                     if age < min_age_duration {
+                        if !dry_run {
+                            eprintln!(
+                                "{}",
+                                info_message(format!("Skipped {label} (younger than {min_age})"))
+                            );
+                        }
                         skipped_young.push(label);
                         continue;
                     }
@@ -1601,8 +1609,8 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else {
-                candidates.push(candidate);
+            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+                removed.push(candidate);
             }
             continue;
         }
@@ -1626,6 +1634,12 @@ pub fn step_prune(
             {
                 let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
                 if age < min_age_duration {
+                    if !dry_run {
+                        eprintln!(
+                            "{}",
+                            info_message(format!("Skipped {branch} (younger than {min_age})"))
+                        );
+                    }
                     skipped_young.push(branch.clone());
                     continue;
                 }
@@ -1646,8 +1660,8 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else {
-            candidates.push(candidate);
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            removed.push(candidate);
         }
     }
 
@@ -1712,42 +1726,6 @@ pub fn step_prune(
         );
         return Ok(());
     }
-
-    // Report skipped worktrees
-    if !skipped_young.is_empty() {
-        let names = skipped_young.join(", ");
-        eprintln!(
-            "{}",
-            info_message(format!("Skipped {names} (younger than {min_age})"))
-        );
-    }
-
-    // Phase 2: Parallel batch removal of confirmed candidates.
-    //
-    // Sort by original check order so output is deterministic when rayon
-    // happens to process items sequentially (small candidate counts). With
-    // many candidates, printed output from handle_remove_output may arrive
-    // in completion order — each eprintln! is line-atomic so messages don't
-    // interleave within a line.
-    candidates.sort_by_key(|c| c.check_idx);
-    let mut removed: Vec<Candidate> = if candidates.is_empty() {
-        Vec::new()
-    } else {
-        let results: Vec<(Candidate, anyhow::Result<bool>)> = candidates
-            .into_par_iter()
-            .map(|candidate| {
-                let result = try_remove(&candidate, &repo, &config, foreground, run_hooks);
-                (candidate, result)
-            })
-            .collect();
-        let mut removed = Vec::new();
-        for (candidate, result) in results {
-            if result? {
-                removed.push(candidate);
-            }
-        }
-        removed
-    };
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
