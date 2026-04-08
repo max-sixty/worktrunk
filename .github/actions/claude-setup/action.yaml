@@ -52,5 +52,6 @@ runs:
       shell: bash
       run: |
         echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
         echo "RUSTFLAGS=-C debuginfo=0" >> "$GITHUB_ENV"
         echo "RUSTDOCFLAGS=-Dwarnings" >> "$GITHUB_ENV"

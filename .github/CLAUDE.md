@@ -28,3 +28,11 @@ Only the repo owner (`@max-sixty`, admin) can merge to `main`.
 `CARGO_REGISTRY_TOKEN` and `AUR_SSH_PRIVATE_KEY` are in a protected GitHub
 Environment (`release`) requiring deployment approval from `@max-sixty`,
 restricted to `v*` tags.
+
+## Build environment
+
+All workflows must set `CARGO_INCREMENTAL=0`. `Swatinem/rust-cache` hashes
+`CARGO*` env vars into the cache key (via the `env-vars` input, default prefix
+`CARGO`). If one workflow sets `CARGO_INCREMENTAL=0` and another doesn't, they
+get different cache keys and won't share cached artifacts. CI does clean builds
+anyway, so incremental state is pure overhead.
