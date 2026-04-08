@@ -240,7 +240,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             HookType::PreMerge,
             &extra,
             HookFailureStrategy::FailFast,
-            None,
+            &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }

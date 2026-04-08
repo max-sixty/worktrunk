@@ -1368,6 +1368,7 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 ```console
 $ wt hook pre-merge              # Run all pre-merge hooks
 $ wt hook pre-merge test         # Run hooks named "test" from both sources
+$ wt hook pre-merge test build   # Run hooks named "test" and "build"
 $ wt hook pre-merge user:        # Run all user hooks
 $ wt hook pre-merge project:     # Run all project hooks
 $ wt hook pre-merge user:test    # Run only user's "test" hook
