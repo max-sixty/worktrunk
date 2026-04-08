@@ -773,7 +773,7 @@ fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     // (e.g., /private/var/folders/... before /var/folders/... on macOS).
     settings.add_filter(
         &format!(
-            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
+            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+'?",
             regex::escape(canonical_str)
         ),
         "[PROJECT_ID]",
@@ -781,7 +781,7 @@ fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     if canonical_str != temp_dir_str {
         settings.add_filter(
             &format!(
-                r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
+                r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+'?",
                 regex::escape(temp_dir_str)
             ),
             "[PROJECT_ID]",
