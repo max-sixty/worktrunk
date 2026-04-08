@@ -529,7 +529,12 @@ pub fn handle_picker(
             rayon::spawn(move || {
                 let cache_key = (item.branch_name().to_string(), mode);
                 cache.entry(cache_key).or_insert_with(|| {
-                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
+                    WorktreeSkimItem::compute_and_page_preview(
+                        &item,
+                        mode,
+                        preview_width,
+                        preview_height,
+                    )
                 });
             });
         }

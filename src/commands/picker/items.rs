@@ -156,21 +156,43 @@ impl WorktreeSkimItem {
     }
 
     /// Render preview for the given mode with specified dimensions.
-    /// Uses cache if available, otherwise computes and caches.
-    /// Post-processing (diff pager, markdown render) applied at display time.
+    ///
+    /// Uses cache if available, otherwise computes and caches. Diff-mode pager
+    /// output is included in the cached value (via [`Self::compute_and_page_preview`])
+    /// so that skim's event-loop thread — which calls `preview()` synchronously —
+    /// never spawns a pager subprocess.
     fn preview_for_mode(&self, mode: PreviewMode, width: usize, height: usize) -> String {
         let cache_key = (self.branch_name.clone(), mode);
 
         let content = self
             .preview_cache
             .entry(cache_key)
-            .or_insert_with(|| Self::compute_preview(&self.item, mode, width, height))
+            .or_insert_with(|| Self::compute_and_page_preview(&self.item, mode, width, height))
             .value()
             .clone();
 
-        // Post-processing at display time (not cached)
         match mode {
+            // Summary post-processing is cheap (string formatting, no subprocess).
+            // Applied at display time because generate_and_cache_summary() inserts
+            // raw LLM output.
             PreviewMode::Summary => super::summary::render_summary(&content, width),
+            _ => content,
+        }
+    }
+
+    /// Compute preview and apply pager for diff modes.
+    ///
+    /// Both the inline cache-miss path and background pre-computation use this so
+    /// that the cache always stores display-ready content (no pager subprocess
+    /// needed at render time).
+    pub(super) fn compute_and_page_preview(
+        item: &ListItem,
+        mode: PreviewMode,
+        width: usize,
+        height: usize,
+    ) -> String {
+        let content = Self::compute_preview(item, mode, width, height);
+        match mode {
             PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
                 if let Some(pager_cmd) = diff_pager() {
                     pipe_through_pager(&content, pager_cmd, width)
@@ -178,11 +200,11 @@ impl WorktreeSkimItem {
                     content
                 }
             }
-            PreviewMode::Log => content,
+            _ => content,
         }
     }
 
-    /// Compute preview for any mode. Called from cache miss and background pre-computation.
+    /// Compute raw preview for any mode.
     pub(super) fn compute_preview(
         item: &ListItem,
         mode: PreviewMode,
