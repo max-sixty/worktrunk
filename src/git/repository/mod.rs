@@ -554,10 +554,15 @@ impl Repository {
     ///
     /// Reads `core.bare` from git config rather than using `git rev-parse
     /// --is-bare-repository`. The rev-parse approach is unreliable when run from
-    /// inside a `.git` directory — some git versions (notably Apple Git) infer
-    /// bare=true based on the absence of a working tree at the current level,
-    /// even for normal (non-bare) repos. Reading the config value directly
-    /// avoids this false positive. See #1939.
+    /// inside a `.git` directory — when `core.bare` is unset, git infers based
+    /// on directory context, and from inside `.git/` there's no working tree so
+    /// it returns `true` even for normal repos. This affects repos where
+    /// `core.bare` was never written (e.g., repos cloned by Eclipse/EGit).
+    /// Reading the config value directly avoids this false positive.
+    ///
+    /// Uses `--type=bool` to normalize all git boolean representations (`yes`,
+    /// `1`, `on`, `TRUE`) to `true`/`false`. When `core.bare` is unset (exit 1),
+    /// defaults to non-bare — matching libgit2's behavior. See #1939.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
         self.cache
             .is_bare
@@ -566,13 +571,14 @@ impl Repository {
                 // linked worktrees of bare repos correctly read the bare repo's
                 // config (not the worktree's).
                 let output = Cmd::new("git")
-                    .args(["config", "--get", "core.bare"])
+                    .args(["config", "--type=bool", "core.bare"])
                     .current_dir(&self.git_common_dir)
                     .context(path_to_logging_context(&self.git_common_dir))
                     .run()
                     .context("failed to check if repository is bare")?;
-                // git config --get exits 0 and prints the value if the key exists,
-                // exits 1 if the key is missing (defaults to non-bare).
+                // --type=bool normalizes all boolean representations to true/false.
+                // Exits 0 with the value if the key exists, exits 1 if missing
+                // (defaults to non-bare).
                 Ok(output.status.success()
                     && String::from_utf8_lossy(&output.stdout).trim() == "true")
             })
