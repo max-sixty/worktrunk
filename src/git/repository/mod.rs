@@ -562,7 +562,9 @@ impl Repository {
     ///
     /// Uses `--type=bool` to normalize all git boolean representations (`yes`,
     /// `1`, `on`, `TRUE`) to `true`/`false`. When `core.bare` is unset (exit 1),
-    /// defaults to non-bare — matching libgit2's behavior. See #1939.
+    /// defaults to non-bare — matching libgit2's behavior.
+    ///
+    /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
         self.cache
             .is_bare
