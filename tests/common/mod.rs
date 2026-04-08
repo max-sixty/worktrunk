@@ -765,7 +765,10 @@ fn add_os_temp_dir_filter(settings: &mut insta::Settings) {
     let temp_dir_str = temp_dir.to_string_lossy().replace('\\', "/");
     let temp_dir_str = temp_dir_str.trim_end_matches('/');
     settings.add_filter(
-        &format!(r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+", regex::escape(temp_dir_str)),
+        &format!(
+            r"'?{}/\.tmp[^/']+/[^)'\s\x1b]+",
+            regex::escape(temp_dir_str)
+        ),
         "[PROJECT_ID]",
     );
 }
