@@ -1,4 +1,6 @@
 bot_name = "worktrunk-bot"
+# TODO: reset model back to default (2026-04-09 Thu 8:00 PM PT)
+model = "sonnet"
 
 setup = [
   {uses = "./.github/actions/claude-setup"},

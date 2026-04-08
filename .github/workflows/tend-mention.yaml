@@ -166,6 +166,7 @@ jobs:
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           bot_name: worktrunk-bot
+          model: sonnet
           prompt: >-
             ${{ steps.delay.outputs.seconds
             && format('This job started {0}s after the triggering event (over ~40s means it was queued). ',
