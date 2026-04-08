@@ -2150,7 +2150,10 @@ fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo)
 
     MockConfig::new("gh")
         .version("gh version 2.0.0 (mock)")
-        .command("repo set-default --view", MockResponse::output("owner/test-repo\n"))
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
         .command("api", MockResponse::file("pr_response.json"))
         .command("_default", MockResponse::exit(1))
         .write(&mock_bin);
