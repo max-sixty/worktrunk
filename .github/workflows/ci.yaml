@@ -136,7 +136,10 @@ jobs:
         echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     - name: 🧪 Pre-merge hooks
-      run: wt hook pre-merge --yes insta doctest doc
+      run: |
+        wt hook pre-merge --yes insta
+        wt hook pre-merge --yes doctest
+        wt hook pre-merge --yes doc
 
     - name: 📊 Upload test timing
       if: always()
