@@ -60,6 +60,11 @@ If surrounding lines also need updating, note that in your reply.
 
 When a bug may already be fixed, ask the reporter: `wt --version`
 
+When an issue involves config, shell integration, completions, or unexpected
+behavior that could stem from user setup, ask the reporter for
+`wt config show` output. This reveals installed shells, config paths, and
+active settings — essential context for diagnosing config-related problems.
+
 ### Closing Duplicates
 
 When an issue is clearly a duplicate, close it after commenting. Use
