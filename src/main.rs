@@ -793,7 +793,7 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(args.yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false)?;
+                handle_remove_output(&result, args.foreground, run_hooks, false, false)?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -825,14 +825,16 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 let run_hooks = verify && approve_remove(args.yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
+                let show_branch =
+                    plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 for result in &plans.others {
-                    handle_remove_output(result, args.foreground, run_hooks, false)?;
+                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
                 }
                 for result in &plans.branch_only {
-                    handle_remove_output(result, args.foreground, run_hooks, false)?;
+                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
                 }
                 if let Some(ref result) = plans.current {
-                    handle_remove_output(result, args.foreground, run_hooks, false)?;
+                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
                 }
 
                 if json_mode {

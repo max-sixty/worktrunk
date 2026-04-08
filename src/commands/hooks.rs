@@ -233,9 +233,14 @@ fn format_unnamed(source_label: &str, count: usize) -> String {
 /// can use different contexts (e.g., post-remove uses the removed branch while
 /// post-switch uses the destination branch).
 ///
-/// Example output: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
+/// When `show_branch` is true, includes the branch name for disambiguation in batch
+/// contexts (e.g., prune removing multiple worktrees):
+/// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
+///
+/// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
 pub fn announce_and_spawn_background_hooks(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
+    show_branch: bool,
 ) -> anyhow::Result<()> {
     let non_empty: Vec<_> = pipelines
         .into_iter()
@@ -265,9 +270,24 @@ pub fn announce_and_spawn_background_hooks(
         }
     }
 
+    // In batch contexts (prune), use the first pipeline's branch for disambiguation.
+    // This is the removed branch — it identifies the triggering event even for
+    // post-switch hooks that fire as a consequence of the removal.
+    let branch_suffix = if show_branch {
+        non_empty
+            .first()
+            .and_then(|(ctx, _)| ctx.branch)
+            .map(|b| cformat!(" for <bold>{b}</>"))
+    } else {
+        None
+    };
+
     let combined: String = type_summaries
         .iter()
-        .map(|(ht, summaries)| format!("{ht}: {}", summaries.join(", ")))
+        .map(|(ht, summaries)| {
+            let suffix = branch_suffix.as_deref().unwrap_or("");
+            format!("{ht}{suffix}: {}", summaries.join(", "))
+        })
         .collect::<Vec<_>>()
         .join("; ");
     let message = match display_path {

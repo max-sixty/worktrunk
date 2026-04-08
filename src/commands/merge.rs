@@ -328,7 +328,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
         true
     };
 

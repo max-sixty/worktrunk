@@ -262,7 +262,7 @@ pub(crate) fn spawn_switch_background_hooks(
         );
     }
 
-    super::hooks::announce_and_spawn_background_hooks(pipelines)
+    super::hooks::announce_and_spawn_background_hooks(pipelines, false)
 }
 
 /// Handle the switch command.
