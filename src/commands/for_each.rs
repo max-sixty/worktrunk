@@ -100,7 +100,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let (exit_code, error_msg) = match &err {
+                match &err {
                     CommandError::SpawnFailed(e) => {
                         eprintln!(
                             "{}",
@@ -109,7 +109,6 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             ))
                         );
                         eprintln!("{}", format_with_gutter(e, None));
-                        (None, format!("spawn failed: {e}"))
                     }
                     CommandError::ExitCode(code) => {
                         let exit_info = code
@@ -119,20 +118,16 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             "{}",
                             error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
                         );
-                        let msg = code
-                            .map(|c| format!("exit code {c}"))
-                            .unwrap_or_else(|| "killed by signal".to_string());
-                        (*code, msg)
                     }
-                };
+                }
                 failed.push(display_name.to_string());
                 if json_mode {
                     json_results.push(serde_json::json!({
                         "branch": wt.branch,
                         "path": wt.path,
-                        "exit_code": exit_code,
+                        "exit_code": err.exit_code(),
                         "success": false,
-                        "error": error_msg,
+                        "error": err.to_string(),
                     }));
                 }
             }
@@ -181,6 +176,25 @@ pub(crate) enum CommandError {
     SpawnFailed(String),
     /// Command exited with non-zero status
     ExitCode(Option<i32>),
+}
+
+impl CommandError {
+    fn exit_code(&self) -> Option<i32> {
+        match self {
+            CommandError::SpawnFailed(_) => None,
+            CommandError::ExitCode(code) => *code,
+        }
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandError::SpawnFailed(e) => write!(f, "spawn failed: {e}"),
+            CommandError::ExitCode(Some(c)) => write!(f, "exit code {c}"),
+            CommandError::ExitCode(None) => write!(f, "killed by signal"),
+        }
+    }
 }
 
 /// Run a shell command, streaming both stdout and stderr in real-time.
@@ -243,5 +257,25 @@ pub(crate) fn run_command_streaming(
         Ok(())
     } else {
         Err(CommandError::ExitCode(status.code()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_error_display_and_exit_code() {
+        let spawn = CommandError::SpawnFailed("no such file".into());
+        assert_eq!(spawn.to_string(), "spawn failed: no such file");
+        assert_eq!(spawn.exit_code(), None);
+
+        let exit = CommandError::ExitCode(Some(42));
+        assert_eq!(exit.to_string(), "exit code 42");
+        assert_eq!(exit.exit_code(), Some(42));
+
+        let signal = CommandError::ExitCode(None);
+        assert_eq!(signal.to_string(), "killed by signal");
+        assert_eq!(signal.exit_code(), None);
     }
 }
