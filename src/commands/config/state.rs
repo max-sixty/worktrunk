@@ -479,8 +479,10 @@ pub fn handle_logs_get(
             let log_path = hook_log.path(&log_dir, &branch);
 
             if log_path.exists() {
-                // Output just the path to stdout for easy piping
-                println!("{}", log_path.display());
+                // Output just the path to stdout for easy piping.
+                // Use to_slash_lossy() so Windows paths use forward slashes, consistent
+                // with the relative paths in `logs list` output.
+                println!("{}", log_path.to_slash_lossy());
                 return Ok(());
             }
 
