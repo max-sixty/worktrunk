@@ -71,7 +71,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Controls where new worktrees are created.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# **Variables:**[0m
+[107m [0m [2m# **Available template variables:**[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
@@ -307,7 +307,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# pre-start = "npm ci"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*):[0m
+[107m [0m [2m# Multiple named commands — concurrent for post-*, sequential for pre-*:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [pre-merge][0m
 [107m [0m [2m# test = "npm test"[0m
@@ -326,9 +326,9 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 
 [107m [0m [2m# # Project Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
+[107m [0m [2m# Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
+[107m [0m [2m# To create a starter file with commented-out examples, run `wt config create --project`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m

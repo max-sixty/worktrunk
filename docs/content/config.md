@@ -73,7 +73,7 @@ Location:
 
 Controls where new worktrees are created.
 
-**Variables:**
+**Available template variables:**
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
@@ -347,7 +347,7 @@ Single command:
 pre-start = "npm ci"
 ```
 
-Multiple named commands (concurrent for post-*, sequential for pre-*):
+Multiple named commands — concurrent for post-*, sequential for pre-*:
 
 ```toml
 [pre-merge]
@@ -367,9 +367,9 @@ post-start = [
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
+Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.
 
-Location: `.config/wt.toml` (checked into version control and shared with the team).
+To create a starter file with commented-out examples, run `wt config create --project`.
 
 ## Hooks
 

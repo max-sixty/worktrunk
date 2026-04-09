@@ -117,7 +117,7 @@ Location:
 
 Controls where new worktrees are created.
 
-[1mVariables:[0m
+[1mAvailable template variables:[0m
 
 - [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
@@ -349,7 +349,7 @@ Single command:
 
 [107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
 
-Multiple named commands (concurrent for post-*, sequential for pre-*):
+Multiple named commands — concurrent for post-*, sequential for pre-*:
 
 [107m [0m [2m[36m[pre-merge][0m
 [107m [0m [2mtest = [0m[2m[32m"npm test"[0m
@@ -363,9 +363,9 @@ Pipeline — list of maps, run in order (each map concurrent):
 [107m [0m [2m][0m
 [32mPROJECT CONFIGURATION[0m
 
-Create with [2mwt config create --project[0m. Examples shown — uncomment and customize for your project.
+Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in [2m.config/wt.toml[0m and is typically checked into version control.
 
-Location: [2m.config/wt.toml[0m (checked into version control and shared with the team).
+To create a starter file with commented-out examples, run [2mwt config create --project[0m.
 
 [1m[32mHooks[0m
 
