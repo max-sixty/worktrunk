@@ -1,8 +1,8 @@
 # # Project Configuration
 #
-# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
+# Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.
 #
-# Location: `.config/wt.toml` (checked into version control and shared with the team).
+# To create a starter file with commented-out examples, run `wt config create --project`.
 #
 # ## Hooks
 #

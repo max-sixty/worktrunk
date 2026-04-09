@@ -11,7 +11,7 @@
 #
 # Controls where new worktrees are created.
 #
-# **Variables:**
+# **Available template variables:**
 #
 # - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 # - `{{ repo }}` — repository directory name (e.g., `myproject`)
@@ -247,7 +247,7 @@
 #
 # pre-start = "npm ci"
 #
-# Multiple named commands (concurrent for post-*, sequential for pre-*):
+# Multiple named commands — concurrent for post-*, sequential for pre-*:
 #
 # [pre-merge]
 # test = "npm test"
