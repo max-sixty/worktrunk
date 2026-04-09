@@ -23,7 +23,21 @@ jobs:
       actions: read
       issues: write
     steps:
+      - name: Check for unread notifications
+        id: check
+        run: |
+          COUNT=$(gh api notifications --jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" = "0" ]; then
+            echo "No unread notifications — skipping"
+          else
+            echo "$COUNT unread notification(s) — proceeding"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+
       - uses: actions/checkout@v6
+        if: steps.check.outputs.count != '0' || github.event_name == 'workflow_dispatch'
         with:
           ref: main
           fetch-depth: 0
@@ -31,8 +45,9 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - uses: ./.github/actions/claude-setup
-
+        if: steps.check.outputs.count != '0' || github.event_name == 'workflow_dispatch'
       - uses: max-sixty/tend@v1
+        if: steps.check.outputs.count != '0' || github.event_name == 'workflow_dispatch'
         with:
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
