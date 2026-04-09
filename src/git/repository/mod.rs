@@ -15,6 +15,36 @@
 //! - `diff.rs` - Diff, history, and commit operations
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
+//!
+//! # Caching
+//!
+//! Most repository data — remote URLs, config, default branch, merge-bases — is stable
+//! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
+//! read-only values so repeated queries hit memory instead of spawning git processes.
+//!
+//! **Lifetime.** A cache is created once per `Repository::at()` call and never
+//! invalidated. There is no expiry, no dirty-tracking, no
+//! manual flush — the cache lives exactly as long as the command.
+//!
+//! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
+//! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again.
+//!
+//! **What is NOT cached.** Values that change during command execution are intentionally
+//! excluded:
+//! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
+//! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
+//!
+//! **Invariants:**
+//! - A cached value, once written, is never updated within the same command.
+//! - All cache access is lock-free at the call site — `OnceCell` and `DashMap` handle
+//!   synchronization internally.
+//! - Code that mutates repository state (committing, creating worktrees) must not read
+//!   its own mutations through the cache. Use direct git commands for post-mutation
+//!   state.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
