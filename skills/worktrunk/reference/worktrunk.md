@@ -173,12 +173,12 @@ $ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
 $ wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#pre-start-vs-post-start) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
-- Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
+- Set up [hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
