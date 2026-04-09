@@ -45,6 +45,16 @@
 //! - Code that mutates repository state (committing, creating worktrees) must not read
 //!   its own mutations through the cache. Use direct git commands for post-mutation
 //!   state.
+//!
+//! **Process-level caches.** Outside `RepoCache`, several modules use `OnceLock`/`LazyLock`
+//! for process-global singletons that are computed once and never change:
+//! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
+//!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
+//! - Global state: `OUTPUT_STATE` (output), `VERBOSE_LOG`, `COMMAND_LOG`
+//! - Config: `CONFIG_PATH`, `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//!
+//! These are lazy initialization, not caches — they have no invalidation concerns
+//! because their values are fixed for the process lifetime.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
