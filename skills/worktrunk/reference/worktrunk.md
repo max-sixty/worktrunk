@@ -76,6 +76,7 @@ git branch -d feat</td>
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](https://worktrunk.dev/hook/#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](https://worktrunk.dev/step/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt step <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -173,12 +174,12 @@ $ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
 $ wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#pre-start-vs-post-start) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
-- Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
+- Set up [hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)

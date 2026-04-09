@@ -91,6 +91,7 @@ git branch -d feat{% end %}</td>
 - **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries) per branch
 - **[PR checkout](@/switch.md#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](@/step.md#aliases) & [per-branch variables](@/config.md#wt-config-state-vars)** — custom `wt step <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -191,12 +192,12 @@ For parallel agents, create multiple worktrees and launch an agent in each:
 
 {{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md#pre-start-vs-post-start) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)
-- Set up [project hooks](@/hook.md) for automated setup
+- Set up [hooks](@/hook.md) for automated setup
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
   picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
