@@ -431,6 +431,58 @@ fn test_worktrunk_config_format_path_tilde_expansion() {
 }
 
 #[test]
+fn test_worktrunk_config_format_path_owner_variable() {
+    let mut test = TestRepo::with_initial_commit();
+    test.setup_remote("main");
+    test.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:max-sixty/worktrunk.git",
+    ]);
+
+    let config = UserConfig {
+        configs: OverridableConfig {
+            worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+
+    assert_eq!(path, "max-sixty/myrepo/feature/branch");
+}
+
+#[test]
+fn test_worktrunk_config_format_path_owner_uses_full_namespace() {
+    let mut test = TestRepo::with_initial_commit();
+    test.setup_remote("main");
+    test.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@gitlab.com:group/subgroup/project.git",
+    ]);
+
+    let config = UserConfig {
+        configs: OverridableConfig {
+            worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let path = config
+        .format_path("myrepo", "feature/branch", &test.repo, None)
+        .unwrap();
+
+    assert_eq!(path, "group/subgroup/myrepo/feature/branch");
+}
+
+#[test]
 fn test_merge_config_serde() {
     let config = MergeConfig {
         squash: Some(true),

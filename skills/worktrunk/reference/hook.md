@@ -103,6 +103,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
+| `{{ owner }}` | Primary remote owner path (may include subgroups) |
 | `{{ primary_worktree_path }}` | Primary worktree path |
 | `{{ default_branch }}` | Default branch name |
 | `{{ remote }}` | Primary remote name |
