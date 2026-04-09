@@ -237,10 +237,15 @@ impl std::fmt::Display for TemplateExpandError {
             parts.push(format_with_gutter(line, None));
         }
         if !self.available_vars.is_empty() {
+            let underlined_vars: Vec<String> = self
+                .available_vars
+                .iter()
+                .map(|v| cformat!("<underline>{}</>", v))
+                .collect();
             parts.push(
                 hint_message(cformat!(
-                    "Available variables: <underline>{}</>",
-                    self.available_vars.join(", ")
+                    "Available variables: {}",
+                    underlined_vars.join(", ")
                 ))
                 .to_string(),
             );
@@ -770,7 +775,7 @@ mod tests {
         assert_snapshot!(err, @"
         [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
         [107m [0m echo {{ target }}
-        [2m↳[22m [2mAvailable variables: [4mbranch, remote[24m[22m
+        [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m
         ");
     }
 
