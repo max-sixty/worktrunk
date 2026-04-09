@@ -317,6 +317,57 @@ impl Merge for MergeConfig {
     }
 }
 
+/// Configuration for the `wt sync` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct SyncConfig {
+    /// Run `git fetch` before syncing (default: false)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetch: Option<bool>,
+
+    /// Sync all stacks (default: true)
+    ///
+    /// When false, only the stack containing the current branch is synced
+    /// (equivalent to `--stack`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all: Option<bool>,
+
+    /// Push rebased branches after syncing (default: false)
+    ///
+    /// Uses `--force-with-lease` for safety.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push: Option<bool>,
+
+    /// Remove integrated worktrees after syncing (default: false)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prune: Option<bool>,
+}
+
+impl SyncConfig {
+    pub fn fetch(&self) -> bool {
+        self.fetch.unwrap_or(false)
+    }
+    pub fn all(&self) -> bool {
+        self.all.unwrap_or(true)
+    }
+    pub fn push(&self) -> bool {
+        self.push.unwrap_or(false)
+    }
+    pub fn prune(&self) -> bool {
+        self.prune.unwrap_or(false)
+    }
+}
+
+impl Merge for SyncConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            fetch: other.fetch.or(self.fetch),
+            all: other.all.or(self.all),
+            push: other.push.or(self.push),
+            prune: other.prune.or(self.prune),
+        }
+    }
+}
+
 /// Configuration for the `wt switch` interactive picker.
 ///
 /// New format under `[switch.picker]`. Replaces the deprecated `[select]` section.
@@ -503,6 +554,10 @@ pub struct OverridableConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchConfig>,
 
+    /// Configuration for the `wt sync` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<SyncConfig>,
+
     /// Configuration for `wt step` subcommands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<StepConfig>,
@@ -538,6 +593,7 @@ impl OverridableConfig {
             && self.list.is_none()
             && self.commit.is_none()
             && self.merge.is_none()
+            && self.sync.is_none()
             && self.switch.is_none()
             && self.step.is_none()
             && self.aliases.is_none()
@@ -557,6 +613,7 @@ impl Merge for OverridableConfig {
             list: merge_optional(self.list.as_ref(), other.list.as_ref()),
             commit: merge_optional(self.commit.as_ref(), other.commit.as_ref()),
             merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
+            sync: merge_optional(self.sync.as_ref(), other.sync.as_ref()),
             switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
             step: merge_optional(self.step.as_ref(), other.step.as_ref()),
             aliases: merge_alias_maps(&self.aliases, &other.aliases), // Append semantics

@@ -7,8 +7,9 @@
 //!
 //! Key behaviors:
 //! - No configuration needed — dependencies are inferred from git history
-//! - By default, only syncs the stack containing the current branch
-//! - `--all` syncs all worktree branches
+//! - By default, syncs the stack containing the current branch
+//! - `--all` syncs all worktree branches; `--stack` restricts to current stack
+//! - `--fetch` / `--push` / `--prune` enable optional phases
 //! - `--dry-run` previews the plan without executing
 //! - Stops on first conflict; user resolves and re-runs
 
@@ -120,8 +121,18 @@ impl DependencyTree {
 
 /// Options for the sync command.
 pub struct SyncOptions {
-    pub stack: bool,
+    pub fetch: bool,
+    pub all: bool,
+    pub push: bool,
+    pub prune: bool,
     pub dry_run: bool,
+}
+
+/// Result of building the dependency tree, including integrated branch info.
+struct SyncPlan {
+    tree: DependencyTree,
+    /// Branches detected as integrated into the default branch, with their worktree paths.
+    integrated: Vec<(String, PathBuf)>,
 }
 
 /// Build the dependency tree from worktree branches.
@@ -129,7 +140,7 @@ pub struct SyncOptions {
 /// For each branch B, finds the closest parent P where merge_base(P, B) is
 /// nearest to B's tip (fewest commits ahead). Integrated branches are excluded
 /// and their children reparented.
-fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
+fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
     let default_branch = repo
         .default_branch()
         .context("Cannot determine default branch")?;
@@ -161,14 +172,14 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
     let integration_target = repo.integration_target();
     let target_ref = integration_target.as_deref().unwrap_or(&default_branch);
 
-    let mut integrated: HashMap<String, ()> = HashMap::new();
-    for (branch, _) in &branches {
+    let mut integrated: HashMap<String, PathBuf> = HashMap::new();
+    for (branch, path) in &branches {
         if branch == &default_branch {
             continue;
         }
         let (_, reason) = repo.integration_reason(branch, target_ref)?;
         if reason.is_some() {
-            integrated.insert(branch.clone(), ());
+            integrated.insert(branch.clone(), path.clone());
         }
     }
 
@@ -361,9 +372,14 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
         node.children.sort();
     }
 
-    Ok(DependencyTree {
-        root: default_branch,
-        nodes,
+    let integrated_list: Vec<(String, PathBuf)> = integrated.into_iter().collect();
+
+    Ok(SyncPlan {
+        tree: DependencyTree {
+            root: default_branch,
+            nodes,
+        },
+        integrated: integrated_list,
     })
 }
 
@@ -371,16 +387,28 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
 pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
+    // Fetch from remote if requested
+    if opts.fetch {
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Fetching from remote..."))
+        );
+        repo.run_command(&["fetch", "--prune"])
+            .context("git fetch failed")?;
+        eprintln!("{}", success_message("Fetch complete"));
+    }
+
     // Build dependency tree
-    let tree = build_dependency_tree(&repo)?;
+    let plan = build_dependency_tree(&repo)?;
+    let tree = plan.tree;
 
     // Determine which branches to sync
     let current_wt = repo.current_worktree();
     let current_branch = current_wt.branch()?;
 
-    let branches_to_sync: Vec<&str> = if opts.stack {
+    let branches_to_sync: Vec<&str> = if !opts.all {
         let Some(ref current) = current_branch else {
-            bail!("Current worktree has no branch. Remove --stack to sync all branches.");
+            bail!("Current worktree has no branch. Use --all to sync all branches.");
         };
         let stack = tree.stack_containing(current);
         if stack.is_empty() {
@@ -447,6 +475,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Execute rebases in topological order
     let mut rebased_count = 0;
     let mut skipped_count = 0;
+    let mut rebased_branches: Vec<String> = Vec::new();
 
     for &branch in &branches_to_sync {
         let Some(node) = tree.nodes.get(branch) else {
@@ -540,6 +569,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         }
 
         rebased_count += 1;
+        rebased_branches.push(branch.to_string());
         eprintln!(
             "{}",
             success_message(cformat!("Rebased <bold>{branch}</> onto <bold>{parent}</>"))
@@ -558,6 +588,82 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 skipped_count,
             ))
         );
+    }
+
+    // Push rebased branches
+    if opts.push && !rebased_branches.is_empty() {
+        eprintln!();
+        for branch in &rebased_branches {
+            // Skip branches without an upstream
+            if repo.branch(branch).upstream()?.is_none() {
+                continue;
+            }
+            eprintln!(
+                "{}",
+                progress_message(cformat!("Pushing <bold>{branch}</>..."))
+            );
+            let result = repo.run_command(&[
+                "push",
+                "--force-with-lease",
+                "origin",
+                branch,
+            ]);
+            match result {
+                Ok(_) => {
+                    eprintln!(
+                        "{}",
+                        success_message(cformat!("Pushed <bold>{branch}</>"))
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        worktrunk::styling::error_message(cformat!(
+                            "Failed to push <bold>{branch}</>: {e}"
+                        ))
+                    );
+                }
+            }
+        }
+    }
+
+    // Prune integrated worktrees
+    if opts.prune && !plan.integrated.is_empty() {
+        eprintln!();
+        for (branch, path) in &plan.integrated {
+            eprintln!(
+                "{}",
+                progress_message(cformat!(
+                    "Removing integrated worktree <bold>{branch}</>..."
+                ))
+            );
+            // Remove the worktree
+            let result = repo.run_command(&[
+                "worktree",
+                "remove",
+                "--force",
+                &path.to_string_lossy(),
+            ]);
+            if let Err(e) = result {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::error_message(cformat!(
+                        "Failed to remove worktree for <bold>{branch}</>: {e}"
+                    ))
+                );
+                continue;
+            }
+            // Delete the local branch
+            let _ = repo.run_command(&["branch", "-D", branch]);
+            // Delete remote branch if it exists
+            if repo.branch(branch).upstream()?.is_some() {
+                let _ = repo.run_command(&["push", "origin", "--delete", branch]);
+            }
+            eprintln!(
+                "{}",
+                success_message(cformat!("Removed integrated worktree <bold>{branch}</>"))
+            );
+        }
     }
 
     Ok(())

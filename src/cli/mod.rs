@@ -456,6 +456,34 @@ pub(crate) struct SyncArgs {
     #[arg(long)]
     pub(crate) stack: bool,
 
+    /// Sync all stacks (overrides config)
+    #[arg(long, conflicts_with = "stack")]
+    pub(crate) all: bool,
+
+    /// Fetch from remote before syncing
+    #[arg(long)]
+    pub(crate) fetch: bool,
+
+    /// Skip fetch (overrides config)
+    #[arg(long = "no-fetch", conflicts_with = "fetch")]
+    pub(crate) no_fetch: bool,
+
+    /// Push rebased branches after syncing (force-with-lease)
+    #[arg(long, short = 'p')]
+    pub(crate) push: bool,
+
+    /// Skip push (overrides config)
+    #[arg(long = "no-push", conflicts_with = "push")]
+    pub(crate) no_push: bool,
+
+    /// Remove integrated worktrees after syncing
+    #[arg(long)]
+    pub(crate) prune: bool,
+
+    /// Skip prune (overrides config)
+    #[arg(long = "no-prune", conflicts_with = "prune")]
+    pub(crate) no_prune: bool,
+
     /// Preview the sync plan
     ///
     /// Shows the dependency tree and planned rebases without executing.
@@ -1023,32 +1051,14 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 ## Examples
 
 ```console
-$ wt sync                # Sync all stacks
-$ wt sync --stack        # Sync current stack only
-$ wt sync --dry-run      # Preview the plan
+$ wt sync                    # Sync all stacks
+$ wt sync --stack            # Sync current stack only
+$ wt sync --fetch            # Fetch from remote first
+$ wt sync --push             # Push rebased branches after
+$ wt sync --prune            # Remove integrated worktrees
+$ wt sync --fetch --push     # Full workflow: fetch, rebase, push
+$ wt sync --dry-run          # Preview the plan
 ```
-
-## What it does
-
-Say you have two independent stacks:
-
-```
-main
-├── pr-auth → pr-auth-tests       (stack A)
-└── pr-refactor → pr-cleanup      (stack B)
-```
-
-If main advances, `wt sync` rebases everything:
-
-```
-Rebasing pr-auth onto main...         ✓
-Rebasing pr-auth-tests onto pr-auth...✓
-Rebasing pr-refactor onto main...     ✓
-Rebasing pr-cleanup onto pr-refactor..✓
-Sync complete: 4 rebased
-```
-
-With `--stack` (from pr-auth's worktree), only stack A is synced — stack B is left as-is.
 
 ## Three scenarios
 
@@ -1068,6 +1078,36 @@ PR1 gets new commits → PR2 and PR3 rebase onto PR1
 
 ```
 PR1 merged into main → PR2 rebases --onto main
+```
+
+## The `--stack` flag
+
+By default, `wt sync` syncs all stacks. With `--stack`, only the current stack is synced.
+
+Say you have two independent stacks:
+
+```
+main
+├── pr-auth → pr-auth-tests       (stack A — you're here)
+└── pr-refactor → pr-cleanup      (stack B — unrelated work)
+```
+
+If main advances, `wt sync` rebases everything. With `--stack` (from pr-auth's worktree), only stack A is synced — stack B is left as-is.
+
+## Optional phases
+
+Each phase can be enabled via CLI flags or config:
+
+- **`--fetch`** — run `git fetch --prune` before syncing
+- **`--push`** — force-push rebased branches with `--force-with-lease` (skips branches without an upstream)
+- **`--prune`** — remove worktrees for integrated branches (worktree + local branch + remote branch)
+
+All phases are off by default. Set defaults in config:
+
+```toml
+[sync]
+fetch = true
+push = true
 ```
 
 ## Behavior

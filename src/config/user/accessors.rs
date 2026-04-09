@@ -13,7 +13,7 @@ use super::UserConfig;
 use super::merge::{Merge, merge_optional};
 use super::sections::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StepConfig,
-    SwitchConfig, SwitchPickerConfig,
+    SwitchConfig, SwitchPickerConfig, SyncConfig,
 };
 
 /// Default worktree path template
@@ -124,6 +124,13 @@ impl UserConfig {
     pub fn merge(&self, project: Option<&str>) -> Option<MergeConfig> {
         self.merged_project_config(project, self.configs.merge.as_ref(), |config| {
             config.overrides.merge.as_ref()
+        })
+    }
+
+    /// Returns the sync config for a specific project.
+    pub fn sync(&self, project: Option<&str>) -> Option<SyncConfig> {
+        self.merged_project_config(project, self.configs.sync.as_ref(), |config| {
+            config.overrides.sync.as_ref()
         })
     }
 

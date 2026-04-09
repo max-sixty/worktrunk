@@ -1009,8 +1009,44 @@ fn init_logging(verbose_level: u8) {
 }
 
 fn handle_sync_command(args: SyncArgs) -> anyhow::Result<()> {
+    let env = commands::context::CommandEnv::for_action_branchless()?;
+    let resolved = env.resolved();
+
+    // CLI flags override config values
+    let all = if args.stack {
+        false
+    } else if args.all {
+        true
+    } else {
+        resolved.sync.all()
+    };
+    let fetch = if args.fetch {
+        true
+    } else if args.no_fetch {
+        false
+    } else {
+        resolved.sync.fetch()
+    };
+    let push = if args.push {
+        true
+    } else if args.no_push {
+        false
+    } else {
+        resolved.sync.push()
+    };
+    let prune = if args.prune {
+        true
+    } else if args.no_prune {
+        false
+    } else {
+        resolved.sync.prune()
+    };
+
     handle_sync(SyncOptions {
-        stack: args.stack,
+        fetch,
+        all,
+        push,
+        prune,
         dry_run: args.dry_run,
     })
 }

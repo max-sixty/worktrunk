@@ -7,7 +7,7 @@
 use super::UserConfig;
 use super::sections::{
     CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, StepConfig, SwitchConfig,
-    SwitchPickerConfig,
+    SwitchPickerConfig, SyncConfig,
 };
 
 /// All resolved configuration for a specific project context.
@@ -29,6 +29,7 @@ use super::sections::{
 pub struct ResolvedConfig {
     pub list: ListConfig,
     pub merge: MergeConfig,
+    pub sync: SyncConfig,
     pub commit: CommitConfig,
     /// Resolved commit generation config
     pub commit_generation: CommitGenerationConfig,
@@ -46,6 +47,7 @@ impl ResolvedConfig {
         Self {
             list: config.list(project).unwrap_or_default(),
             merge: config.merge(project).unwrap_or_default(),
+            sync: config.sync(project).unwrap_or_default(),
             commit: config.commit(project).unwrap_or_default(),
             commit_generation: config.commit_generation(project),
             switch_picker: config.switch_picker(project),
