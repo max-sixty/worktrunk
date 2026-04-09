@@ -406,7 +406,7 @@ shouldn't clutter user output:
 "To rebase onto main, run wt step rebase or wt merge"
 
 // GOOD - recovery command after shadowing a remote branch
-"To switch to the remote branch, delete this branch and run without --create: wt remove feature && wt switch feature"
+"To switch to the remote branch, delete this branch and run without --create: wt remove --foreground feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"

@@ -363,7 +363,10 @@ fn resolve_switch_target(
                     "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
                 ))
             );
-            let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
+            // `--foreground` is required: background removal leaves a placeholder
+            // directory at the original path (to keep shell PWD valid), which
+            // would block the subsequent `wt switch` with "Directory already exists".
+            let remove_cmd = suggest_command("remove", &[&resolved_branch], &["--foreground"]);
             let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
             eprintln!(
                 "{}",
