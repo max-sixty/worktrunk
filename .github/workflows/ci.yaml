@@ -21,6 +21,7 @@ env:
   # CI does clean builds, so incremental compilation tracking adds I/O overhead
   # with no benefit. Especially impactful on Windows where I/O is the bottleneck.
   CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
   # Authenticate lychee requests to GitHub to avoid rate limiting
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
