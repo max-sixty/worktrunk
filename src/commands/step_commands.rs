@@ -25,7 +25,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
@@ -1394,6 +1394,7 @@ pub fn step_prune(
         config: &UserConfig,
         foreground: bool,
         run_hooks: bool,
+        worktrees: &[WorktreeInfo],
     ) -> anyhow::Result<bool> {
         let target = match candidate.kind {
             CandidateKind::Current => RemoveTarget::Current,
@@ -1419,6 +1420,7 @@ pub fn step_prune(
             false,
             config,
             None,
+            Some(worktrees),
         ) {
             Ok(plan) => plan,
             Err(_) => {
@@ -1609,7 +1611,9 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            } else if try_remove(
+                &candidate, &repo, &config, foreground, run_hooks, &worktrees,
+            )? {
                 removed.push(candidate);
             }
             continue;
@@ -1660,7 +1664,9 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+        } else if try_remove(
+            &candidate, &repo, &config, foreground, run_hooks, &worktrees,
+        )? {
             removed.push(candidate);
         }
     }
@@ -1731,7 +1737,7 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(&current, &repo, &config, foreground, run_hooks)?
+        && try_remove(&current, &repo, &config, foreground, run_hooks, &worktrees)?
     {
         removed.push(current);
     }

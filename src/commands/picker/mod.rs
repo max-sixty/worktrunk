@@ -207,6 +207,7 @@ impl CommandCollector for PickerCollector {
                     false,
                     config,
                     caller_path,
+                    None,
                 );
 
                 match preparation {
