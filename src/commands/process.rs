@@ -177,42 +177,10 @@ fn posix_command_separator(command: &str) -> &'static str {
     }
 }
 
-/// Spawn a detached background process with output redirected to a log file
-///
-/// The process will be fully detached from the parent:
-/// - On Unix: uses process_group(0) to create a new process group (survives PTY closure)
-/// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
-///
-/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
-///
-/// # Arguments
-/// * `repo` - Repository instance for accessing git common directory
-/// * `worktree_path` - Working directory for the command
-/// * `command` - Shell command to execute
-/// * `branch` - Branch name for log organization
-/// * `hook_log` - Log specification (determines the log filename)
-/// * `context_json` - Optional JSON context to pipe to command's stdin
-///
-/// # Returns
-/// Path to the log file where output is being written
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
 /// `spawn_detached_exec`.
-/// Render a log path relative to `wt_logs_dir` for debug logging.
-///
-/// Shows e.g. `feature/user/post-start/server.log` instead of just `server.log`,
-/// which preserves the branch/source/hook-type context when debugging.
-fn log_path_for_debug(log_path: &Path, repo: &Repository) -> String {
-    use path_slash::PathExt as _;
-    let log_dir = repo.wt_logs_dir();
-    log_path
-        .strip_prefix(&log_dir)
-        .unwrap_or(log_path)
-        .to_slash_lossy()
-        .into_owned()
-}
-
 fn create_detach_log(
     repo: &Repository,
     branch: &str,
@@ -244,6 +212,13 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Spawn a detached background process with output redirected to a log file.
+///
+/// The process will be fully detached from the parent:
+/// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
+/// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
+///
+/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
     repo: &Repository,
     worktree_path: &Path,
@@ -257,7 +232,7 @@ pub fn spawn_detached(
     log::debug!(
         "$ {} (detached, logging to {})",
         command,
-        log_path_for_debug(&log_path, repo)
+        log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
     #[cfg(unix)]
@@ -430,7 +405,7 @@ pub fn spawn_detached_exec(
         "$ {} {} (detached, logging to {})",
         program.display(),
         args.join(" "),
-        log_path_for_debug(&log_path, repo)
+        log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
     #[cfg(unix)]

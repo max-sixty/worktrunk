@@ -557,10 +557,12 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
         &hook_log_rel_path("feature", "user", "post-start", "npm"),
         "npm output here",
     );
+    // >= 1024 bytes to exercise the `{}K` size-formatting branch in
+    // render_log_table (the other test files stay under 1KB to exercise `{}B`).
     write_log_at(
         &log_dir,
         &internal_log_rel_path("bugfix", "remove"),
-        "remove output",
+        &"remove output\n".repeat(80),
     );
     std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
@@ -2038,6 +2040,7 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
     let log_dir = repo.root_path().join(".git/wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# report").unwrap();
     write_log_at(
         &log_dir,
         &hook_log_rel_path("main", "user", "post-start", "server"),
