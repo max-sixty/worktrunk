@@ -141,7 +141,9 @@ Without [2m--force[0m, removal fails if the worktree contains untracked files.
 
 [1m[32mBackground removal[0m
 
-Removal runs in the background by default — the command returns immediately. Logs are written to [2m.git/wt/logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+Removal runs in the background by default — the command returns immediately. The worktree is renamed into [2m.git/wt/trash/[0m (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached [2mrm -rf[0m finishes cleanup. Cross-filesystem worktrees fall back to [2mgit worktree remove[0m. Logs: [2m.git/wt/logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+
+After each [2mwt remove[0m, entries in [2m.git/wt/trash/[0m older than 24 hours are swept by a detached [2mrm -rf[0m — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
 
 [1m[32mHooks[0m
 

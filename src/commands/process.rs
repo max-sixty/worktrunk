@@ -17,11 +17,13 @@ use crate::commands::hook_filter::HookSource;
 /// Internal worktrunk operations that produce log files.
 ///
 /// These are operations performed by worktrunk itself (not user-defined hooks).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "kebab-case")]
 pub enum InternalOp {
     /// Background worktree removal (`wt remove` in background mode)
     Remove,
+    /// Background cleanup of stale entries in `.git/wt/trash/`
+    TrashSweep,
 }
 
 /// Specification for a hook log file.
@@ -131,9 +133,11 @@ impl HookLog {
             // internal:op
             ["internal", op_str] => {
                 let op = InternalOp::from_str(op_str).map_err(|_| {
+                    let valid: Vec<_> = InternalOp::iter().map(|o| o.to_string()).collect();
                     cformat!(
-                        "Unknown internal operation: <bold>{}</>. Valid: remove",
-                        op_str
+                        "Unknown internal operation: <bold>{}</>. Valid: {}",
+                        op_str,
+                        valid.join(", ")
                     )
                 })?;
                 Ok(Self::Internal(op))
@@ -513,6 +517,82 @@ pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf
     trash_dir.join(format!("{}-{}", name, timestamp))
 }
 
+/// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
+pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
+
+/// Fire-and-forget cleanup of stale entries in `.git/wt/trash/`.
+///
+/// Worktree removal uses a fast path that renames the worktree into
+/// `.git/wt/trash/<name>-<timestamp>/` and deletes it in a detached background
+/// process. If that process is interrupted (SIGKILL, reboot, disk full), the
+/// renamed directory is orphaned. `wt remove` calls this function after its
+/// primary user-visible output — so the sweep never delays the progress or
+/// success message — to provide eventual cleanup: entries older than
+/// [`TRASH_STALE_THRESHOLD_SECS`] are removed by a single detached `rm -rf`.
+///
+/// Best effort: directory read failures and spawn failures are logged at debug
+/// level and otherwise ignored. The sweep is purely additive — the primary
+/// `wt remove` operation proceeds regardless of outcome.
+pub fn sweep_stale_trash(repo: &Repository) {
+    let trash_dir = repo.wt_trash_dir();
+    let stale = collect_stale_trash_entries(&trash_dir, epoch_now(), TRASH_STALE_THRESHOLD_SECS);
+    if stale.is_empty() {
+        return;
+    }
+
+    // Join all paths into a single `rm -rf` invocation so we spawn one
+    // background process regardless of how many entries are stale.
+    let escaped: Vec<String> = stale
+        .iter()
+        .map(|p| shell_escape::escape(p.to_string_lossy().as_ref().into()).into_owned())
+        .collect();
+    let command = format!("rm -rf -- {}", escaped.join(" "));
+
+    if let Err(e) = spawn_detached(
+        repo,
+        &repo.wt_dir(),
+        &command,
+        "wt",
+        &HookLog::internal(InternalOp::TrashSweep),
+        None,
+    ) {
+        log::debug!("Failed to spawn stale trash sweep: {e}");
+    }
+}
+
+/// Collect paths in `trash_dir` whose embedded timestamp is older than
+/// `threshold_secs` relative to `now`.
+///
+/// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
+/// the sweep only touches directories worktrunk created via
+/// [`generate_removing_path`].
+fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
+    let Ok(read_dir) = fs::read_dir(trash_dir) else {
+        return Vec::new();
+    };
+
+    read_dir
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let timestamp = parse_trash_entry_timestamp(name.to_str()?)?;
+            let age = now.saturating_sub(timestamp);
+            (age >= threshold_secs).then(|| entry.path())
+        })
+        .collect()
+}
+
+/// Extract the Unix timestamp suffix from a trash entry filename.
+///
+/// Filenames produced by [`generate_removing_path`] have the form
+/// `<name>-<timestamp>`, where timestamp is a bare unsigned integer in Unix
+/// epoch seconds. The worktree name may contain hyphens, so splitting from the
+/// right and parsing the tail is unambiguous.
+fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
+    let (_, suffix) = name.rsplit_once('-')?;
+    suffix.parse::<u64>().ok()
+}
+
 /// Build shell command for background removal of a staged (renamed) worktree.
 ///
 /// This is used after the worktree has been renamed to a staging path,
@@ -777,6 +857,10 @@ mod tests {
 
         // Internal operation suffix
         assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
+        assert_eq!(
+            HookLog::internal(InternalOp::TrashSweep).suffix(),
+            "trash-sweep"
+        );
     }
 
     #[test]
@@ -807,7 +891,7 @@ mod tests {
         assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
 
         // Unknown internal operation
-        assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove");
+        assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove, trash-sweep");
 
         // Invalid formats: single word, two non-internal parts, missing segment
         assert_snapshot!(HookLog::parse("remove").unwrap_err(), @"Invalid log spec: [1mremove[22m. Format: source:hook-type:name or internal:op");
@@ -861,5 +945,70 @@ mod tests {
         assert_eq!(spec, "internal:remove");
         let parsed = HookLog::parse(&spec).unwrap();
         assert_eq!(original, parsed);
+
+        // Trash sweep roundtrip
+        let original = HookLog::internal(InternalOp::TrashSweep);
+        let spec = original.to_spec();
+        assert_eq!(spec, "internal:trash-sweep");
+        let parsed = HookLog::parse(&spec).unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn test_parse_trash_entry_timestamp() {
+        // Simple name with trailing timestamp
+        assert_eq!(
+            parse_trash_entry_timestamp("feature-1700000000"),
+            Some(1700000000)
+        );
+        // Worktree name containing hyphens — split from the right
+        assert_eq!(
+            parse_trash_entry_timestamp("my-project.feature-branch-1700000000"),
+            Some(1700000000)
+        );
+        // Missing separator or non-numeric suffix → None (sweep leaves it alone)
+        assert_eq!(parse_trash_entry_timestamp("no-timestamp"), None);
+        assert_eq!(parse_trash_entry_timestamp("notimestamp"), None);
+        assert_eq!(parse_trash_entry_timestamp(""), None);
+    }
+
+    #[test]
+    fn test_collect_stale_trash_entries() {
+        let trash = tempfile::tempdir().unwrap();
+        let now: u64 = 1_700_000_000;
+        let day = TRASH_STALE_THRESHOLD_SECS;
+
+        // Stale: 2 days old
+        let stale = trash.path().join(format!("feature-old-{}", now - 2 * day));
+        fs::create_dir(&stale).unwrap();
+        // Fresh: 1 hour old
+        let fresh = trash.path().join(format!("feature-new-{}", now - 3600));
+        fs::create_dir(&fresh).unwrap();
+        // Exactly at threshold: 1 day old (inclusive)
+        let boundary = trash.path().join(format!("feature-edge-{}", now - day));
+        fs::create_dir(&boundary).unwrap();
+        // Unparsable: no timestamp suffix — sweep ignores it
+        let foreign = trash.path().join("random-folder");
+        fs::create_dir(&foreign).unwrap();
+
+        let mut collected = collect_stale_trash_entries(trash.path(), now, day);
+        collected.sort();
+        let mut expected = vec![stale, boundary];
+        expected.sort();
+        assert_eq!(collected, expected);
+        assert!(
+            fresh.exists(),
+            "fresh entries must not appear in stale list"
+        );
+        assert!(foreign.exists(), "unparsable entries must be left alone");
+    }
+
+    #[test]
+    fn test_collect_stale_trash_entries_missing_dir() {
+        let missing = std::path::PathBuf::from("/nonexistent/wt/trash/path");
+        assert!(
+            collect_stale_trash_entries(&missing, 1_700_000_000, TRASH_STALE_THRESHOLD_SECS)
+                .is_empty()
+        );
     }
 }

@@ -156,6 +156,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ### Other cleanup
 
+- `wt remove` — in addition to the target worktree, sweeps `.git/wt/trash/` entries older than 24 hours in the background (eventual cleanup for directories orphaned when a previous background removal was interrupted)
 - `wt config state clear` — removes all worktrunk data from `.git/` (config keys, CI cache, markers, hints, variables, logs, stale trash)
 - `wt config shell uninstall` — removes shell integration from rc files
 

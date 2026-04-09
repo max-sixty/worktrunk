@@ -2546,6 +2546,55 @@ fn test_remove_stale_staging_dir_from_crashed_removal(mut repo: TestRepo) {
     );
 }
 
+/// `wt remove` sweeps `.git/wt/trash/` entries older than 24 hours.
+///
+/// Each run of `wt remove` fires a detached `rm -rf` on trash entries whose
+/// encoded timestamp is more than a day in the past. This provides eventual
+/// cleanup for directories orphaned when a previous background removal was
+/// interrupted. Fresh entries (from recent or in-flight removals) are left
+/// alone so concurrent removals don't race.
+#[rstest]
+fn test_remove_sweeps_stale_trash_entries(mut repo: TestRepo) {
+    let git_common_dir = crate::common::resolve_git_common_dir(repo.root_path());
+    let trash_dir = git_common_dir.join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+
+    // Pre-populate the trash directory with a stale entry (2 days old) and a
+    // fresh entry (just created). The stale entry should be swept; the fresh
+    // entry should survive.
+    let day = 24 * 60 * 60;
+    let stale_timestamp = crate::common::TEST_EPOCH - 2 * day;
+    let stale_entry = trash_dir.join(format!("orphan-stale-{stale_timestamp}"));
+    let fresh_entry = trash_dir.join(format!("orphan-fresh-{}", crate::common::TEST_EPOCH));
+    std::fs::create_dir(&stale_entry).unwrap();
+    std::fs::write(stale_entry.join("marker"), "leftover").unwrap();
+    std::fs::create_dir(&fresh_entry).unwrap();
+    std::fs::write(fresh_entry.join("marker"), "recent").unwrap();
+
+    // Create and remove a real worktree to trigger the sweep, which runs after
+    // the primary `wt remove` output has been printed.
+    let _ = repo.add_worktree("feature-sweep");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-sweep"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The stale entry is removed by a detached `rm -rf` — poll for absence.
+    crate::common::wait_for("stale trash entry swept", || !stale_entry.exists());
+
+    // The fresh entry must survive — only entries older than 24 hours are swept.
+    assert!(
+        fresh_entry.exists(),
+        "fresh trash entry (age 0) must not be swept"
+    );
+}
+
 /// Tests that foreground removal shows remaining directory entries when
 /// `git worktree remove` fails because a directory can't be deleted.
 ///

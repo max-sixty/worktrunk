@@ -586,6 +586,17 @@ Removed worktree for bugfix
 Signs of poor temporal locality: collecting messages in a buffer, single success
 message for batch operations, no progress before slow operations.
 
+## Defer Non-Essential Work Until After Primary Output
+
+Fire-and-forget cleanup and cache sweeps run after the command's final
+user-visible message — never before. Placing them at the start delays
+time-to-first-output with work the user didn't ask for.
+
+Worktrunk marks the boundary with `WORKTRUNK_FIRST_OUTPUT`: handlers
+early-return where output begins, so work before that return is on the hot
+path, work after it is not. See `handle_remove_command` —
+`sweep_stale_trash` runs after `handle_remove_output`.
+
 ## Information Display: Show Once, Not Twice
 
 Progress messages should include all relevant details (what's being done,
