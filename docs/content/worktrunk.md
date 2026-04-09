@@ -91,6 +91,7 @@ git branch -d feat{% end %}</td>
 - **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries) per branch
 - **[PR checkout](@/switch.md#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](@/step.md#aliases) & [per-branch variables](@/config.md#wt-config-state-vars)** — custom `wt step <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
