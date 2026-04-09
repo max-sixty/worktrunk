@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
-    GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
+    GitError, IntegrationReason, Repository, WorktreeInfo, parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
@@ -38,6 +38,9 @@ pub trait RepositoryCliExt {
     /// worktree is "current". Pass `None` for normal CLI usage (discovers from
     /// CWD). Pass `Some` when calling from a context where CWD may have changed
     /// (e.g., background threads in the picker).
+    ///
+    /// `worktrees` provides a pre-fetched worktree list to avoid redundant
+    /// `git worktree list` calls. Pass `None` to fetch on demand.
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
@@ -45,6 +48,7 @@ pub trait RepositoryCliExt {
         force_worktree: bool,
         config: &UserConfig,
         current_path: Option<PathBuf>,
+        worktrees: Option<&[WorktreeInfo]>,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -81,9 +85,17 @@ impl RepositoryCliExt for Repository {
         force_worktree: bool,
         config: &UserConfig,
         current_path: Option<PathBuf>,
+        worktrees: Option<&[WorktreeInfo]>,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
-        let worktrees = self.list_worktrees()?;
+        let owned_worktrees;
+        let worktrees = match worktrees {
+            Some(wts) => wts,
+            None => {
+                owned_worktrees = self.list_worktrees()?;
+                &owned_worktrees
+            }
+        };
         // Primary worktree path: prefer default branch's worktree, fall back to first
         // worktree, then repo base for bare repos with no worktrees.
         let primary_path = self.home_path()?;

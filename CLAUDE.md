@@ -316,7 +316,7 @@ fn validate_config() { ... }
 
 ### System Docstrings
 
-Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves.
+Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves. Modules with cached state, cross-module coordination, or non-obvious lifetime/invalidation rules qualify. See `commands/list/collect/mod.rs` for an exemplar.
 
 ### No Test Code in Library Code
 
