@@ -56,6 +56,9 @@
 //! These are lazy initialization, not caches — they have no invalidation concerns
 //! because the container is initialized once and never replaced — unlike `RepoCache`,
 //! there is no risk of reading stale external state.
+//!
+//! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
+//! for rendered preview output, scoped to a single picker session.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
