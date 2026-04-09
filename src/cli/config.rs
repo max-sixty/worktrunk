@@ -437,7 +437,7 @@ $ wt config plugins opencode install
 - **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
-- **vars**: [experimental] Custom variables per branch
+- **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
 - **logs**: Operation and debug logs
 
 ## Examples
@@ -730,7 +730,7 @@ $ wt config state vars set env=production --branch=main
 
 ## Template access
 
-Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
 [post-start]

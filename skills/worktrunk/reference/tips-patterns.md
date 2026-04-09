@@ -58,7 +58,7 @@ Ports are deterministic — `fix-auth` always gets port 16460, regardless of whi
 
 ## Database per worktree
 
-Each worktree can have its own isolated database. A pipeline sets up names and ports as vars, then later steps and hooks reference them:
+Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](https://worktrunk.dev/config/#wt-config-state-vars), then later steps and hooks reference them:
 
 ```toml
 post-start = [

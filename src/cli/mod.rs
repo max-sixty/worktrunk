@@ -825,7 +825,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
-| `vars` | object | Per-branch variables from `wt config state vars` (absent when empty) |
+| `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 
 ### Commit object
 
@@ -1276,7 +1276,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | Remote URL |
 | `{{ hook_type }}` | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 | `{{ hook_name }}` | Hook command name (if named) |
-| `{{ vars.<key> }}` | Per-branch variables from `wt config state vars` |
+| `{{ vars.<key> }}` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 

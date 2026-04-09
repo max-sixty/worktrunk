@@ -162,7 +162,7 @@ Query structured data with `--format=json`:
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
-| `vars` | object | Per-branch variables from `wt config state vars` (absent when empty) |
+| `vars` | object | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) (absent when empty) |
 
 ### Commit object
 
