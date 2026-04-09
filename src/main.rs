@@ -1010,7 +1010,7 @@ fn init_logging(verbose_level: u8) {
 
 fn handle_sync_command(args: SyncArgs) -> anyhow::Result<()> {
     handle_sync(SyncOptions {
-        all: args.all,
+        stack: args.stack,
         dry_run: args.dry_run,
     })
 }

@@ -116,9 +116,9 @@ fn test_sync_dirty_worktree_aborts(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
 }
 
-/// Two independent stacks, --all syncs both.
+/// Two independent stacks, default syncs both.
 #[rstest]
-fn test_sync_all_flag(mut repo: TestRepo) {
+fn test_sync_default_syncs_all(mut repo: TestRepo) {
     repo.commit("initial");
 
     // Stack A: main -> pr-a1
@@ -132,12 +132,12 @@ fn test_sync_all_flag(mut repo: TestRepo) {
     // Advance main
     repo.commit("advance main");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--all"], Some(&pr_a1)));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr_a1)));
 }
 
-/// Two independent stacks, no --all syncs only current stack.
+/// Two independent stacks, --stack syncs only current stack.
 #[rstest]
-fn test_sync_current_stack_only(mut repo: TestRepo) {
+fn test_sync_stack_flag(mut repo: TestRepo) {
     repo.commit("initial");
 
     // Stack A: main -> pr-a1
@@ -151,8 +151,8 @@ fn test_sync_current_stack_only(mut repo: TestRepo) {
     // Advance main
     repo.commit("advance main");
 
-    // Sync from pr-a1 — should only sync stack A
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr_a1)));
+    // Sync from pr-a1 with --stack — should only sync stack A
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--stack"], Some(&pr_a1)));
 }
 
 // =========================================================================
@@ -166,7 +166,7 @@ fn test_sync_current_stack_only(mut repo: TestRepo) {
 ///                   └── PR2 ─ F
 ///                              └── PR3 ─ H
 ///
-/// `wt sync --all` should rebase PR1 onto main, PR2 onto PR1, PR3 onto PR2.
+/// `wt sync` should rebase PR1 onto main, PR2 onto PR1, PR3 onto PR2.
 #[rstest]
 fn test_sync_scenario1_main_advances_deep_stack(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
@@ -176,7 +176,7 @@ fn test_sync_scenario1_main_advances_deep_stack(mut repo: TestRepo) {
     // Advance main
     repo.commit("advance main");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--all"], Some(&pr1)));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
 }
 
 /// Plan scenario 2: Commit in the middle, update the rest.
@@ -196,7 +196,7 @@ fn test_sync_scenario2_mid_stack_change_deep(mut repo: TestRepo) {
     // Add a new commit on pr1 (PR2 and PR3 are now stale)
     repo.commit_in_worktree(&pr1, "pr1-fix.txt", "fix content", "pr1 fix");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--all"], Some(&pr1)));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
 }
 
 /// Plan scenario 3: PR merged to main — reparent children with rebase --onto.
@@ -226,7 +226,7 @@ fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "sync",
-        &["--all"],
+        &[],
         Some(&pr2_path)
     ));
 }

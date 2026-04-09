@@ -120,7 +120,7 @@ impl DependencyTree {
 
 /// Options for the sync command.
 pub struct SyncOptions {
-    pub all: bool,
+    pub stack: bool,
     pub dry_run: bool,
 }
 
@@ -378,11 +378,9 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
     let current_branch = current_wt.branch()?;
 
-    let branches_to_sync: Vec<&str> = if opts.all {
-        tree.topological_order()
-    } else {
+    let branches_to_sync: Vec<&str> = if opts.stack {
         let Some(ref current) = current_branch else {
-            bail!("Current worktree has no branch. Use --all to sync all branches.");
+            bail!("Current worktree has no branch. Remove --stack to sync all branches.");
         };
         let stack = tree.stack_containing(current);
         if stack.is_empty() {
@@ -395,6 +393,8 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             return Ok(());
         }
         stack
+    } else {
+        tree.topological_order()
     };
 
     if branches_to_sync.is_empty() {

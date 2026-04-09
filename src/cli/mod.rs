@@ -449,11 +449,12 @@ pub(crate) struct RemoveArgs {
 
 #[derive(Args)]
 pub(crate) struct SyncArgs {
-    /// Sync all stacks
+    /// Only sync the current stack
     ///
-    /// Without this flag, only the stack containing the current branch is synced.
+    /// Without this flag, all worktree branches are synced. With `--stack`, only
+    /// the stack containing the current branch is synced.
     #[arg(long)]
-    pub(crate) all: bool,
+    pub(crate) stack: bool,
 
     /// Preview the sync plan
     ///
@@ -1022,10 +1023,32 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 ## Examples
 
 ```console
-$ wt sync                # Sync current stack
-$ wt sync --all          # Sync all stacks
+$ wt sync                # Sync all stacks
+$ wt sync --stack        # Sync current stack only
 $ wt sync --dry-run      # Preview the plan
 ```
+
+## What it does
+
+Say you have two independent stacks:
+
+```
+main
+├── pr-auth → pr-auth-tests       (stack A)
+└── pr-refactor → pr-cleanup      (stack B)
+```
+
+If main advances, `wt sync` rebases everything:
+
+```
+Rebasing pr-auth onto main...         ✓
+Rebasing pr-auth-tests onto pr-auth...✓
+Rebasing pr-refactor onto main...     ✓
+Rebasing pr-cleanup onto pr-refactor..✓
+Sync complete: 4 rebased
+```
+
+With `--stack` (from pr-auth's worktree), only stack A is synced — stack B is left as-is.
 
 ## Three scenarios
 
@@ -1052,7 +1075,6 @@ PR1 merged into main → PR2 rebases --onto main
 - Skips branches already up-to-date
 - Stops on first conflict — resolve, `git rebase --continue`, re-run `wt sync`
 - Dirty worktrees block sync (commit or stash first)
-- By default, only syncs the stack containing the current branch
 
 ## See also
 
