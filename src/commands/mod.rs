@@ -25,6 +25,7 @@ pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
+mod sync;
 pub(crate) mod worktree;
 
 pub(crate) use alias::{AliasOptions, step_alias};
@@ -45,6 +46,7 @@ pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show,
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
+pub(crate) use sync::{SyncOptions, handle_sync};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
