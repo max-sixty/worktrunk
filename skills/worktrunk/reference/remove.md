@@ -65,7 +65,7 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 ## Background removal
 
-Removal runs in the background by default — the command returns immediately. Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default — the command returns immediately. Logs are written to `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to run in the foreground.
 
 ## Hooks
 

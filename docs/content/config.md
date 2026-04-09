@@ -908,12 +908,14 @@ The command log appends entries and is not branch-specific — it records all ac
 
 #### Hook output logs
 
-| Operation | Log file |
-|-----------|----------|
-| Background hooks | `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` |
-| Background removal | `{branch}-{hash}-remove.log` |
+Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Hash suffixes are added by filename sanitization. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
+| Operation | Log path |
+|-----------|----------|
+| Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
+| Background removal | `{branch}/internal/remove.log` |
+
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 #### Diagnostic files
 
@@ -926,7 +928,7 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 ### Location
 
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
 
 ### Examples
 
@@ -937,7 +939,7 @@ Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 View a specific hook log:
-{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log__WT_QUOT__") }}
+{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature/project/post-start/build.log__WT_QUOT__") }}
 
 Clear all logs:
 {{ terminal(cmd="wt config state logs clear") }}

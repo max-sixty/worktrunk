@@ -240,10 +240,12 @@ When no structured alternative exists, document the fragility inline.
 
 ## Hook Output Logs
 
-Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Same operation on same branch overwrites the previous log.
+Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Per-branch logs live in subtrees; same operation on same branch overwrites the previous log.
 
-- **Background hooks**: `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` (source: `user` or `project`)
-- **Background removal**: `{branch}-{hash}-remove.log`
+- **Background hooks**: `{branch}/{source}/{hook-type}/{name}.log` (source: `user` or `project`)
+- **Background removal**: `{branch}/internal/remove.log`
+
+Top-level *files* are shared logs (`commands.jsonl*`, `verbose.log`, `diagnostic.md`); top-level *directories* are per-branch log trees. Branch and hook names are sanitized via `sanitize_for_filename` (invalid characters → `-`; short collision-avoidance hash appended).
 
 ## Coverage
 

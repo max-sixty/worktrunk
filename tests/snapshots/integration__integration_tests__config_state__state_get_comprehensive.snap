@@ -32,10 +32,10 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mHOOK OUTPUT[39m @ <PATH>
-            File            Size  Age   
- ────────────────────────── ──── ────── 
- bugfix-remove.log          13B  future 
- feature-post-start-npm.log 10B  future
+                  File                   Size  Age   
+ ─────────────────────────────────────── ──── ────── 
+ bugfix-zgc/internal/remove.log          13B  future 
+ feature-axb/user/post-start/npm-iox.log 10B  future
 
 [36mDIAGNOSTIC[39m @ <PATH>
 [107m [0m (none)

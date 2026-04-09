@@ -1,0 +1,7 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+[31m✗[39m [31mNo log file matches [1muser:post-start:server[22m for branch [1mmain[22m[39m
+[107m [0m Expected: main-vfz/user/post-start/server-f4t.log
+[107m [0m Available: main-vfz/user/post-start/other-4n1.log
