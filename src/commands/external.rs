@@ -69,11 +69,11 @@ pub(crate) fn handle_external_command(
     if let Some(suggestion) = suggest_nested_subcommand(&cli_cmd, &name) {
         eprintln!(
             "{}",
-            error_message(cformat!("unrecognized subcommand '<cyan,bold>{name}</>'"))
+            error_message(cformat!("Unrecognized subcommand '<cyan,bold>{name}</>'"))
         );
         eprintln!(
             "{}",
-            hint_message(cformat!("perhaps <cyan,bold>{suggestion}</>?"))
+            hint_message(cformat!("Perhaps <cyan,bold>{suggestion}</>?"))
         );
         eprintln!("{}", hint_message(help_hint()));
         return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
@@ -131,7 +131,7 @@ fn print_not_found(name: &str, cli_cmd: &clap::Command) {
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "the most similar command is <cyan,bold>{suggestion}</>"
+                "The most similar command is <cyan,bold>{suggestion}</>"
             ))
         );
     }
