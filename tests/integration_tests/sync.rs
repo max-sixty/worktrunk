@@ -54,6 +54,8 @@ fn setup_deep_stack(
 /// rebases.
 #[rstest]
 fn test_sync_dry_run_linear_stack(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2) = setup_linear_stack(&mut repo);
 
@@ -66,6 +68,8 @@ fn test_sync_dry_run_linear_stack(mut repo: TestRepo) {
 /// main -> pr1 -> pr2, commit on main, sync rebases in order.
 #[rstest]
 fn test_sync_main_advances(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2) = setup_linear_stack(&mut repo);
 
@@ -78,6 +82,8 @@ fn test_sync_main_advances(mut repo: TestRepo) {
 /// main -> pr1 -> pr2, extra commit on pr1, sync rebases pr2 onto pr1.
 #[rstest]
 fn test_sync_mid_stack_change(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2) = setup_linear_stack(&mut repo);
 
@@ -90,6 +96,8 @@ fn test_sync_mid_stack_change(mut repo: TestRepo) {
 /// Already-synced single branch reports up-to-date.
 #[rstest]
 fn test_sync_up_to_date(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
 
     let pr1 = repo.add_worktree("pr1");
@@ -102,6 +110,8 @@ fn test_sync_up_to_date(mut repo: TestRepo) {
 /// Dirty worktree blocks sync.
 #[rstest]
 fn test_sync_dirty_worktree_aborts(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
 
     let pr1 = repo.add_worktree("pr1");
@@ -119,6 +129,8 @@ fn test_sync_dirty_worktree_aborts(mut repo: TestRepo) {
 /// Two independent stacks, default syncs both.
 #[rstest]
 fn test_sync_default_syncs_all(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
 
     // Stack A: main -> pr-a1
@@ -138,6 +150,8 @@ fn test_sync_default_syncs_all(mut repo: TestRepo) {
 /// Two independent stacks, --stack syncs only current stack.
 #[rstest]
 fn test_sync_stack_flag(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
 
     // Stack A: main -> pr-a1
@@ -170,6 +184,7 @@ fn test_sync_stack_flag(mut repo: TestRepo) {
 #[rstest]
 fn test_sync_scenario1_main_advances_deep_stack(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
@@ -190,6 +205,7 @@ fn test_sync_scenario1_main_advances_deep_stack(mut repo: TestRepo) {
 #[rstest]
 fn test_sync_scenario2_mid_stack_change_deep(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
@@ -211,6 +227,7 @@ fn test_sync_scenario2_mid_stack_change_deep(mut repo: TestRepo) {
 #[rstest]
 fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
@@ -239,6 +256,7 @@ fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
 #[rstest]
 fn test_sync_fetch(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2) = setup_linear_stack(&mut repo);
 
@@ -252,6 +270,8 @@ fn test_sync_fetch(mut repo: TestRepo) {
 /// --push force-pushes rebased branches that have an upstream.
 #[rstest]
 fn test_sync_push(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (pr1, _pr2) = setup_linear_stack(&mut repo);
 
@@ -423,6 +443,7 @@ fn test_sync_cascading_merges(mut repo: TestRepo) {
 #[rstest]
 fn test_sync_prune(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 

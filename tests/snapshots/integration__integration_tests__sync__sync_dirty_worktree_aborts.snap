@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/sync.rs
-assertion_line: 99
+assertion_line: 126
 info:
   program: wt
   args:
@@ -44,9 +44,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch [1mfeature-a[22m has equidistant parents: feature-b, feature-c. Picked [1mfeature-b[22m.[39m
-[33m▲[39m [33mBranch [1mfeature-b[22m has equidistant parents: feature-a, feature-c. Picked [1mfeature-a[22m.[39m
-[33m▲[39m [33mBranch [1mfeature-c[22m has equidistant parents: feature-a, feature-b. Picked [1mfeature-a[22m.[39m
 [31m✗[39m [31mworktrees have uncommitted changes[39m
 [107m [0m   - pr1
 [107m [0m 
