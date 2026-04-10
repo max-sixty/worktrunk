@@ -575,12 +575,34 @@ fn test_list_config_validation_error_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// System config parse errors are attributed to the system config file,
-/// not the user config or env vars.
+/// System config with a section-field error (caught by OverridableConfig).
 #[rstest]
 fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     let system_config = repo.root_path().join("system-config.toml");
     fs::write(&system_config, "[list]\nbranches = \"not-a-bool\"\n").unwrap();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// System config with a non-section field error (skips OverridableConfig,
+/// caught by the UserConfig fallback validation).
+#[rstest]
+fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
+    let system_config = repo.root_path().join("system-config.toml");
+    fs::write(
+        &system_config,
+        "skip-shell-integration-prompt = \"not-a-bool\"\n",
+    )
+    .unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
     settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
