@@ -2498,3 +2498,24 @@ fn test_reload_projects_from_permission_error() {
         "Expected path in error, got: {err}"
     );
 }
+
+#[test]
+fn test_load_error_display_file() {
+    let toml_err = toml::from_str::<OverridableConfig>("[list]\nbranches = \"bad\"\n")
+        .unwrap_err();
+    let err = LoadError::File {
+        path: std::path::PathBuf::from("/tmp/config.toml"),
+        label: "User config",
+        err: Box::new(toml_err),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("User config at"), "{msg}");
+    assert!(msg.contains("failed to parse"), "{msg}");
+    assert!(msg.contains("line 2"), "{msg}");
+}
+
+#[test]
+fn test_load_error_display_other() {
+    let err = LoadError::Other(config::ConfigError::Message("bad".into()));
+    assert_eq!(err.to_string(), "bad");
+}

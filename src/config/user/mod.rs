@@ -180,7 +180,7 @@ impl UserConfig {
 
     /// Like [`load()`](Self::load), but returns a [`LoadError`] that
     /// distinguishes file-level parse failures (with line/col) from
-    /// env-var override failures. Used by [`Repository::user_config()`]
+    /// env-var override failures. Used by `Repository::user_config()`
     /// to emit targeted diagnostics.
     pub(crate) fn load_with_cause() -> Result<Self, LoadError> {
         // Note: worktree-path has no default set here - it's handled by the getter
