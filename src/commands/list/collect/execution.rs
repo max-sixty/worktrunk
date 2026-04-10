@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use crossbeam_channel as chan;
-use worktrunk::git::{BranchRef, LineDiff, Repository, WorktreeInfo};
+use worktrunk::git::{BranchRef, Repository, WorktreeInfo};
 
 use super::super::model::{
     ActiveGitOperation, ItemKind, ListItem, UpstreamStatus, WorkingTreeStatus,
@@ -222,11 +222,12 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             item.user_marker = Some(None);
         }
         TaskKind::WorkingTreeDiff => {
-            if let ItemKind::Worktree(data) = &mut item.kind {
-                data.working_tree_diff = Some(LineDiff::default());
-                data.working_tree_status = Some(WorkingTreeStatus::default());
-                data.has_conflicts = Some(false);
-            }
+            // Do not seed. `working_tree_diff` feeds gate 3's `is_clean`
+            // check and flows into JSON output. Seeding `Some(default())`
+            // would misreport dirty worktrees as clean+removable and
+            // fabricate an empty diff in `--format=json`. Same rule as
+            // `item.counts`: leaks-to-JSON inputs stay `None`; the gate
+            // waits and renders `⋯`.
         }
         TaskKind::WorkingTreeConflicts => {
             if let ItemKind::Worktree(data) = &mut item.kind {

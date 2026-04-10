@@ -5,12 +5,12 @@
 //! "status context" structure — status-feeding fields flow through the
 //! same `Option<T>` slots as every other column.
 //!
-//! `ListItem::compute_status_symbols` is called after every successful
-//! result and is a no-op until all of its required inputs are `Some`. Spawn
-//! code seeds conservative sentinels for tasks that will not run, so the
-//! only way a required field stays `None` is if its task is still pending
-//! or has errored — exactly the cases where the Status column should
-//! display the "not loaded" placeholder rather than a fabricated answer.
+//! `ListItem::refresh_status_symbols` is called after every successful
+//! result; each gate resolves independently once its inputs arrive.
+//! Callers must also call `refresh_status_symbols` post-drain to cover
+//! items with zero successful results (all tasks errored or timed out),
+//! so that synchronously-derivable gates (e.g. `worktree_state` from
+//! metadata) still materialize.
 
 use std::time::{Duration, Instant};
 
@@ -115,11 +115,10 @@ pub(super) fn drain_results(
         // Track this result for diagnostics (both success and error count as "received")
         received_by_item[item_idx].push(kind);
 
-        // Errors leave every field the errored task would have written at
-        // `None`. The Status column stays blank because
-        // `compute_status_symbols` early-returns on missing inputs, and
-        // each non-status column renders its own placeholder when its
-        // Option is `None`. Still run the progressive callback so the
+        // Errors leave the errored task's fields at `None`. The
+        // corresponding gate stays unresolved (renders `⋯`). Callers
+        // must call `refresh_status_symbols` post-drain to cover items
+        // with zero successful results. Still run the callback so the
         // footer progress counter advances.
         if let Err(error) = outcome {
             errors.push(error);
@@ -230,11 +229,8 @@ pub(super) fn drain_results(
             }
         }
 
-        // Try to compute status symbols. `compute_status_symbols` is
-        // idempotent and bails out while any required field is still
-        // `None`, so this is free to call unconditionally — it will no-op
-        // until the final required field for this item arrives and then
-        // snap to `Some(..)`.
+        // Refresh status symbols. Each gate resolves independently once
+        // its inputs arrive; already-resolved gates are skipped.
         item.refresh_status_symbols(integration_target);
 
         // Invoke callback (progressive mode re-renders rows, buffered mode does nothing)
@@ -246,12 +242,15 @@ pub(super) fn drain_results(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::model::{AheadBehind, MainState, UpstreamStatus, WorktreeState};
+    use super::super::super::model::{
+        AheadBehind, MainState, UpstreamStatus, WorkingTreeStatus, WorktreeState,
+    };
     use super::super::execution::seed_skipped_task_defaults;
     use super::super::types::ErrorCause;
     use super::*;
+    use worktrunk::git::LineDiff;
 
-    /// Seed every status-feeding field on an item so `compute_status_symbols`
+    /// Seed every status-feeding field on an item so `refresh_status_symbols`
     /// has no remaining `None` inputs. The values are deliberately
     /// non-default — counts of (3, 5) means a fully-computed StatusSymbols
     /// will report `MainState::Diverged`, which is distinguishable from the
@@ -265,11 +264,18 @@ mod tests {
             TaskKind::CommittedTreesMatch,
             TaskKind::HasFileChanges,
             TaskKind::WouldMergeAdd,
-            TaskKind::WorkingTreeDiff,
             TaskKind::WorkingTreeConflicts,
             TaskKind::GitOperation,
         ] {
             seed_skipped_task_defaults(item, kind);
+        }
+        // WorkingTreeDiff is intentionally NOT seeded via
+        // `seed_skipped_task_defaults` (it would fabricate a clean tree).
+        // Simulate a real task result instead.
+        if let ItemKind::Worktree(data) = &mut item.kind {
+            data.working_tree_diff = Some(LineDiff::default());
+            data.working_tree_status = Some(WorkingTreeStatus::default());
+            data.has_conflicts = Some(false);
         }
         item.counts = Some(AheadBehind {
             ahead: 3,

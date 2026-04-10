@@ -957,10 +957,15 @@ pub fn collect(
         );
     }
 
-    // Prunable worktrees are now pre-seeded at spawn time
-    // (`seed_prunable_item`), so no post-drain refresh is needed. The
-    // drain itself calls `refresh_status_symbols` after every result,
-    // which covers every non-prunable item's progression.
+    // The drain calls `refresh_status_symbols` after every *successful*
+    // result, but items with zero successful results (all tasks errored
+    // or timed out) never hit that path. Sweep every item so that
+    // synchronously-derivable gates (worktree_state from metadata,
+    // pre-seeded main_state for unborn/prunable items) still materialize.
+    // The call is idempotent — already-resolved gates are skipped.
+    for item in all_items.iter_mut() {
+        item.refresh_status_symbols(integration_target.as_deref());
+    }
 
     // Count errors for summary
     let error_count = errors.len();
@@ -1251,6 +1256,10 @@ pub fn populate_item(
             );
         }
     }
+
+    // Ensure status symbols are refreshed even if all tasks errored
+    // (the drain only calls refresh on the success path).
+    item.refresh_status_symbols(target.as_deref());
 
     // Populate display fields (including status_line for statusline command)
     item.finalize_display();
