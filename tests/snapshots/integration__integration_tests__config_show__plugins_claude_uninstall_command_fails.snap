@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/config_show.rs
+assertion_line: 3343
 info:
   program: wt
   args:
@@ -48,4 +49,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mUninstalling plugin...[39m
-[31m✗[39m [31mclaude plugin uninstall failed: error: uninstall failed[39m
+[31m✗[39m [31mclaude plugin uninstall failed: ✘ Failed to uninstall plugin "worktrunk@worktrunk": Plugin "worktrunk@worktrunk" not found in installed plugins[39m
