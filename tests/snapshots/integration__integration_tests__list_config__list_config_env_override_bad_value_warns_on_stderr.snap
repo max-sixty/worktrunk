@@ -36,6 +36,7 @@ info:
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK__LIST__BRANCHES: not-a-bool
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -50,9 +51,5 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mUser config at [TEST_CONFIG] failed to parse, using defaults[39m
-[107m [0m TOML parse error at line 2, column 12
-[107m [0m   |
-[107m [0m 2 | branches = "not-a-bool"
-[107m [0m   |            ^^^^^^^^^^^^
-[107m [0m invalid type: string "not-a-bool", expected a boolean
+[33m▲[39m [33mFailed to apply WORKTRUNK_* env var override, using defaults: invalid type: string "not-a-bool", expected a boolean[39m
+[2m↳[22m [2mCurrently set: WORKTRUNK__LIST__BRANCHES[22m

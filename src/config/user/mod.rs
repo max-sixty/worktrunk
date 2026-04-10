@@ -13,6 +13,8 @@ mod sections;
 #[cfg(test)]
 mod tests;
 
+use std::path::PathBuf;
+
 use config::{Case, Config, ConfigError, File};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,72 @@ pub use sections::{
     OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
     UserProjectOverrides,
 };
+
+/// Distinguishes *why* `UserConfig::load()` failed so callers can emit
+/// targeted diagnostics (file errors with line/col vs env-var attribution).
+#[derive(Debug)]
+pub enum LoadError {
+    /// A config file failed to parse. The `toml::de::Error` includes
+    /// line/column info and a source-snippet pointer.
+    File {
+        path: PathBuf,
+        label: &'static str,
+        err: Box<toml::de::Error>,
+    },
+    /// Config files parsed cleanly; applying env-var overrides failed.
+    /// `override_vars` lists `WORKTRUNK_*` env vars that could be the cause.
+    Env {
+        err: ConfigError,
+        override_vars: Vec<String>,
+    },
+    /// Other errors (validation, config-crate internals).
+    Other(ConfigError),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::File { path, label, err } => {
+                write!(
+                    f,
+                    "{label} at {} failed to parse:\n{err}",
+                    crate::path::format_path_for_display(path)
+                )
+            }
+            LoadError::Env { err, .. } => write!(f, "{err}"),
+            LoadError::Other(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+/// Returns names of `WORKTRUNK_*` env vars that could be value overrides,
+/// excluding infrastructure paths and the `WORKTRUNK_TEST_` namespace.
+// TODO: This hardcoded exclusion list is a smell — ideally the config loading
+// layer would track which source each value came from, making attribution
+// automatic rather than heuristic. Consider integrating this into the config
+// crate's source-tracking or building our own env-var overlay.
+fn collect_worktrunk_override_vars() -> Vec<String> {
+    const INFRA_VARS: &[&str] = &[
+        "WORKTRUNK_CONFIG_PATH",
+        "WORKTRUNK_SYSTEM_CONFIG_PATH",
+        "WORKTRUNK_APPROVALS_PATH",
+    ];
+    let mut vars: Vec<String> = std::env::vars()
+        .filter_map(|(k, _)| {
+            if !k.starts_with("WORKTRUNK_") {
+                return None;
+            }
+            if INFRA_VARS.contains(&k.as_str()) || k.starts_with("WORKTRUNK_TEST_") {
+                return None;
+            }
+            Some(k)
+        })
+        .collect();
+    vars.sort();
+    vars
+}
 
 /// User-level configuration for worktree path formatting and LLM integration.
 ///
@@ -107,6 +175,14 @@ impl UserConfig {
     /// 3. User config file (personal preferences)
     /// 4. Environment variables (WORKTRUNK_*)
     pub fn load() -> Result<Self, ConfigError> {
+        Self::load_with_cause().map_err(|e| ConfigError::Message(e.to_string()))
+    }
+
+    /// Like [`load()`](Self::load), but returns a [`LoadError`] that
+    /// distinguishes file-level parse failures (with line/col) from
+    /// env-var override failures. Used by [`Repository::user_config()`]
+    /// to emit targeted diagnostics.
+    pub(crate) fn load_with_cause() -> Result<Self, LoadError> {
         // Note: worktree-path has no default set here - it's handled by the getter
         // which returns the default when None. This allows us to distinguish
         // "user explicitly set this" from "using default".
@@ -125,6 +201,22 @@ impl UserConfig {
 
             // Feed migrated content to serde so deprecated patterns parse correctly
             let migrated = super::deprecation::migrate_content(&content);
+
+            // Pre-validate with the toml crate for rich line/col errors.
+            // Validate as OverridableConfig (not UserConfig) because
+            // UserConfig's `#[serde(flatten)]` on OverridableConfig causes
+            // toml to lose field paths — errors point at the section header
+            // instead of the bad value. OverridableConfig has the section
+            // fields (list, commit, merge, ...) as direct fields, so the
+            // toml crate tracks their location correctly.
+            if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
+                return Err(LoadError::File {
+                    path: system_path,
+                    label: "System config",
+                    err: Box::new(err),
+                });
+            }
+
             builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
         }
 
@@ -157,6 +249,16 @@ impl UserConfig {
                     &find_unknown_keys(&content),
                     "User config",
                 );
+
+                // Pre-validate with the toml crate for rich line/col errors
+                // (OverridableConfig — see system config comment above for why).
+                if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
+                    return Err(LoadError::File {
+                        path: config_path.clone(),
+                        label: "User config",
+                        err: Box::new(err),
+                    });
+                }
 
                 // Feed migrated content from check_and_migrate to serde so deprecated
                 // patterns parse correctly without reparsing the TOML here.
@@ -198,8 +300,20 @@ impl UserConfig {
         // The config crate's `preserve_order` feature ensures TOML insertion order
         // is preserved (uses IndexMap instead of HashMap internally).
         // See: https://github.com/max-sixty/worktrunk/issues/737
-        let config: Self = builder.build()?.try_deserialize()?;
-        config.validate()?;
+        let config: Self = builder
+            .build()
+            .map_err(LoadError::Other)?
+            .try_deserialize()
+            .map_err(|err| {
+                // Files were pre-validated above, so a deserialize failure here
+                // is caused by env-var overrides.
+                LoadError::Env {
+                    err,
+                    override_vars: collect_worktrunk_override_vars(),
+                }
+            })?;
+
+        config.validate().map_err(LoadError::Other)?;
 
         Ok(config)
     }

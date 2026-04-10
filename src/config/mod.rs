@@ -99,6 +99,7 @@ pub use project::{
     ProjectCiConfig, ProjectConfig, ProjectListConfig,
     find_unknown_keys as find_unknown_project_keys, valid_project_config_keys,
 };
+pub(crate) use user::LoadError;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
     OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,

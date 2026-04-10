@@ -233,8 +233,12 @@ impl ProjectConfig {
             );
         }
 
-        let config: ProjectConfig = toml::from_str(&contents)
-            .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
+        let config: ProjectConfig = toml::from_str(&contents).map_err(|e| {
+            ConfigError::Message(format!(
+                "Project config at {} failed to parse:\n{e}",
+                crate::path::format_path_for_display(&config_path),
+            ))
+        })?;
 
         Ok(Some(config))
     }

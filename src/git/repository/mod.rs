@@ -78,7 +78,7 @@ use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
+use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
 use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
@@ -389,27 +389,53 @@ impl Repository {
     /// would hide it from anyone not running with `RUST_LOG=warn`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load()
-                .inspect_err(|err| {
-                    // Include the config file path so users know where to look.
-                    // Serde's flatten/Option wrapping loses the offending field
-                    // name inside the config crate's error, so the file path is
-                    // the most reliable pointer we can give.
-                    let path_hint = crate::config::config_path()
-                        .map(|p| format!(" at {}", crate::path::format_path_for_display(&p)))
-                        .unwrap_or_default();
-                    crate::styling::eprintln!(
-                        "{}",
-                        crate::styling::warning_message(format!(
-                            "Failed to load user config{path_hint}, using defaults: {err}"
-                        ))
-                    );
-                    crate::styling::eprintln!(
-                        "{}",
-                        crate::styling::hint_message(
-                            "If the value came from a WORKTRUNK_* env var, check those too.",
-                        )
-                    );
+            UserConfig::load_with_cause()
+                .inspect_err(|err| match err {
+                    LoadError::File { path, label, err } => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "{label} at {} failed to parse, using defaults",
+                                crate::path::format_path_for_display(path),
+                            ))
+                        );
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(&err.to_string(), None)
+                        );
+                    }
+                    LoadError::Env {
+                        err,
+                        override_vars,
+                    } => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Failed to apply WORKTRUNK_* env var override, using defaults: {err}"
+                            ))
+                        );
+                        // TODO: With source-tracking in the config layer
+                        // (see collect_worktrunk_override_vars TODO) we could
+                        // pinpoint the exact var and show its value, rather
+                        // than dumping all override vars.
+                        if !override_vars.is_empty() {
+                            crate::styling::eprintln!(
+                                "{}",
+                                crate::styling::hint_message(format!(
+                                    "Currently set: {}",
+                                    override_vars.join(", ")
+                                ))
+                            );
+                        }
+                    }
+                    LoadError::Other(err) => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Failed to load user config, using defaults: {err}"
+                            ))
+                        );
+                    }
                 })
                 .unwrap_or_default()
         })
