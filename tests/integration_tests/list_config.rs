@@ -340,6 +340,83 @@ task-timeout-ms = 0
     );
 }
 
+/// Regression: setting a typed env-var override (e.g. `WORKTRUNK__LIST__TIMEOUT_MS`)
+/// must not wipe unrelated fields in the same section.
+///
+/// Previously, the `config` crate's Environment source emitted values as strings,
+/// so `timeout-ms: Option<u64>` failed to deserialize and the whole `UserConfig`
+/// silently fell back to defaults — dropping `list.branches = true` and hiding
+/// the `feature` branch from `wt list` output.
+///
+/// The snapshot captures both stdout (feature branch present with the
+/// "1 branches" summary line) and the empty stderr (no silent fallback
+/// warning) — if the fix regresses, the diff shows the missing branch.
+#[rstest]
+fn test_list_config_env_override_preserves_file_fields(repo: TestRepo) {
+    // Create a branch without a worktree
+    repo.run_git(&["branch", "feature"]);
+
+    // Write to the test config path (the one `configure_wt_cmd` points
+    // WORKTRUNK_CONFIG_PATH at); an XDG config under a temp HOME would be
+    // ignored because WORKTRUNK_CONFIG_PATH takes precedence.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+branches = true
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Typed env-var override that must coerce a string → u64. The bug was
+        // at deserialize time, so any value reproduces it; 0 (disabled) is
+        // chosen so the timeout doesn't affect output.
+        cmd.env("WORKTRUNK__LIST__TIMEOUT_MS", "0");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// When `UserConfig::load()` fails (e.g. user config has a wrong field type),
+/// `Repository::user_config()` falls back to defaults but must surface the
+/// error on stderr — a silent `log::warn!` would hide it from anyone not
+/// running with `RUST_LOG=warn`.
+///
+/// The snapshot pins both the warning prefix (`▲`) and the exact wording so
+/// an accidental downgrade back to `log::warn!` or a rewording is caught.
+#[rstest]
+fn test_list_config_malformed_config_warns_on_stderr(repo: TestRepo) {
+    // `list.branches` is typed `Option<bool>`; a string here fails serde
+    // deserialization and triggers the fallback path.
+    fs::write(
+        repo.test_config_path(),
+        r#"[list]
+branches = "not-a-bool"
+"#,
+    )
+    .unwrap();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // `format_path_for_display` produces different strings depending on
+    // whether HOME contains the tempdir — macOS tempdir lives under
+    // /var/folders (absolute), Linux CI tempdir lives under HOME (tilde).
+    // The default `~/…` → `_PARENT_/…` filter only fires in the tilde case,
+    // so normalize the Linux form back to `[TEST_CONFIG]` for a stable
+    // snapshot across platforms.
+    settings.add_filter(r"_PARENT_/[^\s,]*test-config\.toml", "[TEST_CONFIG]");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test that --full disables the task timeout.
 #[rstest]
 fn test_list_config_timeout_disabled_with_full(repo: TestRepo) {
