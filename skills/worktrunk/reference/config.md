@@ -873,9 +873,15 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 Markers appear at the end of the Status column, after git symbols:
 
-<!-- wt list (markers) -->
-```bash
-wt list
+```
+$ wt list
+  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ main             ^⇡                         ⇡1      33323bc1  1d    Initial commit
++ feature-api      ↑ 🤖              ↑1               70343f03  1d    Add REST API endpoints
++ review-ui      ? ↑ 💬              ↑1               a585d6ed  1d    Add dashboard component
++ wip-docs       ? –                                  33323bc1  1d    Initial commit
+
+○ Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden
 ```
 
 ### Use cases
