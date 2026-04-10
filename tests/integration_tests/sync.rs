@@ -173,6 +173,28 @@ fn test_sync_stack_flag(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--stack"], Some(&pr_a1)));
 }
 
+/// Rebase conflict stops sync and shows resolution instructions.
+#[rstest]
+fn test_sync_rebase_conflict(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+
+    // Create a worktree that modifies the same file as main
+    let pr1 = repo.add_worktree("pr1");
+    repo.commit_in_worktree(&pr1, "shared.txt", "feature", "pr1: modify shared");
+
+    // Advance main with a conflicting change to the same file
+    std::fs::write(repo.root_path().join("shared.txt"), "main-v2").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "main: modify shared"]);
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+
+    // Clean up the in-progress rebase so temp dir removal doesn't fail
+    repo.run_git_in(&pr1, &["rebase", "--abort"]);
+}
+
 // =========================================================================
 // Plan scenarios (3-level stacks matching plan.md exactly)
 // =========================================================================
