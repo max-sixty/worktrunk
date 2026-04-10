@@ -278,11 +278,33 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         );
     }
 
-    // Check for integrated branches
+    // Check for integrated branches.
+    //
+    // Without a stack file, we only check against the default branch (main).
+    // With a stack file, we also check against each branch's explicit parent,
+    // which detects merges between non-default branches (e.g., PR2 squash-merged
+    // into PR1).
     let integration_target = repo.integration_target();
     let target_ref = integration_target.as_deref().unwrap_or(&default_branch);
 
     let mut integrated: HashMap<String, PathBuf> = HashMap::new();
+
+    // Parse stack file once (used for parent detection, integration checks, and reparenting)
+    let stack_file_path = repo.wt_dir().join(STACK_FILE);
+    let explicit_parents: HashMap<String, String> = if stack_file_path.exists() {
+        let content = std::fs::read_to_string(&stack_file_path)
+            .context("Failed to read stack file")?;
+        parse_stack_file(&content, &default_branch)?
+    } else {
+        HashMap::new()
+    };
+    let has_stack_file = !explicit_parents.is_empty();
+
+    // Determine parent for each branch. If a stack file exists, use it;
+    // otherwise infer parents from the commit graph.
+    let mut parent_map: HashMap<String, (String, Option<String>)> = HashMap::new(); // branch -> (parent, original_parent_if_reparented)
+
+    // Phase 1: Check integration against default branch (always)
     for (branch, path) in &branches {
         if branch == &default_branch {
             continue;
@@ -293,17 +315,26 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         }
     }
 
-    // Determine parent for each branch. If a stack file exists, use it;
-    // otherwise infer parents from the commit graph.
-    let stack_file_path = repo.wt_dir().join(STACK_FILE);
-    let mut parent_map: HashMap<String, (String, Option<String>)> = HashMap::new(); // branch -> (parent, original_parent_if_reparented)
+    // Phase 2: With stack file, also check integration against each branch's
+    // explicit parent. This catches merges between stacked branches (e.g.,
+    // PR2 squash-merged into PR1).
+    if has_stack_file {
+        for (branch, path) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
+                continue;
+            }
+            if let Some(parent) = explicit_parents.get(branch) {
+                if parent != target_ref {
+                    let (_, reason) = repo.integration_reason(branch, parent)?;
+                    if reason.is_some() {
+                        integrated.insert(branch.clone(), path.clone());
+                    }
+                }
+            }
+        }
+    }
 
-    if stack_file_path.exists() {
-        // Use explicit stack file for parent detection
-        let content = std::fs::read_to_string(&stack_file_path)
-            .context("Failed to read stack file")?;
-        let explicit_parents = parse_stack_file(&content, &default_branch)?;
-
+    if has_stack_file {
         for (branch, _) in &branches {
             if branch == &default_branch || integrated.contains_key(branch) {
                 continue;
@@ -426,14 +457,31 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         }
     }
 
-    // Reparent children of integrated branches
-    // If branch X's parent was integrated, reparent X to the integrated branch's parent
+    // Reparent children of integrated branches.
+    //
+    // If branch X's parent was integrated, walk up the tree to find the first
+    // non-integrated ancestor. With a stack file, this uses the explicit parent
+    // chain (e.g., pr2 integrated into pr1 → pr3 reparents to pr1). Without a
+    // stack file, falls back to the default branch.
+    //
     for (_branch, (parent, original_parent)) in parent_map.iter_mut() {
         if integrated.contains_key(parent.as_str()) {
-            // The parent was integrated — find what the integrated branch's parent would have been
-            // Since the integrated branch is gone, reparent to the default branch
             let old_parent = parent.clone();
-            *parent = default_branch.clone();
+            // Walk up the tree to find the first non-integrated ancestor.
+            // With a stack file, use the explicit parent chain; without, fall
+            // back to the default branch.
+            let mut new_parent = explicit_parents
+                .get(parent.as_str())
+                .cloned()
+                .unwrap_or_else(|| default_branch.clone());
+            // Keep walking if that ancestor is also integrated
+            while integrated.contains_key(new_parent.as_str()) {
+                new_parent = explicit_parents
+                    .get(new_parent.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| default_branch.clone());
+            }
+            *parent = new_parent;
             *original_parent = Some(old_parent);
         }
     }

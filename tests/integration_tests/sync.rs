@@ -313,6 +313,35 @@ fn test_sync_stack_file_fixes_scenario2(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
 }
 
+/// PR merged into non-default branch: PR2 squash-merged into PR1 (not main).
+///
+/// main ─ A
+///        └── PR1 ─ D ─ [PR2 squashed into PR1]
+///                   └── PR2 ─ F  (integrated into PR1)
+///                              └── PR3 ─ H
+///
+/// With a stack file, `wt sync` should detect PR2 is integrated into PR1 and
+/// reparent PR3 onto PR1 (not main).
+#[rstest]
+fn test_sync_pr_merged_into_non_default_branch(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // Save the stack file first
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &["--save"], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Simulate squash-merge of PR2 into PR1: apply PR2's changes onto PR1
+    std::fs::write(pr1.join("pr2.txt"), "pr2 content").unwrap();
+    repo.run_git_in(&pr1, &["add", "pr2.txt"]);
+    repo.run_git_in(&pr1, &["commit", "-m", "squash-merge pr2 into pr1"]);
+
+    // Run sync — should detect PR2 is integrated into PR1 and reparent PR3 onto PR1
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+}
+
 /// --prune removes integrated worktrees after syncing.
 #[rstest]
 fn test_sync_prune(mut repo: TestRepo) {
