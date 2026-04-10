@@ -180,7 +180,8 @@ fn save_fork_points(
 
 /// Parse a stack file (git-machete compatible format) into a parent map.
 ///
-/// The format is indentation-based, one branch per line:
+/// The full git-machete format is indentation-based, one branch per line,
+/// with the root (default branch) at the top:
 /// ```text
 /// main
 ///     pr1
@@ -188,6 +189,10 @@ fn save_fork_points(
 ///             pr3
 ///     other-pr
 /// ```
+///
+/// Note: `format_stack_file` omits the root branch when writing, so files
+/// produced by worktrunk start at the first child level. Both formats are
+/// accepted when reading.
 ///
 /// Returns a map of branch -> parent. The root branch (first line, no indent)
 /// is expected to match the default branch and is not included in the map.
