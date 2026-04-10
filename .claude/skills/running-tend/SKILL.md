@@ -51,6 +51,32 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 - `automated-fix` — fix PRs from triage and ci-fix workflows
 - `nightly-cleanup` — nightly sweep issues and PRs
 
+## CI Fix: Prefer Rerun for Transient Infrastructure Failures
+
+Before opening a `fix/ci-*` PR, classify the failure:
+
+- **Transient infrastructure** (link-check timeouts, apt-get flakes, GitHub
+  outages, runner disk issues, codecov upload blips) — do **not** create a
+  PR. The maintainer will rerun CI. Comment on the run or exit silently; a
+  permanent config change for a one-off timeout is churn the maintainer will
+  close.
+- **Flaky test** (known-flaky or first-seen PTY/shell test) — exit without a
+  PR (same behavior as prior test-flake ci-fix runs).
+- **Real regression** — proceed with a fix PR.
+
+**Lychee link-check timeouts are always transient** unless the same URL has
+failed on at least two separate runs within the last few days. `.config/lychee.toml`
+already sets `max_retries = 6` and lists known-unreliable hosts; one timeout
+is not enough evidence to extend that list. Signals you have a transient
+failure, not a broken link:
+
+- The previous CI run on the same or a nearby commit passed.
+- Only `[TIMEOUT]` is reported (not `404`/`403`/`410`).
+- The URL is reachable from a local `curl`.
+
+When in doubt, post a comment on the failed run summarizing the diagnosis and
+wait — don't open a PR.
+
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
