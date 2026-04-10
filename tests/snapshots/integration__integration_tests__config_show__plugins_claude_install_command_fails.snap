@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/config_show.rs
-assertion_line: 3292
 info:
   program: wt
   args:
@@ -43,11 +42,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
 [36m◎[39m [36mAdding plugin from marketplace...[39m
-[36m◎[39m [36mInstalling plugin...[39m
-[32m✓[39m [32mPlugin installed[39m
+[31m✗[39m [31mclaude plugin marketplace add failed: error: network timeout[39m
