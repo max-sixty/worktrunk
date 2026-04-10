@@ -112,6 +112,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/verbose.log` | Debug log for issue reporting | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` when warnings occur |
+| `.git/wt/stack` | Stack file tracking parent-child relationships between stacked branches (git-machete compatible format) | `wt sync` |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
