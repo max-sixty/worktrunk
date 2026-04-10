@@ -457,10 +457,6 @@ pub(crate) struct SyncArgs {
     #[arg(long)]
     pub(crate) stack: bool,
 
-    /// Sync all stacks (overrides config)
-    #[arg(long, conflicts_with = "stack")]
-    pub(crate) all: bool,
-
     /// Preview the sync plan
     ///
     /// Shows the dependency tree and planned rebases without executing.
