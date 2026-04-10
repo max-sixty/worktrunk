@@ -4,7 +4,6 @@ info:
   program: wt
   args:
     - sync
-    - "--save"
     - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -45,4 +44,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mSaved stack to [1m_REPO_/.git/wt/stack[22m[39m
+Dependency tree:
+main
+pr1
+pr2
+pr3
+
+Planned operations:
+  rebase pr1 onto main
+  rebase pr2 onto pr1
+  rebase pr3 onto pr2

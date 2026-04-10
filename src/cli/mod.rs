@@ -484,13 +484,6 @@ pub(crate) struct SyncArgs {
     #[arg(long = "no-prune", conflicts_with = "prune")]
     pub(crate) no_prune: bool,
 
-    /// Save inferred tree to .git/wt/stack
-    ///
-    /// Persists the detected branch tree so future syncs use it instead of
-    /// inferring parents from the commit graph. Edit the file to adjust.
-    #[arg(long)]
-    pub(crate) save: bool,
-
     /// Preview the sync plan
     ///
     /// Shows the dependency tree and planned rebases without executing.
@@ -1116,6 +1109,10 @@ All phases are off by default. Set defaults in config:
 fetch = true
 push = true
 ```
+
+## Stack file
+
+The dependency tree is persisted to `.git/wt/stack` on every sync. This file is human-editable (indentation-based tree, git-machete compatible) and ensures reliable parent tracking across syncs. When a stacked PR is merged into another stacked branch (not just main), the stack file enables detection of that integration.
 
 ## Behavior
 

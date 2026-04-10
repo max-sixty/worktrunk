@@ -132,7 +132,6 @@ pub struct SyncOptions {
     pub push: bool,
     pub prune: bool,
     pub dry_run: bool,
-    pub save: bool,
 }
 
 /// Result of building the dependency tree, including integrated branch info.
@@ -576,24 +575,16 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let plan = build_dependency_tree(&repo)?;
     let tree = plan.tree;
 
-    // Save the inferred tree to the stack file
-    if opts.save {
+    // Always persist the dependency tree to the stack file. This ensures
+    // parent-based integration detection works (e.g., PR2 merged into PR1)
+    // and keeps the file in sync after integrated branches are removed.
+    {
         let stack_file_path = repo.wt_dir().join(STACK_FILE);
         let content = format_stack_file(&tree);
         std::fs::create_dir_all(repo.wt_dir())
             .context("Failed to create .git/wt directory")?;
         std::fs::write(&stack_file_path, &content)
             .context("Failed to write stack file")?;
-        eprintln!(
-            "{}",
-            success_message(cformat!(
-                "Saved stack to <bold>{}</>",
-                stack_file_path.display()
-            ))
-        );
-        if opts.dry_run {
-            return Ok(());
-        }
     }
 
     // Determine which branches to sync

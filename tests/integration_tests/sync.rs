@@ -268,19 +268,19 @@ fn test_sync_push(mut repo: TestRepo) {
 // Stack file tests
 // =========================================================================
 
-/// --save persists the inferred tree to .git/wt/stack.
+/// Sync always creates the stack file (.git/wt/stack).
 #[rstest]
-fn test_sync_save_creates_stack_file(mut repo: TestRepo) {
+fn test_sync_creates_stack_file(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["worktree", "prune"]);
     repo.commit("initial");
     let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
-    // Run sync with --save --dry-run (don't actually rebase, just save)
+    // Dry-run still creates the stack file (tree is built regardless)
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "sync",
-        &["--save", "--dry-run"],
+        &["--dry-run"],
         Some(&_pr1)
     ));
 
@@ -302,8 +302,8 @@ fn test_sync_stack_file_fixes_scenario2(mut repo: TestRepo) {
     repo.commit("initial");
     let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
-    // First sync to rebase everything (establishes the tree)
-    let mut cmd = make_snapshot_cmd(&repo, "sync", &["--save"], Some(&pr1));
+    // First sync to rebase everything (auto-creates stack file)
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
     cmd.output().unwrap();
 
     // Now add a mid-stack commit on pr1 (scenario 2)
@@ -329,8 +329,8 @@ fn test_sync_pr_merged_into_non_default_branch(mut repo: TestRepo) {
     repo.commit("initial");
     let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
-    // Save the stack file first
-    let mut cmd = make_snapshot_cmd(&repo, "sync", &["--save"], Some(&pr1));
+    // First sync auto-creates the stack file
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
     cmd.output().unwrap();
 
     // Simulate squash-merge of PR2 into PR1: apply PR2's changes onto PR1
