@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 120
 info:
   program: wt
   args:
@@ -8,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -37,6 +39,7 @@ Commands:
   switch  Switch to a worktree; create if needed
   list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
+  sync    Rebase stacked worktree branches in dependency order
   merge   Merge current branch into the target branch
   step    Run individual operations
   hook    Run configured hooks

@@ -449,6 +449,26 @@ pub(crate) struct RemoveArgs {
 }
 
 #[derive(Args)]
+pub(crate) struct SyncArgs {
+    /// Only sync the current stack
+    ///
+    /// Without this flag, all worktree branches are synced. With `--stack`, only
+    /// the stack containing the current branch is synced.
+    #[arg(long)]
+    pub(crate) stack: bool,
+
+    /// Sync all stacks (overrides config)
+    #[arg(long, conflicts_with = "stack")]
+    pub(crate) all: bool,
+
+    /// Preview the sync plan
+    ///
+    /// Shows the dependency tree and planned rebases without executing.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Args)]
 pub(crate) struct MergeArgs {
     /// Target branch
     ///
@@ -998,6 +1018,68 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 - [`wt list`](@/list.md) — View all worktrees
 "#)]
     Remove(RemoveArgs),
+
+    /// Rebase stacked worktree branches in dependency order
+    ///
+    /// Auto-detects the branch dependency tree from git history and rebases each branch onto its parent.
+    #[command(
+        after_long_help = r#"Detects which branches are stacked on each other by analyzing the git commit graph (merge-base relationships). Rebases each branch onto its parent in topological order — parent before children.
+
+## Examples
+
+```console
+$ wt sync                    # Sync all stacks
+$ wt sync --stack            # Sync current stack only
+$ wt sync --dry-run          # Preview the plan
+```
+
+## Three scenarios
+
+**1. Main advances** — all stacked branches rebase in order:
+
+```
+main ← PR1 ← PR2 ← PR3
+```
+
+**2. Mid-stack change** — downstream branches update:
+
+```
+PR1 gets new commits → PR2 and PR3 rebase onto PR1
+```
+
+**3. PR merged** — children reparent with `rebase --onto`:
+
+```
+PR1 merged into main → PR2 rebases --onto main
+```
+
+## The `--stack` flag
+
+By default, `wt sync` syncs all stacks. With `--stack`, only the current stack is synced.
+
+Say you have two independent stacks:
+
+```
+main
+├── pr-auth → pr-auth-tests       (stack A — you're here)
+└── pr-refactor → pr-cleanup      (stack B — unrelated work)
+```
+
+If main advances, `wt sync` rebases everything. With `--stack` (from pr-auth's worktree), only stack A is synced — stack B is left as-is.
+
+## Behavior
+
+- Skips branches already up-to-date
+- Stops on first conflict — resolve, `git rebase --continue`, re-run `wt sync`
+- Dirty worktrees block sync (commit or stash first)
+
+## See also
+
+- [`wt step rebase`](@/step.md) — Rebase a single branch
+- [`wt list`](@/list.md) — View branch relationships
+"#
+    )]
+    Sync(SyncArgs),
 
     /// Merge current branch into the target branch
     ///

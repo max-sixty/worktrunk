@@ -26,6 +26,7 @@ pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
+pub(crate) mod sync;
 pub(crate) mod worktree;
 
 pub(crate) use alias::{AliasOptions, step_alias};
@@ -55,6 +56,7 @@ pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
 };
+pub(crate) use sync::{SyncOptions, handle_sync};
 pub(crate) use worktree::{
     OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
 };

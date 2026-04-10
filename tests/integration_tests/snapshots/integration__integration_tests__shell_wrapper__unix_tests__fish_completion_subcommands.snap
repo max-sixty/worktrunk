@@ -1,10 +1,12 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
+assertion_line: 3065
 expression: completions
 ---
 switch
 list
 remove
+sync
 merge
 step
 hook
