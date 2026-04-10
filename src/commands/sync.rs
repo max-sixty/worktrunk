@@ -819,11 +819,11 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                     "Removing integrated worktree <bold>{branch}</>..."
                 ))
             );
-            // Remove the worktree
+            // Remove the worktree (without --force to avoid silent data loss
+            // if the worktree has untracked files)
             let result = repo.run_command(&[
                 "worktree",
                 "remove",
-                "--force",
                 &path.to_string_lossy(),
             ]);
             if let Err(e) = result {
@@ -831,6 +831,13 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                     "{}",
                     worktrunk::styling::error_message(cformat!(
                         "Failed to remove worktree for <bold>{branch}</>: {e}"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::hint_message(cformat!(
+                        "Clean up the worktree manually, then run: git worktree remove {}",
+                        path.to_string_lossy()
                     ))
                 );
                 continue;
