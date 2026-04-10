@@ -606,7 +606,6 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Dry-run mode: show plan and exit
     if opts.dry_run {
         print_sync_plan(&tree, &branches_to_sync);
-        write_stack_file(&repo, &tree)?;
         return Ok(());
     }
 
