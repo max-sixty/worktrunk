@@ -61,7 +61,7 @@ pub mod step_diff;
 pub mod step_promote;
 pub mod step_prune;
 pub mod step_relocate;
-pub mod sync;
 pub mod switch;
 pub mod switch_picker;
+pub mod sync;
 pub mod user_hooks;

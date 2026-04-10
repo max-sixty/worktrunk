@@ -15,7 +15,11 @@ fn add_stacked_worktree(
     start_point: &str,
 ) -> std::path::PathBuf {
     let safe = branch.replace('/', "-");
-    let worktree_path = repo.root_path().parent().unwrap().join(format!("repo.{safe}"));
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("repo.{safe}"));
     let worktree_str = worktree_path.to_str().unwrap();
     repo.run_git(&["worktree", "add", "-b", branch, worktree_str, start_point]);
     worktree_path
@@ -240,12 +244,7 @@ fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
 
     // Run sync from pr2's worktree
     let pr2_path = repo.root_path().parent().unwrap().join("repo.pr2");
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "sync",
-        &[],
-        Some(&pr2_path)
-    ));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr2_path)));
 }
 
 // =========================================================================
