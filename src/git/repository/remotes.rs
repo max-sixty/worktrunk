@@ -276,6 +276,16 @@ impl Repository {
             .clone()
     }
 
+    /// Parse the primary remote URL into structured host/owner/repo components.
+    ///
+    /// Uses the raw configured URL rather than `effective_remote_url()` so owner/namespace
+    /// extraction follows the same "path is the source of truth" rule used elsewhere.
+    pub fn primary_remote_parsed_url(&self) -> Option<GitRemoteUrl> {
+        self.primary_remote_url()
+            .as_deref()
+            .and_then(GitRemoteUrl::parse)
+    }
+
     /// Get a project identifier for approval tracking.
     ///
     /// Uses the git remote URL if available (e.g., "github.com/user/repo"),

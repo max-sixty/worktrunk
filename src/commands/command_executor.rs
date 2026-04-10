@@ -112,6 +112,10 @@ pub fn build_hook_context(
     map.insert("repo_root".into(), repo_path);
     map.insert("worktree".into(), worktree);
 
+    if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
+        map.insert("owner".into(), parsed_remote.owner().to_string());
+    }
+
     // Default branch
     if let Some(default_branch) = ctx.repo.default_branch() {
         map.insert("default_branch".into(), default_branch);

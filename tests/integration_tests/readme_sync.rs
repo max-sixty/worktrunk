@@ -372,20 +372,18 @@ fn update_section(
 // End Unified Infrastructure
 // =============================================================================
 
-/// Regex to find command placeholder comments in help pages
-/// Matches: <!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```
+/// Regex to find command placeholder comments in help pages.
+/// Matches: `<!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```` — the `$ ` prompt is
+/// optional. Group 1 captures the placeholder id (used for snapshot lookup,
+/// e.g. `wt list (markers)`); group 2 captures the actual command to display
+/// (e.g. `wt list`).
 ///
-/// The HTML comment triggers expansion, the code block shows in terminal help.
 /// Pattern expects ```bash``` because --help-page converts ```console``` first.
-/// The `$ ` prompt is optional: in the HTML pipeline, `$ `-prefixed blocks are
-/// consumed entirely by `convert_dollar_console_to_terminal` before this regex
-/// runs, so only bare `wt …` blocks reach here. The `$ ` branch matters only
-/// in the plain pipeline, which skips that conversion and sees the source
-/// block verbatim.
-///
-/// Group 1 captures the placeholder id (used for snapshot lookup, e.g.
-/// `wt list (markers)`); group 2 captures the actual command to display (e.g.
-/// `wt list`), so disambiguation suffixes don't leak into the rendered prompt.
+/// In HTML mode the `$ ` alternative is a no-op today because
+/// `convert_dollar_console_to_terminal` has already rewritten `$ `‐prefixed
+/// console blocks into `{{ terminal }}` shortcodes upstream, and no raw
+/// ```bash``` blocks with a `$ ` prompt exist in CLI `after_long_help` source;
+/// plain mode skips that conversion, so both forms reach this regex.
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
 });
@@ -407,83 +405,29 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
     }
 }
 
-/// Expand command placeholders in help page content to terminal shortcodes
-///
-/// Finds ```bash\nwt <cmd>\n``` blocks (```console``` is already converted
-/// to ```bash``` by --help-page) and replaces them with {% terminal() %}
-/// shortcodes containing snapshot output.
-///
-/// The placeholder id (e.g. `wt list (markers)`) drives snapshot lookup; the
-/// displayed command comes from the block body so disambiguation suffixes
-/// don't leak into the rendered `cmd=` prompt.
-///
-/// Commands without a snapshot mapping are left as plain code blocks.
-fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<String, String> {
-    let mut result = content.to_string();
-    let mut errors = Vec::new();
-
-    // Find all placeholder blocks
-    for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let placeholder_id = cap.get(1).unwrap().as_str();
-        let display_cmd = cap.get(2).unwrap().as_str();
-
-        // Skip commands without snapshot mappings - leave as plain code blocks
-        let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
-            continue;
-        };
-
-        let snapshot_path = snapshots_dir.join(snapshot_name);
-        if !snapshot_path.exists() {
-            errors.push(format!(
-                "Snapshot file not found: {} (for command '{}')",
-                snapshot_path.display(),
-                placeholder_id
-            ));
-            continue;
-        }
-
-        let snapshot_content = fs::read_to_string(&snapshot_path)
-            .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
-
-        let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = encode_leading_spaces(&trim_lines(&html));
-
-        // Build the terminal shortcode with standard template markers
-        // cmd= parameter enables giallo syntax highlighting on the command line
-        // Prompt ($) is added via CSS ::before, so not included in HTML
-        let replacement = format!(
-            "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
-             {{% terminal(cmd=\"{}\") %}}\n\
-             {}\n\
-             {{% end %}}\n\n\
-             <!-- END AUTO-GENERATED -->",
-            snapshot_name, display_cmd, normalized
-        );
-
-        result = result.replace(full_match, &replacement);
-    }
-
-    if !errors.is_empty() {
-        return Err(errors.join("\n"));
-    }
-
-    Ok(result)
+/// Rendering mode for [`expand_command_placeholders`].
+enum ExpandMode {
+    /// HTML docs (`docs/content/*.md`): emit a `{% terminal(cmd="...") %}`
+    /// shortcode with an ANSI→HTML body, wrapped in AUTO-GENERATED markers.
+    Html,
+    /// Skill reference (`skills/worktrunk/reference/*.md`): emit a fenced code
+    /// block with a `$ <cmd>` prompt and a plain-text body.
+    Plain,
 }
 
-/// Expand command placeholders in --help-page --plain output to plain code blocks
+/// Expand command placeholders in help page content into rendered snapshot blocks.
 ///
-/// Finds `<!-- wt <id> -->` + ```bash\n[$ ]wt <cmd>\n``` blocks and replaces them
-/// with code blocks containing the command and its plain text snapshot output.
+/// Finds `<!-- wt <id> -->` + ```bash\n[$ ]wt <cmd>\n``` blocks, looks up the
+/// snapshot for the placeholder id (e.g. `wt list (markers)`), and replaces
+/// the block with a mode-appropriate rendering (see [`ExpandMode`]).
 ///
-/// The placeholder id (e.g. `wt list (markers)`) is used for snapshot lookup;
-/// the displayed command comes from the block body so disambiguation suffixes
-/// like `(markers)` don't leak into the rendered prompt.
-///
-/// Commands without a snapshot mapping are left as plain code blocks.
-fn expand_command_placeholders_plain(
+/// The placeholder id drives snapshot lookup so disambiguation suffixes like
+/// `(markers)` don't have to appear in the displayed command. Commands without
+/// a snapshot mapping are left unchanged.
+fn expand_command_placeholders(
     content: &str,
     snapshots_dir: &Path,
+    mode: ExpandMode,
 ) -> Result<String, String> {
     let mut result = content.to_string();
     let mut errors = Vec::new();
@@ -510,9 +454,28 @@ fn expand_command_placeholders_plain(
         let snapshot_content = fs::read_to_string(&snapshot_path)
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
-        let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
-
-        let replacement = format!("```\n$ {display_cmd}\n{plain}\n```");
+        let replacement = match mode {
+            ExpandMode::Html => {
+                let html = parse_snapshot_content_for_docs(&snapshot_content)?;
+                let normalized = encode_leading_spaces(&trim_lines(&html));
+                // cmd= parameter uses the displayed command (enables giallo
+                // syntax highlighting on the command line) rather than the
+                // placeholder id, so disambiguation suffixes like `(markers)`
+                // don't leak into the rendered prompt. Prompt ($) is added
+                // via CSS ::before, so not included in HTML.
+                format!(
+                    "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{snapshot_name} — edit source to update -->\n\n\
+                     {{% terminal(cmd=\"{display_cmd}\") %}}\n\
+                     {normalized}\n\
+                     {{% end %}}\n\n\
+                     <!-- END AUTO-GENERATED -->",
+                )
+            }
+            ExpandMode::Plain => {
+                let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+                format!("```\n$ {display_cmd}\n{plain}\n```")
+            }
+        };
 
         result = result.replace(full_match, &replacement);
     }
@@ -1811,16 +1774,17 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
         // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
         let snapshots_dir = project_root.join("tests/snapshots");
-        let generated = match expand_command_placeholders(&generated, &snapshots_dir) {
-            Ok(expanded) => expanded,
-            Err(e) => {
-                errors.push(format!(
-                    "Failed to expand placeholders for '{}': {}",
-                    cmd, e
-                ));
-                continue;
-            }
-        };
+        let generated =
+            match expand_command_placeholders(&generated, &snapshots_dir, ExpandMode::Html) {
+                Ok(expanded) => expanded,
+                Err(e) => {
+                    errors.push(format!(
+                        "Failed to expand placeholders for '{}': {}",
+                        cmd, e
+                    ));
+                    continue;
+                }
+            };
 
         // Convert command reference code blocks to terminal shortcodes with HTML
         let generated = match convert_command_reference_to_html(&generated) {
@@ -2190,7 +2154,7 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
 
     // Expand command placeholders (e.g., <!-- wt list --> → plain text snapshot output)
     let snapshots_dir = project_root.join("tests/snapshots");
-    let content = expand_command_placeholders_plain(&content, &snapshots_dir)?;
+    let content = expand_command_placeholders(&content, &snapshots_dir, ExpandMode::Plain)?;
 
     Ok(finalize_skill_content(&content))
 }

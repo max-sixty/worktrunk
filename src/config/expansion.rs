@@ -30,6 +30,7 @@ use crate::styling::{
 /// This list is the single source of truth for `--var` validation in CLI.
 pub const TEMPLATE_VARS: &[&str] = &[
     "repo",
+    "owner",
     "branch",
     "worktree_name",
     "repo_path",

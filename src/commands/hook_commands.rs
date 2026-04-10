@@ -18,7 +18,7 @@ use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
-    info_message, success_message,
+    info_message, success_message, warning_message,
 };
 
 use super::command_approval::approve_hooks_filtered;
@@ -210,28 +210,22 @@ pub fn run_hook(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    /// Helper to require at least one hook is configured (for standalone `wt hook` command)
-    fn require_hooks(
-        user: Option<&CommandConfig>,
-        project: Option<&CommandConfig>,
-        hook_type: HookType,
-    ) -> anyhow::Result<()> {
-        if user.is_none() && project.is_none() {
-            return Err(worktrunk::git::GitError::Other {
-                message: format!("No {hook_type} hook configured; checked both user and project"),
-            }
-            .into());
-        }
-        Ok(())
-    }
-
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) = (
         user_hooks.get(hook_type),
         project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
     );
-    require_hooks(user_config, proj_config, hook_type)?;
+    // No hooks configured: warn and exit successfully. Running hooks that
+    // don't exist is a no-op, so scripts can invoke `wt hook <type>`
+    // unconditionally without special-casing empty configuration.
+    if user_config.is_none() && proj_config.is_none() {
+        eprintln!(
+            "{}",
+            warning_message(format!("No {hook_type} hooks configured"))
+        );
+        return Ok(());
+    }
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();

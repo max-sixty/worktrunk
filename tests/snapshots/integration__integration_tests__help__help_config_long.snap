@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -121,6 +121,7 @@ Controls where new worktrees are created.
 
 - [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
+- [2m{{ owner }}[0m — primary remote owner path (may include subgroups like [2mgroup/subgroup[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
@@ -138,6 +139,10 @@ Inside the repository ([2m~/code/myproject/.worktrees/feature-auth[0m):
 Centralized worktrees directory ([2m~/worktrees/myproject/feature-auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+
+By remote owner path ([2m~/development/max-sixty/myproject/feature/auth[0m):
+
+[107m [0m [2mworktree-path = [0m[2m[32m"~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 
 Bare repository ([2m~/code/myproject/feature-auth[0m):
 

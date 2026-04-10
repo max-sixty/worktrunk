@@ -1439,7 +1439,8 @@ fn test_standalone_hook_post_remove_foreground(repo: TestRepo) {
 
 #[rstest]
 fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
-    // No project config, no user config with hooks
+    // No project config, no user config with hooks: `wt hook` should exit 0
+    // with a warning — running hooks that don't exist is a no-op, not an error.
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
@@ -1447,14 +1448,15 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 
     let output = cmd.output().unwrap();
     assert!(
-        !output.status.success(),
-        "wt hook should fail when no hooks configured"
+        output.status.success(),
+        "wt hook should exit 0 when no hooks configured, got: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No pre-start hook configured"),
-        "Error should mention no hook configured, got: {stderr}"
+        stderr.contains("No pre-start hooks configured"),
+        "stderr should warn about missing hooks, got: {stderr}"
     );
 }
 

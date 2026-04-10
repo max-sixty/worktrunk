@@ -224,6 +224,7 @@ impl UserConfig {
     /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
     /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
     /// * `repo` - Repository for template function access
+    /// * remote owner/namespace is available as {{ owner }}
     /// * `project` - Optional project identifier (e.g., "github.com/user/repo") to look up
     ///   project-specific worktree-path template
     pub fn format_path(
@@ -244,6 +245,12 @@ impl UserConfig {
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         vars.insert("repo_path", repo_path.as_str());
+        let owner = repo
+            .primary_remote_parsed_url()
+            .map(|parsed_remote| parsed_remote.owner().to_string());
+        if let Some(ref owner) = owner {
+            vars.insert("owner", owner.as_str());
+        }
         Ok(
             expand_template(&template, &vars, false, repo, "worktree-path")
                 .map(|p| shellexpand::tilde(&p).into_owned())?,

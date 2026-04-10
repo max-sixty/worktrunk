@@ -1276,6 +1276,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
+| `{{ owner }}` | Primary remote owner path (may include subgroups) |
 | `{{ primary_worktree_path }}` | Primary worktree path |
 | `{{ default_branch }}` | Default branch name |
 | `{{ remote }}` | Primary remote name |
@@ -1708,6 +1709,7 @@ Controls where new worktrees are created.
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
+- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
@@ -1730,6 +1732,12 @@ Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
 
 ```toml
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+```
+
+By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
+
+```toml
+worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
 
 Bare repository (`~/code/myproject/feature-auth`):

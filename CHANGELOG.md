@@ -8,6 +8,10 @@
 
 - **Fewer redundant `git worktree list` calls in prune and multi-remove**: `prepare_worktree_removal()` now accepts a pre-fetched worktree list, eliminating N+1 subprocess calls when removing many worktrees. ([#2025](https://github.com/max-sixty/worktrunk/pull/2025))
 
+### Changed
+
+- **`wt hook <type>` exits successfully when no hooks are configured**: Previously `wt hook pre-merge` (and every other hook type) errored when neither the user nor the project config defined hooks of that type. It now prints a warning and exits 0, so scripts and CI can invoke `wt hook` unconditionally without special-casing empty configuration. ([#2055](https://github.com/max-sixty/worktrunk/issues/2055))
+
 ### Fixed
 
 - **Picker preview UI lag**: The picker's preview cache now stores pager-rendered output, so cache hits skip the pager subprocess entirely. Previously, scrolling past an item with a large diff froze the UI briefly on every re-render because the pager ran on every call. ([#2021](https://github.com/max-sixty/worktrunk/pull/2021))
