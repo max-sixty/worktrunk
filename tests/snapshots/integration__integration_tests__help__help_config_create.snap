@@ -75,6 +75,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
+[107m [0m [2m# - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)[0m
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
@@ -92,6 +93,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# By remote owner path (`~/development/max-sixty/myproject/feature/auth`):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Bare repository (`~/code/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
