@@ -268,3 +268,158 @@ fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
     let pr2_path = repo.root_path().parent().unwrap().join("repo.pr2");
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr2_path)));
 }
+
+// =========================================================================
+// Stack file scenarios
+// =========================================================================
+
+/// Sync auto-creates a stack file in `.git/wt/stack`.
+#[rstest]
+fn test_sync_creates_stack_file(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // Dry-run still creates the stack file (tree is built regardless)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "sync",
+        &["--dry-run"],
+        Some(&_pr1)
+    ));
+
+    // Verify the stack file was created with correct content
+    let stack_file = repo.root_path().join(".git").join("wt").join("stack");
+    assert!(stack_file.exists(), "stack file should exist");
+    let content = std::fs::read_to_string(&stack_file).unwrap();
+    assert!(content.contains("pr1"), "stack file should contain pr1");
+    assert!(content.contains("pr2"), "stack file should contain pr2");
+    assert!(content.contains("pr3"), "stack file should contain pr3");
+}
+
+/// Stack file overrides inference: scenario 2 (mid-stack commit) works
+/// correctly when the stack file defines the tree.
+#[rstest]
+fn test_sync_stack_file_fixes_scenario2(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // First sync to rebase everything (auto-creates stack file)
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Now add a mid-stack commit on pr1 (scenario 2)
+    repo.commit_in_worktree(&pr1, "pr1-fix.txt", "fix content", "pr1 fix");
+
+    // With stack file, pr2 should rebase onto pr1 (not main)
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+}
+
+/// PR merged into non-default branch: PR2 squash-merged into PR1 (not main).
+///
+/// main ─ A
+///        └── PR1 ─ D ─ [PR2 squashed into PR1]
+///                   └── PR2 ─ F  (integrated into PR1)
+///                              └── PR3 ─ H
+///
+/// With a stack file, `wt sync` should detect PR2 is integrated into PR1 and
+/// reparent PR3 onto PR1 (not main).
+#[rstest]
+fn test_sync_pr_merged_into_non_default_branch(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // First sync auto-creates the stack file
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Simulate squash-merge of PR2 into PR1: apply PR2's changes onto PR1
+    std::fs::write(pr1.join("pr2.txt"), "pr2 content").unwrap();
+    repo.run_git_in(&pr1, &["add", "pr2.txt"]);
+    repo.run_git_in(&pr1, &["commit", "-m", "squash-merge pr2 into pr1"]);
+
+    // Run sync — should detect PR2 is integrated into PR1 and reparent PR3 onto PR1
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+}
+
+/// PR3 squash-merged into its parent PR2 (mid-stack, not main).
+///
+/// main ─ A
+///        └── PR1
+///              └── PR2 ─ [PR3 squashed into PR2]
+///                    └── PR3 (integrated into PR2)
+///                          └── PR4
+///
+/// PR3's parent is PR2 (not main). After PR3 is squash-merged into PR2,
+/// `wt sync` should detect PR3 is integrated and reparent PR4 onto PR2.
+#[rstest]
+fn test_sync_mid_stack_pr_merged_into_parent(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+
+    // Build 4-level stack: main -> pr1 -> pr2 -> pr3 -> pr4
+    let pr1 = repo.add_worktree("pr1");
+    repo.commit_in_worktree(&pr1, "pr1.txt", "pr1 content", "pr1 commit");
+    let pr2 = add_stacked_worktree(&mut repo, "pr2", "pr1");
+    repo.commit_in_worktree(&pr2, "pr2.txt", "pr2 content", "pr2 commit");
+    let pr3 = add_stacked_worktree(&mut repo, "pr3", "pr2");
+    repo.commit_in_worktree(&pr3, "pr3.txt", "pr3 content", "pr3 commit");
+    let pr4 = add_stacked_worktree(&mut repo, "pr4", "pr3");
+    repo.commit_in_worktree(&pr4, "pr4.txt", "pr4 content", "pr4 commit");
+
+    // First sync to auto-create stack file
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Simulate squash-merge of PR3 into PR2
+    std::fs::write(pr2.join("pr3.txt"), "pr3 content").unwrap();
+    repo.run_git_in(&pr2, &["add", "pr3.txt"]);
+    repo.run_git_in(&pr2, &["commit", "-m", "squash-merge pr3 into pr2"]);
+
+    // Sync should detect PR3 integrated into PR2, reparent PR4 onto PR2
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+}
+
+/// Cascading merge: PR2 merged into PR1, then PR1 merged into main.
+///
+/// Step 1: PR2 squash-merged into PR1 → PR3 reparents onto PR1
+/// Step 2: PR1 squash-merged into main → PR3 reparents onto main
+///
+/// Tests that sync handles sequential merges correctly.
+#[rstest]
+fn test_sync_cascading_merges(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // First sync to auto-create stack file
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Step 1: Squash-merge PR2 into PR1
+    std::fs::write(pr1.join("pr2.txt"), "pr2 content").unwrap();
+    repo.run_git_in(&pr1, &["add", "pr2.txt"]);
+    repo.run_git_in(&pr1, &["commit", "-m", "squash-merge pr2 into pr1"]);
+
+    // Sync after first merge — PR3 should reparent onto PR1
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &[], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Step 2: Squash-merge PR1 into main
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(repo.root_path().join("pr1.txt"), "pr1 content").unwrap();
+    std::fs::write(repo.root_path().join("pr2.txt"), "pr2 content").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "squash-merge pr1 into main"]);
+
+    // Sync after second merge — PR3 should reparent onto main
+    let pr3_path = repo.root_path().parent().unwrap().join("repo.pr3");
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr3_path)));
+}

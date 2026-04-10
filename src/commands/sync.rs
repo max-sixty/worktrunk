@@ -5,8 +5,14 @@
 //! order. Handles integrated (merged) branches by reparenting their children
 //! with `rebase --onto`.
 //!
+//! The dependency tree is persisted to a stack file (`.git/wt/stack`) on every
+//! sync. The format is compatible with git-machete: indentation-based, one
+//! branch per line. When this file exists, it is used for parent tracking and
+//! non-default branch integration detection.
+//!
 //! Key behaviors:
 //! - No configuration needed — dependencies are inferred from git history
+//! - Stack file (`.git/wt/stack`) is auto-created and updated on every sync
 //! - By default, syncs all stacks
 //! - `--stack` restricts to the stack containing the current branch
 //! - `--dry-run` previews the plan without executing
@@ -124,12 +130,119 @@ pub struct SyncOptions {
     pub dry_run: bool,
 }
 
+/// Result of building the dependency tree.
+struct SyncPlan {
+    tree: DependencyTree,
+}
+
+/// Stack file name within the wt data directory.
+const STACK_FILE: &str = "stack";
+
+/// Parse a stack file (git-machete compatible format) into a parent map.
+///
+/// The format is indentation-based, one branch per line:
+/// ```text
+/// main
+///     pr1
+///         pr2
+///             pr3
+///     other-pr
+/// ```
+///
+/// Returns a map of branch -> parent. The root branch (first line, no indent)
+/// is expected to match the default branch and is not included in the map.
+fn parse_stack_file(
+    content: &str,
+    default_branch: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut parent_map: HashMap<String, String> = HashMap::new();
+    // Stack of (indent_level, branch_name)
+    let mut stack: Vec<(usize, String)> = Vec::new();
+
+    for raw_line in content.lines() {
+        // Skip empty lines and comments
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Strip annotations after the branch name (machete supports "branch  annotation")
+        let branch = trimmed.split_whitespace().next().unwrap();
+
+        // Determine indent level (count leading whitespace: tab=1, space groups of 4=1)
+        let indent = if raw_line.starts_with('\t') {
+            raw_line.len() - raw_line.trim_start_matches('\t').len()
+        } else {
+            // Accept any consistent spacing — treat each group as one level
+            raw_line.len() - raw_line.trim_start().len()
+        };
+
+        // Pop stack back to find the parent at this indent level
+        while let Some(&(level, _)) = stack.last() {
+            if level >= indent {
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        let parent = stack
+            .last()
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(|| default_branch.to_string());
+
+        // The root entry (default branch itself) is not added to the map
+        if branch != default_branch {
+            parent_map.insert(branch.to_string(), parent);
+        }
+
+        stack.push((indent, branch.to_string()));
+    }
+
+    Ok(parent_map)
+}
+
+/// Format the dependency tree as a stack file (git-machete compatible format).
+fn format_stack_file(tree: &DependencyTree) -> String {
+    let mut output = String::new();
+    format_stack_node(tree, &tree.root, 0, &mut output);
+    output
+}
+
+fn format_stack_node(tree: &DependencyTree, branch: &str, depth: usize, output: &mut String) {
+    // Don't write the root (default branch) — it's implicit
+    if depth > 0 {
+        for _ in 0..depth - 1 {
+            output.push('\t');
+        }
+        output.push_str(branch);
+        output.push('\n');
+    }
+
+    if let Some(node) = tree.nodes.get(branch) {
+        for child in &node.children {
+            format_stack_node(tree, child, depth + 1, output);
+        }
+    }
+}
+
+fn write_stack_file(repo: &Repository, tree: &DependencyTree) -> anyhow::Result<()> {
+    let stack_file_path = repo.wt_dir().join(STACK_FILE);
+    let content = format_stack_file(tree);
+    std::fs::create_dir_all(repo.wt_dir()).context("Failed to create .git/wt directory")?;
+    std::fs::write(&stack_file_path, &content).context("Failed to write stack file")?;
+    Ok(())
+}
+
 /// Build the dependency tree from worktree branches.
 ///
 /// For each branch B, finds the closest parent P where merge_base(P, B) is
 /// nearest to B's tip (fewest commits ahead). Integrated branches are excluded
 /// and their children reparented.
-fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
+///
+/// If a stack file (`.git/wt/stack`) exists, it is used for parent detection
+/// instead of merge-base inference.
+fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
     let default_branch = repo
         .default_branch()
         .context("Cannot determine default branch")?;
@@ -156,12 +269,29 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
         );
     }
 
-    // Check for integrated branches against the default branch
+    // Check for integrated branches.
+    //
+    // Without a stack file, we only check against the default branch (main).
+    // With a stack file, we also check against each branch's explicit parent,
+    // which detects merges between non-default branches (e.g., PR2 squash-merged
+    // into PR1).
     let integration_target = repo.integration_target();
     let target_ref = integration_target.as_deref().unwrap_or(&default_branch);
 
     let mut integrated: HashMap<String, PathBuf> = HashMap::new();
 
+    // Parse stack file once (used for parent detection, integration checks, and reparenting)
+    let stack_file_path = repo.wt_dir().join(STACK_FILE);
+    let explicit_parents: HashMap<String, String> = if stack_file_path.exists() {
+        let content =
+            std::fs::read_to_string(&stack_file_path).context("Failed to read stack file")?;
+        parse_stack_file(&content, &default_branch)?
+    } else {
+        HashMap::new()
+    };
+    let has_stack_file = !explicit_parents.is_empty();
+
+    // Phase 1: Check integration against default branch (always)
     for (branch, path) in &branches {
         if branch == &default_branch {
             continue;
@@ -172,117 +302,179 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
         }
     }
 
-    // Infer parents from the commit graph using merge-base analysis.
-    //
-    // For each branch B, the parent P is selected in two tiers:
-    //   1. True ancestors (candidate_depth == 0, meaning merge_base ==
-    //      candidate tip): branches whose tip is reachable from B. Among
-    //      true ancestors, pick the closest (smallest branch_depth).
-    //   2. Diverged candidates (only if no true ancestors): pick by
-    //      smallest branch_depth, then smallest candidate_depth.
-    //
-    // This prevents cycles in stacked branches: if B descends from C
-    // (C's tip is on B's history), C is a true ancestor and always wins
-    // over siblings that merely share a common fork point.
-    let branch_names: Vec<&str> = branches.iter().map(|(b, _)| b.as_str()).collect();
-
-    let mut parent_map: HashMap<String, (String, Option<String>)> = HashMap::new();
-
-    for (branch, _) in &branches {
-        if branch == &default_branch || integrated.contains_key(branch) {
-            continue;
-        }
-
-        let mut ancestors: Vec<(&str, String, usize)> = Vec::new();
-        let mut diverged: Vec<(&str, String, usize, usize)> = Vec::new();
-
-        for candidate in &branch_names {
-            if *candidate == branch.as_str() {
+    // Phase 2: With stack file, also check integration against each branch's
+    // explicit parent. This catches merges between stacked branches (e.g.,
+    // PR2 squash-merged into PR1).
+    if has_stack_file {
+        for (branch, path) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
                 continue;
             }
-
-            let Some(mb) = repo.merge_base(candidate, branch)? else {
-                continue;
-            };
-
-            let branch_depth = repo.count_commits(&mb, branch)?;
-
-            if branch_depth == 0 {
-                continue;
-            }
-
-            let candidate_depth = repo.count_commits(&mb, candidate)?;
-
-            if candidate_depth == 0 {
-                ancestors.push((candidate, mb, branch_depth));
-            } else {
-                diverged.push((candidate, mb, branch_depth, candidate_depth));
-            }
-        }
-
-        let mut best_parent: Option<&str> = None;
-        let mut tie_candidates: Vec<(&str, String)> = Vec::new();
-
-        if !ancestors.is_empty() {
-            ancestors.sort_by_key(|&(_, _, bd)| bd);
-            let best_bd = ancestors[0].2;
-            tie_candidates = ancestors
-                .iter()
-                .filter(|&&(_, _, bd)| bd == best_bd)
-                .map(|&(c, ref mb, _)| (c, mb.clone()))
-                .collect();
-            best_parent = Some(ancestors[0].0);
-        } else if !diverged.is_empty() {
-            diverged.sort_by_key(|&(_, _, bd, cd)| (bd, cd));
-            let (best_bd, best_cd) = (diverged[0].2, diverged[0].3);
-            tie_candidates = diverged
-                .iter()
-                .filter(|&&(_, _, bd, cd)| bd == best_bd && cd == best_cd)
-                .map(|&(c, ref mb, _, _)| (c, mb.clone()))
-                .collect();
-            best_parent = Some(diverged[0].0);
-        }
-
-        if tie_candidates.len() > 1 {
-            let mb_shas: Vec<&str> = tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
-            let timestamps = repo.commit_timestamps(&mb_shas)?;
-
-            let mut best_ts = i64::MIN;
-            let mut resolved_parent: Option<&str> = None;
-            for (candidate, mb) in &tie_candidates {
-                if let Some(&ts) = timestamps.get(mb.as_str())
-                    && ts > best_ts
-                {
-                    best_ts = ts;
-                    resolved_parent = Some(candidate);
+            if let Some(parent) = explicit_parents.get(branch)
+                && parent != target_ref
+            {
+                let (_, reason) = repo.integration_reason(branch, parent)?;
+                if reason.is_some() {
+                    integrated.insert(branch.clone(), path.clone());
                 }
             }
-            if let Some(p) = resolved_parent {
-                best_parent = Some(p);
-            }
-
-            let names: Vec<&str> = tie_candidates.iter().map(|(c, _)| *c).collect();
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Branch <bold>{}</> has equidistant parents: {}. Picked <bold>{}</>.",
-                    branch,
-                    names.join(", "),
-                    best_parent.unwrap_or("unknown"),
-                ))
-            );
-        }
-
-        if let Some(parent) = best_parent {
-            parent_map.insert(branch.clone(), (parent.to_string(), None));
         }
     }
 
-    // Reparent children of integrated branches — fall back to default branch.
+    // Determine parent for each branch. If a stack file exists, use it;
+    // otherwise infer parents from the commit graph.
+    let mut parent_map: HashMap<String, (String, Option<String>)> = HashMap::new();
+
+    if has_stack_file {
+        for (branch, _) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
+                continue;
+            }
+            let parent = explicit_parents
+                .get(branch)
+                .cloned()
+                .unwrap_or_else(|| default_branch.clone());
+            parent_map.insert(branch.clone(), (parent, None));
+        }
+    } else {
+        // Infer parents from the commit graph using merge-base analysis.
+        //
+        // For each branch B, the parent P is selected in two tiers:
+        //   1. True ancestors (candidate_depth == 0, meaning merge_base ==
+        //      candidate tip): branches whose tip is reachable from B. Among
+        //      true ancestors, pick the closest (smallest branch_depth).
+        //   2. Diverged candidates (only if no true ancestors): pick by
+        //      smallest branch_depth, then smallest candidate_depth.
+        //
+        // This prevents cycles in stacked branches: if B descends from C
+        // (C's tip is on B's history), C is a true ancestor and always wins
+        // over siblings that merely share a common fork point.
+        //
+        // Limitation: after syncing + adding a mid-stack commit, the parent
+        // branch becomes "diverged" and may lose to the default branch (a
+        // true ancestor). The auto-saved stack file (`.git/wt/stack`) avoids
+        // this by preserving explicit parent relationships across syncs.
+        let branch_names: Vec<&str> = branches.iter().map(|(b, _)| b.as_str()).collect();
+
+        for (branch, _) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
+                continue;
+            }
+
+            let mut ancestors: Vec<(&str, String, usize)> = Vec::new();
+            let mut diverged: Vec<(&str, String, usize, usize)> = Vec::new();
+
+            for candidate in &branch_names {
+                if *candidate == branch.as_str() {
+                    continue;
+                }
+
+                let Some(mb) = repo.merge_base(candidate, branch)? else {
+                    continue;
+                };
+
+                let branch_depth = repo.count_commits(&mb, branch)?;
+
+                if branch_depth == 0 {
+                    continue;
+                }
+
+                let candidate_depth = repo.count_commits(&mb, candidate)?;
+
+                if candidate_depth == 0 {
+                    ancestors.push((candidate, mb, branch_depth));
+                } else {
+                    diverged.push((candidate, mb, branch_depth, candidate_depth));
+                }
+            }
+
+            let mut best_parent: Option<&str> = None;
+            let mut tie_candidates: Vec<(&str, String)> = Vec::new();
+
+            if !ancestors.is_empty() {
+                ancestors.sort_by_key(|&(_, _, bd)| bd);
+                let best_bd = ancestors[0].2;
+                tie_candidates = ancestors
+                    .iter()
+                    .filter(|&&(_, _, bd)| bd == best_bd)
+                    .map(|&(c, ref mb, _)| (c, mb.clone()))
+                    .collect();
+                best_parent = Some(ancestors[0].0);
+            } else if !diverged.is_empty() {
+                diverged.sort_by_key(|&(_, _, bd, cd)| (bd, cd));
+                let (best_bd, best_cd) = (diverged[0].2, diverged[0].3);
+                tie_candidates = diverged
+                    .iter()
+                    .filter(|&&(_, _, bd, cd)| bd == best_bd && cd == best_cd)
+                    .map(|&(c, ref mb, _, _)| (c, mb.clone()))
+                    .collect();
+                best_parent = Some(diverged[0].0);
+            }
+
+            if tie_candidates.len() > 1 {
+                let mb_shas: Vec<&str> = tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
+                let timestamps = repo.commit_timestamps(&mb_shas)?;
+
+                let mut best_ts = i64::MIN;
+                let mut resolved_parent: Option<&str> = None;
+                for (candidate, mb) in &tie_candidates {
+                    if let Some(&ts) = timestamps.get(mb.as_str())
+                        && ts > best_ts
+                    {
+                        best_ts = ts;
+                        resolved_parent = Some(candidate);
+                    }
+                }
+                if let Some(p) = resolved_parent {
+                    best_parent = Some(p);
+                }
+
+                let names: Vec<&str> = tie_candidates.iter().map(|(c, _)| *c).collect();
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Branch <bold>{}</> has equidistant parents: {}. Picked <bold>{}</>.",
+                        branch,
+                        names.join(", "),
+                        best_parent.unwrap_or("unknown"),
+                    ))
+                );
+            }
+
+            if let Some(parent) = best_parent {
+                parent_map.insert(branch.clone(), (parent.to_string(), None));
+            }
+        }
+    }
+
+    // Reparent children of integrated branches.
+    //
+    // If branch X's parent was integrated, walk up the tree to find the first
+    // non-integrated ancestor. With a stack file, this uses the explicit parent
+    // chain (e.g., pr2 integrated into pr1 → pr3 reparents to pr1). Without a
+    // stack file, falls back to the default branch.
     for (_branch, (parent, original_parent)) in parent_map.iter_mut() {
         if integrated.contains_key(parent.as_str()) {
             let old_parent = parent.clone();
-            *parent = default_branch.clone();
+            // Walk up the tree to find the first non-integrated ancestor.
+            let mut new_parent = explicit_parents
+                .get(parent.as_str())
+                .cloned()
+                .unwrap_or_else(|| default_branch.clone());
+            // Keep walking if that ancestor is also integrated.
+            // Track visited to prevent infinite loops from cycles in the stack file.
+            let mut visited = std::collections::HashSet::new();
+            while integrated.contains_key(new_parent.as_str()) {
+                if !visited.insert(new_parent.clone()) {
+                    new_parent = default_branch.clone();
+                    break;
+                }
+                new_parent = explicit_parents
+                    .get(new_parent.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| default_branch.clone());
+            }
+            *parent = new_parent;
             *original_parent = Some(old_parent);
         }
     }
@@ -347,9 +539,11 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<DependencyTree> {
         node.children.sort();
     }
 
-    Ok(DependencyTree {
-        root: default_branch,
-        nodes,
+    Ok(SyncPlan {
+        tree: DependencyTree {
+            root: default_branch,
+            nodes,
+        },
     })
 }
 
@@ -358,7 +552,8 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 
     // Build dependency tree
-    let tree = build_dependency_tree(&repo)?;
+    let plan = build_dependency_tree(&repo)?;
+    let tree = plan.tree;
 
     // Determine which branches to sync
     let current_wt = repo.current_worktree();
@@ -391,6 +586,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Dry-run mode: show plan and exit
     if opts.dry_run {
         print_sync_plan(&tree, &branches_to_sync);
+        write_stack_file(&repo, &tree)?;
         return Ok(());
     }
 
@@ -429,6 +625,12 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             }
         }
     }
+
+    // Persist the dependency tree to the stack file after all safety checks
+    // pass. This ensures parent-based integration detection works (e.g., PR2
+    // merged into PR1) and keeps the file in sync after integrated branches
+    // are removed.
+    write_stack_file(&repo, &tree)?;
 
     // Execute rebases in topological order
     let mut rebased_count = 0;
@@ -607,5 +809,176 @@ fn print_tree_node(
     for (i, child) in node.children.iter().enumerate() {
         let is_last_child = i == node.children.len() - 1;
         print_tree_node(tree, child, &child_prefix, is_last_child, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_topological_order_linear() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "main".to_string(),
+            TreeNode {
+                branch: "main".to_string(),
+                path: PathBuf::new(),
+                parent: None,
+                original_parent: None,
+                children: vec!["pr1".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr1".to_string(),
+            TreeNode {
+                branch: "pr1".to_string(),
+                path: PathBuf::new(),
+                parent: Some("main".to_string()),
+                original_parent: None,
+                children: vec!["pr2".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr2".to_string(),
+            TreeNode {
+                branch: "pr2".to_string(),
+                path: PathBuf::new(),
+                parent: Some("pr1".to_string()),
+                original_parent: None,
+                children: vec!["pr3".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr3".to_string(),
+            TreeNode {
+                branch: "pr3".to_string(),
+                path: PathBuf::new(),
+                parent: Some("pr2".to_string()),
+                original_parent: None,
+                children: vec![],
+            },
+        );
+
+        let tree = DependencyTree {
+            root: "main".to_string(),
+            nodes,
+        };
+
+        assert_eq!(tree.topological_order(), vec!["pr1", "pr2", "pr3"]);
+    }
+
+    #[test]
+    fn test_topological_order_fan_out() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "main".to_string(),
+            TreeNode {
+                branch: "main".to_string(),
+                path: PathBuf::new(),
+                parent: None,
+                original_parent: None,
+                children: vec!["feature-a".to_string(), "feature-b".to_string()],
+            },
+        );
+        nodes.insert(
+            "feature-a".to_string(),
+            TreeNode {
+                branch: "feature-a".to_string(),
+                path: PathBuf::new(),
+                parent: Some("main".to_string()),
+                original_parent: None,
+                children: vec![],
+            },
+        );
+        nodes.insert(
+            "feature-b".to_string(),
+            TreeNode {
+                branch: "feature-b".to_string(),
+                path: PathBuf::new(),
+                parent: Some("main".to_string()),
+                original_parent: None,
+                children: vec![],
+            },
+        );
+
+        let tree = DependencyTree {
+            root: "main".to_string(),
+            nodes,
+        };
+
+        let order = tree.topological_order();
+        assert_eq!(order.len(), 2);
+        // Both should appear, order is children sorted alphabetically
+        assert!(order.contains(&"feature-a"));
+        assert!(order.contains(&"feature-b"));
+    }
+
+    #[test]
+    fn test_stack_containing_middle_branch() {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "main".to_string(),
+            TreeNode {
+                branch: "main".to_string(),
+                path: PathBuf::new(),
+                parent: None,
+                original_parent: None,
+                children: vec!["pr1".to_string(), "feature-x".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr1".to_string(),
+            TreeNode {
+                branch: "pr1".to_string(),
+                path: PathBuf::new(),
+                parent: Some("main".to_string()),
+                original_parent: None,
+                children: vec!["pr2".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr2".to_string(),
+            TreeNode {
+                branch: "pr2".to_string(),
+                path: PathBuf::new(),
+                parent: Some("pr1".to_string()),
+                original_parent: None,
+                children: vec!["pr3".to_string()],
+            },
+        );
+        nodes.insert(
+            "pr3".to_string(),
+            TreeNode {
+                branch: "pr3".to_string(),
+                path: PathBuf::new(),
+                parent: Some("pr2".to_string()),
+                original_parent: None,
+                children: vec![],
+            },
+        );
+        nodes.insert(
+            "feature-x".to_string(),
+            TreeNode {
+                branch: "feature-x".to_string(),
+                path: PathBuf::new(),
+                parent: Some("main".to_string()),
+                original_parent: None,
+                children: vec![],
+            },
+        );
+
+        let tree = DependencyTree {
+            root: "main".to_string(),
+            nodes,
+        };
+
+        // When on pr2, should get pr1, pr2, pr3 (the pr1 stack) but not feature-x
+        let stack = tree.stack_containing("pr2");
+        assert!(stack.contains(&"pr1"));
+        assert!(stack.contains(&"pr2"));
+        assert!(stack.contains(&"pr3"));
+        assert!(!stack.contains(&"feature-x"));
+        assert!(!stack.contains(&"main"));
     }
 }

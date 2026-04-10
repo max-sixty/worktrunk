@@ -1063,6 +1063,10 @@ main
 
 If main advances, `wt sync` rebases everything. With `--stack` (from pr-auth's worktree), only stack A is synced — stack B is left as-is.
 
+## Stack file
+
+The dependency tree is persisted to `.git/wt/stack` on every sync. This file is human-editable (indentation-based tree, git-machete compatible) and ensures reliable parent tracking across syncs. When a stacked PR is merged into another stacked branch (not just main), the stack file enables detection of that integration.
+
 ## Behavior
 
 - Skips branches already up-to-date
