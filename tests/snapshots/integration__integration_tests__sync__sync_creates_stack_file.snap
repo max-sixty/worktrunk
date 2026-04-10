@@ -47,9 +47,9 @@ exit_code: 0
 ----- stderr -----
 Dependency tree:
 main
-pr1
-pr2
-pr3
+└── pr1
+    └── pr2
+        └── pr3
 
 Planned operations:
   rebase pr1 onto main
