@@ -810,11 +810,15 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             eprintln!();
         }
         for branch in &pushable {
+            let remote = repo
+                .branch(branch)
+                .push_remote()
+                .unwrap_or_else(|| "origin".to_string());
             eprintln!(
                 "{}",
-                progress_message(cformat!("Pushing <bold>{branch}</>..."))
+                progress_message(cformat!("Pushing <bold>{branch}</> to {remote}..."))
             );
-            let result = repo.run_command(&["push", "--force-with-lease", "origin", branch]);
+            let result = repo.run_command(&["push", "--force-with-lease", &remote, branch]);
             match result {
                 Ok(_) => {
                     eprintln!("{}", success_message(cformat!("Pushed <bold>{branch}</>")));
@@ -886,8 +890,12 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 );
             }
             // Delete remote branch if it had an upstream
+            let prune_remote = repo
+                .branch(branch)
+                .push_remote()
+                .unwrap_or_else(|| "origin".to_string());
             if has_upstream
-                && let Err(e) = repo.run_command(&["push", "origin", "--delete", branch])
+                && let Err(e) = repo.run_command(&["push", &prune_remote, "--delete", branch])
             {
                 eprintln!(
                     "{}",
