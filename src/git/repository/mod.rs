@@ -383,10 +383,34 @@ impl Repository {
     /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
     /// for operations that require the full `UserConfig` (e.g., path template formatting,
     /// approval state, hook resolution).
+    ///
+    /// Falls back to defaults on load errors so a single bad field does not break
+    /// unrelated commands, but surfaces the error on stderr — a silent `log::warn!`
+    /// would hide it from anyone not running with `RUST_LOG=warn`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
             UserConfig::load()
-                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
+                .inspect_err(|err| {
+                    // Include the config file path so users know where to look.
+                    // Serde's flatten/Option wrapping loses the offending field
+                    // name inside the config crate's error, so the file path is
+                    // the most reliable pointer we can give.
+                    let path_hint = crate::config::config_path()
+                        .map(|p| format!(" at {}", crate::path::format_path_for_display(&p)))
+                        .unwrap_or_default();
+                    crate::styling::eprintln!(
+                        "{}",
+                        crate::styling::warning_message(format!(
+                            "Failed to load user config{path_hint}, using defaults: {err}"
+                        ))
+                    );
+                    crate::styling::eprintln!(
+                        "{}",
+                        crate::styling::hint_message(
+                            "If the value came from a WORKTRUNK_* env var, check those too.",
+                        )
+                    );
+                })
                 .unwrap_or_default()
         })
     }

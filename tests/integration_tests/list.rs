@@ -2823,11 +2823,11 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 /// 1. Uses `git stash create` to get a tree object from uncommitted changes
 /// 2. Runs merge-tree against the default branch to detect conflicts
 ///
-/// The key distinction from commit-level conflicts:
-/// - Commit-level: HEAD conflicts with main (always checked)
-/// - Working tree: Uncommitted changes conflict with main (only with --full)
+/// Both kinds of conflicts are checked in both `wt list` and `wt list --full`:
+/// - Commit-level: HEAD conflicts with main
+/// - Working tree: uncommitted changes conflict with main
 #[rstest]
-fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
+fn test_list_working_tree_conflicts(mut repo: TestRepo) {
     // Create initial commit with a shared file
     std::fs::write(repo.root_path().join("shared.txt"), "original content").unwrap();
     repo.commit("Initial commit");
@@ -2845,13 +2845,14 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
-    // Without --full: no conflict symbol (only checks commit-level)
+    // Without --full: WorkingTreeConflicts runs and detects the uncommitted conflict.
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",
         list_snapshots::command(&repo, repo.root_path())
     );
 
-    // With --full: should show conflict symbol because uncommitted changes conflict
+    // With --full: same conflict detection, plus the wide status column and extra
+    // post-skeleton tasks that non-full mode skips.
     assert_cmd_snapshot!("working_tree_conflicts_with_full", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
@@ -3062,7 +3063,7 @@ fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
 
 /// Tests that wt list --full works correctly when the configured default branch doesn't exist.
 ///
-/// The --full flag enables expensive tasks like BranchDiff and WorkingTreeConflicts.
+/// The --full flag enables expensive tasks like BranchDiff.
 /// These should also degrade gracefully when default_branch is None.
 #[rstest]
 fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {

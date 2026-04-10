@@ -430,7 +430,7 @@ impl Task for MergeTreeConflictsTask {
     }
 }
 
-/// Task 6b (worktree only, --full only): Working tree conflict check
+/// Task 6b (worktree only): Working tree conflict check
 ///
 /// For dirty worktrees, uses `git stash create` to get a tree object that
 /// includes uncommitted changes, then runs merge-tree against that.

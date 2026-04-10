@@ -1603,10 +1603,10 @@ approved-commands = ["echo 'fish background task'"]
         // Shell-agnostic assertions
         assert_ne!(output.exit_code, 0, "{}: Command should fail", shell);
 
-        // CRITICAL: Should see wt's actual error message about unrecognized subcommand
+        // CRITICAL: Should see wt's actual error message about an unknown subcommand
         assert!(
-            output.combined.contains("unrecognized subcommand"),
-            "{}: Should show actual wt error message 'unrecognized subcommand'.\nOutput:\n{}",
+            output.combined.contains("is not a wt command"),
+            "{}: Should show actual wt error message 'is not a wt command'.\nOutput:\n{}",
             shell,
             output.combined
         );

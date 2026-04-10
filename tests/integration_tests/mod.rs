@@ -30,6 +30,7 @@ pub mod doc_templates;
 pub mod e2e_shell;
 pub mod e2e_shell_post_start;
 pub mod eval;
+pub mod external;
 pub mod for_each;
 pub mod git_error_display;
 pub mod help;

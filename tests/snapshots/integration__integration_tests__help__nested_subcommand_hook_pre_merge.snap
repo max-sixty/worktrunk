@@ -31,12 +31,6 @@ exit_code: 2
 ----- stdout -----
 
 ----- stderr -----
-[1m[31merror:[0m unrecognized subcommand '[1m[33mpre-merge[0m'
-
-  [1m[32mtip:[0m a similar subcommand exists: '[1m[32mremove[0m'
-
-[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
-
-For more information, try '[1m[36m--help[0m'.
-
-  [33mtip:[39m  perhaps [36m[1mwt hook pre-merge[39m[22m?
+[31m✗[39m [31mUnrecognized subcommand '[36m[1mpre-merge[39m[22m'[39m
+[2m↳[22m [2mPerhaps [36m[1mwt hook pre-merge[39m[22m?[22m
+[2m↳[22m [2mFor more information, try '[36m[1mwt --help[39m[22m'.[22m

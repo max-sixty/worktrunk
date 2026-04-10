@@ -49,8 +49,8 @@ use commands::{
     MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_hints_clear, handle_hints_get,
-    handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge,
+    handle_config_update, handle_configure_shell, handle_external_command, handle_hints_clear,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
@@ -1028,7 +1028,10 @@ fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
     })
 }
 
-fn dispatch_command(command: Commands) -> anyhow::Result<()> {
+fn dispatch_command(
+    command: Commands,
+    working_dir: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
@@ -1038,6 +1041,10 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
         Commands::Switch(args) => handle_switch_command(args),
         Commands::Remove(args) => handle_remove_command(args),
         Commands::Merge(args) => handle_merge_command(args),
+        // `working_dir` is the top-level `-C <path>` flag, applied as the
+        // child's current directory so global `-C` works for external
+        // subcommands the same way it does for built-ins.
+        Commands::External(args) => handle_external_command(args, working_dir),
     }
 }
 
@@ -1142,7 +1149,7 @@ fn main() {
         verbose,
         command,
     } = cli;
-    apply_global_options(directory, config);
+    apply_global_options(directory.clone(), config);
 
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
     init_command_log(&command_line);
@@ -1153,7 +1160,9 @@ fn main() {
         return;
     };
 
-    match dispatch_command(command) {
+    let result = dispatch_command(command, directory);
+
+    match result {
         Ok(()) => finish_command(verbose, &command_line, None),
         Err(error) => handle_command_failure(error, verbose, &command_line),
     }

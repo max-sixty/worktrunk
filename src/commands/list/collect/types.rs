@@ -79,7 +79,7 @@ pub(crate) enum TaskResult {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
     },
-    /// Potential merge conflicts including working tree changes (--full only)
+    /// Potential merge conflicts including working tree changes
     ///
     /// For dirty worktrees, uses `git stash create` to get a tree object that
     /// includes uncommitted changes, then runs merge-tree against that.

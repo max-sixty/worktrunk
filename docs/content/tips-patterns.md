@@ -31,6 +31,14 @@ test = "cargo test --features {{ vars.features | default('default') }}"
 
 See [`wt step` aliases](@/step.md#aliases) for scoping, approval, and reference.
 
+## External subcommands `[experimental]`
+
+Drop a `wt-<name>` binary anywhere on `PATH` and `wt <name>` will run it — mirroring how `git foo` finds `git-foo`. Use this to ship third-party extensions without patching worktrunk itself.
+
+{{ terminal(cmd="wt sync origin          # runs: wt-sync origin|||wt -C /tmp/repo sync    # `-C` is forwarded as the child's cwd") }}
+
+Built-in commands always take precedence, so an external `wt-switch` cannot shadow `wt switch`. Arguments after the name are passed through verbatim (including `--help`), and the child's exit code is propagated unchanged. If nothing matches — no built-in, no nested subcommand, no `wt-<name>` — wt prints a git-style `'foo' is not a wt command` error with a typo suggestion drawn from the built-in command list.
+
 ## Per-branch variables
 
 `wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:

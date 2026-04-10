@@ -217,7 +217,6 @@ pub struct CollectOptions {
     ///   since they depend on skipped tasks
     ///
     /// Note: `wt switch` interactive picker doesn't show the BranchDiff column, so `…` isn't visible there.
-    /// This is similar to how `✗` conflict only shows with `--full` even in `wt list`.
     ///
     /// TODO: Consider adding a visible indicator in Status column when integration
     /// checks are skipped, so users know the `⊂` symbol may be incomplete.
@@ -391,7 +390,6 @@ pub fn collect(
                     [
                         TaskKind::BranchDiff,
                         TaskKind::CiStatus,
-                        TaskKind::WorkingTreeConflicts,
                         TaskKind::SummaryGenerate,
                     ]
                     .into_iter()
