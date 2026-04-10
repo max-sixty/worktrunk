@@ -203,13 +203,19 @@ impl UserConfig {
             let migrated = super::deprecation::migrate_content(&content);
 
             // Pre-validate with the toml crate for rich line/col errors.
-            // Validate as OverridableConfig (not UserConfig) because
-            // UserConfig's `#[serde(flatten)]` on OverridableConfig causes
-            // toml to lose field paths — errors point at the section header
-            // instead of the bad value. OverridableConfig has the section
-            // fields (list, commit, merge, ...) as direct fields, so the
-            // toml crate tracks their location correctly.
+            // Try OverridableConfig first — it has section fields (list,
+            // commit, merge, ...) as direct fields, so toml tracks their
+            // location correctly. UserConfig's flatten loses field paths.
+            // Then try UserConfig to catch non-section fields (projects,
+            // skip-*-prompt) that OverridableConfig silently ignores.
             if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
+                return Err(LoadError::File {
+                    path: system_path,
+                    label: "System config",
+                    err: Box::new(err),
+                });
+            }
+            if let Err(err) = toml::from_str::<Self>(&migrated) {
                 return Err(LoadError::File {
                     path: system_path,
                     label: "System config",
@@ -251,8 +257,15 @@ impl UserConfig {
                 );
 
                 // Pre-validate with the toml crate for rich line/col errors
-                // (OverridableConfig — see system config comment above for why).
+                // (see system config comment above for the two-pass rationale).
                 if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
+                    return Err(LoadError::File {
+                        path: config_path.clone(),
+                        label: "User config",
+                        err: Box::new(err),
+                    });
+                }
+                if let Err(err) = toml::from_str::<Self>(&migrated) {
                     return Err(LoadError::File {
                         path: config_path.clone(),
                         label: "User config",

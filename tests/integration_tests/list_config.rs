@@ -536,6 +536,48 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
+/// Bad values in non-section fields (projects, skip-*-prompt) must still be
+/// attributed to the file, not to env vars. These fields are NOT caught by
+/// the OverridableConfig pre-validation (which only covers section fields) —
+/// the UserConfig fallback validation catches them.
+#[rstest]
+fn test_list_config_malformed_non_section_field_warns_on_stderr(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        "skip-shell-integration-prompt = \"not-a-bool\"\n",
+    )
+    .unwrap();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"_PARENT_/[^\s,]*test-config\.toml", "[TEST_CONFIG]");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// System config parse errors are attributed to the system config file,
+/// not the user config or env vars.
+#[rstest]
+fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
+    let system_config = repo.root_path().join("system-config.toml");
+    fs::write(&system_config, "[list]\nbranches = \"not-a-bool\"\n").unwrap();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test that --full disables the task timeout.
 #[rstest]
 fn test_list_config_timeout_disabled_with_full(repo: TestRepo, temp_home: TempDir) {
