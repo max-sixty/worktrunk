@@ -927,6 +927,17 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         "To update, run <underline>{cmd} config shell install {shell}</>"
                     ));
                     writeln!(out, "{warning}\n{hint}")?;
+                } else if shell_active && Some(shell) == worktrunk::shell::current_shell() {
+                    // Shell integration is active at runtime even though we can't
+                    // find the init line in config files — likely sourced from
+                    // another file (common with dotfile managers like stow/chezmoi).
+                    writeln!(
+                        out,
+                        "{}",
+                        info_message(cformat!(
+                            "<bold>{shell}</>: Configured {what} (not found in {path})"
+                        ))
+                    )?;
                 } else {
                     any_not_configured = true;
                     writeln!(

@@ -2053,6 +2053,44 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
     });
 }
 
+/// When shell integration is active at runtime (WORKTRUNK_DIRECTIVE_FILE set) but the
+/// init line is NOT in the scanned config file (e.g., sourced from another file), config
+/// show should report "Configured ... (not found in ...)" instead of "Not configured".
+/// Regression test for https://github.com/max-sixty/worktrunk/issues/1306
+#[rstest]
+fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n",
+    )
+    .unwrap();
+
+    // Create ~/.zshrc WITHOUT the init line (simulates it being in a sourced file)
+    fs::write(temp_home.path().join(".zshrc"), "# my zsh config\n").unwrap();
+
+    let directive_file = temp_home.path().join("directive");
+    fs::write(&directive_file, "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        // Set SHELL to zsh so current_shell() returns Some(Zsh)
+        cmd.env("SHELL", "/bin/zsh");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
