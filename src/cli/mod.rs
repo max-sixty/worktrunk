@@ -14,6 +14,7 @@ pub(crate) use step::StepCommand;
 
 use clap::builder::styling::{AnsiColor, Color, Styles};
 use clap::{Args, Command, CommandFactory, Parser, Subcommand, ValueEnum};
+use std::ffi::OsString;
 use std::sync::OnceLock;
 use worktrunk::config::{DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS};
 
@@ -2127,4 +2128,12 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
         #[command(subcommand)]
         action: ConfigCommand,
     },
+
+    /// Run an external `wt-<name>` command found on PATH.
+    ///
+    /// Captured by clap when the first positional argument doesn't match any
+    /// built-in subcommand. The first element of the vec is the subcommand name;
+    /// the rest are the arguments to pass through. See `commands::external`.
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
