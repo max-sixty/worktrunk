@@ -149,6 +149,11 @@ pub struct ListConfig {
     /// Disabled when --full is used. Default: no budget (wait for all results).
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+
+    /// Glob patterns for items to hide from list output.
+    /// Matches against worktree paths and branch names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<Vec<String>>,
 }
 
 impl ListConfig {
@@ -198,6 +203,7 @@ impl Merge for ListConfig {
             summary: other.summary.or(self.summary),
             task_timeout_ms: other.task_timeout_ms.or(self.task_timeout_ms),
             timeout_ms: other.timeout_ms.or(self.timeout_ms),
+            hidden: other.hidden.clone().or_else(|| self.hidden.clone()),
         }
     }
 }

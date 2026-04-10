@@ -206,6 +206,7 @@ pub(super) struct SummaryMetrics {
     worktrees: usize,
     local_branches: usize,
     remote_branches: usize,
+    hidden: usize,
     dirty_worktrees: usize,
     ahead_items: usize,
 }
@@ -266,6 +267,10 @@ impl SummaryMetrics {
             parts.push(format!("{} worktree{}", self.worktrees, plural));
         }
 
+        if self.hidden > 0 {
+            parts.push(format!("{} hidden", self.hidden));
+        }
+
         if self.dirty_worktrees > 0 {
             parts.push(format!("{} with changes", self.dirty_worktrees));
         }
@@ -292,10 +297,12 @@ pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
     hidden_column_count: usize,
+    hidden_count: usize,
     error_count: usize,
     timed_out_count: usize,
 ) -> String {
-    let metrics = SummaryMetrics::from_items(items);
+    let mut metrics = SummaryMetrics::from_items(items);
+    metrics.hidden = hidden_count;
     let dim = Style::new().dimmed();
     let summary = metrics
         .summary_parts(show_branches, hidden_column_count)
@@ -331,6 +338,7 @@ mod tests {
         assert_eq!(metrics.worktrees, 0);
         assert_eq!(metrics.local_branches, 0);
         assert_eq!(metrics.remote_branches, 0);
+        assert_eq!(metrics.hidden, 0);
         assert_eq!(metrics.dirty_worktrees, 0);
         assert_eq!(metrics.ahead_items, 0);
     }
@@ -341,6 +349,7 @@ mod tests {
             worktrees: 1,
             local_branches: 0,
             remote_branches: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -354,6 +363,7 @@ mod tests {
             worktrees: 3,
             local_branches: 0,
             remote_branches: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -367,6 +377,7 @@ mod tests {
             worktrees: 2,
             local_branches: 5,
             remote_branches: 10,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -383,6 +394,7 @@ mod tests {
             worktrees: 3,
             local_branches: 0,
             remote_branches: 0,
+            hidden: 0,
             dirty_worktrees: 2,
             ahead_items: 0,
         };
@@ -396,6 +408,7 @@ mod tests {
             worktrees: 2,
             local_branches: 0,
             remote_branches: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 1,
         };
@@ -409,6 +422,7 @@ mod tests {
             worktrees: 1,
             local_branches: 0,
             remote_branches: 0,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -425,6 +439,7 @@ mod tests {
             worktrees: 2,
             local_branches: 0,
             remote_branches: 5,
+            hidden: 0,
             dirty_worktrees: 0,
             ahead_items: 0,
         };
@@ -438,6 +453,7 @@ mod tests {
             worktrees: 5,
             local_branches: 3,
             remote_branches: 8,
+            hidden: 0,
             dirty_worktrees: 2,
             ahead_items: 4,
         };
@@ -460,16 +476,18 @@ mod tests {
         use insta::assert_snapshot;
 
         // No errors
-        assert_snapshot!(format_summary_message(&[], false, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 0, 0), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // All timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees. 3 tasks timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 3, 3), @"[2m○[22m [2mShowing 0 worktrees. 3 tasks timed out[0m");
         // Mixed errors and timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees. 5 tasks failed (3 timed out)[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 5, 3), @"[2m○[22m [2mShowing 0 worktrees. 5 tasks failed (3 timed out)[0m");
         // Only failures, no timeouts
-        assert_snapshot!(format_summary_message(&[], false, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 2, 0), @"[2m○[22m [2mShowing 0 worktrees. 2 tasks failed[0m");
         // Single error
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 1, 0), @"[2m○[22m [2mShowing 0 worktrees. 1 task failed[0m");
+        // With hidden items
+        assert_snapshot!(format_summary_message(&[], false, 0, 3, 0, 0), @"[2m○[22m [2mShowing 0 worktrees, 3 hidden[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, 0, 0, 1, 1), @"[2m○[22m [2mShowing 0 worktrees. 1 task timed out[0m");
     }
 }

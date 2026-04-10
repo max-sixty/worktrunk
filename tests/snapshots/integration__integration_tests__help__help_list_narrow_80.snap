@@ -204,6 +204,21 @@ These appear across all columns while the table is loading:
 
 [2m────────────────────────────────────────────────────────────────────────────────[0m
 
+[1m[32mFiltering with hidden patterns [experimental][0m
+
+The [2m[list].hidden[0m config hides worktrees and branches from output. Patterns are 
+matched against both the canonical worktree path and the branch name:
+
+[107m [0m [2m[36m[list][0m
+[107m [0m [2mhidden = [[0m[2m[32m"tmp-*"[0m[2m, [0m[2m[32m"*/scratch/*"[0m[2m][0m
+
+A worktree or branch is hidden if any pattern matches its path or branch name. 
+Filtering applies to worktrees, local branches ([2m--branches[0m), and remote branches
+ ([2m--remotes[0m). The summary line shows how many items were filtered (e.g. [2mShowing 
+[2m3 worktrees, 1 hidden[0m).
+
+[2m────────────────────────────────────────────────────────────────────────────────[0m
+
 [1m[32mJSON output[0m
 
 Query structured data with [2m--format=json[0m:

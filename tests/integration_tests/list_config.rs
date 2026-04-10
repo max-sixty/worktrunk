@@ -1,7 +1,8 @@
 //! Tests for `wt list` command with user config
 
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, list_snapshots, repo, set_temp_home_env, setup_snapshot_settings_with_home,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -472,4 +473,125 @@ task-timeout-ms = 1
         "Expected no timeout message with --full flag, but got: {}",
         stderr
     );
+}
+
+#[rstest]
+fn test_list_config_hidden_single_glob(mut repo: TestRepo) {
+    // Create worktrees: one matching the hidden pattern, one not
+    repo.add_worktree("feature");
+    repo.add_worktree("tmp-scratch");
+
+    // Write config with hidden pattern to the test config path
+    // Pattern matches worktree directory names containing "tmp-"
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+hidden = ["*/repo.tmp-*"]
+"#,
+    );
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+#[rstest]
+fn test_list_config_hidden_array_globs(mut repo: TestRepo) {
+    // Create worktrees matching different patterns
+    repo.add_worktree("feature");
+    repo.add_worktree("tmp-one");
+    repo.add_worktree("scratch-two");
+
+    // Write config with multiple hidden patterns
+    // Patterns match worktree directory names containing "tmp-" or "scratch-"
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+hidden = ["*/repo.tmp-*", "*/repo.scratch-*"]
+"#,
+    );
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+#[rstest]
+fn test_list_config_hidden_by_parent_path(mut repo: TestRepo) {
+    // Create worktrees in different parent directories
+    let temp_dir = repo.root_path().parent().unwrap();
+    let scratch_dir = temp_dir.join("scratch");
+    let keep_dir = temp_dir.join("keep");
+
+    // Worktree in "scratch" folder (should be ignored)
+    repo.add_worktree_at_path("feature-scratch", &scratch_dir.join("repo.feature-scratch"));
+
+    // Worktree in "keep" folder (should be kept)
+    repo.add_worktree_at_path("feature-keep", &keep_dir.join("repo.feature-keep"));
+
+    // Configure hidden pattern matching the parent directory
+    repo.write_test_config(
+        r#"worktree-path = "{{ branch }}"
+
+[list]
+hidden = ["*/scratch/*"]
+"#,
+    );
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+#[rstest]
+fn test_list_config_hidden_worktree_by_branch_name(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.add_worktree("tmp-scratch");
+
+    // Pattern matches branch name directly (no path glob needed)
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+hidden = ["tmp-*"]
+"#,
+    );
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+#[rstest]
+fn test_list_config_hidden_local_branch(repo: TestRepo) {
+    // Remove fixture worktrees to isolate test (keep only main worktree)
+    for branch in &["feature-a", "feature-b", "feature-c"] {
+        let worktree_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{}", branch));
+        if worktree_path.exists() {
+            let _ = repo
+                .git_command()
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap(),
+                ])
+                .run();
+        }
+        let _ = repo.git_command().args(["branch", "-D", branch]).run();
+    }
+
+    // Create branches without worktrees
+    repo.run_git(&["branch", "feature"]);
+    repo.run_git(&["branch", "tmp-experiment"]);
+
+    repo.write_test_config(
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[list]
+hidden = ["tmp-*"]
+"#,
+    );
+
+    let mut cmd = list_snapshots::command(&repo, repo.root_path());
+    cmd.arg("--branches");
+    assert_cmd_snapshot!(cmd);
 }

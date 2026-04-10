@@ -390,6 +390,7 @@ pub(crate) struct ListArgs {
     #[arg(long)]
     pub(crate) full: bool,
 
+    // TODO: consider adding a flag to show hidden items (name TBD — `--hidden`, `--all`, etc.)
     /// Show fast info immediately, update with slow info
     ///
     /// Displays local data (branches, paths, status) first, then updates
@@ -772,6 +773,19 @@ These appear across all columns while the table is loading:
 |--------|---------|
 | `⋯` | Data is loading |
 | `·` | Skipped — collection timed out or branch too stale |
+
+---
+
+## Filtering with hidden patterns [experimental]
+
+The `[list].hidden` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+
+```toml
+[list]
+hidden = ["tmp-*", "*/scratch/*"]
+```
+
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
 
 ---
 
@@ -1797,6 +1811,7 @@ remotes = false    # Include remote-only branches (--remotes)
 
 task-timeout-ms = 0   # Kill individual git commands after N ms; 0 disables
 timeout-ms = 0        # Wall-clock budget for the entire collect phase; 0 disables
+hidden = ["tmp-*"]    # [experimental] Glob patterns to hide from output
 ```
 
 ### Commit

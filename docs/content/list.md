@@ -132,6 +132,21 @@ These appear across all columns while the table is loading:
 
 ---
 
+## Filtering with hidden patterns
+
+<span class="badge-experimental"></span>
+
+The `[list].hidden` config hides worktrees and branches from output. Patterns are matched against both the canonical worktree path and the branch name:
+
+```toml
+[list]
+hidden = ["tmp-*", "*/scratch/*"]
+```
+
+A worktree or branch is hidden if any pattern matches its path or branch name. Filtering applies to worktrees, local branches (`--branches`), and remote branches (`--remotes`). The summary line shows how many items were filtered (e.g. `Showing 3 worktrees, 1 hidden`).
+
+---
+
 ## JSON output
 
 Query structured data with `--format=json`:

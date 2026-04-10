@@ -191,6 +191,7 @@ Persistent flag values for [2mwt list[0m. Override on command line as needed.
 [107m [0m 
 [107m [0m [2mtask-timeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Kill individual git commands after N ms; 0 disables[0m
 [107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m        [0m[2m# Wall-clock budget for the entire collect phase; 0 disables[0m
+[107m [0m [2mhidden = [[0m[2m[32m"tmp-*"[0m[2m]    [0m[2m# [experimental] Glob patterns to hide from output[0m
 
 [32mCommit[0m
 
