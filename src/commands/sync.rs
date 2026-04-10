@@ -549,7 +549,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
 /// Print the sync plan (dry-run mode).
 fn print_sync_plan(tree: &DependencyTree, branches: &[&str]) {
     eprintln!("Dependency tree:");
-    print_tree_node(tree, &tree.root, "", true);
+    print_tree_node(tree, &tree.root, "", true, true);
 
     eprintln!();
     eprintln!("Planned operations:");
@@ -577,22 +577,27 @@ fn print_sync_plan(tree: &DependencyTree, branches: &[&str]) {
 }
 
 /// Print a tree node with indentation.
-fn print_tree_node(tree: &DependencyTree, branch: &str, prefix: &str, is_last: bool) {
-    let connector = if prefix.is_empty() {
-        ""
+fn print_tree_node(
+    tree: &DependencyTree,
+    branch: &str,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+) {
+    if is_root {
+        eprintln!("{branch}");
     } else if is_last {
-        "└── "
+        eprintln!("{prefix}└── {branch}");
     } else {
-        "├── "
-    };
-    eprintln!("{prefix}{connector}{branch}");
+        eprintln!("{prefix}├── {branch}");
+    }
 
     let Some(node) = tree.nodes.get(branch) else {
         return;
     };
 
-    let child_prefix = if prefix.is_empty() {
-        "".to_string()
+    let child_prefix = if is_root {
+        String::new()
     } else if is_last {
         format!("{prefix}    ")
     } else {
@@ -601,6 +606,6 @@ fn print_tree_node(tree: &DependencyTree, branch: &str, prefix: &str, is_last: b
 
     for (i, child) in node.children.iter().enumerate() {
         let is_last_child = i == node.children.len() - 1;
-        print_tree_node(tree, child, &child_prefix, is_last_child);
+        print_tree_node(tree, child, &child_prefix, is_last_child, false);
     }
 }
