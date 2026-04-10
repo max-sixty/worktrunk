@@ -2211,19 +2211,16 @@ pub fn wait_for_file(path: &Path) {
     );
 }
 
-/// Wait for a directory to contain at least `expected_count` files with a given extension.
+/// Wait for a directory tree to contain at least `expected_count` files with a given extension.
+///
+/// Walks recursively — used to count hook log files which live in nested
+/// `{branch}/{source}/{hook-type}/{name}.log` subtrees under `.git/wt/logs/`.
 pub fn wait_for_file_count(dir: &Path, extension: &str, expected_count: usize) {
     let start = std::time::Instant::now();
     let mut attempt = 0;
     while start.elapsed() < BG_TIMEOUT {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            let count = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(extension))
-                .count();
-            if count >= expected_count {
-                return;
-            }
+        if count_files_recursive(dir, extension) >= expected_count {
+            return;
         }
         exponential_sleep(attempt);
         attempt += 1;
@@ -2232,6 +2229,25 @@ pub fn wait_for_file_count(dir: &Path, extension: &str, expected_count: usize) {
         "Expected {} .{} files in {:?} within {:?}",
         expected_count, extension, dir, BG_TIMEOUT
     );
+}
+
+fn count_files_recursive(dir: &Path, extension: &str) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut count = 0;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if file_type.is_dir() {
+            count += count_files_recursive(&path, extension);
+        } else if path.extension().and_then(|s| s.to_str()) == Some(extension) {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Wait for a file to have non-empty content, polling with exponential backoff.

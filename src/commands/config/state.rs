@@ -2,12 +2,22 @@
 //!
 //! Commands for getting, setting, and clearing stored state like default branch,
 //! previous branch, CI status, markers, and logs.
+//!
+//! # Log layout invariant
+//!
+//! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
+//! `verbose.log`, `diagnostic.md`) and top-level *directories* are per-branch log
+//! trees (`{branch}/{source|internal}/{hook-type}/{name}.log`). Categorization
+//! relies on this file-vs-directory distinction: new top-level shared entries
+//! must remain files. If a future category needs multiple files, it should live
+//! under a single reserved subdirectory rather than adding sibling top-level dirs.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
+use path_slash::PathExt as _;
 use worktrunk::config::config_path;
 use worktrunk::git::Repository;
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
@@ -37,30 +47,83 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 // ==================== Log Management ====================
 
-/// Check if a file in `.git/wt/logs/` is a worktrunk log file.
+/// Check if a top-level file is a diagnostic file (`verbose.log` or `diagnostic.md`).
 ///
-/// Matches `.log` (hook output + verbose), `.jsonl`/`.jsonl.old` (command audit log),
-/// and known diagnostic files.
-fn is_wt_log_file(path: &std::path::Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    name.ends_with(".log")
-        || name.ends_with(".jsonl")
-        || name.ends_with(".jsonl.old")
-        || is_diagnostic_file(name)
-}
-
-/// Check if a file is a diagnostic file (`verbose.log` or `diagnostic.md`).
-///
-/// These are created by `-vv` and are separate from hook output and the command audit log.
+/// These are created by `-vv` and live directly under `wt_logs_dir()`.
 fn is_diagnostic_file(name: &str) -> bool {
     name == "verbose.log" || name == "diagnostic.md"
 }
 
-/// Check if a file is a hook output log (branch-specific `.log` files, not diagnostic).
-fn is_hook_output_file(name: &str) -> bool {
-    name.ends_with(".log") && !is_diagnostic_file(name)
+/// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
+fn is_command_log_file(name: &str) -> bool {
+    name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+}
+
+/// A hook-output log file discovered by walking the per-branch subtree.
+struct HookOutputEntry {
+    /// Path relative to `wt_logs_dir()`, used for display and JSON output.
+    /// Always forward-slashed for cross-platform stability.
+    relative_display: String,
+    metadata: std::fs::Metadata,
+}
+
+/// Walk every per-branch log file under `log_dir`.
+///
+/// Top-level *directories* are treated as branch dirs; each is walked
+/// recursively for `.log` files. Non-directory top-level entries are ignored
+/// (those belong to command audit / diagnostic categories).
+///
+/// Returns entries sorted by modification time (newest first), with name as a
+/// tie-breaker for stable ordering.
+fn walk_hook_output_files(log_dir: &Path) -> anyhow::Result<Vec<HookOutputEntry>> {
+    let mut out = Vec::new();
+    if !log_dir.exists() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(log_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        walk_branch_dir(log_dir, &entry.path(), &mut out)?;
+    }
+    sort_hook_entries(&mut out);
+    Ok(out)
+}
+
+/// Recursively collect `.log` files under a branch directory.
+fn walk_branch_dir(
+    log_dir: &Path,
+    current: &Path,
+    out: &mut Vec<HookOutputEntry>,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            walk_branch_dir(log_dir, &path, out)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("log") {
+            let metadata = entry.metadata()?;
+            let relative = path.strip_prefix(log_dir).unwrap_or(&path);
+            out.push(HookOutputEntry {
+                relative_display: relative.to_slash_lossy().into_owned(),
+                metadata,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Sort hook entries by mtime (newest first), then by relative path for stability.
+fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata.modified().ok();
+        let b_time = b.metadata.modified().ok();
+        b_time
+            .cmp(&a_time)
+            .then_with(|| a.relative_display.cmp(&b.relative_display))
+    });
 }
 
 /// Clear stale entries from the wt/trash directory.
@@ -95,7 +158,34 @@ fn clear_trash(repo: &Repository) -> anyhow::Result<usize> {
     Ok(cleared)
 }
 
-/// Clear all log files from the wt/logs directory
+/// Count `.log` files recursively under `dir`.
+///
+/// Used by `clear_logs` to report how many logs are being swept when it
+/// removes a whole branch subtree with `remove_dir_all`.
+fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            count += count_log_files_recursive(&path)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("log") {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Clear all log files from the wt/logs directory.
+///
+/// Walks the two layers of log storage:
+///
+/// 1. **Top-level files**: `commands.jsonl*`, `verbose.log`, `diagnostic.md`.
+///    Also sweeps any legacy flat `.log` files left over from the pre-nested
+///    layout so the transition is self-healing (no explicit migrator).
+/// 2. **Top-level directories**: per-branch log trees — counted recursively
+///    and removed with `remove_dir_all`.
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     let log_dir = repo.wt_logs_dir();
 
@@ -107,9 +197,20 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     for entry in std::fs::read_dir(&log_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() && is_wt_log_file(&path) {
-            std::fs::remove_file(&path)?;
-            cleared += 1;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            // Branch subtree — count logs within, then nuke the whole subtree.
+            cleared += count_log_files_recursive(&path)?;
+            std::fs::remove_dir_all(&path)?;
+        } else if file_type.is_file() {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // Known shared files + legacy flat `.log` files from the old layout.
+            if is_command_log_file(name) || is_diagnostic_file(name) || name.ends_with(".log") {
+                std::fs::remove_file(&path)?;
+                cleared += 1;
+            }
         }
     }
 
@@ -121,32 +222,60 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     Ok(cleared)
 }
 
-/// Check if a filename belongs to the command audit log (`.jsonl` / `.jsonl.old`).
-fn is_command_log_file(name: &str) -> bool {
-    name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
+/// A row ready to render in the log listing table or emit as JSON.
+struct LogRow {
+    display_name: String,
+    size: u64,
+    modified_at: Option<u64>,
 }
 
-/// Convert a log directory entry to a JSON object with file, size, and modified_at.
-fn log_entry_to_json(entry: &std::fs::DirEntry) -> serde_json::Value {
-    let path = entry.path();
-    let name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+impl LogRow {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "file": self.display_name,
+            "size": self.size,
+            "modified_at": self.modified_at,
+        })
+    }
+}
+
+/// Build a `LogRow` for a top-level shared file.
+fn top_level_log_row(entry: &std::fs::DirEntry) -> LogRow {
+    let name = entry.file_name().to_string_lossy().into_owned();
     let meta = entry.metadata().ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-    let modified = meta
+    let modified_at = meta
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
-    serde_json::json!({ "file": name, "size": size, "modified_at": modified })
+    LogRow {
+        display_name: name,
+        size,
+        modified_at,
+    }
+}
+
+/// Build a `LogRow` for a hook-output file (display uses relative path).
+fn hook_output_log_row(entry: &HookOutputEntry) -> LogRow {
+    let size = entry.metadata.len();
+    let modified_at = entry
+        .metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    LogRow {
+        display_name: entry.relative_display.clone(),
+        size,
+        modified_at,
+    }
 }
 
 /// Read and partition log files into command log, hook output, and diagnostic categories.
 ///
-/// Reads all wt log files from the repository's log directory, sorts by modification
-/// time (newest first), and partitions into three categories as JSON values.
+/// Top-level files are classified by name; directories under `log_dir` are
+/// walked as branch subtrees to collect hook output. All three categories are
+/// sorted by modification time (newest first) with a stable tie-breaker.
 fn partition_log_files_json(
     repo: &Repository,
 ) -> anyhow::Result<(
@@ -159,122 +288,133 @@ fn partition_log_files_json(
         return Ok((vec![], vec![], vec![]));
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file() && is_wt_log_file(&e.path()))
-        .collect();
-
-    entries.sort_by(|a, b| {
-        let a_time = a.metadata().and_then(|m| m.modified()).ok();
-        let b_time = b.metadata().and_then(|m| m.modified()).ok();
-        b_time
-            .cmp(&a_time)
-            .then_with(|| a.file_name().cmp(&b.file_name()))
-    });
-
-    let mut cmd_log = Vec::new();
-    let mut hook_out = Vec::new();
-    let mut diagnostic = Vec::new();
-    for entry in &entries {
-        let name = entry.file_name().to_string_lossy().to_string();
+    let mut cmd_rows = Vec::new();
+    let mut diagnostic_rows = Vec::new();
+    for entry in std::fs::read_dir(&log_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
         if is_command_log_file(&name) {
-            cmd_log.push(log_entry_to_json(entry));
+            cmd_rows.push(top_level_log_row(&entry));
         } else if is_diagnostic_file(&name) {
-            diagnostic.push(log_entry_to_json(entry));
-        } else {
-            hook_out.push(log_entry_to_json(entry));
+            diagnostic_rows.push(top_level_log_row(&entry));
         }
     }
-    Ok((cmd_log, hook_out, diagnostic))
+    sort_log_rows(&mut cmd_rows);
+    sort_log_rows(&mut diagnostic_rows);
+
+    // Hook output comes from walking the branch subtrees.
+    let hook_rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
+        .iter()
+        .map(hook_output_log_row)
+        .collect();
+
+    Ok((
+        cmd_rows.iter().map(LogRow::to_json).collect(),
+        hook_rows.iter().map(LogRow::to_json).collect(),
+        diagnostic_rows.iter().map(LogRow::to_json).collect(),
+    ))
 }
 
-/// Render a table of log file entries, or "(none)" if empty.
-fn render_log_table(out: &mut String, entries: &mut [std::fs::DirEntry]) -> std::fmt::Result {
-    if entries.is_empty() {
+/// Sort log rows by mtime (newest first), stable on display name.
+fn sort_log_rows(rows: &mut [LogRow]) {
+    rows.sort_by(|a, b| {
+        b.modified_at
+            .cmp(&a.modified_at)
+            .then_with(|| a.display_name.cmp(&b.display_name))
+    });
+}
+
+/// Render a table of log rows, or "(none)" if empty.
+fn render_log_table(out: &mut String, rows: &[LogRow]) -> std::fmt::Result {
+    if rows.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
         return Ok(());
     }
 
-    // Sort by modification time (newest first), then by name for stability
-    entries.sort_by(|a, b| {
-        let a_time = a.metadata().and_then(|m| m.modified()).ok();
-        let b_time = b.metadata().and_then(|m| m.modified()).ok();
-        b_time
-            .cmp(&a_time)
-            .then_with(|| a.file_name().cmp(&b.file_name()))
-    });
-
-    let rows: Vec<Vec<String>> = entries
+    let table_rows: Vec<Vec<String>> = rows
         .iter()
-        .map(|entry| {
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let meta = entry.metadata().ok();
-
-            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let size_str = if size < 1024 {
-                format!("{size}B")
+        .map(|row| {
+            let size_str = if row.size < 1024 {
+                format!("{}B", row.size)
             } else {
-                format!("{}K", size / 1024)
+                format!("{}K", row.size / 1024)
             };
-
-            let age = meta
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| format_relative_time_short(d.as_secs() as i64))
+            let age = row
+                .modified_at
+                .map(|secs| format_relative_time_short(secs as i64))
                 .unwrap_or_else(|| "?".to_string());
-
-            vec![name, size_str, age]
+            vec![row.display_name.clone(), size_str, age]
         })
         .collect();
 
-    let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &rows);
+    let rendered = crate::md_help::render_data_table(&["File", "Size", "Age"], &table_rows);
     writeln!(out, "{}", rendered.trim_end())?;
 
     Ok(())
 }
 
-/// Render a single log section: heading, then filtered entries from the logs directory.
-fn render_log_section(
+/// Render a section heading and the `(none)` placeholder if the log dir is missing.
+fn render_log_heading(out: &mut String, log_dir: &Path, heading: &str) -> std::fmt::Result {
+    let log_dir_display = format_path_for_display(log_dir);
+    writeln!(
+        out,
+        "{}",
+        format_heading(heading, Some(&format!("@ {log_dir_display}")))
+    )
+}
+
+/// Render the command-log or diagnostic section: top-level files filtered by name.
+fn render_top_level_section(
     out: &mut String,
     repo: &Repository,
     heading: &str,
     filter: impl Fn(&str) -> bool,
 ) -> anyhow::Result<()> {
     let log_dir = repo.wt_logs_dir();
-    let log_dir_display = format_path_for_display(&log_dir);
-
-    writeln!(
-        out,
-        "{}",
-        format_heading(heading, Some(&format!("@ {log_dir_display}")))
-    )?;
-
+    render_log_heading(out, &log_dir, heading)?;
     if !log_dir.exists() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
         return Ok(());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+    let mut rows: Vec<LogRow> = std::fs::read_dir(&log_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file() && filter(&e.file_name().to_string_lossy()))
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|e| filter(&e.file_name().to_string_lossy()))
+        .map(|e| top_level_log_row(&e))
         .collect();
+    sort_log_rows(&mut rows);
+    render_log_table(out, &rows)?;
+    Ok(())
+}
 
-    render_log_table(out, &mut entries)?;
+/// Render the hook-output section: walk per-branch subtrees.
+fn render_hook_output_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let log_dir = repo.wt_logs_dir();
+    render_log_heading(out, &log_dir, "HOOK OUTPUT")?;
+    if !log_dir.exists() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+        return Ok(());
+    }
+
+    let rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
+        .iter()
+        .map(hook_output_log_row)
+        .collect();
+    render_log_table(out, &rows)?;
     Ok(())
 }
 
 /// Render all three log sections (command log, hook output, diagnostic) into a buffer.
 pub(super) fn render_all_log_sections(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    render_log_section(out, repo, "COMMAND LOG", is_command_log_file)?;
+    render_top_level_section(out, repo, "COMMAND LOG", is_command_log_file)?;
     writeln!(out)?;
-    render_log_section(out, repo, "HOOK OUTPUT", is_hook_output_file)?;
+    render_hook_output_section(out, repo)?;
     writeln!(out)?;
-    render_log_section(out, repo, "DIAGNOSTIC", is_diagnostic_file)?;
+    render_top_level_section(out, repo, "DIAGNOSTIC", is_diagnostic_file)?;
     Ok(())
 }
 
@@ -339,23 +479,29 @@ pub fn handle_logs_get(
             let log_path = hook_log.path(&log_dir, &branch);
 
             if log_path.exists() {
-                // Output just the path to stdout for easy piping
-                println!("{}", log_path.display());
+                // Output just the path to stdout for easy piping.
+                // Use to_slash_lossy() so Windows paths use forward slashes, consistent
+                // with the relative paths in `logs list` output.
+                println!("{}", log_path.to_slash_lossy());
                 return Ok(());
             }
 
-            // No match found - show expected filename and available files
-            let expected_filename = hook_log.filename(&branch);
-            let safe_branch = sanitize_for_filename(&branch);
-            let mut available = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&log_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with(&format!("{}-", safe_branch)) && name.ends_with(".log") {
-                        available.push(name);
-                    }
-                }
-            }
+            // No match found — show the expected relative path and list any
+            // logs that do exist for this branch.
+            let expected_relative = log_path
+                .strip_prefix(&log_dir)
+                .unwrap_or(&log_path)
+                .to_slash_lossy()
+                .into_owned();
+            let branch_dir = log_dir.join(sanitize_for_filename(&branch));
+            let available: Vec<String> = if branch_dir.exists() {
+                // Walk only the branch subtree, not every branch.
+                let mut entries = Vec::new();
+                walk_branch_dir(&log_dir, &branch_dir, &mut entries)?;
+                entries.into_iter().map(|e| e.relative_display).collect()
+            } else {
+                Vec::new()
+            };
 
             if available.is_empty() {
                 anyhow::bail!(cformat!(
@@ -363,10 +509,10 @@ pub fn handle_logs_get(
                     branch
                 ));
             } else {
-                let available_list = available.join(", ");
                 let details = format!(
                     "Expected: {}\nAvailable: {}",
-                    expected_filename, available_list
+                    expected_relative,
+                    available.join(", ")
                 );
                 return Err(anyhow::anyhow!(details).context(cformat!(
                     "No log file matches <bold>{}</> for branch <bold>{}</>",

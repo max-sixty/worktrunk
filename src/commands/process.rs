@@ -28,16 +28,20 @@ pub enum InternalOp {
 
 /// Specification for a hook log file.
 ///
-/// This is the single source of truth for hook log file naming.
+/// This is the single source of truth for hook log file paths.
 /// Used by both log creation (in `spawn_detached`) and log lookup (in `handle_logs_get`).
 ///
-/// # Log file naming
+/// # Log file layout
 ///
-/// Hook commands produce logs named: `{branch}-{source}-{hook_type}-{name}.log`
-/// - Example: `feature-user-post-start-server.log`
+/// Hook commands produce logs at: `{branch}/{source}/{hook-type}/{name}.log`
+/// - Example: `feature/user/post-start/server.log`
 ///
-/// Internal operations produce logs named: `{branch}-{op}.log`
-/// - Example: `feature-remove.log`
+/// Internal operations produce logs at: `{branch}/internal/{op}.log`
+/// - Example: `feature/internal/remove.log`
+///
+/// Branch and hook names are sanitized for filesystem safety via
+/// `sanitize_for_filename`, which replaces invalid characters and appends a
+/// short collision-avoidance hash.
 ///
 /// # CLI format for lookup
 ///
@@ -47,13 +51,13 @@ pub enum InternalOp {
 /// - `internal:op` → Internal operation (e.g., `internal:remove`)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookLog {
-    /// Hook command log: `{branch}-{source}-{hook_type}-{name}.log`
+    /// Hook command log: `{branch}/{source}/{hook-type}/{name}.log`
     Hook {
         source: HookSource,
         hook_type: HookType,
         name: String,
     },
-    /// Internal operation log: `{branch}-{op}.log`
+    /// Internal operation log: `{branch}/internal/{op}.log`
     Internal(InternalOp),
 }
 
@@ -72,32 +76,23 @@ impl HookLog {
         Self::Internal(op)
     }
 
-    /// Generate the suffix (without branch) for the log filename.
+    /// Generate the full log path for a branch in the given log directory.
     ///
-    /// This is what gets appended after `{branch}-` in the log filename.
-    pub fn suffix(&self) -> String {
+    /// Builds the nested path under `{log_dir}/{sanitized-branch}/...`.
+    /// Parent directories must be created by the caller (see `create_detach_log`).
+    pub fn path(&self, log_dir: &Path, branch: &str) -> PathBuf {
+        let branch_dir = log_dir.join(sanitize_for_filename(branch));
         match self {
             HookLog::Hook {
                 source,
                 hook_type,
                 name,
-            } => {
-                // HookSource uses #[strum(serialize_all = "kebab-case")] which produces lowercase
-                format!("{}-{}-{}", source, hook_type, sanitize_for_filename(name))
-            }
-            HookLog::Internal(op) => op.to_string(),
+            } => branch_dir
+                .join(source.to_string())
+                .join(hook_type.to_string())
+                .join(format!("{}.log", sanitize_for_filename(name))),
+            HookLog::Internal(op) => branch_dir.join("internal").join(format!("{op}.log")),
         }
-    }
-
-    /// Generate full log filename for a branch.
-    pub fn filename(&self, branch: &str) -> String {
-        let safe_branch = sanitize_for_filename(branch);
-        format!("{}-{}.log", safe_branch, self.suffix())
-    }
-
-    /// Generate full log path for a branch in the given log directory.
-    pub fn path(&self, log_dir: &Path, branch: &str) -> PathBuf {
-        log_dir.join(self.filename(branch))
     }
 
     /// Convert to CLI spec format (for error messages and roundtrip).
@@ -182,24 +177,6 @@ fn posix_command_separator(command: &str) -> &'static str {
     }
 }
 
-/// Spawn a detached background process with output redirected to a log file
-///
-/// The process will be fully detached from the parent:
-/// - On Unix: uses process_group(0) to create a new process group (survives PTY closure)
-/// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
-///
-/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
-///
-/// # Arguments
-/// * `repo` - Repository instance for accessing git common directory
-/// * `worktree_path` - Working directory for the command
-/// * `command` - Shell command to execute
-/// * `branch` - Branch name for log organization
-/// * `hook_log` - Log specification (determines the log filename)
-/// * `context_json` - Optional JSON context to pipe to command's stdin
-///
-/// # Returns
-/// Path to the log file where output is being written
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
@@ -210,14 +187,21 @@ fn create_detach_log(
     hook_log: &HookLog,
 ) -> anyhow::Result<(PathBuf, fs::File)> {
     let log_dir = repo.wt_logs_dir();
-    fs::create_dir_all(&log_dir).with_context(|| {
+    let log_path = hook_log.path(&log_dir, branch);
+
+    // Create the full ancestor chain (e.g., {log_dir}/{branch}/{source}/{hook-type}/).
+    // log_path always has a parent here because HookLog::path() always appends at
+    // least one segment beyond log_dir.
+    let parent = log_path
+        .parent()
+        .expect("HookLog::path always includes a parent");
+    fs::create_dir_all(parent).with_context(|| {
         format!(
             "Failed to create log directory {}",
-            format_path_for_display(&log_dir)
+            format_path_for_display(parent)
         )
     })?;
 
-    let log_path = hook_log.path(&log_dir, branch);
     let log_file = fs::File::create(&log_path).with_context(|| {
         format!(
             "Failed to create log file {}",
@@ -228,6 +212,13 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Spawn a detached background process with output redirected to a log file.
+///
+/// The process will be fully detached from the parent:
+/// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
+/// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
+///
+/// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
     repo: &Repository,
     worktree_path: &Path,
@@ -701,6 +692,7 @@ pub fn build_remove_command(
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
+    use path_slash::PathExt as _;
 
     use super::*;
 
@@ -844,42 +836,57 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_log_suffix() {
+    fn test_hook_log_path() {
         use worktrunk::git::HookType;
 
-        // Suffix includes sanitized name with hash for collision avoidance
-        // Constructor and parse produce identical suffixes
-        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PostStart, "server").suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::hook(HookSource::Project, HookType::PreStart, "build").suffix(), @"project-pre-start-build-seq");
-        assert_snapshot!(HookLog::hook(HookSource::User, HookType::PreRemove, "cleanup").suffix(), @"user-pre-remove-cleanup-non");
-        assert_snapshot!(HookLog::parse("user:post-start:server").unwrap().suffix(), @"user-post-start-server-f4t");
-        assert_snapshot!(HookLog::parse("project:pre-start:build").unwrap().suffix(), @"project-pre-start-build-seq");
+        let log_dir = Path::new("/repo/.git/wt/logs");
 
-        // Internal operation suffix
-        assert_eq!(HookLog::internal(InternalOp::Remove).suffix(), "remove");
-        assert_eq!(
-            HookLog::internal(InternalOp::TrashSweep).suffix(),
-            "trash-sweep"
-        );
-    }
-
-    #[test]
-    fn test_hook_log_filename() {
-        use worktrunk::git::HookType;
-
+        // Hook path: {log_dir}/{sanitized-branch}/{source}/{hook-type}/{sanitized-name}.log
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        assert_snapshot!(log.filename("main"), @"main-vfz-user-post-start-server-f4t.log");
-        // Slash in branch name gets sanitized
-        assert_snapshot!(log.filename("feature/auth"), @"feature-auth-j34-user-post-start-server-f4t.log");
+        assert_snapshot!(
+            log.path(log_dir, "main").to_slash_lossy(),
+            @"/repo/.git/wt/logs/main-vfz/user/post-start/server-f4t.log"
+        );
 
-        assert_snapshot!(HookLog::internal(InternalOp::Remove).filename("main"), @"main-vfz-remove.log");
+        // Slash in branch name gets sanitized (feature/auth → feature-auth-{hash})
+        assert_snapshot!(
+            log.path(log_dir, "feature/auth").to_slash_lossy(),
+            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server-f4t.log"
+        );
+
+        // Project source
+        let log = HookLog::hook(HookSource::Project, HookType::PreStart, "build");
+        assert_snapshot!(
+            log.path(log_dir, "main").to_slash_lossy(),
+            @"/repo/.git/wt/logs/main-vfz/project/pre-start/build-seq.log"
+        );
+
+        // Constructor and parse produce identical paths
+        assert_eq!(
+            HookLog::hook(HookSource::User, HookType::PostStart, "server").path(log_dir, "main"),
+            HookLog::parse("user:post-start:server")
+                .unwrap()
+                .path(log_dir, "main"),
+        );
+
+        // Internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
+        assert_snapshot!(
+            HookLog::internal(InternalOp::Remove).path(log_dir, "main").to_slash_lossy(),
+            @"/repo/.git/wt/logs/main-vfz/internal/remove.log"
+        );
+
+        // Non-branch-scoped internal ops (like TrashSweep) use a pseudo-branch
+        // at the top level — `wt remove` calls this with branch = "wt".
+        assert_snapshot!(
+            HookLog::internal(InternalOp::TrashSweep).path(log_dir, "wt").to_slash_lossy(),
+            @"/repo/.git/wt/logs/wt-boj/internal/trash-sweep.log"
+        );
     }
 
     #[test]
     fn test_hook_log_parse_internal() {
         let log = HookLog::parse("internal:remove").unwrap();
         assert_eq!(log, HookLog::Internal(InternalOp::Remove));
-        assert_eq!(log.suffix(), "remove");
     }
 
     #[test]
@@ -910,15 +917,17 @@ mod tests {
         // What gets created should match what gets looked up
         use worktrunk::git::HookType;
 
+        let log_dir = Path::new("/repo/.git/wt/logs");
+
         // Hook: create the same way hooks.rs does, parse the same way state.rs does
         let created = HookLog::hook(HookSource::User, HookType::PostStart, "server");
         let parsed = HookLog::parse("user:post-start:server").unwrap();
-        assert_eq!(created.filename("main"), parsed.filename("main"));
+        assert_eq!(created.path(log_dir, "main"), parsed.path(log_dir, "main"));
 
         // Internal: create the same way handlers.rs does, parse from CLI
         let created = HookLog::internal(InternalOp::Remove);
         let parsed = HookLog::parse("internal:remove").unwrap();
-        assert_eq!(created.filename("main"), parsed.filename("main"));
+        assert_eq!(created.path(log_dir, "main"), parsed.path(log_dir, "main"));
     }
 
     #[test]

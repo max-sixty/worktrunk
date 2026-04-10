@@ -10,10 +10,16 @@ expression: "String::from_utf8_lossy(&output.stdout)"
       "size": "<SIZE>"
     }
   ],
-  "diagnostic": [],
+  "diagnostic": [
+    {
+      "file": "diagnostic.md",
+      "modified_at": "<TIMESTAMP>",
+      "size": "<SIZE>"
+    }
+  ],
   "hook_output": [
     {
-      "file": "main-user-post-start-server.log",
+      "file": "main-<HASH>/user/post-start/server-<HASH>.log",
       "modified_at": "<TIMESTAMP>",
       "size": "<SIZE>"
     }

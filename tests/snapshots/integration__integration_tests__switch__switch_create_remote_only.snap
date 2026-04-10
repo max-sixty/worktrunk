@@ -46,7 +46,7 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
-[2m↳[22m [2mTo switch to the remote branch, delete this branch and run without [4m--create[24m: [4mwt remove remote-feature && wt switch remote-feature[24m[22m
+[2m↳[22m [2mTo switch to the remote branch, delete this branch and run without [4m--create[24m: [4mwt remove --foreground remote-feature && wt switch remote-feature[24m[22m
 [32m✓[39m [32mCreated branch [1mremote-feature[22m from [1mmain[22m and worktree @ [1m_REPO_.remote-feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

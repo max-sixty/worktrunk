@@ -1,7 +1,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
     configure_git_cmd, configure_git_env, directive_file, repo, setup_temp_snapshot_settings,
-    wait_for, wait_for_file_content, wait_for_file_count, wt_command,
+    wait_for, wait_for_file, wait_for_file_content, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -703,26 +703,19 @@ fn test_bare_repo_background_logs_location() {
     }
 
     // Wait for background process to create log file (poll instead of fixed sleep)
-    // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
-    // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
+    // The key test is that the path is correct, not that content was written
+    // (background processes are flaky in tests). Logs live at:
+    // `{bare_repo}/wt/logs/{sanitized-branch}/internal/remove.log`
     let log_dir = test.bare_repo_path().join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
-
-    // Verify the log file matches expected pattern (feature-*-remove.log)
-    // Format: {branch_with_hash}-{op}.log (internal ops don't have hash on suffix)
-    let log_files: Vec<_> = std::fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("feature-") && name.ends_with("-remove.log")
-        })
-        .collect();
-    assert_eq!(
-        log_files.len(),
-        1,
-        "Expected exactly one feature-*-remove.log file, found: {:?}",
-        log_files
+    let remove_log = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("internal")
+        .join("remove.log");
+    wait_for_file(&remove_log);
+    assert!(
+        remove_log.exists(),
+        "Expected remove log at {}",
+        remove_log.display()
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
