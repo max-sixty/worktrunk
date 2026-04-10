@@ -391,7 +391,6 @@ pub fn collect(
                     [
                         TaskKind::BranchDiff,
                         TaskKind::CiStatus,
-                        TaskKind::WorkingTreeConflicts,
                         TaskKind::SummaryGenerate,
                     ]
                     .into_iter()

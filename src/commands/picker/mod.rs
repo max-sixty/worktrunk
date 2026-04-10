@@ -300,13 +300,10 @@ pub fn handle_picker(
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for picker UI
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
-        collect::TaskKind::BranchDiff,
-        collect::TaskKind::CiStatus,
-        collect::TaskKind::MergeTreeConflicts,
-    ]
-    .into_iter()
-    .collect();
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> =
+        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
+            .into_iter()
+            .collect();
 
     // Per-task command timeout from shared [list] config.
     let command_timeout = config.list.task_timeout();

@@ -48,9 +48,10 @@ exit_code: 0
 + feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
 + feature                               [2m⋯[0m        [2m⋯[0m  ../repo.feature              [2m⋯[0m     [2m⋯
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead. 1 task failed
+[2m○[22m [2mShowing 5 worktrees, 3 ahead. 2 tasks failed
 
 ----- stderr -----
 [33m▲[39m [33mSome git operations failed:
-[107m [0m [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)[39m
+[107m [0m [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)
+[107m [0m [1mfeature[22m: working-tree-conflicts (fatal: bad object HEAD)[39m
 [2m↳[22m [2mTo create a diagnostic file, run with [4m-vv[24m[22m

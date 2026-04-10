@@ -1568,12 +1568,11 @@ mod tests {
         calculate_layout_with_width(&items, skip_tasks, width, Path::new("/test"), None)
     }
 
-    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI, WorkingTreeConflicts skipped).
+    /// Default skip_tasks for non-full mode (Summary, BranchDiff, CI skipped).
     fn non_full_skip_tasks() -> HashSet<TaskKind> {
         [
             TaskKind::BranchDiff,
             TaskKind::CiStatus,
-            TaskKind::WorkingTreeConflicts,
             TaskKind::SummaryGenerate,
         ]
         .into_iter()
