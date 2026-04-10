@@ -270,6 +270,88 @@ fn test_sync_scenario3_pr_merged_to_main(mut repo: TestRepo) {
 }
 
 // =========================================================================
+// Optional phases: --fetch, --push, --prune
+// =========================================================================
+
+/// --fetch runs git fetch before syncing.
+#[rstest]
+fn test_sync_fetch(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2) = setup_linear_stack(&mut repo);
+
+    // Advance main so there's something to sync
+    repo.commit("advance main");
+
+    // --fetch should run git fetch first, then rebase
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--fetch"], Some(&pr1)));
+}
+
+/// --push force-pushes rebased branches that have an upstream.
+#[rstest]
+fn test_sync_push(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2) = setup_linear_stack(&mut repo);
+
+    // Push pr1 with upstream tracking
+    repo.run_git(&["push", "-u", "origin", "pr1"]);
+
+    // Advance main so there's something to sync
+    repo.commit("advance main");
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--push"], Some(&pr1)));
+}
+
+/// --push skips branches whose remote branch was deleted.
+#[rstest]
+fn test_sync_push_skips_deleted_remote(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2) = setup_linear_stack(&mut repo);
+
+    // Push both branches with upstream tracking
+    repo.run_git(&["push", "-u", "origin", "pr1"]);
+    repo.run_git(&["push", "-u", "origin", "pr2"]);
+
+    // Delete pr2's remote branch (simulates branch deleted on GitHub after merge)
+    repo.run_git(&["push", "origin", "--delete", "pr2"]);
+    repo.run_git(&["fetch", "--prune"]);
+
+    // Advance main so there's something to sync
+    repo.commit("advance main");
+
+    // Sync with --push: pr1 should push, pr2 should be skipped (no upstream)
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--push"], Some(&pr1)));
+}
+
+/// --prune removes integrated worktrees after syncing.
+#[rstest]
+fn test_sync_prune(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // Simulate squash-merge of PR1 into main
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(repo.root_path().join("pr1.txt"), "pr1 content").unwrap();
+    repo.run_git(&["add", "pr1.txt"]);
+    repo.run_git(&["commit", "-m", "squash-merge pr1"]);
+
+    let pr2_path = repo.root_path().parent().unwrap().join("repo.pr2");
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "sync",
+        &["--prune"],
+        Some(&pr2_path)
+    ));
+}
+
+// =========================================================================
 // Stack file scenarios
 // =========================================================================
 

@@ -29,7 +29,7 @@ pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, SyncConfig,
     UserProjectOverrides,
 };
 

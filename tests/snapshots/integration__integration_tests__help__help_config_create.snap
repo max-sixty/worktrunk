@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -10,6 +11,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -169,6 +171,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ### Sync[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [sync][0m
+[107m [0m [2m# fetch = false    # Fetch from remote before syncing[0m
+[107m [0m [2m# push = false     # Force-push rebased branches after syncing[0m
+[107m [0m [2m# prune = false    # Remove integrated worktrees after syncing[0m
+[107m [0m [2m# all = true       # Sync all stacks (false = current stack only)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m

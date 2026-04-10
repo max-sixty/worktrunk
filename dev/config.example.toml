@@ -110,6 +110,14 @@
 # verify = true      # Run project hooks (--no-hooks to skip)
 # ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
+# ### Sync
+#
+# [sync]
+# fetch = false    # Fetch from remote before syncing
+# push = false     # Force-push rebased branches after syncing
+# prune = false    # Remove integrated worktrees after syncing
+# all = true       # Sync all stacks (false = current stack only)
+#
 # ### Switch
 #
 # [switch]

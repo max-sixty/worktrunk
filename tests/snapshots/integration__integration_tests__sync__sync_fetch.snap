@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/config_show.rs
-assertion_line: 2533
+source: tests/integration_tests/sync.rs
+assertion_line: 266
 info:
   program: wt
   args:
-    - list
+    - sync
+    - "--fetch"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -42,13 +43,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m                        [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                           [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
-+ feature-a     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-a  [2m1b87d473[0m  [2m⋯[0m     [2m⋯
-+ feature-b     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-b  [2mf62940fc[0m  [2m⋯[0m     [2m⋯
-+ feature-c     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-c  [2m345c7c93[0m  [2m⋯[0m     [2m⋯
-
-[2m○[22m [2mShowing 4 worktrees
 
 ----- stderr -----
-[33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
+[36m◎[39m [36mFetching from remote...[39m
+[32m✓[39m [32mFetch complete[39m
+[36m◎[39m [36mRebasing [1mpr1[22m onto [1mmain[22m...[39m
+[32m✓[39m [32mRebased [1mpr1[22m onto [1mmain[22m[39m
+[36m◎[39m [36mRebasing [1mpr2[22m onto [1mpr1[22m...[39m
+[32m✓[39m [32mRebased [1mpr2[22m onto [1mpr1[22m[39m
+[32m✓[39m [32mSync complete: 2 rebased, 0 already up to date.[39m

@@ -126,13 +126,18 @@ impl DependencyTree {
 
 /// Options for the sync command.
 pub struct SyncOptions {
+    pub fetch: bool,
     pub all: bool,
+    pub push: bool,
+    pub prune: bool,
     pub dry_run: bool,
 }
 
-/// Result of building the dependency tree.
+/// Result of building the dependency tree, including integrated branch info.
 struct SyncPlan {
     tree: DependencyTree,
+    /// Branches detected as integrated, with their worktree paths.
+    integrated: Vec<(String, PathBuf)>,
 }
 
 /// Stack file name within the wt data directory.
@@ -539,17 +544,28 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         node.children.sort();
     }
 
+    let integrated_list: Vec<(String, PathBuf)> = integrated.into_iter().collect();
+
     Ok(SyncPlan {
         tree: DependencyTree {
             root: default_branch,
             nodes,
         },
+        integrated: integrated_list,
     })
 }
 
 /// Execute the sync operation.
 pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
+
+    // Fetch from remote if requested
+    if opts.fetch {
+        eprintln!("{}", progress_message(cformat!("Fetching from remote...")));
+        repo.run_command(&["fetch", "--prune"])
+            .context("git fetch failed")?;
+        eprintln!("{}", success_message("Fetch complete"));
+    }
 
     // Build dependency tree
     let plan = build_dependency_tree(&repo)?;
@@ -635,6 +651,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Execute rebases in topological order
     let mut rebased_count = 0;
     let mut skipped_count = 0;
+    let mut rebased_branches: Vec<String> = Vec::new();
 
     for &branch in &branches_to_sync {
         let Some(node) = tree.nodes.get(branch) else {
@@ -725,6 +742,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         }
 
         rebased_count += 1;
+        rebased_branches.push(branch.to_string());
         eprintln!(
             "{}",
             success_message(cformat!("Rebased <bold>{branch}</> onto <bold>{parent}</>"))
@@ -743,6 +761,93 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 skipped_count,
             ))
         );
+    }
+
+    // Push rebased branches
+    if opts.push && !rebased_branches.is_empty() {
+        eprintln!();
+        for branch in &rebased_branches {
+            // Skip branches without an upstream
+            if repo.branch(branch).upstream()?.is_none() {
+                continue;
+            }
+            eprintln!(
+                "{}",
+                progress_message(cformat!("Pushing <bold>{branch}</>..."))
+            );
+            let result = repo.run_command(&["push", "--force-with-lease", "origin", branch]);
+            match result {
+                Ok(_) => {
+                    eprintln!("{}", success_message(cformat!("Pushed <bold>{branch}</>")));
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        worktrunk::styling::error_message(cformat!(
+                            "Failed to push <bold>{branch}</>: {e}"
+                        ))
+                    );
+                }
+            }
+        }
+    }
+
+    // Prune integrated worktrees
+    if opts.prune && !plan.integrated.is_empty() {
+        eprintln!();
+        for (branch, path) in &plan.integrated {
+            eprintln!(
+                "{}",
+                progress_message(cformat!(
+                    "Removing integrated worktree <bold>{branch}</>..."
+                ))
+            );
+            // Remove the worktree (without --force to avoid silent data loss
+            // if the worktree has untracked files)
+            let result = repo.run_command(&["worktree", "remove", &path.to_string_lossy()]);
+            if let Err(e) = result {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::error_message(cformat!(
+                        "Failed to remove worktree for <bold>{branch}</>: {e}"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::hint_message(cformat!(
+                        "Clean up the worktree manually, then run: git worktree remove {}",
+                        path.to_string_lossy()
+                    ))
+                );
+                continue;
+            }
+            // Check for upstream before deleting the local branch
+            let has_upstream = repo.branch(branch).upstream()?.is_some();
+            // Delete the local branch
+            if let Err(e) = repo.run_command(&["branch", "-D", branch]) {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::warning_message(cformat!(
+                        "Failed to delete local branch <bold>{branch}</>: {e}"
+                    ))
+                );
+            }
+            // Delete remote branch if it had an upstream
+            if has_upstream
+                && let Err(e) = repo.run_command(&["push", "origin", "--delete", branch])
+            {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::warning_message(cformat!(
+                        "Failed to delete remote branch <bold>{branch}</>: {e}"
+                    ))
+                );
+            }
+            eprintln!(
+                "{}",
+                success_message(cformat!("Removed integrated worktree <bold>{branch}</>"))
+            );
+        }
     }
 
     Ok(())
