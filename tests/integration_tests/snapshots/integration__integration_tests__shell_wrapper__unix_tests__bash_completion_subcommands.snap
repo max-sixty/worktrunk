@@ -1,10 +1,12 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
+assertion_line: 3041
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 switch
 list
 remove
+sync
 merge
 step
 hook
