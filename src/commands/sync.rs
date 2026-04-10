@@ -165,7 +165,7 @@ fn parse_stack_file(
     // Stack of (indent_level, branch_name)
     let mut stack: Vec<(usize, String)> = Vec::new();
 
-    for (line_num, raw_line) in content.lines().enumerate() {
+    for raw_line in content.lines() {
         // Skip empty lines and comments
         let trimmed = raw_line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -471,7 +471,8 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
             let mut visited = std::collections::HashSet::new();
             while integrated.contains_key(new_parent.as_str()) {
                 if !visited.insert(new_parent.clone()) {
-                    break; // cycle detected, fall through to current new_parent
+                    new_parent = default_branch.clone();
+                    break;
                 }
                 new_parent = explicit_parents
                     .get(new_parent.as_str())
