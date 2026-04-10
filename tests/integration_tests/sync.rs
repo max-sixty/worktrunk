@@ -284,6 +284,29 @@ fn test_sync_push(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--push"], Some(&pr1)));
 }
 
+/// --push skips branches whose remote branch was deleted.
+#[rstest]
+fn test_sync_push_skips_deleted_remote(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2) = setup_linear_stack(&mut repo);
+
+    // Push both branches with upstream tracking
+    repo.run_git(&["push", "-u", "origin", "pr1"]);
+    repo.run_git(&["push", "-u", "origin", "pr2"]);
+
+    // Delete pr2's remote branch (simulates branch deleted on GitHub after merge)
+    repo.run_git(&["push", "origin", "--delete", "pr2"]);
+    repo.run_git(&["fetch", "--prune"]);
+
+    // Advance main so there's something to sync
+    repo.commit("advance main");
+
+    // Sync with --push: pr1 should push, pr2 should be skipped (no upstream)
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--push"], Some(&pr1)));
+}
+
 // =========================================================================
 // Stack file tests
 // =========================================================================
