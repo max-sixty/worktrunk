@@ -51,13 +51,12 @@ use commands::{
     handle_claude_install_statusline, handle_claude_uninstall, handle_completions,
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_external_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_get, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_sync, handle_unconfigure_shell, handle_vars_clear,
-    handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook,
-    step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    handle_list, handle_logs_get, handle_merge, handle_opencode_install, handle_opencode_uninstall,
+    handle_promote, handle_rebase, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
+    handle_sync, handle_unconfigure_shell, handle_vars_clear, handle_vars_get, handle_vars_list,
+    handle_vars_set, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_diff,
+    step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 
