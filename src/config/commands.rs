@@ -157,6 +157,11 @@ const EXPECTING: &str = r#"a command in one of these forms:
 - a pipeline list: ["cargo build", { test = "cargo test" }]
 run `wt hook --help` for details"#;
 
+/// Accepted forms for an entry inside a pipeline list (sub-form of `EXPECTING`
+/// — pipelines can't nest, so only the string and named-table forms are valid).
+const EXPECTING_PIPELINE_ENTRY: &str =
+    r#"a command string "cargo build" or a named table { build = "cargo build" }"#;
+
 /// An entry in a pipeline list: either a string or a map of named commands.
 ///
 /// Anonymous strings work but are intentionally undocumented — they
@@ -177,10 +182,7 @@ impl<'de> Deserialize<'de> for PipelineEntry {
             type Value = PipelineEntry;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(
-                    "a command string \"cargo build\" or a named table \
-                     { build = \"cargo build\", test = \"cargo test\" }",
-                )
+                f.write_str(EXPECTING_PIPELINE_ENTRY)
             }
 
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
@@ -631,6 +633,20 @@ broken = 42
         invalid type: integer `42`, expected a string
         "#
         );
+    }
+
+    #[test]
+    fn test_error_describes_pipeline_entry_forms_for_wrong_type() {
+        // Wrong type as a pipeline entry → error must list the two accepted
+        // entry forms (string or named table). Pipelines can't nest, so the
+        // top-level "pipeline list" form isn't repeated here.
+        assert_snapshot!(deserialize_err("command = [42]"), @r#"
+        TOML parse error at line 1, column 12
+          |
+        1 | command = [42]
+          |            ^^
+        invalid type: integer `42`, expected a command string "cargo build" or a named table { build = "cargo build" }
+        "#);
     }
 
     #[test]
