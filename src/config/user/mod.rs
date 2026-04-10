@@ -179,12 +179,20 @@ impl UserConfig {
         // - prefix_separator("_"): strip prefix with single underscore (WORKTRUNK_ → key)
         // - separator("__"): double underscore for nested fields (COMMIT__GENERATION__COMMAND → commit.generation.command)
         // - convert_case(Kebab): converts snake_case to kebab-case to match serde field names
+        // - try_parsing(true): coerce env-var strings into bool/i64/f64 so any
+        //   non-String typed field (e.g. `list.timeout-ms: Option<u64>`) accepts
+        //   overrides like `WORKTRUNK__LIST__TIMEOUT_MS=30`. String fields still
+        //   round-trip through `into_string()` in the config deserializer, so
+        //   `WORKTRUNK_WORKTREE_PATH=42` stringifies back to "42" as expected.
+        //   Without this, a single typed override fails the whole config deserialize
+        //   and silently falls back to defaults.
         // Example: WORKTRUNK_WORKTREE_PATH → worktree-path
         builder = builder.add_source(
             config::Environment::with_prefix("WORKTRUNK")
                 .prefix_separator("_")
                 .separator("__")
-                .convert_case(Case::Kebab),
+                .convert_case(Case::Kebab)
+                .try_parsing(true),
         );
 
         // The config crate's `preserve_order` feature ensures TOML insertion order
