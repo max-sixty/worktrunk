@@ -837,10 +837,12 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 );
                 continue;
             }
+            // Check for upstream before deleting the local branch
+            let has_upstream = repo.branch(branch).upstream()?.is_some();
             // Delete the local branch
             let _ = repo.run_command(&["branch", "-D", branch]);
-            // Delete remote branch if it exists
-            if repo.branch(branch).upstream()?.is_some() {
+            // Delete remote branch if it had an upstream
+            if has_upstream {
                 let _ = repo.run_command(&["push", "origin", "--delete", branch]);
             }
             eprintln!(
