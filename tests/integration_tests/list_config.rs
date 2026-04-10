@@ -502,7 +502,14 @@ branches = "not-a-bool"
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings(&repo);
+    let mut settings = setup_snapshot_settings(&repo);
+    // `format_path_for_display` produces different strings depending on
+    // whether HOME contains the tempdir — macOS tempdir lives under
+    // /var/folders (absolute), Linux CI tempdir lives under HOME (tilde).
+    // The default `~/…` → `_PARENT_/…` filter only fires in the tilde case,
+    // so normalize the Linux form back to `[TEST_CONFIG]` for a stable
+    // snapshot across platforms.
+    settings.add_filter(r"_PARENT_/[^\s,]*test-config\.toml", "[TEST_CONFIG]");
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
