@@ -188,4 +188,48 @@ mod tests {
         let cmd = Cli::command();
         assert_eq!(closest_subcommand("select", &cmd), None);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn handle_external_command_rejects_non_utf8_name() {
+        use std::os::unix::ffi::OsStringExt;
+
+        // clap routes the subcommand name through `OsString`, so a caller
+        // with a non-UTF-8 argv could in principle reach this path. We
+        // construct the same `Vec<OsString>` shape directly.
+        let bad_name = OsString::from_vec(vec![0xFF, 0xFE]);
+        let err = handle_external_command(vec![bad_name], None).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not valid UTF-8"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_external_propagates_signal_exit_code() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let script = dir.path().join("wt-signal-test");
+        std::fs::write(&script, "#!/bin/sh\nkill -TERM $$\n").expect("write script");
+        let mut perms = std::fs::metadata(&script)
+            .expect("stat script")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod script");
+
+        let err = run_external(&script, &[], None).expect_err("child killed by SIGTERM");
+        let wt_err = err
+            .downcast_ref::<WorktrunkError>()
+            .expect("signal should surface as WorktrunkError::AlreadyDisplayed");
+        match wt_err {
+            WorktrunkError::AlreadyDisplayed { exit_code } => {
+                // SIGTERM = 15, and the shell-style convention is 128 + signal.
+                assert_eq!(*exit_code, 128 + 15);
+            }
+            other => panic!("unexpected WorktrunkError variant: {other:?}"),
+        }
+    }
 }

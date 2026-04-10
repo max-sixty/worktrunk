@@ -1028,7 +1028,10 @@ fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
     })
 }
 
-fn dispatch_command(command: Commands) -> anyhow::Result<()> {
+fn dispatch_command(
+    command: Commands,
+    working_dir: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     match command {
         Commands::Config { action } => handle_config_command(action),
         Commands::Step { action } => handle_step_command(action),
@@ -1038,9 +1041,10 @@ fn dispatch_command(command: Commands) -> anyhow::Result<()> {
         Commands::Switch(args) => handle_switch_command(args),
         Commands::Remove(args) => handle_remove_command(args),
         Commands::Merge(args) => handle_merge_command(args),
-        // Handled directly in `main` so we can pass through the `-C` flag
-        // as the child's working directory.
-        Commands::External(_) => unreachable!("External is dispatched in main()"),
+        // `working_dir` is the top-level `-C <path>` flag, applied as the
+        // child's current directory so global `-C` works for external
+        // subcommands the same way it does for built-ins.
+        Commands::External(args) => handle_external_command(args, working_dir),
     }
 }
 
@@ -1156,10 +1160,7 @@ fn main() {
         return;
     };
 
-    let result = match command {
-        Commands::External(args) => handle_external_command(args, directory),
-        other => dispatch_command(other),
-    };
+    let result = dispatch_command(command, directory);
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
