@@ -857,15 +857,15 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 );
             }
             // Delete remote branch if it had an upstream
-            if has_upstream {
-                if let Err(e) = repo.run_command(&["push", "origin", "--delete", branch]) {
-                    eprintln!(
-                        "{}",
-                        worktrunk::styling::warning_message(cformat!(
-                            "Failed to delete remote branch <bold>{branch}</>: {e}"
-                        ))
-                    );
-                }
+            if has_upstream
+                && let Err(e) = repo.run_command(&["push", "origin", "--delete", branch])
+            {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::warning_message(cformat!(
+                        "Failed to delete remote branch <bold>{branch}</>: {e}"
+                    ))
+                );
             }
             eprintln!(
                 "{}",
