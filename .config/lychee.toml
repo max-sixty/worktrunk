@@ -54,6 +54,7 @@ exclude = [
     "incident\\.io",
     "git-scm\\.com",
     "api\\.star-history\\.com",
+    "caddyserver\\.com",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
