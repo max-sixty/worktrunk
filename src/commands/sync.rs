@@ -174,7 +174,9 @@ fn parse_stack_file(
         }
 
         // Strip annotations after the branch name (machete supports "branch  annotation")
-        let branch = trimmed.split_whitespace().next().unwrap();
+        let Some(branch) = trimmed.split_whitespace().next() else {
+            continue;
+        };
 
         // Determine indent level (count leading whitespace: tab=1, space groups of 4=1)
         let indent = if raw_line.starts_with('\t') {
