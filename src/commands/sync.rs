@@ -232,6 +232,14 @@ fn format_stack_node(tree: &DependencyTree, branch: &str, depth: usize, output: 
     }
 }
 
+fn write_stack_file(repo: &Repository, tree: &DependencyTree) -> anyhow::Result<()> {
+    let stack_file_path = repo.wt_dir().join(STACK_FILE);
+    let content = format_stack_file(tree);
+    std::fs::create_dir_all(repo.wt_dir()).context("Failed to create .git/wt directory")?;
+    std::fs::write(&stack_file_path, &content).context("Failed to write stack file")?;
+    Ok(())
+}
+
 /// Build the dependency tree from worktree branches.
 ///
 /// For each branch B, finds the closest parent P where merge_base(P, B) is
@@ -572,18 +580,6 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     let plan = build_dependency_tree(&repo)?;
     let tree = plan.tree;
 
-    // Always persist the dependency tree to the stack file. This ensures
-    // parent-based integration detection works (e.g., PR2 merged into PR1)
-    // and keeps the file in sync after integrated branches are removed.
-    {
-        let stack_file_path = repo.wt_dir().join(STACK_FILE);
-        let content = format_stack_file(&tree);
-        std::fs::create_dir_all(repo.wt_dir())
-            .context("Failed to create .git/wt directory")?;
-        std::fs::write(&stack_file_path, &content)
-            .context("Failed to write stack file")?;
-    }
-
     // Determine which branches to sync
     let current_wt = repo.current_worktree();
     let current_branch = current_wt.branch()?;
@@ -615,6 +611,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Dry-run mode: show plan and exit
     if opts.dry_run {
         print_sync_plan(&tree, &branches_to_sync);
+        write_stack_file(&repo, &tree)?;
         return Ok(());
     }
 
@@ -653,6 +650,12 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             }
         }
     }
+
+    // Persist the dependency tree to the stack file after all safety checks
+    // pass. This ensures parent-based integration detection works (e.g., PR2
+    // merged into PR1) and keeps the file in sync after integrated branches
+    // are removed.
+    write_stack_file(&repo, &tree)?;
 
     // Execute rebases in topological order
     let mut rebased_count = 0;
