@@ -762,14 +762,17 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         );
     }
 
-    // Push rebased branches
-    if opts.push && !rebased_branches.is_empty() {
-        eprintln!();
-        for branch in &rebased_branches {
-            // Skip branches without an upstream
-            if repo.branch(branch).upstream().ok().flatten().is_none() {
-                continue;
-            }
+    // Push all branches with an upstream
+    if opts.push {
+        let pushable: Vec<&str> = branches_to_sync
+            .iter()
+            .filter(|b| repo.branch(b).upstream().ok().flatten().is_some())
+            .copied()
+            .collect();
+        if !pushable.is_empty() {
+            eprintln!();
+        }
+        for branch in &pushable {
             eprintln!(
                 "{}",
                 progress_message(cformat!("Pushing <bold>{branch}</>..."))
