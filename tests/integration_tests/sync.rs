@@ -264,6 +264,55 @@ fn test_sync_push(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--push"], Some(&pr1)));
 }
 
+// =========================================================================
+// Stack file tests
+// =========================================================================
+
+/// --save persists the inferred tree to .git/wt/stack.
+#[rstest]
+fn test_sync_save_creates_stack_file(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // Run sync with --save --dry-run (don't actually rebase, just save)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "sync",
+        &["--save", "--dry-run"],
+        Some(&_pr1)
+    ));
+
+    // Verify the stack file was created with correct content
+    let stack_file = repo.root_path().join(".git").join("wt").join("stack");
+    assert!(stack_file.exists(), "stack file should exist");
+    let content = std::fs::read_to_string(&stack_file).unwrap();
+    assert!(content.contains("pr1"), "stack file should contain pr1");
+    assert!(content.contains("pr2"), "stack file should contain pr2");
+    assert!(content.contains("pr3"), "stack file should contain pr3");
+}
+
+/// Stack file overrides inference: scenario 2 (mid-stack commit) works
+/// correctly when the stack file defines the tree.
+#[rstest]
+fn test_sync_stack_file_fixes_scenario2(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+    let (pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
+
+    // First sync to rebase everything (establishes the tree)
+    let mut cmd = make_snapshot_cmd(&repo, "sync", &["--save"], Some(&pr1));
+    cmd.output().unwrap();
+
+    // Now add a mid-stack commit on pr1 (scenario 2)
+    repo.commit_in_worktree(&pr1, "pr1-fix.txt", "fix content", "pr1 fix");
+
+    // With stack file, pr2 should rebase onto pr1 (not main)
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
+}
+
 /// --prune removes integrated worktrees after syncing.
 #[rstest]
 fn test_sync_prune(mut repo: TestRepo) {

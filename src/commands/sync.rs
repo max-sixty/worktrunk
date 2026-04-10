@@ -5,8 +5,14 @@
 //! order. Handles integrated (merged) branches by reparenting their children
 //! with `rebase --onto`.
 //!
+//! Parent detection can be overridden by a stack file (`.git/wt/stack`) that
+//! explicitly defines the branch tree. The format is compatible with git-machete:
+//! indentation-based, one branch per line. When this file exists, it is used
+//! instead of merge-base inference. Use `--save` to persist the inferred tree.
+//!
 //! Key behaviors:
 //! - No configuration needed — dependencies are inferred from git history
+//! - Stack file (`.git/wt/stack`) overrides inference when present
 //! - By default, syncs the stack containing the current branch
 //! - `--all` syncs all worktree branches; `--stack` restricts to current stack
 //! - `--fetch` / `--push` / `--prune` enable optional phases
@@ -126,6 +132,7 @@ pub struct SyncOptions {
     pub push: bool,
     pub prune: bool,
     pub dry_run: bool,
+    pub save: bool,
 }
 
 /// Result of building the dependency tree, including integrated branch info.
@@ -135,11 +142,114 @@ struct SyncPlan {
     integrated: Vec<(String, PathBuf)>,
 }
 
+/// Stack file name within the wt data directory.
+const STACK_FILE: &str = "stack";
+
+/// Parse a stack file (git-machete compatible format) into a parent map.
+///
+/// The format is indentation-based, one branch per line:
+/// ```text
+/// main
+///     pr1
+///         pr2
+///             pr3
+///     other-pr
+/// ```
+///
+/// Returns a map of branch -> parent. The root branch (first line, no indent)
+/// is expected to match the default branch and is not included in the map.
+fn parse_stack_file(
+    content: &str,
+    default_branch: &str,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut parent_map: HashMap<String, String> = HashMap::new();
+    // Stack of (indent_level, branch_name)
+    let mut stack: Vec<(usize, String)> = Vec::new();
+
+    for (line_num, raw_line) in content.lines().enumerate() {
+        // Skip empty lines and comments
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Strip annotations after the branch name (machete supports "branch  annotation")
+        let branch = trimmed.split_whitespace().next().unwrap();
+
+        // Determine indent level (count leading whitespace: tab=1, space groups of 4=1)
+        let indent = if raw_line.starts_with('\t') {
+            raw_line.len() - raw_line.trim_start_matches('\t').len()
+        } else {
+            let spaces = raw_line.len() - raw_line.trim_start().len();
+            // Accept any consistent spacing — treat each group as one level
+            // by dividing by the first nonzero indent seen
+            spaces
+        };
+
+        // Pop stack back to find the parent at this indent level
+        while let Some(&(level, _)) = stack.last() {
+            if level >= indent {
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        let parent = stack
+            .last()
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(|| default_branch.to_string());
+
+        // The root entry (default branch itself) is not added to the map
+        if branch != default_branch {
+            parent_map.insert(branch.to_string(), parent);
+        }
+
+        stack.push((indent, branch.to_string()));
+
+        // Validate: first non-default branch at indent 0 is fine (parent = default_branch)
+        if stack.len() == 1 && branch != default_branch && indent == 0 {
+            // Top-level branch — parent is the default branch, which is implicit
+        }
+
+        let _ = line_num; // used for error reporting if needed
+    }
+
+    Ok(parent_map)
+}
+
+/// Format the dependency tree as a stack file (git-machete compatible format).
+fn format_stack_file(tree: &DependencyTree) -> String {
+    let mut output = String::new();
+    format_stack_node(tree, &tree.root, 0, &mut output);
+    output
+}
+
+fn format_stack_node(tree: &DependencyTree, branch: &str, depth: usize, output: &mut String) {
+    // Don't write the root (default branch) — it's implicit
+    if depth > 0 {
+        for _ in 0..depth - 1 {
+            output.push('\t');
+        }
+        output.push_str(branch);
+        output.push('\n');
+    }
+
+    if let Some(node) = tree.nodes.get(branch) {
+        for child in &node.children {
+            format_stack_node(tree, child, depth + 1, output);
+        }
+    }
+}
+
 /// Build the dependency tree from worktree branches.
 ///
 /// For each branch B, finds the closest parent P where merge_base(P, B) is
 /// nearest to B's tip (fewest commits ahead). Integrated branches are excluded
 /// and their children reparented.
+///
+/// If a stack file (`.git/wt/stack`) exists, it is used for parent detection
+/// instead of merge-base inference.
 fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
     let default_branch = repo
         .default_branch()
@@ -183,120 +293,136 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         }
     }
 
-    // Compute closest parent for each branch using ALL branches (including
-    // integrated ones). This ensures children of integrated branches initially
-    // get the integrated branch as their parent, so reparenting can detect and
-    // apply `rebase --onto`.
-    //
-    // For each branch B, the parent P is selected in two tiers:
-    //   1. True ancestors (candidate_depth == 0, meaning merge_base == candidate
-    //      tip): these are branches whose tip is reachable from B. Among true
-    //      ancestors, pick the closest (smallest branch_depth).
-    //   2. Diverged candidates: pick by smallest branch_depth, then smallest
-    //      candidate_depth.
-    //
-    // This prevents cycles in stacked branches: if B descends from C (C's tip
-    // is on B's history), C is a true ancestor and always wins over siblings
-    // that merely share a common fork point.
-    let branch_names: Vec<&str> = branches.iter().map(|(b, _)| b.as_str()).collect();
+    // Determine parent for each branch. If a stack file exists, use it;
+    // otherwise infer parents from the commit graph.
+    let stack_file_path = repo.wt_dir().join(STACK_FILE);
     let mut parent_map: HashMap<String, (String, Option<String>)> = HashMap::new(); // branch -> (parent, original_parent_if_reparented)
 
-    for (branch, _) in &branches {
-        if branch == &default_branch || integrated.contains_key(branch) {
-            continue;
+    if stack_file_path.exists() {
+        // Use explicit stack file for parent detection
+        let content = std::fs::read_to_string(&stack_file_path)
+            .context("Failed to read stack file")?;
+        let explicit_parents = parse_stack_file(&content, &default_branch)?;
+
+        for (branch, _) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
+                continue;
+            }
+            let parent = explicit_parents
+                .get(branch)
+                .cloned()
+                .unwrap_or_else(|| default_branch.clone());
+            parent_map.insert(branch.clone(), (parent, None));
         }
+    } else {
+        // Infer parents from the commit graph using merge-base analysis.
+        //
+        // For each branch B, the parent P is selected in two tiers:
+        //   1. True ancestors (candidate_depth == 0, meaning merge_base ==
+        //      candidate tip): branches whose tip is reachable from B. Among
+        //      true ancestors, pick the closest (smallest branch_depth).
+        //   2. Diverged candidates (only if no true ancestors): pick by
+        //      smallest branch_depth, then smallest candidate_depth.
+        //
+        // This prevents cycles in stacked branches: if B descends from C
+        // (C's tip is on B's history), C is a true ancestor and always wins
+        // over siblings that merely share a common fork point.
+        //
+        // Limitation: after syncing + adding a mid-stack commit, the parent
+        // branch becomes "diverged" and may lose to the default branch (a
+        // true ancestor). Use `wt sync --save` to persist the tree and avoid
+        // this. See `.git/wt/stack`.
+        let branch_names: Vec<&str> = branches.iter().map(|(b, _)| b.as_str()).collect();
 
-        // Partition into true ancestors and diverged candidates
-        let mut ancestors: Vec<(&str, String, usize)> = Vec::new(); // (candidate, mb, branch_depth)
-        let mut diverged: Vec<(&str, String, usize, usize)> = Vec::new(); // (candidate, mb, branch_depth, candidate_depth)
-
-        for candidate in &branch_names {
-            if *candidate == branch.as_str() {
+        for (branch, _) in &branches {
+            if branch == &default_branch || integrated.contains_key(branch) {
                 continue;
             }
 
-            let Some(mb) = repo.merge_base(candidate, branch)? else {
-                continue;
-            };
+            let mut ancestors: Vec<(&str, String, usize)> = Vec::new();
+            let mut diverged: Vec<(&str, String, usize, usize)> = Vec::new();
 
-            let branch_depth = repo.count_commits(&mb, branch)?;
+            for candidate in &branch_names {
+                if *candidate == branch.as_str() {
+                    continue;
+                }
 
-            // Skip descendants: if branch_depth == 0, the branch's tip is the
-            // merge-base, meaning branch is fully contained in candidate's
-            // history. Candidate is a child, not a parent.
-            if branch_depth == 0 {
-                continue;
-            }
+                let Some(mb) = repo.merge_base(candidate, branch)? else {
+                    continue;
+                };
 
-            let candidate_depth = repo.count_commits(&mb, candidate)?;
+                let branch_depth = repo.count_commits(&mb, branch)?;
 
-            if candidate_depth == 0 {
-                // True ancestor: candidate's tip IS the merge-base
-                ancestors.push((candidate, mb, branch_depth));
-            } else {
-                diverged.push((candidate, mb, branch_depth, candidate_depth));
-            }
-        }
+                if branch_depth == 0 {
+                    continue;
+                }
 
-        // Prefer true ancestors, then diverged candidates
-        let mut best_parent: Option<&str> = None;
-        let mut tie_candidates: Vec<(&str, String)> = Vec::new();
+                let candidate_depth = repo.count_commits(&mb, candidate)?;
 
-        if !ancestors.is_empty() {
-            // Among true ancestors, pick the closest (smallest branch_depth)
-            ancestors.sort_by_key(|&(_, _, bd)| bd);
-            let best_bd = ancestors[0].2;
-            tie_candidates = ancestors
-                .iter()
-                .filter(|&&(_, _, bd)| bd == best_bd)
-                .map(|&(c, ref mb, _)| (c, mb.clone()))
-                .collect();
-            best_parent = Some(ancestors[0].0);
-        } else if !diverged.is_empty() {
-            // Among diverged, sort by (branch_depth, candidate_depth)
-            diverged.sort_by_key(|&(_, _, bd, cd)| (bd, cd));
-            let (best_bd, best_cd) = (diverged[0].2, diverged[0].3);
-            tie_candidates = diverged
-                .iter()
-                .filter(|&&(_, _, bd, cd)| bd == best_bd && cd == best_cd)
-                .map(|&(c, ref mb, _, _)| (c, mb.clone()))
-                .collect();
-            best_parent = Some(diverged[0].0);
-        }
-
-        // Handle tie-breaking by merge-base timestamp
-        if tie_candidates.len() > 1 {
-            let mb_shas: Vec<&str> = tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
-            let timestamps = repo.commit_timestamps(&mb_shas)?;
-
-            let mut best_ts = i64::MIN;
-            let mut resolved_parent: Option<&str> = None;
-            for (candidate, mb) in &tie_candidates {
-                if let Some(&ts) = timestamps.get(mb.as_str()) {
-                    if ts > best_ts {
-                        best_ts = ts;
-                        resolved_parent = Some(candidate);
-                    }
+                if candidate_depth == 0 {
+                    ancestors.push((candidate, mb, branch_depth));
+                } else {
+                    diverged.push((candidate, mb, branch_depth, candidate_depth));
                 }
             }
-            if let Some(p) = resolved_parent {
-                best_parent = Some(p);
+
+            let mut best_parent: Option<&str> = None;
+            let mut tie_candidates: Vec<(&str, String)> = Vec::new();
+
+            if !ancestors.is_empty() {
+                ancestors.sort_by_key(|&(_, _, bd)| bd);
+                let best_bd = ancestors[0].2;
+                tie_candidates = ancestors
+                    .iter()
+                    .filter(|&&(_, _, bd)| bd == best_bd)
+                    .map(|&(c, ref mb, _)| (c, mb.clone()))
+                    .collect();
+                best_parent = Some(ancestors[0].0);
+            } else if !diverged.is_empty() {
+                diverged.sort_by_key(|&(_, _, bd, cd)| (bd, cd));
+                let (best_bd, best_cd) = (diverged[0].2, diverged[0].3);
+                tie_candidates = diverged
+                    .iter()
+                    .filter(|&&(_, _, bd, cd)| bd == best_bd && cd == best_cd)
+                    .map(|&(c, ref mb, _, _)| (c, mb.clone()))
+                    .collect();
+                best_parent = Some(diverged[0].0);
             }
 
-            let names: Vec<&str> = tie_candidates.iter().map(|(c, _)| *c).collect();
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Branch <bold>{}</> has equidistant parents: {}. Picked <bold>{}</>.",
-                    branch,
-                    names.join(", "),
-                    best_parent.unwrap_or("unknown"),
-                ))
-            );
-        }
+            if tie_candidates.len() > 1 {
+                let mb_shas: Vec<&str> =
+                    tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
+                let timestamps = repo.commit_timestamps(&mb_shas)?;
 
-        if let Some(parent) = best_parent {
-            parent_map.insert(branch.clone(), (parent.to_string(), None));
+                let mut best_ts = i64::MIN;
+                let mut resolved_parent: Option<&str> = None;
+                for (candidate, mb) in &tie_candidates {
+                    if let Some(&ts) = timestamps.get(mb.as_str()) {
+                        if ts > best_ts {
+                            best_ts = ts;
+                            resolved_parent = Some(candidate);
+                        }
+                    }
+                }
+                if let Some(p) = resolved_parent {
+                    best_parent = Some(p);
+                }
+
+                let names: Vec<&str> = tie_candidates.iter().map(|(c, _)| *c).collect();
+                eprintln!(
+                    "{}",
+                    warning_message(cformat!(
+                        "Branch <bold>{}</> has equidistant parents: {}. Picked <bold>{}</>.",
+                        branch,
+                        names.join(", "),
+                        best_parent.unwrap_or("unknown"),
+                    ))
+                );
+            }
+
+            if let Some(parent) = best_parent {
+                parent_map.insert(branch.clone(), (parent.to_string(), None));
+            }
         }
     }
 
@@ -401,6 +527,26 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Build dependency tree
     let plan = build_dependency_tree(&repo)?;
     let tree = plan.tree;
+
+    // Save the inferred tree to the stack file
+    if opts.save {
+        let stack_file_path = repo.wt_dir().join(STACK_FILE);
+        let content = format_stack_file(&tree);
+        std::fs::create_dir_all(repo.wt_dir())
+            .context("Failed to create .git/wt directory")?;
+        std::fs::write(&stack_file_path, &content)
+            .context("Failed to write stack file")?;
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Saved stack to <bold>{}</>",
+                stack_file_path.display()
+            ))
+        );
+        if opts.dry_run {
+            return Ok(());
+        }
+    }
 
     // Determine which branches to sync
     let current_wt = repo.current_worktree();

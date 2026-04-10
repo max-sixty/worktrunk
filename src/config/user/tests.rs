@@ -2077,8 +2077,8 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "step" | "select" | "commit-generation"
-            | "aliases" => {
+            "list" | "commit" | "merge" | "switch" | "sync" | "step" | "select"
+            | "commit-generation" | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

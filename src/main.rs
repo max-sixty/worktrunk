@@ -1048,6 +1048,7 @@ fn handle_sync_command(args: SyncArgs) -> anyhow::Result<()> {
         push,
         prune,
         dry_run: args.dry_run,
+        save: args.save,
     })
 }
 

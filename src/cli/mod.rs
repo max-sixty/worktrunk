@@ -484,6 +484,13 @@ pub(crate) struct SyncArgs {
     #[arg(long = "no-prune", conflicts_with = "prune")]
     pub(crate) no_prune: bool,
 
+    /// Save inferred tree to .git/wt/stack
+    ///
+    /// Persists the detected branch tree so future syncs use it instead of
+    /// inferring parents from the commit graph. Edit the file to adjust.
+    #[arg(long)]
+    pub(crate) save: bool,
+
     /// Preview the sync plan
     ///
     /// Shows the dependency tree and planned rebases without executing.
@@ -1954,6 +1961,16 @@ rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
 verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
+```
+
+### Sync
+
+```toml
+[sync]
+fetch = false    # Fetch from remote before syncing
+push = false     # Force-push rebased branches after syncing
+prune = false    # Remove integrated worktrees after syncing
+all = true       # Sync all stacks (false = current stack only)
 ```
 
 ### Switch

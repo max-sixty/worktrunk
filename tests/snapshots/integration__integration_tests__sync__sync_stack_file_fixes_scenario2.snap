@@ -4,7 +4,6 @@ info:
   program: wt
   args:
     - sync
-    - "--all"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -44,13 +43,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mBranch [1mfeature-a[22m has equidistant parents: feature-b, feature-c. Picked [1mfeature-b[22m.[39m
-[33m▲[39m [33mBranch [1mfeature-b[22m has equidistant parents: feature-a, feature-c. Picked [1mfeature-a[22m.[39m
-[33m▲[39m [33mBranch [1mfeature-c[22m has equidistant parents: feature-a, feature-b. Picked [1mfeature-a[22m.[39m
-[33m▲[39m [33mBranch [1mpr-a1[22m has equidistant parents: main, pr-b1. Picked [1mmain[22m.[39m
-[33m▲[39m [33mBranch [1mpr-b1[22m has equidistant parents: main, pr-a1. Picked [1mmain[22m.[39m
-[36m◎[39m [36mRebasing [1mpr-a1[22m onto [1mmain[22m...[39m
-[32m✓[39m [32mRebased [1mpr-a1[22m onto [1mmain[22m[39m
-[36m◎[39m [36mRebasing [1mpr-b1[22m onto [1mmain[22m...[39m
-[32m✓[39m [32mRebased [1mpr-b1[22m onto [1mmain[22m[39m
-[32m✓[39m [32mSync complete: 2 rebased, 0 already up to date.[39m
+[32m✓[39m [32m[1mpr1[22m is up to date with [1mmain[22m[39m
+[36m◎[39m [36mRebasing [1mpr2[22m onto [1mpr1[22m...[39m
+[32m✓[39m [32mRebased [1mpr2[22m onto [1mpr1[22m[39m
+[36m◎[39m [36mRebasing [1mpr3[22m onto [1mpr2[22m...[39m
+[32m✓[39m [32mRebased [1mpr3[22m onto [1mpr2[22m[39m
+[32m✓[39m [32mSync complete: 2 rebased, 1 already up to date.[39m
