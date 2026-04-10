@@ -373,19 +373,20 @@ fn update_section(
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages
-/// Matches: <!-- wt <args> -->\n```bash\nwt <args>\n```
-/// The HTML comment triggers expansion, the code block shows in terminal help
-/// Note: Pattern expects ```bash``` because --help-page converts ```console``` first
-static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\nwt [^\n]+\n```").unwrap());
-
-/// Regex for command placeholders in --help-page --plain output
 /// Matches: <!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```
-/// Plain mode preserves the source block verbatim (skips convert_dollar_console_to_terminal),
-/// so blocks with and without the `$ ` prompt both appear — the prompt is optional.
-/// Group 1 captures the placeholder id (used for snapshot lookup, e.g. `wt list (markers)`);
-/// group 2 captures the actual command to display (e.g. `wt list`).
-static COMMAND_PLACEHOLDER_PATTERN_PLAIN: LazyLock<Regex> = LazyLock::new(|| {
+///
+/// The HTML comment triggers expansion, the code block shows in terminal help.
+/// Pattern expects ```bash``` because --help-page converts ```console``` first.
+/// The `$ ` prompt is optional: in the HTML pipeline, `$ `-prefixed blocks are
+/// consumed entirely by `convert_dollar_console_to_terminal` before this regex
+/// runs, so only bare `wt …` blocks reach here. The `$ ` branch matters only
+/// in the plain pipeline, which skips that conversion and sees the source
+/// block verbatim.
+///
+/// Group 1 captures the placeholder id (used for snapshot lookup, e.g.
+/// `wt list (markers)`); group 2 captures the actual command to display (e.g.
+/// `wt list`), so disambiguation suffixes don't leak into the rendered prompt.
+static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
 });
 
@@ -412,6 +413,10 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
 /// to ```bash``` by --help-page) and replaces them with {% terminal() %}
 /// shortcodes containing snapshot output.
 ///
+/// The placeholder id (e.g. `wt list (markers)`) drives snapshot lookup; the
+/// displayed command comes from the block body so disambiguation suffixes
+/// don't leak into the rendered `cmd=` prompt.
+///
 /// Commands without a snapshot mapping are left as plain code blocks.
 fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<String, String> {
     let mut result = content.to_string();
@@ -420,10 +425,11 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
     // Find all placeholder blocks
     for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
-        let command = cap.get(1).unwrap().as_str();
+        let placeholder_id = cap.get(1).unwrap().as_str();
+        let display_cmd = cap.get(2).unwrap().as_str();
 
         // Skip commands without snapshot mappings - leave as plain code blocks
-        let Some(snapshot_name) = command_to_snapshot(command) else {
+        let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
         };
 
@@ -432,7 +438,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             errors.push(format!(
                 "Snapshot file not found: {} (for command '{}')",
                 snapshot_path.display(),
-                command
+                placeholder_id
             ));
             continue;
         }
@@ -452,7 +458,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
              {}\n\
              {{% end %}}\n\n\
              <!-- END AUTO-GENERATED -->",
-            snapshot_name, command, normalized
+            snapshot_name, display_cmd, normalized
         );
 
         result = result.replace(full_match, &replacement);
@@ -482,7 +488,7 @@ fn expand_command_placeholders_plain(
     let mut result = content.to_string();
     let mut errors = Vec::new();
 
-    for cap in COMMAND_PLACEHOLDER_PATTERN_PLAIN.captures_iter(content) {
+    for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
         let placeholder_id = cap.get(1).unwrap().as_str();
         let display_cmd = cap.get(2).unwrap().as_str();
