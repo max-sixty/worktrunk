@@ -179,10 +179,8 @@ fn parse_stack_file(
         let indent = if raw_line.starts_with('\t') {
             raw_line.len() - raw_line.trim_start_matches('\t').len()
         } else {
-            let spaces = raw_line.len() - raw_line.trim_start().len();
             // Accept any consistent spacing — treat each group as one level
-            // by dividing by the first nonzero indent seen
-            spaces
+            raw_line.len() - raw_line.trim_start().len()
         };
 
         // Pop stack back to find the parent at this indent level
@@ -315,12 +313,12 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
             if branch == &default_branch || integrated.contains_key(branch) {
                 continue;
             }
-            if let Some(parent) = explicit_parents.get(branch) {
-                if parent != target_ref {
-                    let (_, reason) = repo.integration_reason(branch, parent)?;
-                    if reason.is_some() {
-                        integrated.insert(branch.clone(), path.clone());
-                    }
+            if let Some(parent) = explicit_parents.get(branch)
+                && parent != target_ref
+            {
+                let (_, reason) = repo.integration_reason(branch, parent)?;
+                if reason.is_some() {
+                    integrated.insert(branch.clone(), path.clone());
                 }
             }
         }
@@ -420,11 +418,11 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
                 let mut best_ts = i64::MIN;
                 let mut resolved_parent: Option<&str> = None;
                 for (candidate, mb) in &tie_candidates {
-                    if let Some(&ts) = timestamps.get(mb.as_str()) {
-                        if ts > best_ts {
-                            best_ts = ts;
-                            resolved_parent = Some(candidate);
-                        }
+                    if let Some(&ts) = timestamps.get(mb.as_str())
+                        && ts > best_ts
+                    {
+                        best_ts = ts;
+                        resolved_parent = Some(candidate);
                     }
                 }
                 if let Some(p) = resolved_parent {
