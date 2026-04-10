@@ -75,6 +75,7 @@ pub(crate) fn handle_external_command(
             "{}",
             hint_message(cformat!("perhaps <cyan,bold>{suggestion}</>?"))
         );
+        eprintln!("{}", hint_message(help_hint()));
         return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
     }
 
@@ -124,18 +125,23 @@ fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> R
 fn print_not_found(name: &str, cli_cmd: &clap::Command) {
     eprintln!(
         "{}",
-        error_message(cformat!(
-            "'<cyan,bold>{name}</>' is not a wt command. See '<cyan,bold>wt --help</>'."
-        ))
+        error_message(cformat!("'<cyan,bold>{name}</>' is not a wt command"))
     );
     if let Some(suggestion) = closest_subcommand(name, cli_cmd) {
         eprintln!(
             "{}",
             hint_message(cformat!(
-                "The most similar command is <cyan,bold>{suggestion}</>"
+                "the most similar command is <cyan,bold>{suggestion}</>"
             ))
         );
     }
+    eprintln!("{}", hint_message(help_hint()));
+}
+
+/// The "try `wt --help`" tail shared by both unrecognized-subcommand branches.
+/// Mirrors the suggestion clap emitted before we took over this error path.
+fn help_hint() -> String {
+    cformat!("for more information, try '<cyan,bold>wt --help</>'")
 }
 
 /// Return the closest visible built-in subcommand name by Levenshtein distance,
