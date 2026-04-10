@@ -559,9 +559,14 @@ impl ListItem {
         }
 
         // Gate 3 (main state — position 4).
-        if self.status_symbols.main_state.is_none()
-            && let Some(ms) = self.try_gate_main_state(default_branch)
-        {
+        // Gate 3 is re-evaluable: unlike other gates, its answer can
+        // become more specific as later signals arrive. Integration
+        // signals are not hard-gated, so the first pass may see only
+        // counts and produce `Ahead`; a later pass with `has_file_changes`
+        // loaded can refine to `Integrated(NoAddedChanges)`. The
+        // progression is strictly refinement (never wrong, just less
+        // specific), so re-evaluation is safe.
+        if let Some(ms) = self.try_gate_main_state(default_branch) {
             self.status_symbols.main_state = Some(ms);
         }
 
