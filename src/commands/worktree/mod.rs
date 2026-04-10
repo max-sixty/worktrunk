@@ -110,6 +110,12 @@ pub use types::{
 /// On the fast path the directory disappears instantly; the caller is responsible
 /// for cleaning up the staged trash entry (returned via `staged_path`).
 ///
+/// Called from the synchronous (foreground) removal path and from the TUI picker.
+/// The background removal path (`output::handlers::spawn_background_removal`)
+/// uses `stage_worktree_removal` directly so it can defer the `rm -rf` to a
+/// detached process. See `handle_remove_command` in `main.rs` for the full
+/// `wt remove` command flow.
+///
 /// `branch_result` is the raw `delete_branch_if_safe` outcome, preserved so
 /// callers can handle branch deletion failures independently:
 /// - The picker ignores it (best-effort in TUI context)

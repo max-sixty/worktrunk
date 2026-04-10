@@ -21,6 +21,7 @@
 #![cfg(not(windows))]
 
 use crate::common::wt_command;
+use ansi_str::AnsiStr;
 use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;
 use std::fs;
@@ -378,6 +379,16 @@ fn update_section(
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\nwt [^\n]+\n```").unwrap());
 
+/// Regex for command placeholders in --help-page --plain output
+/// Matches: <!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```
+/// Plain mode preserves the source block verbatim (skips convert_dollar_console_to_terminal),
+/// so blocks with and without the `$ ` prompt both appear — the prompt is optional.
+/// Group 1 captures the placeholder id (used for snapshot lookup, e.g. `wt list (markers)`);
+/// group 2 captures the actual command to display (e.g. `wt list`).
+static COMMAND_PLACEHOLDER_PATTERN_PLAIN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
+});
+
 /// Map commands to their snapshot files for help page expansion
 fn command_to_snapshot(command: &str) -> Option<&'static str> {
     match command {
@@ -454,6 +465,59 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
     Ok(result)
 }
 
+/// Expand command placeholders in --help-page --plain output to plain code blocks
+///
+/// Finds `<!-- wt <id> -->` + ```bash\n[$ ]wt <cmd>\n``` blocks and replaces them
+/// with code blocks containing the command and its plain text snapshot output.
+///
+/// The placeholder id (e.g. `wt list (markers)`) is used for snapshot lookup;
+/// the displayed command comes from the block body so disambiguation suffixes
+/// like `(markers)` don't leak into the rendered prompt.
+///
+/// Commands without a snapshot mapping are left as plain code blocks.
+fn expand_command_placeholders_plain(
+    content: &str,
+    snapshots_dir: &Path,
+) -> Result<String, String> {
+    let mut result = content.to_string();
+    let mut errors = Vec::new();
+
+    for cap in COMMAND_PLACEHOLDER_PATTERN_PLAIN.captures_iter(content) {
+        let full_match = cap.get(0).unwrap().as_str();
+        let placeholder_id = cap.get(1).unwrap().as_str();
+        let display_cmd = cap.get(2).unwrap().as_str();
+
+        let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
+            continue;
+        };
+
+        let snapshot_path = snapshots_dir.join(snapshot_name);
+        if !snapshot_path.exists() {
+            errors.push(format!(
+                "Snapshot file not found: {} (for command '{}')",
+                snapshot_path.display(),
+                placeholder_id
+            ));
+            continue;
+        }
+
+        let snapshot_content = fs::read_to_string(&snapshot_path)
+            .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
+
+        let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+
+        let replacement = format!("```\n$ {display_cmd}\n{plain}\n```");
+
+        result = result.replace(full_match, &replacement);
+    }
+
+    if !errors.is_empty() {
+        return Err(errors.join("\n"));
+    }
+
+    Ok(result)
+}
+
 /// Convert literal bracket notation [32m to actual escape sequences \x1b[32m
 fn literal_to_escape(text: &str) -> String {
     ANSI_LITERAL_REGEX
@@ -499,6 +563,14 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
     let content = ensure_line_resets(&content);
     let html = ansi_to_html(&content).map_err(|e| format!("ANSI conversion failed: {e}"))?;
     Ok(clean_ansi_html(&html))
+}
+
+/// Parse snapshot content for skill reference files (plain text, ANSI stripped)
+fn parse_snapshot_content_for_skill(content: &str) -> String {
+    let content = parse_snapshot_raw(content);
+    let content = replace_placeholders(&content);
+    let content = literal_to_escape(&content);
+    content.ansi_strip().into_owned()
 }
 
 /// Ensure each line ends with a reset code so ansi-to-html produces clean per-line HTML
@@ -2109,6 +2181,10 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+
+    // Expand command placeholders (e.g., <!-- wt list --> → plain text snapshot output)
+    let snapshots_dir = project_root.join("tests/snapshots");
+    let content = expand_command_placeholders_plain(&content, &snapshots_dir)?;
 
     Ok(finalize_skill_content(&content))
 }

@@ -60,6 +60,11 @@ pub struct SquashArgs {
     pub(crate) show_prompt: bool,
 }
 
+// Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
+// then standalone utilities (diff, copy-ignored), then experimentals
+// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
+// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
 #[command(allow_external_subcommands = true)]
@@ -146,6 +151,26 @@ $ wt step squash --show-prompt | less
     )]
     Squash(SquashArgs),
 
+    /// Rebase onto target
+    #[command(
+        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+
+## Examples
+
+```console
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
+```
+"#
+    )]
+    Rebase {
+        /// Target branch
+        ///
+        /// Defaults to default branch.
+        #[arg(add = crate::completion::branch_value_completer())]
+        target: Option<String>,
+    },
+
     /// Fast-forward target to current branch
     #[command(
         after_long_help = r#"Updates the local target branch (e.g., `main`) to include current commits.
@@ -174,26 +199,6 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Allow fast-forward (default)
         #[arg(long, overrides_with = "no_ff", hide = true)]
         ff: bool,
-    },
-
-    /// Rebase onto target
-    #[command(
-        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
-
-## Examples
-
-```console
-$ wt step rebase            # Rebase onto default branch
-$ wt step rebase develop    # Rebase onto develop
-```
-"#
-    )]
-    Rebase {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
     },
 
     /// Show all changes since branching

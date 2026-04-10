@@ -706,6 +706,28 @@ fn validate_remove_targets(
     plans
 }
 
+/// Entry point for the `wt remove` command.
+///
+/// # Command flow
+///
+/// 1. **Validate** all target worktrees up front via `prepare_worktree_removal`
+///    (clean check, branch-deletion-safety check, force-flag handling).
+/// 2. **Approve hooks** (`pre-remove`, `post-remove`, `post-switch`) if
+///    running interactively and any hooks are configured.
+/// 3. **Dispatch to `handle_remove_output`** per target. For each, the output
+///    handler runs `pre-remove` hooks in the worktree, then either:
+///    - **Foreground** (`--foreground`): stop fsmonitor → rename into
+///      `.git/wt/trash/<name>-<timestamp>/` → prune metadata → delete branch
+///      → synchronous `remove_dir_all` on the staged directory.
+///    - **Background** (default): stop fsmonitor → rename + prune +
+///      synchronous branch delete → spawn detached `rm -rf` on the staged
+///      directory. Cross-filesystem or locked worktrees fall back to
+///      `git worktree remove` in the detached process.
+/// 4. **Post-remove hooks** run in the background after dispatch.
+/// 5. **Sweep stale trash** (fire-and-forget, after primary output): entries
+///    in `.git/wt/trash/` older than 24 hours are removed by a detached
+///    `rm -rf`. Runs last so it never delays the user-visible progress or
+///    success message. See [`commands::process::sweep_stale_trash`].
 fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
     let json_mode = args.format == SwitchFormat::Json;
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
@@ -781,6 +803,10 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
                 }
+                // Fire-and-forget cleanup of stale `.git/wt/trash/` entries —
+                // runs after primary output so it never delays the user-visible
+                // progress/success message.
+                commands::process::sweep_stale_trash(&repo);
                 Ok(())
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
@@ -830,6 +856,11 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                         .collect();
                     println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
+
+                // Fire-and-forget cleanup of stale `.git/wt/trash/` entries —
+                // runs after primary output so it never delays the user-visible
+                // progress/success messages.
+                commands::process::sweep_stale_trash(&repo);
 
                 if !plans.errors.is_empty() {
                     anyhow::bail!("");

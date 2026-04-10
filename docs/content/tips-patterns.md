@@ -9,24 +9,37 @@ group = "Reference"
 
 Practical recipes for common Worktrunk workflows.
 
-## Alias for new worktree + agent
+## Shell alias for new worktree + agent
 
 Create a worktree and launch Claude in one command:
 
 {{ terminal(cmd="alias wsc='wt switch --create --execute=claude'|||wsc new-feature                       # Creates worktree, runs hooks, launches Claude|||wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`") }}
 
-## Eliminate cold starts
+## `wt` aliases
 
-Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
+Compose with template filters and [vars](@/tips-patterns.md#per-branch-variables) for branch-specific shortcuts:
 
 ```toml
-[post-start]
-copy = "wt step copy-ignored"
+# .config/wt.toml
+[aliases]
+# Open this worktree's dev server
+open = "open http://localhost:{{ branch | hash_port }}"
+
+# Test with branch-specific features from vars
+test = "cargo test --features {{ vars.features | default('default') }}"
 ```
 
-Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+See [`wt step` aliases](@/step.md#aliases) for scoping, approval, and reference.
 
-All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for details.
+## Per-branch variables
+
+`wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:
+
+- **Coordinate state across pipeline steps** — see [Database per worktree](@/tips-patterns.md#database-per-worktree) below for a full recipe
+- **Stick a branch to an environment** — `wt config state vars set env=staging`, then `{{ vars.env | default('dev') }}` in hooks
+- **Parametrize aliases per branch** — see [`wt` aliases above](@/tips-patterns.md#wt-aliases)
+
+See [`wt config state vars`](@/config.md#wt-config-state-vars) for storage format, JSON support, and reference.
 
 ## Dev server per worktree
 
@@ -96,6 +109,19 @@ The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so 
 The connection string is accessible anywhere — not just in hooks:
 
 {{ terminal(cmd="DATABASE_URL=$(wt config state vars get db_url) npm start") }}
+
+## Eliminate cold starts
+
+Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+```
+
+Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+
+All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for details.
 
 ## Local CI gate
 

@@ -240,10 +240,12 @@ When no structured alternative exists, document the fragility inline.
 
 ## Hook Output Logs
 
-Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Same operation on same branch overwrites the previous log.
+Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Per-branch logs live in subtrees; same operation on same branch overwrites the previous log.
 
-- **Background hooks**: `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` (source: `user` or `project`)
-- **Background removal**: `{branch}-{hash}-remove.log`
+- **Background hooks**: `{branch}/{source}/{hook-type}/{name}.log` (source: `user` or `project`)
+- **Background removal**: `{branch}/internal/remove.log`
+
+Top-level *files* are shared logs (`commands.jsonl*`, `verbose.log`, `diagnostic.md`); top-level *directories* are per-branch log trees. Branch and hook names are sanitized via `sanitize_for_filename` (invalid characters → `-`; short collision-avoidance hash appended).
 
 ## Coverage
 
@@ -321,6 +323,21 @@ Complex systems (multi-step workflows, state machines, coordination logic) shoul
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
+
+### Multiline String Literals
+
+Use plain multiline string literals with real embedded newlines — what you see in the source is exactly what ends up in the string.
+
+```rust
+// ✅ Literal multiline string
+const EXPECTING: &str = r#"a command in one of these forms:
+- a string: "cargo build"
+- a named table: { build = "cargo build" }
+- a pipeline list: ["cargo build", "cargo test"]
+run `wt hook --help` for details"#;
+```
+
+**Don't** use `\` line continuation — it strips following whitespace silently, so diffs show phantom indented blocks. **Don't** use `concat!()` — it splits the string across literals for no benefit. Use raw strings (`r#"..."#`) to avoid escaping embedded `"`, and place long constants at module level so continuation lines start at column 0.
 
 ## Error Handling
 

@@ -406,7 +406,7 @@ shouldn't clutter user output:
 "To rebase onto main, run wt step rebase or wt merge"
 
 // GOOD - recovery command after shadowing a remote branch
-"To switch to the remote branch, delete this branch and run without --create: wt remove feature && wt switch feature"
+"To switch to the remote branch, delete this branch and run without --create: wt remove --foreground feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"
@@ -585,6 +585,17 @@ Removed worktree for bugfix
 
 Signs of poor temporal locality: collecting messages in a buffer, single success
 message for batch operations, no progress before slow operations.
+
+## Defer Non-Essential Work Until After Primary Output
+
+Fire-and-forget cleanup and cache sweeps run after the command's final
+user-visible message — never before. Placing them at the start delays
+time-to-first-output with work the user didn't ask for.
+
+Worktrunk marks the boundary with `WORKTRUNK_FIRST_OUTPUT`: handlers
+early-return where output begins, so work before that return is on the hot
+path, work after it is not. See `handle_remove_command` —
+`sweep_stale_trash` runs after `handle_remove_output`.
 
 ## Information Display: Show Once, Not Twice
 

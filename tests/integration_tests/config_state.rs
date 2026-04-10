@@ -1,24 +1,44 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::path::sanitize_for_filename;
 
-/// Generate a hook log filename matching the format from `commands::process::HookLog`.
+/// Relative path of a hook log file under the wt logs directory.
 ///
-/// Format: `{branch}-{source}-{hook_type}-{name}.log` where branch and name are sanitized.
-fn hook_log_filename(branch: &str, source: &str, hook_type: &str, name: &str) -> String {
+/// Layout: `{branch}/{source}/{hook_type}/{name}.log` — branch and name are
+/// sanitized to match `commands::process::HookLog::path`.
+fn hook_log_rel_path(branch: &str, source: &str, hook_type: &str, name: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
     let safe_name = sanitize_for_filename(name);
-    format!("{safe_branch}-{source}-{hook_type}-{safe_name}.log")
+    PathBuf::from(safe_branch)
+        .join(source)
+        .join(hook_type)
+        .join(format!("{safe_name}.log"))
 }
 
-/// Generate an internal operation log filename.
+/// Relative path of an internal-operation log file under the wt logs directory.
 ///
-/// Format: `{branch}-{op}.log` where branch is sanitized.
-fn internal_log_filename(branch: &str, op: &str) -> String {
+/// Layout: `{branch}/internal/{op}.log` — branch is sanitized.
+fn internal_log_rel_path(branch: &str, op: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
-    format!("{safe_branch}-{op}.log")
+    PathBuf::from(safe_branch)
+        .join("internal")
+        .join(format!("{op}.log"))
+}
+
+/// Write a log file at `log_dir / relative`, creating parent directories.
+fn write_log_at(log_dir: &Path, relative: &Path, contents: &str) {
+    let full = log_dir.join(relative);
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, contents).unwrap();
+}
+
+/// Display string for a relative log path, forward-slashed for stable snapshots.
+fn rel_display(p: &Path) -> String {
+    use path_slash::PathExt as _;
+    p.to_slash_lossy().into_owned()
 }
 
 /// Settings for `wt config state get` snapshots (normalizes log paths)
@@ -532,12 +552,18 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(
-        log_dir.join("feature-post-start-npm.log"),
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
         "npm output here",
-    )
-    .unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    );
+    // >= 1024 bytes to exercise the `{}K` size-formatting branch in
+    // render_log_table (the other test files stay under 1KB to exercise `{}B`).
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        &"remove output\n".repeat(80),
+    );
     std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
@@ -553,10 +579,10 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
          commands.jsonl <SIZE>  <AGE>
 
         [36mHOOK OUTPUT[39m @ <PATH>
-                    File            Size  Age   
-         ────────────────────────── ──── ────── 
-         bugfix-remove.log          <SIZE>  <AGE>
-         feature-post-start-npm.log <SIZE>  <AGE>
+                          File                   Size  Age   
+         ─────────────────────────────────────── ──── ────── 
+         bugfix-zgc/internal/remove.log          <SIZE>  <AGE>
+         feature-axb/user/post-start/npm-iox.log <SIZE>  <AGE>
 
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
@@ -598,7 +624,8 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
     std::fs::write(log_dir.join("verbose.log"), "debug output").unwrap();
     std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
     // Also add a hook output file to verify separation
-    std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
+    let remove_rel = internal_log_rel_path("feature", "remove");
+    write_log_at(&log_dir, &remove_rel, "remove output");
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
@@ -623,9 +650,10 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
         .rsplit("HOOK OUTPUT")
         .next()
         .unwrap();
+    let remove_display = rel_display(&remove_rel);
     assert!(
-        hook_section.contains("feature-remove.log"),
-        "Expected feature-remove.log in HOOK OUTPUT: {hook_section}"
+        hook_section.contains(&remove_display),
+        "Expected {remove_display} in HOOK OUTPUT: {hook_section}"
     );
     assert!(
         !hook_section.contains("verbose.log"),
@@ -664,8 +692,16 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove output",
+    );
     std::fs::write(log_dir.join("commands.jsonl"), "jsonl data").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
@@ -677,12 +713,33 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_clear_logs_sweeps_legacy_flat_files(repo: TestRepo) {
+    // Pre-nested layout left orphan `.log` files directly under wt/logs/.
+    // `clear_logs` self-heals by sweeping them along with everything else.
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("feature-post-start-npm.log"), "old layout").unwrap();
+    std::fs::write(log_dir.join("bugfix-remove.log"), "old layout").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Cleared") && stderr.contains("2") && stderr.contains("log file"));
+    assert!(!log_dir.exists(), "log dir should be removed after sweep");
+}
+
+#[rstest]
 fn test_state_clear_logs_single_file(repo: TestRepo) {
     // Create wt/logs directory with one log file
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "remove output",
+    );
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
@@ -738,7 +795,11 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-remove.log"), "output").unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "output",
+    );
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
@@ -946,8 +1007,16 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove output",
+    );
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
@@ -1050,8 +1119,16 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove log output",
+    );
     std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
@@ -1087,12 +1164,12 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "hints": [],
           "hook_output": [
             {
-              "file": "bugfix-remove.log",
+              "file": "bugfix-zgc/internal/remove.log",
               "modified_at": "<MTIME>",
               "size": "<SIZE>"
             },
             {
-              "file": "feature-post-start-npm.log",
+              "file": "feature-axb/user/post-start/npm-iox.log",
               "modified_at": "<MTIME>",
               "size": "<SIZE>"
             }
@@ -1373,9 +1450,8 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("main", "user", "post-start", "server");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "server output here").unwrap();
+    let relative = hook_log_rel_path("main", "user", "post-start", "server");
+    write_log_at(&log_dir, &relative, "server output here");
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
@@ -1384,10 +1460,10 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     assert!(output.status.success());
     // The path should be printed to stdout for piping
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = rel_display(&relative);
     assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
+        stdout.contains(&expected),
+        "Expected {expected} in stdout: {stdout}",
     );
 }
 
@@ -1397,9 +1473,8 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("main", "project", "post-start", "build");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "build output here").unwrap();
+    let relative = hook_log_rel_path("main", "project", "post-start", "build");
+    write_log_at(&log_dir, &relative, "build output here");
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=project:post-start:build"])
@@ -1407,10 +1482,10 @@ fn test_state_logs_get_hook_project_source(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = rel_display(&relative);
     assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
+        stdout.contains(&expected),
+        "Expected {expected} in stdout: {stdout}",
     );
 }
 
@@ -1420,19 +1495,18 @@ fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = internal_log_filename("main", "remove");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "remove output").unwrap();
+    let relative = internal_log_rel_path("main", "remove");
+    write_log_at(&log_dir, &relative, "remove output");
 
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = rel_display(&relative);
     assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
+        stdout.contains(&expected),
+        "Expected {expected} in stdout: {stdout}",
     );
 }
 
@@ -1442,19 +1516,18 @@ fn test_state_logs_get_hook_not_found(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let other_filename = hook_log_filename("main", "user", "post-start", "other");
-    std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("main", "user", "post-start", "other"),
+        "other output",
+    );
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-    [31m✗[39m [31mNo log file matches [1muser:post-start:server[22m for branch [1mmain[22m[39m
-    [107m [0m Expected: main-vfz-user-post-start-server-f4t.log
-    [107m [0m Available: main-vfz-user-post-start-other-4n1.log
-    ");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr));
 }
 
 #[rstest]
@@ -1474,8 +1547,11 @@ fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
-    std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("other-branch", "user", "post-start", "server"),
+        "other output",
+    );
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
@@ -1496,8 +1572,8 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("feature", "user", "post-start", "dev");
-    std::fs::write(log_dir.join(&filename), "dev output").unwrap();
+    let relative = hook_log_rel_path("feature", "user", "post-start", "dev");
+    write_log_at(&log_dir, &relative, "dev output");
 
     // Use explicit format: source:hook-type:name
     let output = wt_state_cmd(
@@ -1510,10 +1586,10 @@ fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
     .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = rel_display(&relative);
     assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
+        stdout.contains(&expected),
+        "Expected {expected} in stdout: {stdout}",
     );
 }
 
@@ -1964,17 +2040,24 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
     let log_dir = repo.root_path().join(".git/wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
-    std::fs::write(log_dir.join("main-user-post-start-server.log"), "output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# report").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("main", "user", "post-start", "server"),
+        "output",
+    );
 
     let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    // Redact dynamic timestamps and sizes
+    // Redact dynamic timestamps, sizes, and sanitize hashes (hashes vary per input).
     let mut settings = insta::Settings::clone_current();
     settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
     settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.add_filter(r"main-[a-z0-9]{3}", "main-<HASH>");
+    settings.add_filter(r"server-[a-z0-9]{3}", "server-<HASH>");
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });

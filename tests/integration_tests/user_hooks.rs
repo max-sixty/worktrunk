@@ -1546,9 +1546,13 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 2);
 
-    // Find the command log file (contains "cmd-0" in name)
-    let cmd_log = fs::read_dir(&log_dir)
-        .unwrap()
+    // Hook logs live at `{branch}/project/post-start/{name}.log`.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("project")
+        .join("post-start");
+    let cmd_log = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
         .find(|e| e.file_name().to_string_lossy().contains("cmd-0"))
         .expect("Should have a cmd-0 log file");
@@ -1592,16 +1596,21 @@ second = "echo SECOND_OUTPUT"
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 3);
 
+    // Hook logs live at `{branch}/project/post-start/{name}.log`.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("project")
+        .join("post-start");
+    let log_files: Vec<_> = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
+        .filter_map(|e| e.ok())
+        .collect();
+
     // Verify each command's output is in its own log file
     for (task, expected) in [("first", "FIRST_OUTPUT"), ("second", "SECOND_OUTPUT")] {
-        let log_file = fs::read_dir(&log_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .find(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .contains(&format!("post-start-{task}"))
-            })
+        let log_file = log_files
+            .iter()
+            .find(|e| e.file_name().to_string_lossy().starts_with(task))
             .unwrap_or_else(|| panic!("should have log file for {task}"));
 
         wait_for_file_content(&log_file.path());

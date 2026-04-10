@@ -526,6 +526,10 @@ pub(crate) struct MergeArgs {
     pub(crate) format: SwitchFormat,
 }
 
+// Ordering: by "core-ness". Primitive worktree operations first (switch, list,
+// remove), then composites built on top (merge), then subcommand namespaces
+// (step, hook, config). `remove` is a primitive and more core than `merge`,
+// which wraps it. Hidden commands last.
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// Switch to a worktree; create if needed
@@ -975,7 +979,9 @@ Without `--force`, removal fails if the worktree contains untracked files. Witho
 
 ## Background removal
 
-Removal runs in the background by default — the command returns immediately. Logs are written to `.git/wt/logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
+Removal runs in the background by default — the command returns immediately. The worktree is renamed into `.git/wt/trash/` (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached `rm -rf` finishes cleanup. Cross-filesystem worktrees fall back to `git worktree remove`. Logs: `.git/wt/logs/{branch}/internal/remove.log`. Use `--foreground` to run in the foreground.
+
+After each `wt remove`, entries in `.git/wt/trash/` older than 24 hours are swept by a detached `rm -rf` — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full). The sweep's log lives at `.git/wt/logs/wt-boj/internal/trash-sweep.log` (the `wt` pseudo-branch is sanitized via `sanitize_for_filename` like any other branch name).
 
 ## Hooks
 

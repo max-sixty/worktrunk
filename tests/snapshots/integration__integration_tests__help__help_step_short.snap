@@ -39,8 +39,8 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 [1m[32mCommands:[0m
   [1m[36mcommit[0m        Stage and commit with LLM-generated message
   [1m[36msquash[0m        Squash commits since branching
-  [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mrebase[0m        Rebase onto target
+  [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mdiff[0m          Show all changes since branching
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36meval[0m          [experimental] Evaluate a template expression

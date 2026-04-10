@@ -46,8 +46,8 @@ Usage: wt step [OPTIONS] <COMMAND>
 Commands:
   commit        Stage and commit with LLM-generated message
   squash        Squash commits since branching
-  push          Fast-forward target to current branch
   rebase        Rebase onto target
+  push          Fast-forward target to current branch
   diff          Show all changes since branching
   copy-ignored  Copy gitignored files to another worktree
   eval          [experimental] Evaluate a template expression

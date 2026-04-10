@@ -14,23 +14,43 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 List all worktrees:
 
-<!-- wt list -->
-```bash
+```
 $ wt list
+  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests
+^ main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…
++ fix-auth         ↕|                ↑2  ↓1     |     b772e68b  5h    Add secure token storage
++ fix-typos        _|                           |     41ee0834  4d    Merge fix-auth: hardened to…
+
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden
 ```
 
 Include CI status, line diffs, and LLM summaries:
 
-<!-- wt list --full -->
-```bash
+```
 $ wt list --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
+
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
 ```
 
 Include branches that don't have worktrees:
 
-<!-- wt list --branches --full -->
-```bash
+```
 $ wt list --branches --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
+  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229
+  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc
+
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
 
 Output as JSON for scripting:

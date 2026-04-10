@@ -900,15 +900,19 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     // 2 log files: runner log + per-command log (cmd-0, unnamed single command)
     wait_for_file_count(&log_dir, "log", 2);
 
-    // Find the command log file (contains "cmd-0" in name, not "runner")
-    let cmd_log = fs::read_dir(&log_dir)
-        .unwrap()
+    // Find the command log file at `{branch}/project/post-start/cmd-0-*.log`.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-start");
+    let cmd_log = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .find(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.contains("cmd-0"))
+                .is_some_and(|n| n.starts_with("cmd-0"))
         })
         .expect("Should have a cmd-0 log file");
 
@@ -985,21 +989,25 @@ approved-commands = [
     let log_dir = git_common_dir.join("wt/logs");
     wait_for_file_count(&log_dir, "log", 4);
 
-    // Verify each task's output is in its own log file.
+    // Verify each task's output is in its own log file. Hook logs live at
+    // `{branch}/project/post-start/{task}.log` in the nested layout.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-start");
+    let log_files: Vec<_> = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
+        .filter_map(|e| e.ok())
+        .collect();
     for (task, expected) in [
         ("task1", "TASK1_OUTPUT"),
         ("task2", "TASK2_OUTPUT"),
         ("task3", "TASK3_OUTPUT"),
     ] {
-        let log_file = fs::read_dir(&log_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .find(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .contains(&format!("post-start-{task}"))
-            })
-            .unwrap_or_else(|| panic!("should have log file for {task}"));
+        let log_file = log_files
+            .iter()
+            .find(|e| e.file_name().to_string_lossy().starts_with(task))
+            .unwrap_or_else(|| panic!("should have log file for {task} in {post_start_dir:?}"));
 
         wait_for_file_content(&log_file.path());
         let contents = fs::read_to_string(log_file.path()).unwrap();
