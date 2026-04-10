@@ -1,11 +1,10 @@
 ---
 source: tests/integration_tests/sync.rs
-assertion_line: 263
+assertion_line: 374
 info:
   program: wt
   args:
     - sync
-    - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -45,13 +44,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-Dependency tree:
-main
-└── pr1
-    └── pr2
-        └── pr3
-
-Planned operations:
-  rebase pr1 onto main
-  rebase pr2 onto pr1
-  rebase pr3 onto pr2
+[32m✓[39m [32m[1mpr1[22m is up to date with [1mmain[22m[39m
+[32m✓[39m [32m[1mpr2[22m is up to date with [1mpr1[22m[39m
+[32m✓[39m [32m[1mpr3[22m is up to date with [1mpr2[22m[39m
+[32m✓[39m [32mAll branches are up to date.[39m

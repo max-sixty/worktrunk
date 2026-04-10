@@ -363,17 +363,17 @@ fn test_sync_creates_stack_file(mut repo: TestRepo) {
     repo.commit("initial");
     let (_pr1, _pr2, _pr3) = setup_deep_stack(&mut repo);
 
-    // Dry-run still creates the stack file (tree is built regardless)
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "sync",
-        &["--dry-run"],
-        Some(&_pr1)
-    ));
-
-    // Verify the stack file was created with correct content
+    // Dry-run does NOT write the stack file
     let stack_file = repo.root_path().join(".git").join("wt").join("stack");
-    assert!(stack_file.exists(), "stack file should exist");
+    make_snapshot_cmd(&repo, "sync", &["--dry-run"], Some(&_pr1))
+        .output()
+        .unwrap();
+    assert!(!stack_file.exists(), "dry-run should not create stack file");
+
+    // A real sync creates the stack file
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&_pr1)));
+
+    assert!(stack_file.exists(), "stack file should exist after sync");
     let content = std::fs::read_to_string(&stack_file).unwrap();
     assert!(content.contains("pr1"), "stack file should contain pr1");
     assert!(content.contains("pr2"), "stack file should contain pr2");
@@ -504,4 +504,26 @@ fn test_sync_cascading_merges(mut repo: TestRepo) {
     // Sync after second merge — PR3 should reparent onto main
     let pr3_path = repo.root_path().parent().unwrap().join("repo.pr3");
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr3_path)));
+}
+
+// =========================================================================
+// Edge cases: control-flow paths
+// =========================================================================
+
+/// Detached HEAD worktree with --stack reports "no branch" error.
+#[rstest]
+fn test_sync_detached_head(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["worktree", "prune"]);
+    repo.commit("initial");
+
+    let pr1 = repo.add_worktree("pr1");
+    repo.commit_in_worktree(&pr1, "pr1.txt", "pr1 content", "pr1 commit");
+
+    // Detach HEAD in the pr1 worktree (main stays on its branch)
+    let head_sha = repo.git_output(&["rev-parse", "pr1"]);
+    repo.run_git_in(&pr1, &["checkout", "--detach", &head_sha]);
+
+    // Sync with --stack from detached worktree should fail with "no branch"
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &["--stack"], Some(&pr1)));
 }

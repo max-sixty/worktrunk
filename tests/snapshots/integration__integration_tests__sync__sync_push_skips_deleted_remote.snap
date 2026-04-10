@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/sync.rs
-assertion_line: 306
+assertion_line: 328
 info:
   program: wt
   args:
@@ -51,5 +51,5 @@ exit_code: 0
 [32m✓[39m [32mRebased [1mpr2[22m onto [1mpr1[22m[39m
 [32m✓[39m [32mSync complete: 2 rebased, 0 already up to date.[39m
 
-[36m◎[39m [36mPushing [1mpr1[22m...[39m
+[36m◎[39m [36mPushing [1mpr1[22m to origin...[39m
 [32m✓[39m [32mPushed [1mpr1[22m[39m

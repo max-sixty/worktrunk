@@ -1,11 +1,11 @@
 ---
 source: tests/integration_tests/sync.rs
-assertion_line: 305
+assertion_line: 528
 info:
   program: wt
   args:
     - sync
-    - "--push"
+    - "--stack"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -40,16 +40,9 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRebasing [1mpr1[22m onto [1mmain[22m...[39m
-[32m✓[39m [32mRebased [1mpr1[22m onto [1mmain[22m[39m
-[36m◎[39m [36mRebasing [1mpr2[22m onto [1mpr1[22m...[39m
-[32m✓[39m [32mRebased [1mpr2[22m onto [1mpr1[22m[39m
-[32m✓[39m [32mSync complete: 2 rebased, 0 already up to date.[39m
-
-[36m◎[39m [36mPushing [1mpr1[22m to origin...[39m
-[32m✓[39m [32mPushed [1mpr1[22m[39m
+[31m✗[39m [31mCurrent worktree has no branch. Use --all to sync all branches.[39m
