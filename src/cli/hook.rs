@@ -2,6 +2,10 @@ use clap::Subcommand;
 
 use super::config::ApprovalsCommand;
 
+// Ordering: worktree lifecycle phases (switch → start → commit → merge →
+// remove), with each phase's `pre-` immediately before its `post-`. `show`
+// first (read-only introspection), `approvals` last (administration). Hidden
+// commands last.
 /// Run configured hooks
 #[derive(Subcommand)]
 pub enum HookCommand {

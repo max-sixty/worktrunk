@@ -3,6 +3,9 @@ use clap::Subcommand;
 use super::SwitchFormat;
 use crate::commands::Shell;
 
+// Ordering: primitive (init prints the code) → convenience (install writes
+// it) → inverse (uninstall removes it), then unrelated utilities. Hidden
+// commands last.
 #[derive(Subcommand)]
 pub enum ConfigShellCommand {
     /// Generate shell integration code
@@ -156,6 +159,7 @@ Detects various forms of the integration pattern regardless of:
     },
 }
 
+// Ordering: action + inverse adjacent (install, uninstall).
 #[derive(Subcommand)]
 pub enum ConfigPluginsOpencodeCommand {
     /// Install the activity tracking plugin
@@ -197,6 +201,7 @@ $ wt config plugins opencode uninstall
     },
 }
 
+// Ordering: action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
     /// Store approvals in approvals.toml
@@ -226,6 +231,8 @@ all approvals across all projects."#
     },
 }
 
+// Ordering: alphabetical. Equal-weight sibling plugins with no natural
+// precedence.
 #[derive(Subcommand)]
 pub enum ConfigPluginsCommand {
     /// Claude Code plugin
@@ -273,6 +280,8 @@ Written to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/p
     },
 }
 
+// Ordering: action + inverse adjacent (install, uninstall), then related
+// extras.
 #[derive(Subcommand)]
 pub enum ConfigPluginsClaudeCommand {
     /// Install the Worktrunk plugin
@@ -326,6 +335,9 @@ Skips gracefully if the statusline is already configured."#
     },
 }
 
+// Ordering: user journey — shell (install integration), create (bootstrap
+// config files), show (inspect), update (migrate deprecations), plugins
+// (optional add-ons), state (advanced diagnostics).
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
@@ -435,10 +447,10 @@ $ wt config plugins opencode install
 
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
 - **previous-branch**: Previous branch for `wt switch -`
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
 - **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
 - **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
-- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
 
 ## Examples
 
@@ -477,10 +489,10 @@ Clear all stored state:
 $ wt config state clear
 ```
 <!-- subdoc: default-branch -->
+<!-- subdoc: logs -->
 <!-- subdoc: ci-status -->
 <!-- subdoc: marker -->
-<!-- subdoc: vars -->
-<!-- subdoc: logs -->"#
+<!-- subdoc: vars -->"#
     )]
     State {
         #[command(subcommand)]
@@ -488,8 +500,47 @@ $ wt config state clear
     },
 }
 
+// Ordering: aggregate operations first (get, clear) — entry points for
+// exploring or wiping all state. Then primary state managed by wt
+// (default-branch, previous-branch, logs, hints), then per-branch display
+// annotations shown in `wt list` (ci-status, marker), then experimental keys
+// (vars).
 #[derive(Subcommand)]
 pub enum StateCommand {
+    /// Get all stored state
+    #[command(after_long_help = r#"Shows all stored state including:
+
+- **Default branch**: Cached result of querying remote for default branch
+- **Previous branch**: Previous branch for `wt switch -`
+- **Branch markers**: User-defined branch notes
+- **Vars**: Custom variables per branch
+- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Hints**: One-time hints that have been shown
+- **Log files**: Operation and debug logs
+
+CI cache entries show status, age, and the commit SHA they were fetched for."#)]
+    Get {
+        /// Output format (table, json)
+        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        format: super::OutputFormat,
+    },
+
+    /// Clear all stored state
+    #[command(after_long_help = r#"Clears all stored state:
+
+- Default branch cache
+- Previous branch
+- All branch markers
+- All variables
+- All CI status cache
+- All hints
+- All log files
+- Stale trash from worktree removal (`.git/wt/trash/`)
+
+Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
+to clear specific state."#)]
+    Clear,
+
     /// Default branch detection and override
     #[command(
         name = "default-branch",
@@ -537,71 +588,6 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
     PreviousBranch {
         #[command(subcommand)]
         action: Option<PreviousBranchAction>,
-    },
-
-    /// CI status cache
-    #[command(
-        name = "ci-status",
-        after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
-
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
-
-Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
-
-Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
-
-## Status values
-
-| Status | Meaning |
-|--------|---------|
-| `passed` | All checks passed |
-| `running` | Checks in progress |
-| `failed` | Checks failed |
-| `conflicts` | PR has merge conflicts |
-| `no-ci` | No checks configured |
-| `error` | Fetch error (rate limit, network, auth) |
-
-See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
-
-Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
-    )]
-    CiStatus {
-        #[command(subcommand)]
-        action: Option<CiStatusAction>,
-    },
-
-    /// Branch markers
-    #[command(
-        after_long_help = r#"Custom status text or emoji shown in the `wt list` Status column.
-
-## Display
-
-Markers appear at the end of the Status column, after git symbols:
-
-<!-- wt list (markers) -->
-```console
-wt list
-```
-
-## Use cases
-
-- **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
-- **Notes** — Any short text: `"blocked"`, `"needs tests"`
-
-## Storage
-
-Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
-
-```console
-$ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
-```
-
-Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#
-    )]
-    Marker {
-        #[command(subcommand)]
-        action: Option<MarkerAction>,
     },
 
     /// Operation and debug logs
@@ -700,6 +686,71 @@ $ wt config state hints clear NAME   # re-show specific hint
         action: Option<HintsAction>,
     },
 
+    /// CI status cache
+    #[command(
+        name = "ci-status",
+        after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
+
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+
+Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
+
+Results cache for 30-60 seconds. Indicators dim when local changes haven't been pushed.
+
+## Status values
+
+| Status | Meaning |
+|--------|---------|
+| `passed` | All checks passed |
+| `running` | Checks in progress |
+| `failed` | Checks failed |
+| `conflicts` | PR has merge conflicts |
+| `no-ci` | No checks configured |
+| `error` | Fetch error (rate limit, network, auth) |
+
+See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
+
+Without a subcommand, runs `get` for the current branch. Use `clear` to reset cache for a branch or `clear --all` to reset all."#
+    )]
+    CiStatus {
+        #[command(subcommand)]
+        action: Option<CiStatusAction>,
+    },
+
+    /// Branch markers
+    #[command(
+        after_long_help = r#"Custom status text or emoji shown in the `wt list` Status column.
+
+## Display
+
+Markers appear at the end of the Status column, after git symbols:
+
+<!-- wt list (markers) -->
+```console
+wt list
+```
+
+## Use cases
+
+- **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
+- **Notes** — Any short text: `"blocked"`, `"needs tests"`
+
+## Storage
+
+Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
+
+```console
+$ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
+```
+
+Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#
+    )]
+    Marker {
+        #[command(subcommand)]
+        action: Option<MarkerAction>,
+    },
+
     /// \[experimental\] Custom variables per branch
     #[command(
         name = "vars",
@@ -755,42 +806,9 @@ Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain
         #[command(subcommand)]
         action: VarsAction,
     },
-
-    /// Get all stored state
-    #[command(after_long_help = r#"Shows all stored state including:
-
-- **Default branch**: Cached result of querying remote for default branch
-- **Previous branch**: Previous branch for `wt switch -`
-- **Branch markers**: User-defined branch notes
-- **Vars**: Custom variables per branch
-- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
-- **Hints**: One-time hints that have been shown
-- **Log files**: Operation and debug logs
-
-CI cache entries show status, age, and the commit SHA they were fetched for."#)]
-    Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
-        format: super::OutputFormat,
-    },
-
-    /// Clear all stored state
-    #[command(after_long_help = r#"Clears all stored state:
-
-- Default branch cache
-- Previous branch
-- All branch markers
-- All variables
-- All CI status cache
-- All hints
-- All log files
-- Stale trash from worktree removal (`.git/wt/trash/`)
-
-Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
-to clear specific state."#)]
-    Clear,
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum DefaultBranchAction {
     /// Get the default branch
@@ -824,6 +842,7 @@ $ wt config state default-branch set main
     Clear,
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum PreviousBranchAction {
     /// Get the previous branch
@@ -852,6 +871,7 @@ $ wt config state previous-branch set feature
     Clear,
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum CiStatusAction {
     /// Get CI status for a branch
@@ -913,6 +933,7 @@ $ wt config state ci-status clear --all
     },
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum MarkerAction {
     /// Get marker for a branch
@@ -986,6 +1007,7 @@ $ wt config state marker clear --all
     },
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum LogsAction {
     /// Get log file paths
@@ -1046,6 +1068,7 @@ $ wt config state logs get --hook=user:post-start:server --branch=feature
     Clear,
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum HintsAction {
     /// List hints that have been shown
@@ -1087,6 +1110,7 @@ $ wt config state hints clear worktree-path
     },
 }
 
+// Ordering: CRUD — get, set, list, clear.
 #[derive(Subcommand)]
 pub enum VarsAction {
     /// Get a value

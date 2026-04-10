@@ -582,10 +582,10 @@ State is stored in `.git/` (config entries and log files), separate from configu
 
 - **default-branch**: [The repository's default branch (`main`, `master`, etc.)](https://worktrunk.dev/config/#wt-config-state-default-branch)
 - **previous-branch**: Previous branch for `wt switch -`
+- **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
 - **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](https://worktrunk.dev/config/#wt-config-state-ci-status)
 - **marker**: [Custom status marker for a branch (shown in `wt list`)](https://worktrunk.dev/config/#wt-config-state-marker)
 - **vars**: [experimental] [Custom variables per branch](https://worktrunk.dev/config/#wt-config-state-vars)
-- **logs**: [Operation and debug logs](https://worktrunk.dev/config/#wt-config-state-logs)
 
 ### Examples
 
@@ -632,15 +632,15 @@ wt config state - Manage internal data and cache
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  default-branch   Default branch detection and override
-  previous-branch  Previous branch (for wt switch -)
-  ci-status        CI status cache
-  marker           Branch markers
-  logs             Operation and debug logs
-  hints            One-time hints shown in this repo
-  vars             [experimental] Custom variables per branch
   get              Get all stored state
   clear            Clear all stored state
+  default-branch   Default branch detection and override
+  previous-branch  Previous branch (for wt switch -)
+  logs             Operation and debug logs
+  hints            One-time hints shown in this repo
+  ci-status        CI status cache
+  marker           Branch markers
+  vars             [experimental] Custom variables per branch
 
 Options:
   -h, --help
@@ -697,6 +697,101 @@ Commands:
   get    Get the default branch
   set    Set the default branch
   clear  Clear the default branch cache
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: hooks, templates; -vv: debug report)
+```
+
+## wt config state logs
+
+Operation and debug logs.
+
+View and manage log files — hook output, command audit trail, and debug diagnostics.
+
+### What's logged
+
+Three kinds of logs live in `.git/wt/logs/`:
+
+#### Command log (`commands.jsonl`)
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
+| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
+| `cmd` | Shell command executed |
+| `exit` | Exit code (`null` for background commands) |
+| `dur_ms` | Duration in milliseconds (`null` for background commands) |
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
+
+#### Hook output logs
+
+| Operation | Log file |
+|-----------|----------|
+| Background hooks | `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` |
+| Background removal | `{branch}-{hash}-remove.log` |
+
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Hash suffixes are added by filename sanitization. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
+
+#### Diagnostic files
+
+| File | Created when |
+|------|-------------|
+| `verbose.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` when warnings occur |
+
+`verbose.log` is overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur.
+
+### Location
+
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
+
+### Examples
+
+List all log files:
+```bash
+$ wt config state logs get
+```
+
+Query the command log:
+```bash
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
+```
+
+View a specific hook log:
+```bash
+$ cat "$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log"
+```
+
+Clear all logs:
+```bash
+$ wt config state logs clear
+```
+
+### Command reference
+
+```
+wt config state logs - Operation and debug logs
+
+Usage: wt config state logs [OPTIONS] [COMMAND]
+
+Commands:
+  get    Get log file paths
+  clear  Clear all log files
 
 Options:
   -h, --help
@@ -890,101 +985,6 @@ Commands:
   set    Set a value
   list   List all keys
   clear  Clear a key or all keys
-
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-  -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
-```
-
-## wt config state logs
-
-Operation and debug logs.
-
-View and manage log files — hook output, command audit trail, and debug diagnostics.
-
-### What's logged
-
-Three kinds of logs live in `.git/wt/logs/`:
-
-#### Command log (`commands.jsonl`)
-
-All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
-
-| Field | Description |
-|-------|-------------|
-| `ts` | ISO 8601 timestamp |
-| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
-| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
-| `cmd` | Shell command executed |
-| `exit` | Exit code (`null` for background commands) |
-| `dur_ms` | Duration in milliseconds (`null` for background commands) |
-
-The command log appends entries and is not branch-specific — it records all activity across all worktrees.
-
-#### Hook output logs
-
-| Operation | Log file |
-|-----------|----------|
-| Background hooks | `{branch}-{hash}-{source}-{hook-type}-{name}-{hash}.log` |
-| Background removal | `{branch}-{hash}-remove.log` |
-
-All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Hash suffixes are added by filename sanitization. Same operation on same branch overwrites the previous log. Logs from deleted branches remain until manually cleared.
-
-#### Diagnostic files
-
-| File | Created when |
-|------|-------------|
-| `verbose.log` | Running with `-vv` |
-| `diagnostic.md` | Running with `-vv` when warnings occur |
-
-`verbose.log` is overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur.
-
-### Location
-
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory.
-
-### Examples
-
-List all log files:
-```bash
-$ wt config state logs get
-```
-
-Query the command log:
-```bash
-$ tail -5 .git/wt/logs/commands.jsonl | jq .
-```
-
-View a specific hook log:
-```bash
-$ cat "$(git rev-parse --git-dir)/wt/logs/feature-a1b-project-post-start-build-seq.log"
-```
-
-Clear all logs:
-```bash
-$ wt config state logs clear
-```
-
-### Command reference
-
-```
-wt config state logs - Operation and debug logs
-
-Usage: wt config state logs [OPTIONS] [COMMAND]
-
-Commands:
-  get    Get log file paths
-  clear  Clear all log files
 
 Options:
   -h, --help

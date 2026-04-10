@@ -526,6 +526,10 @@ pub(crate) struct MergeArgs {
     pub(crate) format: SwitchFormat,
 }
 
+// Ordering: by "core-ness". Primitive worktree operations first (switch, list,
+// remove), then composites built on top (merge), then subcommand namespaces
+// (step, hook, config). `remove` is a primitive and more core than `merge`,
+// which wraps it. Hidden commands last.
 #[derive(Subcommand)]
 pub(crate) enum Commands {
     /// Switch to a worktree; create if needed

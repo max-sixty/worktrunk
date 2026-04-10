@@ -53,8 +53,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>commit</span></b>        Stage and commit with LLM-generated message
   <b><span class=c>squash</span></b>        Squash commits since branching
-  <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
+  <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
