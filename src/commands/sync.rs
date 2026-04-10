@@ -695,7 +695,6 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // Execute rebases in topological order
     let mut rebased_count = 0;
     let mut skipped_count = 0;
-    let mut rebased_branches: Vec<String> = Vec::new();
 
     for &branch in &branches_to_sync {
         let Some(node) = tree.nodes.get(branch) else {
@@ -744,11 +743,8 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             "{}",
             progress_message(cformat!(
                 "Rebasing <bold>{branch}</> onto <bold>{parent}</>{}...",
-                if node.original_parent.is_some() {
-                    cformat!(
-                        " (was on integrated <bold>{}</>)",
-                        node.original_parent.as_ref().unwrap()
-                    )
+                if let Some(orig) = &node.original_parent {
+                    cformat!(" (was on integrated <bold>{orig}</>)")
                 } else {
                     String::new()
                 }
@@ -783,7 +779,6 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         fork_points.insert(branch.to_string(), parent_sha.clone());
 
         rebased_count += 1;
-        rebased_branches.push(branch.to_string());
         eprintln!(
             "{}",
             success_message(cformat!("Rebased <bold>{branch}</> onto <bold>{parent}</>"))
