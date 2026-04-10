@@ -984,8 +984,8 @@ Usage: wt config state vars [OPTIONS] <COMMAND>
 
 Commands:
   get    Get a value
-  set    Set a value
   list   List all keys
+  set    Set a value
   clear  Clear a key or all keys
 
 Options:

@@ -1112,7 +1112,7 @@ $ wt config state hints clear worktree-path
     },
 }
 
-// Ordering: CRUD — get, set, list, clear.
+// Ordering: reads before writes — get, list, set, clear.
 #[derive(Subcommand)]
 pub enum VarsAction {
     /// Get a value
@@ -1134,6 +1134,28 @@ $ wt config state vars get env --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
+    },
+
+    /// List all keys
+    #[command(after_long_help = r#"## Examples
+
+List keys for current branch:
+```console
+$ wt config state vars list
+```
+
+List keys for a specific branch:
+```console
+$ wt config state vars list --branch=feature
+```"#)]
+    List {
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Set a value
@@ -1161,28 +1183,6 @@ $ wt config state vars set env=production --branch=main
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
-    },
-
-    /// List all keys
-    #[command(after_long_help = r#"## Examples
-
-List keys for current branch:
-```console
-$ wt config state vars list
-```
-
-List keys for a specific branch:
-```console
-$ wt config state vars list --branch=feature
-```"#)]
-    List {
-        /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
-        branch: Option<String>,
-
-        /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Output")]
-        format: SwitchFormat,
     },
 
     /// Clear a key or all keys

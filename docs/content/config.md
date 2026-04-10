@@ -951,8 +951,8 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>    Get a value
-  <b><span class=c>set</span></b>    Set a value
   <b><span class=c>list</span></b>   List all keys
+  <b><span class=c>set</span></b>    Set a value
   <b><span class=c>clear</span></b>  Clear a key or all keys
 
 <b><span class=g>Options:</span></b>
