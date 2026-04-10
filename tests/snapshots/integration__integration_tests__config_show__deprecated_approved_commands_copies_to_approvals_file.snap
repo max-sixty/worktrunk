@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/config_show.rs
-assertion_line: 2827
 info:
   program: wt
   args:
@@ -42,13 +41,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m                        [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                           [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
-+ feature-a     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-a  [2m1b87d473[0m  [2m⋯[0m     [2m⋯
-+ feature-b     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-b  [2mf62940fc[0m  [2m⋯[0m     [2m⋯
-+ feature-c     [31m⚑[39m              [2m⋯[0m        [2m⋯[0m        [2m⋯[0m  ../../../../repo.feature-c  [2m345c7c93[0m  [2m⋯[0m     [2m⋯
+  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                  [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
++ feature-a      [2m↑[22m                 [32m↑1[0m               ../repo.feature-a  [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
++ feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
++ feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
 
-[2m○[22m [2mShowing 4 worktrees
+[2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
 [33m▲[39m [33mUser config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m

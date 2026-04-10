@@ -27,6 +27,8 @@ use color_print::cformat;
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, progress_message, success_message, warning_message};
 
+use super::worktree::{BranchDeletionMode, execute_removal};
+
 /// A node in the dependency tree.
 #[derive(Debug)]
 struct TreeNode {
@@ -768,7 +770,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         eprintln!();
         for branch in &rebased_branches {
             // Skip branches without an upstream
-            if repo.branch(branch).upstream()?.is_none() {
+            if repo.branch(branch).upstream().ok().flatten().is_none() {
                 continue;
             }
             eprintln!(
@@ -802,32 +804,46 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                     "Removing integrated worktree <bold>{branch}</>..."
                 ))
             );
-            // Remove the worktree (without --force to avoid silent data loss
-            // if the worktree has untracked files)
-            let result = repo.run_command(&["worktree", "remove", &path.to_string_lossy()]);
-            if let Err(e) = result {
-                eprintln!(
-                    "{}",
-                    worktrunk::styling::error_message(cformat!(
-                        "Failed to remove worktree for <bold>{branch}</>: {e}"
-                    ))
-                );
-                eprintln!(
-                    "{}",
-                    worktrunk::styling::hint_message(cformat!(
-                        "Clean up the worktree manually, then run: git worktree remove {}",
-                        path.to_string_lossy()
-                    ))
-                );
-                continue;
+            // Check for upstream before removal (which deletes the branch)
+            let has_upstream = repo.branch(branch).upstream().ok().flatten().is_some();
+            // Use the standard removal path: stops fsmonitor, uses fast-path
+            // rename into .git/wt/trash/, and deletes the branch via
+            // delete_branch_if_safe (integration-gated).
+            let output = match execute_removal(
+                &repo,
+                path,
+                Some(branch.as_str()),
+                BranchDeletionMode::SafeDelete,
+                None, // target defaults to HEAD
+                false,
+            ) {
+                Ok(output) => output,
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        worktrunk::styling::error_message(cformat!(
+                            "Failed to remove worktree for <bold>{branch}</>: {e}"
+                        ))
+                    );
+                    eprintln!(
+                        "{}",
+                        worktrunk::styling::hint_message(cformat!(
+                            "Clean up the worktree manually, then run: git worktree remove {}",
+                            path.to_string_lossy()
+                        ))
+                    );
+                    continue;
+                }
+            };
+            // Clean up staged trash directory (fast path)
+            if let Some(staged) = output.staged_path {
+                let _ = std::fs::remove_dir_all(&staged);
             }
-            // Check for upstream before deleting the local branch
-            let has_upstream = repo.branch(branch).upstream()?.is_some();
-            // Delete the local branch
-            if let Err(e) = repo.run_command(&["branch", "-D", branch]) {
+            // Log branch deletion failures as warnings
+            if let Some(Err(e)) = output.branch_result {
                 eprintln!(
                     "{}",
-                    worktrunk::styling::warning_message(cformat!(
+                    warning_message(cformat!(
                         "Failed to delete local branch <bold>{branch}</>: {e}"
                     ))
                 );
@@ -838,7 +854,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             {
                 eprintln!(
                     "{}",
-                    worktrunk::styling::warning_message(cformat!(
+                    warning_message(cformat!(
                         "Failed to delete remote branch <bold>{branch}</>: {e}"
                     ))
                 );
