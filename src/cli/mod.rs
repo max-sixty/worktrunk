@@ -454,35 +454,35 @@ pub(crate) struct SyncArgs {
     ///
     /// Without this flag, all worktree branches are synced. With `--stack`, only
     /// the stack containing the current branch is synced.
-    #[arg(long)]
+    #[arg(long, overrides_with = "all")]
     pub(crate) stack: bool,
 
     /// Sync all stacks (overrides config)
-    #[arg(long, conflicts_with = "stack")]
+    #[arg(long, overrides_with = "stack")]
     pub(crate) all: bool,
 
     /// Fetch from remote before syncing
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_fetch")]
     pub(crate) fetch: bool,
 
     /// Skip fetch (overrides config)
-    #[arg(long = "no-fetch", conflicts_with = "fetch")]
+    #[arg(long = "no-fetch", overrides_with = "fetch")]
     pub(crate) no_fetch: bool,
 
     /// Push rebased branches after syncing (force-with-lease)
-    #[arg(long, short = 'p')]
+    #[arg(long, short = 'p', overrides_with = "no_push")]
     pub(crate) push: bool,
 
     /// Skip push (overrides config)
-    #[arg(long = "no-push", conflicts_with = "push")]
+    #[arg(long = "no-push", overrides_with = "push")]
     pub(crate) no_push: bool,
 
     /// Remove integrated worktrees and their remote branches
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_prune")]
     pub(crate) prune: bool,
 
     /// Skip prune (overrides config)
-    #[arg(long = "no-prune", conflicts_with = "prune")]
+    #[arg(long = "no-prune", overrides_with = "prune")]
     pub(crate) no_prune: bool,
 
     /// Preview the sync plan
