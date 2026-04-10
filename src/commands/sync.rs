@@ -135,13 +135,6 @@ pub struct SyncOptions {
     pub dry_run: bool,
 }
 
-/// Result of building the dependency tree, including integrated branch info.
-struct SyncPlan {
-    tree: DependencyTree,
-    /// Branches detected as integrated, with their worktree paths.
-    integrated: Vec<(String, PathBuf)>,
-}
-
 /// Stack file name within the wt data directory.
 const STACK_FILE: &str = "stack";
 
@@ -251,7 +244,9 @@ fn write_stack_file(repo: &Repository, tree: &DependencyTree) -> anyhow::Result<
 ///
 /// If a stack file (`.git/wt/stack`) exists, it is used for parent detection
 /// instead of merge-base inference.
-fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
+fn build_dependency_tree(
+    repo: &Repository,
+) -> anyhow::Result<(DependencyTree, Vec<(String, PathBuf)>)> {
     let default_branch = repo
         .default_branch()
         .context("Cannot determine default branch")?;
@@ -550,13 +545,13 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
 
     let integrated_list: Vec<(String, PathBuf)> = integrated.into_iter().collect();
 
-    Ok(SyncPlan {
-        tree: DependencyTree {
+    Ok((
+        DependencyTree {
             root: default_branch,
             nodes,
         },
-        integrated: integrated_list,
-    })
+        integrated_list,
+    ))
 }
 
 /// Execute the sync operation.
@@ -572,8 +567,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     }
 
     // Build dependency tree
-    let plan = build_dependency_tree(&repo)?;
-    let tree = plan.tree;
+    let (tree, integrated) = build_dependency_tree(&repo)?;
 
     // Determine which branches to sync
     let current_wt = repo.current_worktree();
@@ -796,9 +790,9 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     }
 
     // Prune integrated worktrees
-    if opts.prune && !plan.integrated.is_empty() {
+    if opts.prune && !integrated.is_empty() {
         eprintln!();
-        for (branch, path) in &plan.integrated {
+        for (branch, path) in &integrated {
             eprintln!(
                 "{}",
                 progress_message(cformat!(
