@@ -149,42 +149,94 @@ pub fn append_aliases(
     }
 }
 
-// Custom deserialization to handle 3 TOML formats
+/// Accepted forms for a command, reused across error messages so the three
+/// supported shapes appear in every invalid-type diagnostic.
+const EXPECTING: &str = r#"a command in one of these forms:
+- a string: "cargo build"
+- a named table: { build = "cargo build", test = "cargo test" }
+- a pipeline list: ["cargo build", { test = "cargo test" }]
+run `wt hook --help` for details"#;
+
+/// Accepted forms for an entry inside a pipeline list (sub-form of `EXPECTING`
+/// — pipelines can't nest, so only the string and named-table forms are valid).
+const EXPECTING_PIPELINE_ENTRY: &str =
+    r#"a command string "cargo build" or a named table { build = "cargo build" }"#;
+
+/// An entry in a pipeline list: either a string or a map of named commands.
+///
+/// Anonymous strings work but are intentionally undocumented — they
+/// complicate the explanation without adding much over single-entry maps.
+enum PipelineEntry {
+    Anonymous(String),
+    Named(IndexMap<String, String>),
+}
+
+impl<'de> Deserialize<'de> for PipelineEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PipelineEntryVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PipelineEntryVisitor {
+            type Value = PipelineEntry;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(EXPECTING_PIPELINE_ENTRY)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(PipelineEntry::Anonymous(v.to_string()))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut entries: IndexMap<String, String> = IndexMap::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = map.next_value::<String>()?;
+                    entries.insert(key, value);
+                }
+                Ok(PipelineEntry::Named(entries))
+            }
+        }
+
+        deserializer.deserialize_any(PipelineEntryVisitor)
+    }
+}
+
+// Custom deserialization to handle 3 TOML formats with format-specific errors.
+//
+// Using a visitor (instead of `#[serde(untagged)]`) means errors describe which
+// form failed and point to the offending value — an untagged enum can only
+// report "data did not match any variant" at the start of the value.
 impl<'de> Deserialize<'de> for CommandConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        /// An entry in a pipeline list: either a string or a map of named commands.
-        ///
-        /// Anonymous strings work but are intentionally undocumented — they
-        /// complicate the explanation without adding much over single-entry maps.
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum PipelineEntry {
-            Anonymous(String),
-            Named(IndexMap<String, String>),
-        }
+        struct CommandConfigVisitor;
 
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum CommandConfigToml {
-            // post-start = "npm install"
-            Single(String),
-            // post-start = ["cmd1", { a = "cmd2", b = "cmd3" }]
-            Pipeline(Vec<PipelineEntry>),
-            // [hooks.post-start] with name = "command" entries
-            Concurrent(IndexMap<String, String>),
-        }
+        impl<'de> serde::de::Visitor<'de> for CommandConfigVisitor {
+            type Value = CommandConfig;
 
-        let toml = CommandConfigToml::deserialize(deserializer)?;
-        let steps = match toml {
-            CommandConfigToml::Single(cmd) => {
-                vec![HookStep::Single(Command::new(None, cmd))]
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(EXPECTING)
             }
-            CommandConfigToml::Pipeline(entries) => {
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(CommandConfig {
+                    steps: vec![HookStep::Single(Command::new(None, v.to_string()))],
+                })
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
                 let mut steps = Vec::new();
-                for entry in entries {
+                while let Some(entry) = seq.next_element::<PipelineEntry>()? {
                     match entry {
                         PipelineEntry::Anonymous(cmd) => {
                             steps.push(HookStep::Single(Command::new(None, cmd)));
@@ -198,18 +250,30 @@ impl<'de> Deserialize<'de> for CommandConfig {
                         }
                     }
                 }
-                steps
+                Ok(CommandConfig { steps })
             }
-            CommandConfigToml::Concurrent(map) => {
-                validate_no_colons(&map)?;
-                let commands: Vec<Command> = map
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut entries: IndexMap<String, String> = IndexMap::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = map.next_value::<String>()?;
+                    entries.insert(key, value);
+                }
+                validate_no_colons(&entries)?;
+                let commands: Vec<Command> = entries
                     .into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
                     .collect();
-                vec![HookStep::Concurrent(commands)]
+                Ok(CommandConfig {
+                    steps: vec![HookStep::Concurrent(commands)],
+                })
             }
-        };
-        Ok(CommandConfig { steps })
+        }
+
+        deserializer.deserialize_any(CommandConfigVisitor)
     }
 }
 
@@ -511,6 +575,100 @@ third = "echo 3"
 
         let result: Result<Wrapper, _> = toml::from_str(toml_str);
         assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Error Message Tests
+    //
+    // These lock in the format-aware error messages. The generic serde error
+    // "data did not match any variant of untagged enum" is not useful — users
+    // need to know which forms are accepted and which value is invalid.
+    // ============================================================================
+
+    #[derive(Debug, Deserialize)]
+    struct CommandWrapper {
+        #[serde(rename = "command")]
+        _command: CommandConfig,
+    }
+
+    fn deserialize_err(toml_str: &str) -> String {
+        toml::from_str::<CommandWrapper>(toml_str)
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn test_error_lists_accepted_forms_at_top_level() {
+        // Wrong type at the top level → error must list all three accepted forms
+        // so the user knows what to write instead.
+        assert_snapshot!(deserialize_err("command = 42"), @r#"
+        TOML parse error at line 1, column 11
+          |
+        1 | command = 42
+          |           ^^
+        invalid type: integer `42`, expected a command in one of these forms:
+        - a string: "cargo build"
+        - a named table: { build = "cargo build", test = "cargo test" }
+        - a pipeline list: ["cargo build", { test = "cargo test" }]
+        run `wt hook --help` for details
+        "#);
+    }
+
+    #[test]
+    fn test_error_identifies_non_string_value_in_named_table() {
+        // Non-string value inside a named table → error should point at the
+        // specific value, not report a generic "no variant matched".
+        assert_snapshot!(
+            deserialize_err(
+                r#"[command]
+build = "cargo build"
+broken = 42
+"#,
+            ),
+            @r#"
+        TOML parse error at line 3, column 10
+          |
+        3 | broken = 42
+          |          ^^
+        invalid type: integer `42`, expected a string
+        "#
+        );
+    }
+
+    #[test]
+    fn test_error_describes_pipeline_entry_forms_for_wrong_type() {
+        // Wrong type as a pipeline entry → error must list the two accepted
+        // entry forms (string or named table). Pipelines can't nest, so the
+        // top-level "pipeline list" form isn't repeated here.
+        assert_snapshot!(deserialize_err("command = [42]"), @r#"
+        TOML parse error at line 1, column 12
+          |
+        1 | command = [42]
+          |            ^^
+        invalid type: integer `42`, expected a command string "cargo build" or a named table { build = "cargo build" }
+        "#);
+    }
+
+    #[test]
+    fn test_error_identifies_non_string_value_in_pipeline_map() {
+        // Non-string value inside a pipeline map → error should point at the
+        // specific value. This is the case that prompted the improvement:
+        // previously produced "data did not match any variant of untagged enum
+        // CommandConfigToml" with no indication of which value was invalid.
+        assert_snapshot!(
+            deserialize_err(
+                r#"command = [
+    { build = "cargo build", ignore_exit = true }
+]"#,
+            ),
+            @r#"
+        TOML parse error at line 2, column 44
+          |
+        2 |     { build = "cargo build", ignore_exit = true }
+          |                                            ^^^^
+        invalid type: boolean `true`, expected a string
+        "#
+        );
     }
 
     // ============================================================================
