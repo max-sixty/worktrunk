@@ -164,15 +164,17 @@ fn load_fork_points(repo: &Repository) -> HashMap<String, String> {
 
 /// Save fork-points to `.git/wt/stack-forkpoints`.
 /// Records each branch's parent tip SHA so the next sync can use `--onto`.
-fn save_fork_points(repo: &Repository, fork_points: &HashMap<String, String>) -> anyhow::Result<()> {
+fn save_fork_points(
+    repo: &Repository,
+    fork_points: &HashMap<String, String>,
+) -> anyhow::Result<()> {
     let path = repo.wt_dir().join(FORK_POINTS_FILE);
     let mut lines: Vec<String> = fork_points
         .iter()
         .map(|(branch, sha)| format!("{branch}={sha}"))
         .collect();
     lines.sort();
-    std::fs::write(&path, lines.join("\n") + "\n")
-        .context("Failed to write fork-points file")?;
+    std::fs::write(&path, lines.join("\n") + "\n").context("Failed to write fork-points file")?;
     Ok(())
 }
 
@@ -743,7 +745,10 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             progress_message(cformat!(
                 "Rebasing <bold>{branch}</> onto <bold>{parent}</>{}...",
                 if node.original_parent.is_some() {
-                    cformat!(" (was on integrated <bold>{}</>)", node.original_parent.as_ref().unwrap())
+                    cformat!(
+                        " (was on integrated <bold>{}</>)",
+                        node.original_parent.as_ref().unwrap()
+                    )
                 } else {
                     String::new()
                 }
