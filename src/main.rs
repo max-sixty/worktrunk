@@ -57,7 +57,7 @@ use commands::{
     handle_state_show, handle_switch, handle_sync, handle_unconfigure_shell, handle_vars_clear,
     handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook,
     step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate, f699cd3c (feat: add `wt sync` command to rebase stacked worktree branches)
+    step_relocate,
 };
 use output::handle_remove_output;
 
