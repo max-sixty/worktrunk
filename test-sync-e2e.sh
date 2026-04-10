@@ -385,6 +385,35 @@ separator
 check "Sync with --push completes without error" "true"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Test 7: --prune removes integrated worktrees and remote branches
+# ═══════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${bold}═══ Test 7: --prune removes integrated worktrees and remote branches ═══${reset}"
+
+# Current stack: main ← pr2 ← pr4 ← pr5
+# Squash-merge pr2 into main via GitHub, then sync --fetch --prune
+info "Squash-merging PR2 via GitHub CLI"
+gh pr merge pr2 --squash --repo "${REPO_FULL}"
+
+cd "${REPO_DIR}"
+info "Running: wt sync --fetch --prune --push"
+separator
+wt sync --fetch --prune --push 2>&1
+separator
+
+show_stack_file
+show_branches
+
+check "Stack file does NOT contain pr2" "! grep -q '^[[:space:]]*pr2' ${REPO_DIR}/.git/wt/stack"
+check "pr2 worktree directory removed" "! [[ -d ${WORK_DIR}/repo.pr2 ]]"
+check "pr4 still exists" "[[ -d ${WORK_DIR}/repo.pr4 ]]"
+check "pr4 has login.go (inherited from pr2)" "[[ -f ${WORK_DIR}/repo.pr4/login.go ]]"
+check "pr5 has handler.go" "[[ -f ${WORK_DIR}/repo.pr5/handler.go ]]"
+# Check remote branch was also deleted
+check "pr2 remote branch deleted" "! git ls-remote --exit-code origin pr2 &>/dev/null"
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -399,6 +428,7 @@ echo "Test 3: Mid-stack commit → rebase downstream"
 echo "Test 4: PR1 squash-merged to main → reparent"
 echo "Test 5: PR3 merged into PR2 (non-default branch detection)"
 echo "Test 6: --push with deleted remote branches"
+echo "Test 7: --prune removes integrated worktrees and remote branches"
 echo ""
 
 # Exit with failure if any tests failed
