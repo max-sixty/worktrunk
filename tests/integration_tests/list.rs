@@ -3063,7 +3063,7 @@ fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
 
 /// Tests that wt list --full works correctly when the configured default branch doesn't exist.
 ///
-/// The --full flag enables expensive tasks like BranchDiff and WorkingTreeConflicts.
+/// The --full flag enables expensive tasks like BranchDiff.
 /// These should also degrade gracefully when default_branch is None.
 #[rstest]
 fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {

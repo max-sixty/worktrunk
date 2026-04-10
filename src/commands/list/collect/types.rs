@@ -18,7 +18,7 @@ use super::super::model::{
 #[derive(Clone, Default)]
 pub(super) struct StatusContext {
     pub has_merge_tree_conflicts: bool,
-    /// Working tree conflict check result (--full only, worktrees only).
+    /// Working tree conflict check result (worktrees only).
     /// None = use commit check (task didn't run or working tree clean)
     /// Some(b) = dirty working tree, b is conflict result
     // TODO: If we need to distinguish "task didn't run" from "clean working tree",
@@ -33,7 +33,7 @@ impl StatusContext {
     pub fn apply_to(&self, item: &mut ListItem, target: Option<&str>) {
         // Main worktree case is handled inside check_integration_state()
         //
-        // Prefer working tree conflicts (--full) when available.
+        // Prefer working tree conflicts when available.
         // None means task didn't run or working tree was clean - use commit check.
         let has_conflicts = self
             .has_working_tree_conflicts
@@ -115,7 +115,7 @@ pub(crate) enum TaskResult {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
     },
-    /// Potential merge conflicts including working tree changes (--full only)
+    /// Potential merge conflicts including working tree changes
     ///
     /// For dirty worktrees, uses `git stash create` to get a tree object that
     /// includes uncommitted changes, then runs merge-tree against that.
