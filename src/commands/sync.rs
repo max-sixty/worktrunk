@@ -2,17 +2,21 @@
 //!
 //! Detects the branch dependency tree from git's commit graph using pairwise
 //! merge-base analysis, then rebases each branch onto its parent in topological
-//! order. Handles integrated (merged) branches by reparenting their children
-//! with `rebase --onto`.
+//! order. All rebases use `--onto` with a stored fork-point, which correctly
+//! handles parent branches that have been rewritten (rebased, amended, or
+//! force-pushed). Integrated (merged) branches are detected and their children
+//! reparented.
 //!
-//! The dependency tree is persisted to a stack file (`.git/wt/stack`) on every
-//! sync. The format is compatible with git-machete: indentation-based, one
-//! branch per line. When this file exists, it is used for parent tracking and
-//! non-default branch integration detection.
+//! Two files are persisted to `.git/wt/`:
+//! - `stack` — the dependency tree (git-machete compatible format), used for
+//!   parent tracking and non-default branch integration detection.
+//! - `stack-forkpoints` — each branch's parent SHA at last sync, used as the
+//!   `--onto` base. Without this, rebasing after a parent rewrite would replay
+//!   the parent's old commits and cause conflicts.
 //!
 //! Key behaviors:
 //! - No configuration needed — dependencies are inferred from git history
-//! - Stack file (`.git/wt/stack`) is auto-created and updated on every sync
+//! - Stack file is auto-created and updated on every sync
 //! - By default, syncs all stacks
 //! - `--stack` restricts to the stack containing the current branch
 //! - `--dry-run` previews the plan without executing
@@ -137,6 +141,40 @@ pub struct SyncOptions {
 
 /// Stack file name within the wt data directory.
 const STACK_FILE: &str = "stack";
+
+/// Fork-points file: records each branch's parent SHA after a successful sync.
+/// Used for `--onto` rebasing when a parent branch has been rewritten.
+const FORK_POINTS_FILE: &str = "stack-forkpoints";
+
+/// Load fork-points from `.git/wt/stack-forkpoints`.
+/// Returns a map of branch_name -> parent_sha_at_last_sync.
+fn load_fork_points(repo: &Repository) -> HashMap<String, String> {
+    let path = repo.wt_dir().join(FORK_POINTS_FILE);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| {
+            let (branch, sha) = line.split_once('=')?;
+            Some((branch.trim().to_string(), sha.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Save fork-points to `.git/wt/stack-forkpoints`.
+/// Records each branch's parent tip SHA so the next sync can use `--onto`.
+fn save_fork_points(repo: &Repository, fork_points: &HashMap<String, String>) -> anyhow::Result<()> {
+    let path = repo.wt_dir().join(FORK_POINTS_FILE);
+    let mut lines: Vec<String> = fork_points
+        .iter()
+        .map(|(branch, sha)| format!("{branch}={sha}"))
+        .collect();
+    lines.sort();
+    std::fs::write(&path, lines.join("\n") + "\n")
+        .context("Failed to write fork-points file")?;
+    Ok(())
+}
 
 /// Parse a stack file (git-machete compatible format) into a parent map.
 ///
@@ -647,6 +685,11 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
     // are removed.
     write_stack_file(&repo, &tree)?;
 
+    // Load fork-points from the previous sync. These record each branch's
+    // parent tip SHA, enabling `--onto` rebasing when a parent branch has
+    // been rewritten (e.g., force-pushed or rebased itself).
+    let mut fork_points = load_fork_points(&repo);
+
     // Execute rebases in topological order
     let mut rebased_count = 0;
     let mut skipped_count = 0;
@@ -670,6 +713,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
 
         if mb == parent_sha {
             skipped_count += 1;
+            fork_points.insert(branch.to_string(), parent_sha);
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -679,66 +723,59 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             continue;
         }
 
-        // Perform the rebase
-        if let Some(ref orig_parent) = node.original_parent {
-            // Reparented branch — use rebase --onto
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Rebasing <bold>{branch}</> onto <bold>{parent}</> (was on integrated <bold>{orig_parent}</>)..."
-                ))
-            );
-            let result = wt.run_command(&["rebase", "--onto", parent, orig_parent, branch]);
-            if let Err(e) = result {
-                if wt.is_rebasing()? {
-                    eprintln!(
-                        "{}",
-                        worktrunk::styling::error_message(cformat!(
-                            "Rebase conflict while rebasing <bold>{branch}</> onto <bold>{parent}</>"
-                        ))
-                    );
-                    eprintln!(
-                        "{}",
-                        worktrunk::styling::hint_message(cformat!(
-                            "Resolve conflicts in {}, then run:\n  cd {}\n  git rebase --continue\n  wt sync",
-                            node.path.display(),
-                            node.path.display(),
-                        ))
-                    );
-                    return Ok(());
-                }
-                return Err(e.context(format!("Failed to rebase {branch} onto {parent}")));
-            }
+        // Determine the rebase base: use the stored fork-point (old parent tip)
+        // when available, otherwise fall back to the merge-base.
+        // The fork-point is essential when the parent was rebased — the merge-base
+        // shifts to an older ancestor, but the fork-point stays at the old parent tip.
+        let rebase_base = if let Some(ref orig_parent) = node.original_parent {
+            // Reparented branch — base is the integrated parent branch
+            orig_parent.clone()
+        } else if let Some(stored_fp) = fork_points.get(branch) {
+            // Use the stored fork-point from the previous sync
+            stored_fp.clone()
         } else {
-            // Normal rebase
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Rebasing <bold>{branch}</> onto <bold>{parent}</>..."
-                ))
-            );
-            let result = wt.run_command(&["rebase", parent]);
-            if let Err(e) = result {
-                if wt.is_rebasing()? {
-                    eprintln!(
-                        "{}",
-                        worktrunk::styling::error_message(cformat!(
-                            "Rebase conflict while rebasing <bold>{branch}</> onto <bold>{parent}</>"
-                        ))
-                    );
-                    eprintln!(
-                        "{}",
-                        worktrunk::styling::hint_message(cformat!(
-                            "Resolve conflicts in {}, then run:\n  cd {}\n  git rebase --continue\n  wt sync",
-                            node.path.display(),
-                            node.path.display(),
-                        ))
-                    );
-                    return Ok(());
+            // First sync or no fork-point — fall back to merge-base
+            mb.clone()
+        };
+
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Rebasing <bold>{branch}</> onto <bold>{parent}</>{}...",
+                if node.original_parent.is_some() {
+                    cformat!(" (was on integrated <bold>{}</>)", node.original_parent.as_ref().unwrap())
+                } else {
+                    String::new()
                 }
-                return Err(e.context(format!("Failed to rebase {branch} onto {parent}")));
+            ))
+        );
+
+        let result = wt.run_command(&["rebase", "--onto", parent, &rebase_base, branch]);
+        if let Err(e) = result {
+            if wt.is_rebasing()? {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::error_message(cformat!(
+                        "Rebase conflict while rebasing <bold>{branch}</> onto <bold>{parent}</>"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::hint_message(cformat!(
+                        "Resolve conflicts in {}, then run:\n  cd {}\n  git rebase --continue\n  wt sync",
+                        node.path.display(),
+                        node.path.display(),
+                    ))
+                );
+                // Save fork-points for branches processed so far
+                let _ = save_fork_points(&repo, &fork_points);
+                return Ok(());
             }
+            return Err(e.context(format!("Failed to rebase {branch} onto {parent}")));
         }
+
+        // Record the parent's current tip as the fork-point for next sync
+        fork_points.insert(branch.to_string(), parent_sha.clone());
 
         rebased_count += 1;
         rebased_branches.push(branch.to_string());
@@ -865,6 +902,9 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             );
         }
     }
+
+    // Persist fork-points for next sync
+    save_fork_points(&repo, &fork_points)?;
 
     Ok(())
 }
