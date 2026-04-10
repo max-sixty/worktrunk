@@ -115,7 +115,7 @@ use worktrunk::styling::{
 
 use crate::commands::is_worktree_at_expected_path;
 
-use super::model::{DisplayFields, ItemKind, ListItem, WorktreeData};
+use super::model::{DisplayFields, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive_table::ProgressiveTable;
 
 // Re-exports for sibling modules (columns.rs, render.rs, layout.rs)
@@ -126,7 +126,7 @@ pub(crate) use types::TaskKind;
 pub(crate) use execution::ExpectedResults;
 use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
-use types::{DrainOutcome, StatusContext};
+use types::DrainOutcome;
 use types::{TaskError, TaskResult};
 
 struct TableRenderPlan {
@@ -556,7 +556,9 @@ pub fn collect(
                 url: None,
                 url_active: None,
                 summary: None,
-                status_symbols: None,
+                has_merge_tree_conflicts: None,
+                user_marker: None,
+                status_symbols: StatusSymbols::default(),
                 display: DisplayFields::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
             }
@@ -771,20 +773,7 @@ pub fn collect(
     // Collect errors for display after rendering
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Collect all work items upfront, then execute in a single Rayon pool.
-    // This avoids nested parallelism (Rayon par_iter → scope per worktree)
-    // which can deadlock when outer tasks block pool threads waiting for inner
-    // tasks that can't get scheduled. Instead, we have one flat pool with the
-    // configured thread count (default 2x CPU cores unless overridden by
-    // RAYON_NUM_THREADS).
-    let sorted_worktrees_clone = sorted_worktrees.clone();
-    let tx_worker = tx.clone();
-    let expected_results_clone = expected_results.clone();
-
-    // Clone repo for the worker thread (shares cache via Arc)
-    let repo_clone = repo.clone();
-
-    // Prepare branch data if needed (before moving into closure)
+    // Prepare branch data if needed.
     // Tuple: (item_idx, branch_name, commit_sha, is_remote)
     let branch_data: Vec<(usize, String, String, bool)> =
         if show_branches || show_remotes {
@@ -804,41 +793,52 @@ pub fn collect(
             Vec::new()
         };
 
+    // Phase 1: Generate all work items on the main thread. Work item
+    // generation is fast (a fixed-size loop per item) and *must* run here
+    // because it pre-populates per-item status-feeder sentinels directly on
+    // `all_items` — the worker thread can't hold a mutable reference while
+    // the drain loop is also mutating items.
+    let mut all_work_items = Vec::new();
+
+    // Worktree work items
+    for (idx, wt) in sorted_worktrees.iter().enumerate() {
+        all_work_items.extend(work_items_for_worktree(
+            repo,
+            wt,
+            idx,
+            &options,
+            &expected_results,
+            &tx,
+            &mut all_items[idx],
+        ));
+    }
+
+    // Branch work items (local + remote)
+    for (item_idx, branch_name, commit_sha, is_remote) in &branch_data {
+        all_work_items.extend(work_items_for_branch(
+            repo,
+            execution::BranchSpawn {
+                name: branch_name,
+                commit_sha,
+                item_idx: *item_idx,
+                is_remote: *is_remote,
+            },
+            &options,
+            &expected_results,
+            &mut all_items[*item_idx],
+        ));
+    }
+
+    // Sort work items: network tasks last to avoid blocking local operations
+    all_work_items.sort_by_key(|item| item.kind.is_network());
+
+    // Phase 2: Execute all work items in a single Rayon pool on a worker
+    // thread. Flat parallelism avoids nested-Rayon deadlocks, and the
+    // worker-thread split lets the drain loop start consuming results on
+    // the main thread immediately.
+    let tx_worker = tx.clone();
     worktrunk::shell_exec::trace_instant("Spawning worker thread");
     std::thread::spawn(move || {
-        // Phase 1: Generate all work items (sequential, fast)
-        // Work items are collected upfront so we can process them all in a single par_iter.
-        let mut all_work_items = Vec::new();
-
-        // Worktree work items
-        for (idx, wt) in sorted_worktrees_clone.iter().enumerate() {
-            all_work_items.extend(work_items_for_worktree(
-                &repo_clone,
-                wt,
-                idx,
-                &options,
-                &expected_results_clone,
-                &tx_worker,
-            ));
-        }
-
-        // Branch work items (local + remote)
-        for (item_idx, branch_name, commit_sha, is_remote) in &branch_data {
-            all_work_items.extend(work_items_for_branch(
-                &repo_clone,
-                branch_name,
-                commit_sha,
-                *item_idx,
-                *is_remote,
-                &options,
-                &expected_results_clone,
-            ));
-        }
-
-        // Sort work items: network tasks last to avoid blocking local operations
-        all_work_items.sort_by_key(|item| item.kind.is_network());
-
-        // Phase 2: Execute all work items in parallel
         worktrunk::shell_exec::trace_instant("Parallel execution started");
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
@@ -864,18 +864,17 @@ pub fn collect(
         &mut errors,
         &expected_results,
         drain_deadline,
-        |item_idx, item, ctx| {
+        integration_target.as_deref(),
+        |item_idx, item| {
             // Trace first result arrival
             if !first_result_traced {
                 first_result_traced = true;
                 worktrunk::shell_exec::trace_instant("First result received");
             }
 
-            // Compute/recompute status symbols as data arrives (both modes).
-            // This is idempotent and updates status as new data (like upstream) arrives.
-            ctx.apply_to(item, integration_target.as_deref());
-
-            // Progressive mode only: update UI
+            // Progressive mode only: update UI. `status_symbols` is set by
+            // `drain_results` itself (once all status-feeding tasks for this
+            // item have arrived successfully); here we only re-render.
             if let Some(ref mut table) = progressive_table {
                 let dim = Style::new().dimmed();
 
@@ -935,6 +934,7 @@ pub fn collect(
             diag.push_str("\nBlocked tasks:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
+                .take(5)
                 .map(|result| {
                     let missing_names: Vec<&str> =
                         result.missing_kinds.iter().map(|k| k.into()).collect();
@@ -957,18 +957,10 @@ pub fn collect(
         );
     }
 
-    // Compute status symbols for prunable worktrees (skipped during task spawning).
-    // They didn't receive any task results, so status_symbols is still None.
-    for item in &mut all_items {
-        if item.status_symbols.is_none()
-            && let Some(data) = item.worktree_data()
-            && data.is_prunable()
-        {
-            // Use default context - no tasks ran, so no conflict/status info
-            let ctx = StatusContext::default();
-            ctx.apply_to(item, integration_target.as_deref());
-        }
-    }
+    // Prunable worktrees are now pre-seeded at spawn time
+    // (`seed_prunable_item`), so no post-drain refresh is needed. The
+    // drain itself calls `refresh_status_symbols` after every result,
+    // which covers every non-prunable item's progression.
 
     // Count errors for summary
     let error_count = errors.len();
@@ -1142,7 +1134,9 @@ pub fn build_worktree_item(
         url: None,
         url_active: None,
         summary: None,
-        status_symbols: None,
+        has_merge_tree_conflicts: None,
+        user_marker: None,
+        status_symbols: StatusSymbols::default(),
         display: DisplayFields::default(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
             wt,
@@ -1186,7 +1180,9 @@ pub fn populate_item(
     // Collect errors (logged silently for statusline)
     let mut errors: Vec<TaskError> = Vec::new();
 
-    // Extract data for background thread (can't send borrows across threads)
+    // Build a minimal WorktreeInfo so the shared work-item generator can
+    // run. The item lives on this (main) thread; the worker thread only
+    // executes prebuilt work items.
     let wt = WorktreeInfo {
         path: data.path.clone(),
         head: item.head.clone(),
@@ -1196,41 +1192,42 @@ pub fn populate_item(
         locked: None,
         prunable: None,
     };
-    let repo_clone = repo.clone();
-    let expected_results_clone = expected_results.clone();
 
-    // Spawn collection in background thread
+    // Generate work items on the main thread so the item can be seeded
+    // with sentinels for skipped tasks (see `work_items_for_worktree`).
+    let mut work_items = work_items_for_worktree(
+        repo,
+        &wt,
+        0, // Single item, always index 0
+        &options,
+        &expected_results,
+        &tx,
+        item,
+    );
+
+    // Sort: network tasks last
+    work_items.sort_by_key(|w| w.kind.is_network());
+
+    // Spawn collection in background thread (executes only)
     std::thread::spawn(move || {
-        // Generate work items for this single worktree
-        let mut work_items = work_items_for_worktree(
-            &repo_clone,
-            &wt,
-            0, // Single item, always index 0
-            &options,
-            &expected_results_clone,
-            &tx,
-        );
-
-        // Sort: network tasks last
-        work_items.sort_by_key(|item| item.kind.is_network());
-
-        // Execute all tasks in parallel
-        work_items.into_par_iter().for_each(|item| {
-            let result = item.execute();
+        work_items.into_par_iter().for_each(|w| {
+            let result = w.execute();
             let _ = tx.send(result);
         });
     });
 
-    // Drain task results (blocking until complete)
+    // Drain task results (blocking until complete). `drain_results`
+    // writes each result onto the item and calls `compute_status_symbols`
+    // after every write, so the callback here is just a no-op — there is
+    // no progressive table to refresh on the statusline path.
     let drain_outcome = drain_results(
         rx,
         std::slice::from_mut(item),
         &mut errors,
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
-        |_item_idx, item, ctx| {
-            ctx.apply_to(item, target.as_deref());
-        },
+        target.as_deref(),
+        |_item_idx, _item| {},
     );
 
     // Handle timeout (silent for statusline - just log it)

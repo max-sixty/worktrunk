@@ -1330,7 +1330,9 @@ mod tests {
             url: None,
             url_active: None,
             summary: None,
-            status_symbols: Some(StatusSymbols::default()),
+            has_merge_tree_conflicts: None,
+            user_marker: None,
+            status_symbols: StatusSymbols::default(),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/path"),
@@ -1338,7 +1340,10 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::from((100, 50))),
-                git_operation: ActiveGitOperation::None,
+                working_tree_status: None,
+                has_conflicts: None,
+                has_working_tree_conflicts: None,
+                git_operation: Some(ActiveGitOperation::None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1430,7 +1435,9 @@ mod tests {
             url: None,
             url_active: None,
             summary: None,
-            status_symbols: Some(StatusSymbols::default()),
+            has_merge_tree_conflicts: None,
+            user_marker: None,
+            status_symbols: StatusSymbols::default(),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test"),
@@ -1438,7 +1445,10 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: Some(LineDiff::default()),
-                git_operation: ActiveGitOperation::None,
+                working_tree_status: None,
+                has_conflicts: None,
+                has_working_tree_conflicts: None,
+                git_operation: Some(ActiveGitOperation::None),
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,
@@ -1525,7 +1535,7 @@ mod tests {
     /// Helper: create a minimal ListItem for layout tests.
     fn make_test_item(branch: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{
-            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+            ActiveGitOperation, DisplayFields, ItemKind, StatusSymbols, WorktreeData,
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
@@ -1544,7 +1554,9 @@ mod tests {
             url: None,
             url_active: None,
             summary: None,
-            status_symbols: None,
+            has_merge_tree_conflicts: None,
+            user_marker: None,
+            status_symbols: StatusSymbols::default(),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/wt"),
@@ -1552,7 +1564,10 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: None,
-                git_operation: ActiveGitOperation::None,
+                working_tree_status: None,
+                has_conflicts: None,
+                has_working_tree_conflicts: None,
+                git_operation: Some(ActiveGitOperation::None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1768,7 +1783,7 @@ mod tests {
     /// Helper: create a test item with a specific worktree path and no mismatch.
     fn make_test_item_at(branch: &str, path: &str) -> super::super::model::ListItem {
         use crate::commands::list::model::{
-            ActiveGitOperation, DisplayFields, ItemKind, WorktreeData,
+            ActiveGitOperation, DisplayFields, ItemKind, StatusSymbols, WorktreeData,
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
@@ -1787,7 +1802,9 @@ mod tests {
             url: None,
             url_active: None,
             summary: None,
-            status_symbols: None,
+            has_merge_tree_conflicts: None,
+            user_marker: None,
+            status_symbols: StatusSymbols::default(),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from(path),
@@ -1795,7 +1812,10 @@ mod tests {
                 locked: None,
                 prunable: None,
                 working_tree_diff: None,
-                git_operation: ActiveGitOperation::None,
+                working_tree_status: None,
+                has_conflicts: None,
+                has_working_tree_conflicts: None,
+                git_operation: Some(ActiveGitOperation::None),
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -1913,7 +1933,9 @@ mod tests {
                 url: None,
                 url_active: None,
                 summary: Some(summary.map(|s| s.to_string())),
-                status_symbols: Some(StatusSymbols::default()),
+                has_merge_tree_conflicts: None,
+                user_marker: None,
+                status_symbols: StatusSymbols::default(),
                 display: DisplayFields::default(),
                 kind: ItemKind::Worktree(Box::new(WorktreeData {
                     path: PathBuf::from(path),
@@ -1921,7 +1943,10 @@ mod tests {
                     locked: None,
                     prunable: None,
                     working_tree_diff: Some(LineDiff::default()),
-                    git_operation: ActiveGitOperation::None,
+                    working_tree_status: None,
+                    has_conflicts: None,
+                    has_working_tree_conflicts: None,
+                    git_operation: Some(ActiveGitOperation::None),
                     is_main,
                     is_current,
                     is_previous: false,

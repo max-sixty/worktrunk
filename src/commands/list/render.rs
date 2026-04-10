@@ -390,11 +390,17 @@ impl ColumnLayout {
                 self.render_text_cell(text, text_style)
             }
             ColumnKind::Status => {
-                let Some(ref status_symbols) = item.status_symbols else {
-                    return self.placeholder_cell(placeholder);
-                };
+                // `render_with_mask` emits the placeholder glyph per
+                // position for unresolved gates, so a row whose Status
+                // cell is partially loaded renders e.g. `+!  ⋯ ↕ | ⋯`
+                // rather than a cell-level `⋯`. The `placeholder` arg
+                // comes from `render_list_item_line` (`⋯`) or
+                // `render_list_item_stale` (`·`).
                 let mut cell = StyledLine::new();
-                cell.push_raw(status_symbols.render_with_mask(status_mask));
+                cell.push_raw(
+                    item.status_symbols
+                        .render_with_mask(status_mask, placeholder),
+                );
                 let mut cell = cell.truncate_to_width(self.width);
                 cell.pad_to(self.width);
                 cell
@@ -1299,25 +1305,27 @@ mod tests {
         use super::super::model::{ListItem, PositionMask};
         use std::path::PathBuf;
 
-        // Minimal layout with just a Status column
+        // Layout with a Summary column — it emits the placeholder via
+        // `placeholder_cell` when `item.summary` is `None`. The Status
+        // column's cell-level placeholder was dropped in step 1 of the
+        // per-symbol rendering refactor; step 5 reinstates per-position
+        // placeholders for unresolved status gates.
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
-                kind: ColumnKind::Status,
-                header: "Status",
+                kind: ColumnKind::Summary,
+                header: "Summary",
                 start: 0,
                 width: 10,
                 format: ColumnFormat::Text,
             }],
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 0,
-            max_summary_len: 0,
+            max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
         };
 
-        // Item with no status_symbols (simulates budget timeout)
         let item = ListItem::new_branch("abc123".into(), "feat".into());
-        assert!(item.status_symbols.is_none());
 
         // render_list_item_line uses ⋯
         let line = layout.render_list_item_line(&item);

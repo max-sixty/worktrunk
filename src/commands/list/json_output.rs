@@ -263,37 +263,39 @@ impl JsonItem {
             timestamp: item.commit.as_ref().map(|c| c.timestamp).unwrap_or(0),
         };
 
-        // Working tree (only for worktrees with status symbols)
+        // Working tree: read directly from `WorktreeData`, not from
+        // `status_symbols.working_tree`. `status_symbols` may be set by
+        // the metadata-only fallback in `compute_status_symbols` (locked
+        // / prunable / mismatched worktrees) carrying a default
+        // `WorkingTreeStatus`. The JSON output must reflect whether
+        // `WorkingTreeDiff` actually loaded the field — collapsing
+        // "unknown" into "clean" misleads consumers.
         let working_tree = worktree_data.and_then(|data| {
-            item.status_symbols.as_ref().map(|symbols| {
-                let wt = &symbols.working_tree;
-                JsonWorkingTree {
-                    staged: wt.staged,
-                    modified: wt.modified,
-                    untracked: wt.untracked,
-                    renamed: wt.renamed,
-                    deleted: wt.deleted,
-                    diff: data.working_tree_diff.map(JsonDiff::from),
-                }
+            data.working_tree_status.map(|wt| JsonWorkingTree {
+                staged: wt.staged,
+                modified: wt.modified,
+                untracked: wt.untracked,
+                renamed: wt.renamed,
+                deleted: wt.deleted,
+                diff: data.working_tree_diff.map(JsonDiff::from),
             })
         });
 
-        // Main state and integration reason
-        let (main_state, integration_reason) = item
+        // Main state and integration reason. Unresolved gate 3 → both
+        // absent from JSON. Resolved → emit as today.
+        let main_state = item.status_symbols.main_state.and_then(|s| s.as_json_str());
+        let integration_reason = item
             .status_symbols
-            .as_ref()
-            .map(|symbols| {
-                let state = symbols.main_state.as_json_str();
-                let reason = symbols.main_state.integration_reason().map(|r| r.into());
-                (state, reason)
-            })
-            .unwrap_or((None, None));
+            .main_state
+            .and_then(|s| s.integration_reason())
+            .map(|r| r.into());
 
-        // Operation state (conflicts, rebase, merge)
+        // Operation state (conflicts, rebase, merge). Unresolved gate 2
+        // (operation family) → absent from JSON.
         let operation_state = item
             .status_symbols
-            .as_ref()
-            .and_then(|symbols| symbols.operation_state.as_json_str());
+            .operation_state
+            .and_then(|s| s.as_json_str());
 
         // Main relationship (absent when is_main)
         let main = if is_main {
@@ -314,7 +316,7 @@ impl JsonItem {
 
         // Worktree state
         let worktree = worktree_data.map(|data| {
-            let (state, reason) = worktree_state_to_json(data, item.status_symbols.as_ref());
+            let (state, reason) = worktree_state_to_json(data, &item.status_symbols);
             JsonWorktree {
                 state,
                 reason,
@@ -334,11 +336,7 @@ impl JsonItem {
 
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.display.statusline.clone();
-        let symbols = item
-            .status_symbols
-            .as_ref()
-            .map(format_raw_symbols)
-            .filter(|s| !s.is_empty());
+        let symbols = Some(format_raw_symbols(&item.status_symbols)).filter(|s| !s.is_empty());
 
         // Per-branch vars data (pre-fetched, moved out to avoid cloning)
         let vars = item
@@ -393,25 +391,26 @@ fn upstream_to_json(upstream: &UpstreamStatus, branch: &Option<String>) -> Optio
 /// Extract worktree state and reason from WorktreeData
 fn worktree_state_to_json(
     data: &super::model::WorktreeData,
-    status_symbols: Option<&super::model::StatusSymbols>,
+    status_symbols: &super::model::StatusSymbols,
 ) -> (Option<&'static str>, Option<String>) {
     use super::model::WorktreeState;
 
-    // Check status symbols for worktree state
-    if let Some(symbols) = status_symbols {
-        match symbols.worktree_state {
-            WorktreeState::None => {}
-            WorktreeState::Branch => return (Some("no_worktree"), None),
-            WorktreeState::BranchWorktreeMismatch => {
-                return (Some("branch_worktree_mismatch"), None);
-            }
-            WorktreeState::Prunable => return (Some("prunable"), data.prunable.clone()),
-            WorktreeState::Locked => return (Some("locked"), data.locked.clone()),
+    // Check status symbols for worktree state. `None` means gate 2
+    // (metadata family) hasn't been populated yet; fall through to the
+    // direct-field fallback below.
+    match status_symbols.worktree_state {
+        None | Some(WorktreeState::None) => {}
+        Some(WorktreeState::Branch) => return (Some("no_worktree"), None),
+        Some(WorktreeState::BranchWorktreeMismatch) => {
+            return (Some("branch_worktree_mismatch"), None);
         }
+        Some(WorktreeState::Prunable) => return (Some("prunable"), data.prunable.clone()),
+        Some(WorktreeState::Locked) => return (Some("locked"), data.locked.clone()),
     }
 
-    // Fallback: check direct fields when status_symbols is None
-    // This can happen early in progressive rendering before status is computed
+    // Fallback: check direct fields when status_symbols hasn't resolved
+    // worktree_state yet. This can happen early in progressive rendering
+    // before status is computed.
     if data.is_prunable() {
         return (Some("prunable"), data.prunable.clone());
     }
@@ -433,41 +432,54 @@ impl From<&PrStatus> for JsonCi {
     }
 }
 
-/// Format status symbols as raw characters (no ANSI codes)
+/// Format status symbols as raw characters (no ANSI codes).
+///
+/// Unresolved gates (`None` fields) contribute nothing — their symbols are
+/// simply absent from the output string, not replaced by a placeholder.
+/// This matches the per-symbol atomic model: machine consumers see only the
+/// symbols that have been computed so far.
 fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
     let mut result = String::new();
 
-    // Working tree symbols
-    let wt_symbols = symbols.working_tree.to_symbols();
-    if !wt_symbols.is_empty() {
-        result.push_str(&wt_symbols);
+    // Working tree symbols (gate 1)
+    if let Some(wt) = symbols.working_tree {
+        result.push_str(&wt.to_symbols());
     }
 
-    // Main state (merged: ^✗_⊂↕↑↓)
-    let main_state = symbols.main_state.to_string();
-    if !main_state.is_empty() {
-        result.push_str(&main_state);
-    }
-
-    // Upstream divergence
-    let upstream_div = symbols.upstream_divergence.symbol();
-    if !upstream_div.is_empty() {
-        result.push_str(upstream_div);
-    }
-
-    // Worktree state (operations ✘⤴⤵ take priority over location /⚑⊟⊞)
-    let op_state = symbols.operation_state.to_string();
-    if !op_state.is_empty() {
-        result.push_str(&op_state);
-    } else {
-        let wt_state = symbols.worktree_state.to_string();
-        if !wt_state.is_empty() {
-            result.push_str(&wt_state);
+    // Main state (gate 3) — merged column: ^✗_⊂↕↑↓
+    if let Some(ms) = symbols.main_state {
+        let s = ms.to_string();
+        if !s.is_empty() {
+            result.push_str(&s);
         }
     }
 
-    // User marker
-    if let Some(ref marker) = symbols.user_marker {
+    // Upstream divergence (gate 4)
+    if let Some(div) = symbols.upstream_divergence {
+        let s = div.symbol();
+        if !s.is_empty() {
+            result.push_str(s);
+        }
+    }
+
+    // Worktree state (gate 2) — operations (✘⤴⤵) take priority over
+    // location (/⚑⊟⊞). Gate 2 is "operation_state is Some"; the metadata
+    // worktree_state is filled synchronously and always Some by the time
+    // the operation family is known.
+    if let Some(op) = symbols.operation_state {
+        let s = op.to_string();
+        if !s.is_empty() {
+            result.push_str(&s);
+        } else if let Some(wt_state) = symbols.worktree_state {
+            let s = wt_state.to_string();
+            if !s.is_empty() {
+                result.push_str(&s);
+            }
+        }
+    }
+
+    // User marker (gate 5)
+    if let Some(Some(ref marker)) = symbols.user_marker {
         result.push_str(marker);
     }
 
@@ -629,7 +641,10 @@ mod tests {
             locked: None,
             prunable: None,
             working_tree_diff: None,
-            git_operation: ActiveGitOperation::None,
+            working_tree_status: None,
+            has_conflicts: None,
+            has_working_tree_conflicts: None,
+            git_operation: Some(ActiveGitOperation::None),
             branch_worktree_mismatch: false,
             working_diff_display: None,
         }
@@ -637,12 +652,12 @@ mod tests {
 
     fn make_status_symbols_with_worktree_state(state: WorktreeState) -> StatusSymbols {
         StatusSymbols {
-            working_tree: WorkingTreeStatus::default(),
-            worktree_state: state,
-            main_state: MainState::None,
-            operation_state: OperationState::None,
-            upstream_divergence: Divergence::None,
-            user_marker: None,
+            working_tree: Some(WorkingTreeStatus::default()),
+            worktree_state: Some(state),
+            main_state: Some(MainState::None),
+            operation_state: Some(OperationState::None),
+            upstream_divergence: Some(Divergence::None),
+            user_marker: Some(None),
         }
     }
 
@@ -650,7 +665,7 @@ mod tests {
     fn test_worktree_state_to_json_none() {
         let data = make_worktree_data();
         let symbols = make_status_symbols_with_worktree_state(WorktreeState::None);
-        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert!(state.is_none());
         assert!(reason.is_none());
     }
@@ -659,7 +674,7 @@ mod tests {
     fn test_worktree_state_to_json_no_worktree() {
         let data = make_worktree_data();
         let symbols = make_status_symbols_with_worktree_state(WorktreeState::Branch);
-        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("no_worktree"));
         assert!(reason.is_none());
     }
@@ -669,7 +684,7 @@ mod tests {
         let data = make_worktree_data();
         let symbols =
             make_status_symbols_with_worktree_state(WorktreeState::BranchWorktreeMismatch);
-        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("branch_worktree_mismatch"));
         assert!(reason.is_none());
     }
@@ -679,7 +694,7 @@ mod tests {
         let mut data = make_worktree_data();
         data.locked = Some("manual lock".to_string());
         let symbols = make_status_symbols_with_worktree_state(WorktreeState::Locked);
-        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("locked"));
         assert_eq!(reason, Some("manual lock".to_string()));
     }
@@ -689,7 +704,7 @@ mod tests {
         let mut data = make_worktree_data();
         data.prunable = Some("gitdir file missing".to_string());
         let symbols = make_status_symbols_with_worktree_state(WorktreeState::Prunable);
-        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("prunable"));
         assert_eq!(reason, Some("gitdir file missing".to_string()));
     }
@@ -698,8 +713,9 @@ mod tests {
     fn test_worktree_state_to_json_fallback_prunable() {
         let mut data = make_worktree_data();
         data.prunable = Some("missing gitdir".to_string());
-        // No status symbols provided - fallback to data fields
-        let (state, reason) = worktree_state_to_json(&data, None);
+        // Default status symbols — fallback to data fields
+        let symbols = StatusSymbols::default();
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("prunable"));
         assert_eq!(reason, Some("missing gitdir".to_string()));
     }
@@ -708,7 +724,8 @@ mod tests {
     fn test_worktree_state_to_json_fallback_locked() {
         let mut data = make_worktree_data();
         data.locked = Some("in use".to_string());
-        let (state, reason) = worktree_state_to_json(&data, None);
+        let symbols = StatusSymbols::default();
+        let (state, reason) = worktree_state_to_json(&data, &symbols);
         assert_eq!(state, Some("locked"));
         assert_eq!(reason, Some("in use".to_string()));
     }
@@ -726,38 +743,43 @@ mod tests {
     #[test]
     fn test_format_raw_symbols_each_category() {
         let working_tree = format_raw_symbols(&StatusSymbols {
-            working_tree: WorkingTreeStatus::new(true, true, true, false, false),
+            working_tree: Some(WorkingTreeStatus::new(true, true, true, false, false)),
             ..Default::default()
         });
         assert_snapshot!(working_tree, @"+!?");
 
         let main_state = format_raw_symbols(&StatusSymbols {
-            main_state: MainState::Ahead,
+            main_state: Some(MainState::Ahead),
             ..Default::default()
         });
         assert_snapshot!(main_state, @"↑");
 
         let upstream = format_raw_symbols(&StatusSymbols {
-            upstream_divergence: Divergence::Behind,
+            upstream_divergence: Some(Divergence::Behind),
             ..Default::default()
         });
         assert_snapshot!(upstream, @"⇣");
 
         // Operation state takes priority over worktree state
         let operation = format_raw_symbols(&StatusSymbols {
-            operation_state: OperationState::Rebase,
+            operation_state: Some(OperationState::Rebase),
             ..Default::default()
         });
         assert_snapshot!(operation, @"⤴");
 
+        // Worktree metadata renders only once the operation-family gate
+        // has resolved to "no operation" — otherwise we can't rule out
+        // ✘⤴⤵ taking priority. Callers that want just the metadata
+        // symbol must set both `operation_state` and `worktree_state`.
         let worktree = format_raw_symbols(&StatusSymbols {
-            worktree_state: WorktreeState::Locked,
+            operation_state: Some(OperationState::None),
+            worktree_state: Some(WorktreeState::Locked),
             ..Default::default()
         });
         assert_snapshot!(worktree, @"⊞");
 
         let marker = format_raw_symbols(&StatusSymbols {
-            user_marker: Some("\u{1f525}".to_string()),
+            user_marker: Some(Some("\u{1f525}".to_string())),
             ..Default::default()
         });
         assert_snapshot!(marker, @"🔥");
@@ -766,9 +788,9 @@ mod tests {
     #[test]
     fn test_format_raw_symbols_combined() {
         let result = format_raw_symbols(&StatusSymbols {
-            working_tree: WorkingTreeStatus::new(true, false, false, false, false),
-            main_state: MainState::Behind,
-            upstream_divergence: Divergence::Ahead,
+            working_tree: Some(WorkingTreeStatus::new(true, false, false, false, false)),
+            main_state: Some(MainState::Behind),
+            upstream_divergence: Some(Divergence::Ahead),
             ..Default::default()
         });
         assert_snapshot!(result, @"+↓⇡");

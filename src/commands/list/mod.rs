@@ -223,11 +223,12 @@ impl SummaryMetrics {
         if let Some(_data) = item.worktree_data() {
             self.worktrees += 1;
             // Use status_symbols.working_tree which includes untracked files,
-            // not just working_tree_diff which only has tracked changes
+            // not just working_tree_diff which only has tracked changes.
+            // `None` means gate 1 hasn't resolved yet — don't count.
             if item
                 .status_symbols
-                .as_ref()
-                .is_some_and(|s| s.working_tree.is_dirty())
+                .working_tree
+                .is_some_and(|wt| wt.is_dirty())
             {
                 self.dirty_worktrees += 1;
             }
