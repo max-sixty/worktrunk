@@ -124,8 +124,8 @@ fn test_sync_dirty_worktree_aborts(mut repo: TestRepo) {
     // Advance main so there's something to sync
     repo.commit("advance main");
 
-    // Make pr1 dirty
-    std::fs::write(pr1.join("dirty.txt"), "uncommitted").unwrap();
+    // Make pr1 dirty (modify a tracked file — untracked files don't block rebase)
+    std::fs::write(pr1.join("pr1.txt"), "modified content").unwrap();
 
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "sync", &[], Some(&pr1)));
 }

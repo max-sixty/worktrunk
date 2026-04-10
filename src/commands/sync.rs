@@ -603,12 +603,14 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Pre-check: ensure all participating worktrees are clean
+    // Pre-check: ensure all participating worktrees have no tracked changes.
+    // Untracked files are safe — git rebase doesn't touch them.
     let mut dirty_branches = Vec::new();
     for &branch in &branches_to_sync {
         if let Some(node) = tree.nodes.get(branch) {
             let wt = repo.worktree_at(&node.path);
-            if wt.is_dirty()? {
+            let stdout = wt.run_command(&["status", "--porcelain", "-uno"])?;
+            if !stdout.trim().is_empty() {
                 dirty_branches.push(branch);
             }
         }
