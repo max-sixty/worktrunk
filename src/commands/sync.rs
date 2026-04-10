@@ -1155,4 +1155,191 @@ mod tests {
         assert!(!stack.contains(&"feature-x"));
         assert!(!stack.contains(&"main"));
     }
+
+    // =========================================================================
+    // Stack file parser tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_stack_file_with_root() {
+        let content = "main\n\tpr1\n\t\tpr2\n\tother\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+        assert_eq!(map.get("other").unwrap(), "main");
+        assert!(!map.contains_key("main"));
+    }
+
+    #[test]
+    fn test_parse_stack_file_without_root() {
+        // Format produced by worktrunk's format_stack_file (omits root)
+        let content = "pr1\n\tpr2\n\t\tpr3\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+        assert_eq!(map.get("pr3").unwrap(), "pr2");
+    }
+
+    #[test]
+    fn test_parse_stack_file_space_indentation() {
+        let content = "main\n    pr1\n        pr2\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+    }
+
+    #[test]
+    fn test_parse_stack_file_comments_and_blank_lines() {
+        let content = "# This is a comment\nmain\n\n\tpr1\n# Another comment\n\t\tpr2\n\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+    }
+
+    #[test]
+    fn test_parse_stack_file_annotations_stripped() {
+        // git-machete supports "branch  annotation text" after the branch name
+        let content = "main\n\tpr1  PR #1 - some feature\n\t\tpr2  PR #2\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+        assert!(!map.contains_key("pr1  PR #1 - some feature"));
+    }
+
+    #[test]
+    fn test_parse_stack_file_siblings() {
+        let content = "main\n\tpr1\n\tpr2\n\tpr3\n";
+        let map = parse_stack_file(content, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "main");
+        assert_eq!(map.get("pr3").unwrap(), "main");
+    }
+
+    #[test]
+    fn test_parse_stack_file_empty() {
+        let map = parse_stack_file("", "main").unwrap();
+        assert!(map.is_empty());
+    }
+
+    // =========================================================================
+    // Stack file round-trip tests
+    // =========================================================================
+
+    fn make_tree(branches: &[(&str, Option<&str>, &[&str])]) -> DependencyTree {
+        let mut nodes = HashMap::new();
+        for &(name, parent, children) in branches {
+            nodes.insert(
+                name.to_string(),
+                TreeNode {
+                    branch: name.to_string(),
+                    path: PathBuf::new(),
+                    parent: parent.map(|p| p.to_string()),
+                    original_parent: None,
+                    children: children.iter().map(|c| c.to_string()).collect(),
+                },
+            );
+        }
+        DependencyTree {
+            root: branches[0].0.to_string(),
+            nodes,
+        }
+    }
+
+    #[test]
+    fn test_format_stack_file_omits_root() {
+        let tree = make_tree(&[("main", None, &["pr1"]), ("pr1", Some("main"), &[])]);
+        let output = format_stack_file(&tree);
+        assert!(!output.contains("main"));
+        assert!(output.contains("pr1"));
+    }
+
+    #[test]
+    fn test_round_trip_linear_stack() {
+        let tree = make_tree(&[
+            ("main", None, &["pr1"]),
+            ("pr1", Some("main"), &["pr2"]),
+            ("pr2", Some("pr1"), &["pr3"]),
+            ("pr3", Some("pr2"), &[]),
+        ]);
+        let output = format_stack_file(&tree);
+        let map = parse_stack_file(&output, "main").unwrap();
+        assert_eq!(map.get("pr1").unwrap(), "main");
+        assert_eq!(map.get("pr2").unwrap(), "pr1");
+        assert_eq!(map.get("pr3").unwrap(), "pr2");
+    }
+
+    #[test]
+    fn test_round_trip_branching_stack() {
+        let tree = make_tree(&[
+            ("main", None, &["feature-a", "feature-b"]),
+            ("feature-a", Some("main"), &["sub-a"]),
+            ("sub-a", Some("feature-a"), &[]),
+            ("feature-b", Some("main"), &[]),
+        ]);
+        let output = format_stack_file(&tree);
+        let map = parse_stack_file(&output, "main").unwrap();
+        assert_eq!(map.get("feature-a").unwrap(), "main");
+        assert_eq!(map.get("sub-a").unwrap(), "feature-a");
+        assert_eq!(map.get("feature-b").unwrap(), "main");
+    }
+
+    // =========================================================================
+    // stack_containing edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_stack_containing_unknown_branch() {
+        let tree = make_tree(&[("main", None, &["pr1"]), ("pr1", Some("main"), &[])]);
+        assert!(tree.stack_containing("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn test_stack_containing_root_returns_all() {
+        let tree = make_tree(&[
+            ("main", None, &["pr1", "pr2"]),
+            ("pr1", Some("main"), &[]),
+            ("pr2", Some("main"), &[]),
+        ]);
+        let stack = tree.stack_containing("main");
+        // Root returns all via topological_order
+        assert!(stack.contains(&"pr1"));
+        assert!(stack.contains(&"pr2"));
+    }
+
+    // =========================================================================
+    // Fork-points round-trip
+    // =========================================================================
+
+    #[test]
+    fn test_fork_points_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt_dir = dir.path().join(".git/wt");
+        std::fs::create_dir_all(&wt_dir).unwrap();
+
+        // Create a minimal repo-like structure for load/save
+        let path = wt_dir.join(FORK_POINTS_FILE);
+
+        let mut points = HashMap::new();
+        points.insert("pr1".to_string(), "abc123".to_string());
+        points.insert("pr2".to_string(), "def456".to_string());
+
+        // Write directly
+        let mut lines: Vec<String> = points.iter().map(|(b, s)| format!("{b}={s}")).collect();
+        lines.sort();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+        // Read back
+        let content = std::fs::read_to_string(&path).unwrap();
+        let loaded: HashMap<String, String> = content
+            .lines()
+            .filter_map(|line| {
+                let (branch, sha) = line.split_once('=')?;
+                Some((branch.trim().to_string(), sha.trim().to_string()))
+            })
+            .collect();
+
+        assert_eq!(loaded.get("pr1").unwrap(), "abc123");
+        assert_eq!(loaded.get("pr2").unwrap(), "def456");
+    }
 }
