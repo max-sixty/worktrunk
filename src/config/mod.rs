@@ -101,10 +101,10 @@ pub use project::{
 };
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, SyncConfig,
-    UserConfig, UserProjectOverrides, config_path, default_config_path, default_system_config_path,
-    find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
-    valid_user_config_keys,
+    OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
+    SyncConfig, UserConfig, UserProjectOverrides, config_path, default_config_path,
+    default_system_config_path, find_unknown_keys as find_unknown_user_keys, set_config_path,
+    system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]

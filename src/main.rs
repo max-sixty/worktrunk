@@ -46,18 +46,17 @@ use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{BranchDeletionMode, handle_no_ff_merge, handle_push};
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SyncOptions,
-    SwitchOptions, add_approvals, clear_approvals, handle_claude_install,
+    MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
+    SyncOptions, add_approvals, clear_approvals, handle_claude_install,
     handle_claude_install_statusline, handle_claude_uninstall, handle_completions,
     handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
     handle_hints_clear, handle_hints_get, handle_hook_show, handle_init, handle_list,
-    handle_logs_get, handle_merge, handle_sync,
-    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    handle_logs_get, handle_merge, handle_opencode_install, handle_opencode_uninstall,
+    handle_promote, handle_rebase, handle_show_theme, handle_squash, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show, handle_switch,
+    handle_sync, handle_unconfigure_shell, handle_vars_clear, handle_vars_get, handle_vars_list,
+    handle_vars_set, resolve_worktree_arg, run_hook, step_commit, step_copy_ignored, step_diff,
+    step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 
@@ -65,8 +64,8 @@ use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SyncArgs,
-    SwitchFormat, VarsAction,
+    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
+    SyncArgs, VarsAction,
 };
 use worktrunk::HookType;
 

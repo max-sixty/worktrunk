@@ -290,8 +290,8 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
     // Parse stack file once (used for parent detection, integration checks, and reparenting)
     let stack_file_path = repo.wt_dir().join(STACK_FILE);
     let explicit_parents: HashMap<String, String> = if stack_file_path.exists() {
-        let content = std::fs::read_to_string(&stack_file_path)
-            .context("Failed to read stack file")?;
+        let content =
+            std::fs::read_to_string(&stack_file_path).context("Failed to read stack file")?;
         parse_stack_file(&content, &default_branch)?
     } else {
         HashMap::new()
@@ -419,8 +419,7 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
             }
 
             if tie_candidates.len() > 1 {
-                let mb_shas: Vec<&str> =
-                    tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
+                let mb_shas: Vec<&str> = tie_candidates.iter().map(|(_, mb)| mb.as_str()).collect();
                 let timestamps = repo.commit_timestamps(&mb_shas)?;
 
                 let mut best_ts = i64::MIN;
@@ -567,10 +566,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
 
     // Fetch from remote if requested
     if opts.fetch {
-        eprintln!(
-            "{}",
-            progress_message(cformat!("Fetching from remote..."))
-        );
+        eprintln!("{}", progress_message(cformat!("Fetching from remote...")));
         repo.run_command(&["fetch", "--prune"])
             .context("git fetch failed")?;
         eprintln!("{}", success_message("Fetch complete"));
@@ -676,10 +672,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
         let Some(mb) = repo.merge_base(parent, branch)? else {
             continue;
         };
-        let parent_sha = repo
-            .run_command(&["rev-parse", parent])?
-            .trim()
-            .to_string();
+        let parent_sha = repo.run_command(&["rev-parse", parent])?.trim().to_string();
 
         if mb == parent_sha {
             skipped_count += 1;
@@ -787,18 +780,10 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
                 "{}",
                 progress_message(cformat!("Pushing <bold>{branch}</>..."))
             );
-            let result = repo.run_command(&[
-                "push",
-                "--force-with-lease",
-                "origin",
-                branch,
-            ]);
+            let result = repo.run_command(&["push", "--force-with-lease", "origin", branch]);
             match result {
                 Ok(_) => {
-                    eprintln!(
-                        "{}",
-                        success_message(cformat!("Pushed <bold>{branch}</>"))
-                    );
+                    eprintln!("{}", success_message(cformat!("Pushed <bold>{branch}</>")));
                 }
                 Err(e) => {
                     eprintln!(
@@ -824,11 +809,7 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             );
             // Remove the worktree (without --force to avoid silent data loss
             // if the worktree has untracked files)
-            let result = repo.run_command(&[
-                "worktree",
-                "remove",
-                &path.to_string_lossy(),
-            ]);
+            let result = repo.run_command(&["worktree", "remove", &path.to_string_lossy()]);
             if let Err(e) = result {
                 eprintln!(
                     "{}",
