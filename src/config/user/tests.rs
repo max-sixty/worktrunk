@@ -2501,8 +2501,7 @@ fn test_reload_projects_from_permission_error() {
 
 #[test]
 fn test_load_error_display_file() {
-    let toml_err = toml::from_str::<OverridableConfig>("[list]\nbranches = \"bad\"\n")
-        .unwrap_err();
+    let toml_err = toml::from_str::<OverridableConfig>("[list]\nbranches = \"bad\"\n").unwrap_err();
     let err = LoadError::File {
         path: std::path::PathBuf::from("/tmp/config.toml"),
         label: "User config",
