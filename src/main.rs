@@ -1012,34 +1012,10 @@ fn handle_sync_command(args: SyncArgs) -> anyhow::Result<()> {
     let resolved = env.resolved();
 
     // CLI flags override config values
-    let all = if args.stack {
-        false
-    } else if args.all {
-        true
-    } else {
-        resolved.sync.all()
-    };
-    let fetch = if args.fetch {
-        true
-    } else if args.no_fetch {
-        false
-    } else {
-        resolved.sync.fetch()
-    };
-    let push = if args.push {
-        true
-    } else if args.no_push {
-        false
-    } else {
-        resolved.sync.push()
-    };
-    let prune = if args.prune {
-        true
-    } else if args.no_prune {
-        false
-    } else {
-        resolved.sync.prune()
-    };
+    let all = flag_pair(args.all, args.stack).unwrap_or_else(|| resolved.sync.all());
+    let fetch = flag_pair(args.fetch, args.no_fetch).unwrap_or_else(|| resolved.sync.fetch());
+    let push = flag_pair(args.push, args.no_push).unwrap_or_else(|| resolved.sync.push());
+    let prune = flag_pair(args.prune, args.no_prune).unwrap_or_else(|| resolved.sync.prune());
 
     handle_sync(SyncOptions {
         fetch,
