@@ -4,4 +4,4 @@ expression: "&output.combined"
 ---
 
 [31m✗[39m [31m'[36m[1mfoo[39m[22m' is not a wt command[39m
-[2m↳[22m [2mfor more information, try '[36m[1mwt --help[39m[22m'[22m
+[2m↳[22m [2mFor more information, try '[36m[1mwt --help[39m[22m'.[22m

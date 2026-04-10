@@ -138,10 +138,11 @@ fn print_not_found(name: &str, cli_cmd: &clap::Command) {
     eprintln!("{}", hint_message(help_hint()));
 }
 
-/// The "try `wt --help`" tail shared by both unrecognized-subcommand branches.
-/// Mirrors the suggestion clap emitted before we took over this error path.
+/// The "For more information, try `wt --help`" tail shared by both
+/// unrecognized-subcommand branches. Mirrors the suggestion clap emitted
+/// before we took over this error path.
 fn help_hint() -> String {
-    cformat!("for more information, try '<cyan,bold>wt --help</>'")
+    cformat!("For more information, try '<cyan,bold>wt --help</>'.")
 }
 
 /// Return the closest visible built-in subcommand name by Levenshtein distance,

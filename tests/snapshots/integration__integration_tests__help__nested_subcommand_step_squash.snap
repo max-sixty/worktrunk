@@ -33,4 +33,4 @@ exit_code: 2
 ----- stderr -----
 [31m✗[39m [31munrecognized subcommand '[36m[1msquash[39m[22m'[39m
 [2m↳[22m [2mperhaps [36m[1mwt step squash[39m[22m?[22m
-[2m↳[22m [2mfor more information, try '[36m[1mwt --help[39m[22m'[22m
+[2m↳[22m [2mFor more information, try '[36m[1mwt --help[39m[22m'.[22m
