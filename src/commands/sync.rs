@@ -845,10 +845,24 @@ pub fn handle_sync(opts: SyncOptions) -> anyhow::Result<()> {
             // Check for upstream before deleting the local branch
             let has_upstream = repo.branch(branch).upstream()?.is_some();
             // Delete the local branch
-            let _ = repo.run_command(&["branch", "-D", branch]);
+            if let Err(e) = repo.run_command(&["branch", "-D", branch]) {
+                eprintln!(
+                    "{}",
+                    worktrunk::styling::warning_message(cformat!(
+                        "Failed to delete local branch <bold>{branch}</>: {e}"
+                    ))
+                );
+            }
             // Delete remote branch if it had an upstream
             if has_upstream {
-                let _ = repo.run_command(&["push", "origin", "--delete", branch]);
+                if let Err(e) = repo.run_command(&["push", "origin", "--delete", branch]) {
+                    eprintln!(
+                        "{}",
+                        worktrunk::styling::warning_message(cformat!(
+                            "Failed to delete remote branch <bold>{branch}</>: {e}"
+                        ))
+                    );
+                }
             }
             eprintln!(
                 "{}",
