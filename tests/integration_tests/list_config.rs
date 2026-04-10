@@ -1,33 +1,24 @@
 //! Tests for `wt list` command with user config
 
-use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
-};
+use crate::common::{TestRepo, repo, setup_snapshot_settings, wt_command};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use tempfile::TempDir;
 
 #[rstest]
-fn test_list_config_full_enabled(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with list.full = true
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
+fn test_list_config_full_enabled(repo: TestRepo) {
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 full = true
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -35,28 +26,22 @@ full = true
 }
 
 #[rstest]
-fn test_list_config_branches_enabled(repo: TestRepo, temp_home: TempDir) {
+fn test_list_config_branches_enabled(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
-    // Create user config with list.branches = true
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 branches = true
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -64,28 +49,22 @@ branches = true
 }
 
 #[rstest]
-fn test_list_config_cli_override(repo: TestRepo, temp_home: TempDir) {
+fn test_list_config_cli_override(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
-    // Create user config with list.branches = false (default)
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 branches = false
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         // CLI flag --branches should override config
         cmd.arg("list")
             .arg("--branches")
@@ -96,29 +75,23 @@ branches = false
 }
 
 #[rstest]
-fn test_list_config_full_and_branches(repo: TestRepo, temp_home: TempDir) {
+fn test_list_config_full_and_branches(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
-    // Create user config with both full and branches enabled
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 full = true
 branches = true
 "#,
     )
     .unwrap();
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -126,25 +99,16 @@ branches = true
 }
 
 #[rstest]
-fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
+fn test_list_no_config(repo: TestRepo) {
     // Create a branch without a worktree
     repo.run_git(&["branch", "feature"]);
 
-    // Create minimal user config without list settings
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
+    // No user config — verify defaults are used (branches not shown).
 
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -152,7 +116,7 @@ fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_list_project_url_column(repo: TestRepo, temp_home: TempDir) {
+fn test_list_project_url_column(repo: TestRepo) {
     // Create project config with URL template
     repo.write_project_config(
         r#"[list]
@@ -160,21 +124,10 @@ url = "http://localhost:{{ branch | hash_port }}"
 "#,
     );
 
-    // Create user config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -182,27 +135,16 @@ url = "http://localhost:{{ branch | hash_port }}"
 }
 
 #[rstest]
-fn test_list_json_url_fields(repo: TestRepo, temp_home: TempDir) {
+fn test_list_json_url_fields(repo: TestRepo) {
     // Create project config with URL template
     repo.write_project_config(
         r#"[list]
 url = "http://localhost:{{ branch | hash_port }}"
 "#,
     );
-
-    // Create user config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -227,20 +169,11 @@ url = "http://localhost:{{ branch | hash_port }}"
 }
 
 #[rstest]
-fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
-    // Create user config WITHOUT URL template
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
+fn test_list_json_no_url_without_template(repo: TestRepo) {
+    // No project config means no URL template configured.
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -261,7 +194,7 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
 ///
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
-fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
+fn test_list_url_with_branches_flag(repo: TestRepo) {
     // Remove fixture worktrees and their branches to isolate test (keep only main worktree)
     for branch in &["feature-a", "feature-b", "feature-c"] {
         let worktree_path = repo
@@ -294,19 +227,8 @@ url = "http://localhost:{{ branch | hash_port }}"
 "#,
     );
 
-    // Create user config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--branches", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -340,7 +262,7 @@ url = "http://localhost:{{ branch | hash_port }}"
 }
 
 #[rstest]
-fn test_list_url_with_branch_variable(repo: TestRepo, temp_home: TempDir) {
+fn test_list_url_with_branch_variable(repo: TestRepo) {
     // Create project config with {{ branch }} in URL
     repo.write_project_config(
         r#"[list]
@@ -348,19 +270,8 @@ url = "http://localhost:8080/{{ branch }}"
 "#,
     );
 
-    // Create user config
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());
 
@@ -379,15 +290,10 @@ url = "http://localhost:8080/{{ branch }}"
 /// Test that task-timeout-ms config option is parsed correctly.
 /// We use a very short timeout (1ms) to trigger timeouts.
 #[rstest]
-fn test_list_config_timeout_triggers_timeouts(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with a very short per-task timeout
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
+fn test_list_config_timeout_triggers_timeouts(repo: TestRepo) {
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 task-timeout-ms = 1
 "#,
     )
@@ -395,7 +301,6 @@ task-timeout-ms = 1
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -411,15 +316,10 @@ task-timeout-ms = 1
 
 /// Test that task-timeout-ms = 0 explicitly disables timeout.
 #[rstest]
-fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with task-timeout-ms = 0
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
+fn test_list_config_timeout_zero_means_no_timeout(repo: TestRepo) {
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 task-timeout-ms = 0
 "#,
     )
@@ -427,7 +327,6 @@ task-timeout-ms = 0
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -443,15 +342,10 @@ task-timeout-ms = 0
 
 /// Test that --full disables the task timeout.
 #[rstest]
-fn test_list_config_timeout_disabled_with_full(repo: TestRepo, temp_home: TempDir) {
-    // Create user config with a very short per-task timeout
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
+fn test_list_config_timeout_disabled_with_full(repo: TestRepo) {
     fs::write(
-        global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-
-[projects."repo".list]
+        repo.test_config_path(),
+        r#"[list]
 task-timeout-ms = 1
 "#,
     )
@@ -459,7 +353,6 @@ task-timeout-ms = 1
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--full"]).current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
