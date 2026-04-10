@@ -5,16 +5,16 @@
 //! order. Handles integrated (merged) branches by reparenting their children
 //! with `rebase --onto`.
 //!
-//! Parent detection can be overridden by a stack file (`.git/wt/stack`) that
-//! explicitly defines the branch tree. The format is compatible with git-machete:
-//! indentation-based, one branch per line. When this file exists, it is used
-//! instead of merge-base inference. Use `--save` to persist the inferred tree.
+//! The dependency tree is persisted to a stack file (`.git/wt/stack`) on every
+//! sync. The format is compatible with git-machete: indentation-based, one
+//! branch per line. When this file exists, it is used for parent tracking and
+//! non-default branch integration detection.
 //!
 //! Key behaviors:
 //! - No configuration needed — dependencies are inferred from git history
-//! - Stack file (`.git/wt/stack`) overrides inference when present
-//! - By default, syncs the stack containing the current branch
-//! - `--all` syncs all worktree branches; `--stack` restricts to current stack
+//! - Stack file (`.git/wt/stack`) is auto-created and updated on every sync
+//! - By default, syncs all stacks
+//! - `--stack` restricts to the stack containing the current branch
 //! - `--fetch` / `--push` / `--prune` enable optional phases
 //! - `--dry-run` previews the plan without executing
 //! - Stops on first conflict; user resolves and re-runs
@@ -205,13 +205,6 @@ fn parse_stack_file(
         }
 
         stack.push((indent, branch.to_string()));
-
-        // Validate: first non-default branch at indent 0 is fine (parent = default_branch)
-        if stack.len() == 1 && branch != default_branch && indent == 0 {
-            // Top-level branch — parent is the default branch, which is implicit
-        }
-
-        let _ = line_num; // used for error reporting if needed
     }
 
     Ok(parent_map)
@@ -360,8 +353,8 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
         //
         // Limitation: after syncing + adding a mid-stack commit, the parent
         // branch becomes "diverged" and may lose to the default branch (a
-        // true ancestor). Use `wt sync --save` to persist the tree and avoid
-        // this. See `.git/wt/stack`.
+        // true ancestor). The auto-saved stack file (`.git/wt/stack`) avoids
+        // this by preserving explicit parent relationships across syncs.
         let branch_names: Vec<&str> = branches.iter().map(|(b, _)| b.as_str()).collect();
 
         for (branch, _) in &branches {
@@ -473,8 +466,13 @@ fn build_dependency_tree(repo: &Repository) -> anyhow::Result<SyncPlan> {
                 .get(parent.as_str())
                 .cloned()
                 .unwrap_or_else(|| default_branch.clone());
-            // Keep walking if that ancestor is also integrated
+            // Keep walking if that ancestor is also integrated.
+            // Track visited to prevent infinite loops from cycles in the stack file.
+            let mut visited = std::collections::HashSet::new();
             while integrated.contains_key(new_parent.as_str()) {
+                if !visited.insert(new_parent.clone()) {
+                    break; // cycle detected, fall through to current new_parent
+                }
                 new_parent = explicit_parents
                     .get(new_parent.as_str())
                     .cloned()

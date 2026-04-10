@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 40
 info:
   program: wt
   args:
@@ -8,7 +9,8 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_PAGER: ""
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -121,7 +123,6 @@ Controls where new worktrees are created.
 
 - [2m{{ repo_path }}[0m — absolute path to the repository root (e.g., [2m/Users/me/code/myproject[0m. Or for bare repos, the bare directory itself)
 - [2m{{ repo }}[0m — repository directory name (e.g., [2mmyproject[0m)
-- [2m{{ owner }}[0m — primary remote owner path (may include subgroups like [2mgroup/subgroup[0m)
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
@@ -139,10 +140,6 @@ Inside the repository ([2m~/code/myproject/.worktrees/feature-auth[0m):
 Centralized worktrees directory ([2m~/worktrees/myproject/feature-auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
-
-By remote owner path ([2m~/development/max-sixty/myproject/feature/auth[0m):
-
-[107m [0m [2mworktree-path = [0m[2m[32m"~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 
 Bare repository ([2m~/code/myproject/feature-auth[0m):
 
@@ -215,6 +212,14 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2mremove = [0m[2m[33mtrue[0m[2m      [0m[2m# Remove worktree after merge (--no-remove to keep)[0m
 [107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2mff = [0m[2m[33mtrue[0m[2m          [0m[2m# Fast-forward merge (--no-ff to create a merge commit instead)[0m
+
+[32mSync[0m
+
+[107m [0m [2m[36m[sync][0m
+[107m [0m [2mfetch = [0m[2m[33mfalse[0m[2m    [0m[2m# Fetch from remote before syncing[0m
+[107m [0m [2mpush = [0m[2m[33mfalse[0m[2m     [0m[2m# Force-push rebased branches after syncing[0m
+[107m [0m [2mprune = [0m[2m[33mfalse[0m[2m    [0m[2m# Remove integrated worktrees after syncing[0m
+[107m [0m [2mall = [0m[2m[33mtrue[0m[2m       [0m[2m# Sync all stacks (false = current stack only)[0m
 
 [32mSwitch[0m
 

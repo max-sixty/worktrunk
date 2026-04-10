@@ -476,7 +476,7 @@ pub(crate) struct SyncArgs {
     #[arg(long = "no-push", conflicts_with = "push")]
     pub(crate) no_push: bool,
 
-    /// Remove integrated worktrees after syncing
+    /// Remove integrated worktrees and their remote branches
     #[arg(long)]
     pub(crate) prune: bool,
 
