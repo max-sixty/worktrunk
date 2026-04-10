@@ -559,6 +559,22 @@ fn test_list_config_malformed_non_section_field_warns_on_stderr(repo: TestRepo) 
     });
 }
 
+/// Validation errors (e.g. empty worktree-path) are neither file parse
+/// errors nor env-var errors — they fire after successful deserialization.
+#[rstest]
+fn test_list_config_validation_error_warns_on_stderr(repo: TestRepo) {
+    fs::write(repo.test_config_path(), "worktree-path = \"\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// System config parse errors are attributed to the system config file,
 /// not the user config or env vars.
 #[rstest]
