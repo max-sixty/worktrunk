@@ -99,7 +99,6 @@ See [Tips & Patterns](https://worktrunk.dev/tips-patterns/) for more recipes: de
 Aliases are custom commands invoked via `wt step <name>`. They share the same template variables and approval model as hooks.
 
 ```toml
-# .config/wt.toml
 [aliases]
 deploy = "make deploy BRANCH={{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
@@ -109,6 +108,19 @@ open = "open http://localhost:{{ branch | hash_port }}"
 $ wt step deploy
 $ wt step deploy --dry-run
 $ wt step deploy --var env=staging
+```
+
+An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
+
+```toml
+[aliases]
+up = '''
+git fetch --all --prune && wt step for-each -- '
+  git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
+  g=$(git rev-parse --git-dir)
+  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git rebase @{u} --no-autostash || git rebase --abort
+''''
 ```
 
 When both user and project config define the same alias name, both run — user first, then project. Project-config aliases require approval, same as project hooks.
