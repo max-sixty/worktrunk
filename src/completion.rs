@@ -46,6 +46,24 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return true;
     }
 
+    // If the subcommand word matches an external binary, forward the completion
+    // request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
+    // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
+    if args.len() >= 3 {
+        let subcommand = args[1].to_string_lossy();
+        let binary = format!("wt-{subcommand}");
+        if which::which(&binary).is_ok() {
+            // Forward args[1..] to the external binary
+            if let Some(forwarded) =
+                forward_completion_to_external(&binary, &args[1..], &shell_name)
+            {
+                let _ = std::io::stdout().write_all(forwarded.as_bytes());
+                CONTEXT.with(|ctx| ctx.borrow_mut().take());
+                return true;
+            }
+        }
+    }
+
     // Generate completions with filtering
     let mut cmd = completion_command();
     cmd.build();
@@ -374,6 +392,7 @@ thread_local! {
 fn completion_command() -> Command {
     let cmd = cli::build_command();
     let cmd = inject_alias_subcommands(cmd);
+    let cmd = inject_external_subcommands(cmd);
     hide_non_positional_options_for_completion(cmd)
 }
 
@@ -463,6 +482,124 @@ fn truncate_template(template: &str) -> &str {
     } else {
         first_line
     }
+}
+
+/// Forward a completion request to an external `wt-*` binary.
+///
+/// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
+/// the `COMPLETE` env var so the external binary generates completions.
+fn forward_completion_to_external(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+) -> Option<String> {
+    // Build args for the external binary: [binary_name, rest_args...]
+    let mut ext_args: Vec<OsString> = vec![OsString::from(binary)];
+    ext_args.extend_from_slice(&args[1..]);
+
+    // Adjust the completion index: subtract 1 since we removed the subcommand name
+    let index = std::env::var("_CLAP_COMPLETE_INDEX")
+        .ok()
+        .and_then(|i| i.parse::<usize>().ok())
+        .map(|i| i.saturating_sub(1));
+
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("--");
+    cmd.args(&ext_args);
+    cmd.env("COMPLETE", shell);
+    cmd.env(
+        "_CLAP_IFS",
+        std::env::var("_CLAP_IFS").unwrap_or_else(|_| "\n".to_string()),
+    );
+    if let Some(idx) = index {
+        cmd.env("_CLAP_COMPLETE_INDEX", idx.to_string());
+    }
+
+    // Capture stdout from the external binary. Using std::process::Command
+    // directly (not shell_exec::Cmd) because this runs during completion —
+    // a short-lived subprocess where logging/tracing is unwanted.
+    let result = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?
+        .wait_with_output()
+        .ok()?;
+    if result.status.success() {
+        String::from_utf8(result.stdout).ok()
+    } else {
+        None
+    }
+}
+
+/// Discover `wt-*` executables on PATH and inject them as subcommands for completion.
+///
+/// This mirrors git's approach: `wt sync` dispatches to `wt-sync`, and completions
+/// should show `sync` as a subcommand. External subcommands that shadow built-in
+/// commands are skipped (built-ins always take precedence at runtime).
+fn inject_external_subcommands(cmd: Command) -> Command {
+    let externals = discover_external_subcommands();
+    if externals.is_empty() {
+        return cmd;
+    }
+
+    let mut cmd = cmd;
+    for name in externals {
+        // Skip if a built-in subcommand with this name already exists
+        if cmd.get_subcommands().any(|s| s.get_name() == name) {
+            continue;
+        }
+        // Leak is fine: completion is a short-lived subprocess that exits after
+        // printing candidates (same pattern as inject_alias_subcommands).
+        let name: &'static str = Box::leak(name.into_boxed_str());
+        let about: &'static str = Box::leak(format!("external: wt-{name}").into_boxed_str());
+        let sub = Command::new(name)
+            .about(about)
+            .allow_external_subcommands(true);
+        cmd = cmd.subcommand(sub);
+    }
+    cmd
+}
+
+/// Find `wt-*` executables on PATH, returning their subcommand names (without the `wt-` prefix).
+fn discover_external_subcommands() -> Vec<String> {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    for dir in std::env::split_paths(&path_var) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if let Some(subcommand) = name.strip_prefix("wt-")
+                && !subcommand.is_empty()
+                && seen.insert(subcommand.to_string())
+            {
+                // Verify it's executable (on Unix)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = entry.metadata()
+                        && meta.permissions().mode() & 0o111 == 0
+                    {
+                        continue;
+                    }
+                }
+                result.push(subcommand.to_string());
+            }
+        }
+    }
+
+    result.sort();
+    result
 }
 
 /// Hide non-positional options so they're filtered out when positional/subcommand
