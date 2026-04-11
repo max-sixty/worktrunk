@@ -791,8 +791,13 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Logs
+    // Git commands cache (probe cache)
     let git_dir = repo.root_path().join(".git");
+    let probe_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&probe_dir).unwrap();
+    std::fs::write(probe_dir.join("abc123-def456.json"), "true").unwrap();
+
+    // Logs
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
@@ -807,6 +812,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     [32m✓[39m [32mCleared previous branch[39m
     [32m✓[39m [32mCleared [1m1[22m marker[39m
     [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m variable[39m
     [32m✓[39m [32mCleared [1m1[22m log file[39m
     ");

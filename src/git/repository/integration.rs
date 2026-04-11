@@ -415,7 +415,7 @@ impl Repository {
 
     /// Resolve a ref to its commit SHA (cached).
     ///
-    /// Unlike [`rev_parse_tree`], this returns the commit SHA rather than the
+    /// Unlike [`Self::rev_parse_tree`], this returns the commit SHA rather than the
     /// tree SHA. Used by the persistent `probe_cache` to convert ref names into
     /// stable SHA-based cache keys before looking up cached merge-tree results.
     pub(super) fn rev_parse_commit(&self, r: &str) -> anyhow::Result<String> {
