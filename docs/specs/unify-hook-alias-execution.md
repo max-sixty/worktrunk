@@ -18,11 +18,11 @@ Three consumers of shell execution exist today:
 
 ## End state
 
-A single leaf execution function replaces both `execute_command_in_worktree` and
-`run_command_streaming`. All three consumers call it.
+A single leaf execution function (`execute_shell_command`) replaces both
+`execute_command_in_worktree` and `run_command_streaming`. All three consumers call it.
 
 ```
-execute_command_in_worktree(options)
+execute_shell_command(working_dir, command, stdin, label, directive_file)
 ├── Hooks (foreground pre-*, post-* with --foreground)
 ├── Aliases (wt step <name>)
 └── for-each (wt step for-each)
@@ -41,17 +41,6 @@ redirects to log files and runs detached from the terminal.
 | Pipeline steps (serial + concurrent) | Hooks only | Hooks + aliases |
 | Lazy `vars.*` expansion | Hooks only | Hooks + aliases |
 | Directive file pass-through | Aliases only | Foreground hooks + aliases |
-
-### Leaf executor interface
-
-```rust
-struct CommandExecOptions<'a> {
-    working_dir: &'a Path,
-    stdin_json: Option<&'a str>,
-    directive_file: Option<&'a Path>,  // None = scrub env var
-    command_log_label: Option<&'a str>,
-}
-```
 
 ## Decisions
 
@@ -73,17 +62,17 @@ worktree (currently drops the `cd`).
 Alias runs do not log to `.git/wt/logs/`. Logging exists for background hooks where
 output is invisible. Aliases are always foreground — the user sees output directly.
 
-### Announcements: separate format, aliases gain pipeline summary
+### Announcements: separate format
 
 Hooks and aliases keep distinct announcement styles:
 
 ```
 Hook:    Running post-merge user:foo @ /path
-Alias:   Running alias deploy: install; build, lint
+Alias:   Running alias deploy
 ```
 
-When aliases gain pipeline support, the announcement shows the pipeline structure so the
-user sees what's about to run.
+Follow-up: alias announcements could show pipeline summary (e.g.,
+`Running alias deploy: install; build, lint`) now that aliases support pipelines.
 
 ### `for-each`: unified leaf executor
 
