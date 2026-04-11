@@ -2149,6 +2149,16 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
         action: ConfigCommand,
     },
 
+    /// Internal subcommands invoked by other `wt` commands.
+    ///
+    /// Hidden from help. Used by the picker to spawn a detached cache-warming
+    /// process — never invoked directly by users.
+    #[command(hide = true)]
+    Internal {
+        #[command(subcommand)]
+        action: InternalCommand,
+    },
+
     /// Run an external `wt-<name>` command found on PATH.
     ///
     /// Captured by clap when the first positional argument doesn't match any
@@ -2156,4 +2166,17 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
     /// the rest are the arguments to pass through. See `commands::external`.
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+/// Internal subcommands. Hidden from `wt --help`.
+#[derive(Subcommand)]
+pub(crate) enum InternalCommand {
+    /// Run all expensive collect tasks against the current repo, populating
+    /// the persistent probe cache as a side effect. Produces no output.
+    ///
+    /// Spawned detached from the picker so subsequent `wt switch` invocations
+    /// see warm caches even when the picker's own task workers were killed
+    /// at process exit.
+    #[command(hide = true, name = "warm-cache")]
+    WarmCache,
 }

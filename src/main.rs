@@ -63,9 +63,9 @@ use output::handle_remove_output;
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
-    VarsAction,
+    HintsAction, HookCommand, InternalCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction,
+    MergeArgs, PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs,
+    SwitchFormat, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -1041,6 +1041,9 @@ fn dispatch_command(
         Commands::Switch(args) => handle_switch_command(args),
         Commands::Remove(args) => handle_remove_command(args),
         Commands::Merge(args) => handle_merge_command(args),
+        Commands::Internal { action } => match action {
+            InternalCommand::WarmCache => commands::handle_warm_cache(),
+        },
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for external
         // subcommands the same way it does for built-ins.

@@ -14,6 +14,7 @@ mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
 pub(crate) mod init;
+mod internal_warm_cache;
 pub(crate) mod list;
 pub(crate) mod merge;
 #[cfg(unix)]
@@ -45,6 +46,7 @@ pub(crate) use for_each::step_for_each;
 pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
+pub(crate) use internal_warm_cache::handle_warm_cache;
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]

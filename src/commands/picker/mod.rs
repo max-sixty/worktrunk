@@ -289,6 +289,20 @@ pub fn handle_picker(
 
     let (repo, is_recovered) = current_or_recover()?;
 
+    // Drop guard: spawn a detached `wt internal warm-cache` child on every
+    // function return path — normal exit, --no-cd early return, skim abort,
+    // or error from switch logic. Firing at drop (rather than at startup)
+    // means the parent's collect worker thread has had the full picker
+    // interaction window — drain timeout + skim browse time + switch —
+    // to finish expensive tasks and write them to `probe_cache` first.
+    // The child then hits cache for every (branch_sha, target_sha) pair
+    // the parent completed and only computes the stragglers. No duplicate
+    // work between parent and child.
+    //
+    // Installed *after* `current_or_recover()` so the spawn only fires when
+    // we actually resolved a repo to warm.
+    let _warm_guard = WarmCacheGuard;
+
     // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
     let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
@@ -680,6 +694,78 @@ pub fn handle_picker(
     }
 
     Ok(())
+}
+
+/// Drop guard that fires [`spawn_detached_warm_cache`] when it goes out of
+/// scope. Installed at the top of [`handle_picker`] so the spawn happens on
+/// every return path without duplicating the call site.
+///
+/// See the comment at the guard's installation site for rationale on *why*
+/// the spawn is at exit rather than at startup — it's the key to avoiding
+/// duplicate work between parent and child.
+struct WarmCacheGuard;
+
+impl Drop for WarmCacheGuard {
+    fn drop(&mut self) {
+        spawn_detached_warm_cache();
+    }
+}
+
+/// Spawn a fully detached `wt internal warm-cache` child process.
+///
+/// The child:
+/// - Re-execs the same binary as the parent (`current_exe()`), so dev builds
+///   under `cargo run` use the dev binary.
+/// - Runs in its own process group (`process_group(0)`), matching the same
+///   detachment pattern used by `commands::process::spawn_detached_unix` for
+///   background hooks. This insulates the child from terminal SIGHUP when
+///   the user closes the terminal while the picker is running.
+/// - Has stdin/stdout/stderr redirected to `/dev/null`, so it can't pollute
+///   the user's terminal even if a downstream library writes directly to a
+///   stream.
+/// - Inherits the parent's current directory, which is sufficient for
+///   `Repository::current()` to discover the same repo.
+///
+/// Failures (binary missing, fork failure) are silently logged at debug
+/// level. Cache warming is best-effort — the picker must continue working
+/// even if the spawn fails.
+///
+/// **Coordination with the picker's own worker thread:** This function is
+/// called via [`WarmCacheGuard::drop`] *after* the picker returns, which is
+/// after the collect worker thread has had the entire picker-interaction
+/// window (500ms drain + skim browse + switch) to write its results to
+/// `probe_cache`. The child starts from a warm cache and only recomputes
+/// entries the parent never wrote — whether because they were still running
+/// when the process exited, or because the rayon pool never got to them.
+/// There is no overlap between parent and child computations.
+fn spawn_detached_warm_cache() {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let Ok(exe) = std::env::current_exe() else {
+        log::debug!("warm-cache: current_exe() failed; skipping detached spawn");
+        return;
+    };
+
+    let result = Command::new(&exe)
+        .args(["internal", "warm-cache"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+
+    match result {
+        Ok(child) => {
+            log::debug!("warm-cache: spawned detached child pid={}", child.id());
+            // Drop the Child without waiting. The new process group means
+            // the OS re-parents it to init when we exit; init reaps it.
+            // Not calling .wait() is intentional — fire-and-forget.
+        }
+        Err(e) => {
+            log::debug!("warm-cache: failed to spawn detached child: {e}");
+        }
+    }
 }
 
 /// Resolve the branch identifier from picker output.
