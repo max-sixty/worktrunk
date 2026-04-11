@@ -110,6 +110,29 @@ fn test_version() {
     });
 }
 
+/// `--version` must write to stdout, not stderr. This is the POSIX convention
+/// and what scripts expect — e.g., `version=$(wt --version)` or test harnesses
+/// that grep for a version string from stdout. See #2072.
+#[test]
+fn test_version_goes_to_stdout() {
+    let output = wt_command()
+        .arg("--version")
+        .output()
+        .expect("failed to run wt --version");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stdout.contains("wt "),
+        "wt --version should write to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "wt --version should not write to stderr, but stderr was: {stderr:?}"
+    );
+}
+
 #[test]
 fn test_help_md() {
     let mut settings = Settings::clone_current();

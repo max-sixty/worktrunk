@@ -155,9 +155,10 @@ pub fn maybe_handle_help_with_pager() -> bool {
                     process::exit(0);
                 }
                 ErrorKind::DisplayVersion => {
-                    // Print to stderr - stdout is reserved for data/scripts
-                    // Use eprint! because clap's Error Display already includes a trailing newline
-                    eprint!("{}", err);
+                    // Print to stdout — POSIX convention, and scripts rely on
+                    // `version=$(wt --version)` working without redirection (#2072).
+                    // Use print! because clap's Error Display already includes a trailing newline.
+                    print!("{}", err);
                     process::exit(0);
                 }
                 _ => {
