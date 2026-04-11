@@ -526,13 +526,17 @@ fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
         !wt_str.contains('\''),
         "wt binary path should not contain single quotes: {wt_str}"
     );
+    // Double backslashes so the Windows path (e.g. `D:\a\worktrunk\...\wt.exe`)
+    // parses as literal characters inside a TOML basic string rather than
+    // being interpreted as escape sequences (`\a`, `\w`, ...).
+    let wt_toml = wt_str.replace('\\', "\\\\");
 
     // Alias body invokes the test wt binary directly (PATH lookup in the
     // subprocess shell wouldn't find it).
     repo.write_test_config(&format!(
         r#"
 [aliases]
-new-branch = "'{wt_str}' switch --create alias-created"
+new-branch = "'{wt_toml}' switch --create alias-created"
 "#
     ));
 
