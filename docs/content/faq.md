@@ -142,7 +142,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason __WT_QUOT__Contains local database__WT_QUOT__") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
