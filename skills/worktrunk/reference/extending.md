@@ -107,7 +107,7 @@ open = "open http://localhost:{{ branch | hash_port }}"
 ```bash
 $ wt step deploy
 $ wt step deploy --dry-run
-$ wt step deploy --var env=staging
+$ wt step deploy --env=staging
 ```
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:

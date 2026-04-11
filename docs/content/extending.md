@@ -111,7 +111,7 @@ deploy = "make deploy BRANCH={{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt step deploy|||wt step deploy --dry-run|||wt step deploy --var env=staging") }}
+{{ terminal(cmd="wt step deploy|||wt step deploy --dry-run|||wt step deploy --env=staging") }}
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 

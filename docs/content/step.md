@@ -822,7 +822,7 @@ deploy = "make deploy BRANCH={{ branch }}"
 port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --var env=staging          # pass extra template variables|||wt step deploy --yes                      # skip approval prompt") }}
+{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --env=staging              # pass template variable|||wt step deploy --var env=staging          # equivalent long form|||wt step deploy --yes                      # skip approval prompt") }}
 
 Multi-line aliases work too. This `up` alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
 

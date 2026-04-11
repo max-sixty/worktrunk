@@ -109,7 +109,8 @@ Custom command templates configured in user config ([2m~/.config/worktrunk/conf
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m step deploy                            # run the alias[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--dry-run[0m[2m                  # show expanded command[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # pass extra template variables[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--env=staging[0m[2m              # pass template variable[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # equivalent long form[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
 
 Multi-line aliases work too. This [2mup[0m alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:

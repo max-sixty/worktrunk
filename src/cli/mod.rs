@@ -1160,7 +1160,8 @@ port = "echo http://localhost:{{ branch | hash_port }}"
 ```console
 $ wt step deploy                            # run the alias
 $ wt step deploy --dry-run                  # show expanded command
-$ wt step deploy --var env=staging          # pass extra template variables
+$ wt step deploy --env=staging              # pass template variable
+$ wt step deploy --var env=staging          # equivalent long form
 $ wt step deploy --yes                      # skip approval prompt
 ```
 

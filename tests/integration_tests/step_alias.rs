@@ -143,6 +143,29 @@ greet = "echo Hello {{ name }} from {{ branch }}"
     ));
 }
 
+/// --key=value shorthand for --var key=value
+#[rstest]
+fn test_step_alias_with_shorthand_var(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo Hello {{ name }} from {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["greet", "--dry-run", "--name=World", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
 /// Alias command failure propagates exit code (--yes bypasses approval)
 #[rstest]
 fn test_step_alias_exit_code(mut repo: TestRepo) {
