@@ -118,7 +118,7 @@ Multi-line aliases work too. This [2mup[0m alias fetches all remotes and rebas
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mup = [0m[2m[32m''[0m[2m[32m'[0m
 [107m [0m [2m[32mgit fetch --all --prune && wt step for-each -- '[0m
-[107m [0m [2m  git rev-parse --verify -q @{u} || exit 0[0m
+[107m [0m [2m  git rev-parse --verify -q @{u} >/dev/null || exit 0[0m
 [107m [0m [2m  g=$(git rev-parse --git-dir)[0m
 [107m [0m [2m  test -d [0m[2m[32m"$g/rebase-merge"[0m[2m -o -d [0m[2m[32m"$g/rebase-apply"[0m[2m && exit 0[0m
 [107m [0m [2m  git rebase @{u} --no-autostash || git rebase --abort[0m

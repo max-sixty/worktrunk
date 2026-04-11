@@ -1171,7 +1171,7 @@ Multi-line aliases work too. This `up` alias fetches all remotes and rebases eac
 [aliases]
 up = '''
 git fetch --all --prune && wt step for-each -- '
-  git rev-parse --verify -q @{u} || exit 0
+  git rev-parse --verify -q @{u} >/dev/null || exit 0
   g=$(git rev-parse --git-dir)
   test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
   git rebase @{u} --no-autostash || git rebase --abort
