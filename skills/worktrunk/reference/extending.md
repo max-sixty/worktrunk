@@ -136,16 +136,16 @@ Aliases compose existing commands into richer workflows. These three aliases wra
 [aliases]
 # Move all in-progress changes (staged + unstaged + untracked) to a new
 # worktree. Source becomes clean.
-#   wt step move-changes --var to=feature-xyz
+#   wt step move-changes --to=feature-xyz
 move-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
 
 # Copy all changes (staged + unstaged + untracked) to a new worktree.
 # Source is unchanged.
-#   wt step copy-changes --var to=feature-xyz
+#   wt step copy-changes --to=feature-xyz
 copy-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && git stash apply --index --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
 
 # Copy only staged changes to a new worktree. Source is unchanged.
-#   wt step copy-staged --var to=feature-xyz
+#   wt step copy-staged --to=feature-xyz
 copy-staged = '''if git diff --cached --quiet; then wt switch --create {{ to }}; else p=$(mktemp) && git diff --cached > "$p" && wt switch --create {{ to }} --execute="git apply --index '$p' && rm '$p'"; fi'''
 ```
 

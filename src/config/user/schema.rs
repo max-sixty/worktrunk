@@ -8,7 +8,7 @@ use super::UserConfig;
 
 /// Returns all valid top-level keys in user config, derived from the JsonSchema.
 ///
-/// This includes keys from UserConfig, OverridableConfig (flattened), and HooksConfig (flattened).
+/// This includes keys from UserConfig and HooksConfig (flattened).
 /// Public for use by the `WorktrunkConfig` trait implementation.
 pub fn valid_user_config_keys() -> Vec<String> {
     let schema = SchemaGenerator::default().into_root_schema_for::<UserConfig>();

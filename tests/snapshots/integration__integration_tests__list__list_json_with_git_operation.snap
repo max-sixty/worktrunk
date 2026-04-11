@@ -206,8 +206,7 @@ exit_code: 0
         "deleted": 0
       }
     },
-    "main_state": "integrated",
-    "integration_reason": "ancestor",
+    "main_state": "would_conflict",
     "operation_state": "conflicts",
     "main": {
       "ahead": 1,
@@ -219,8 +218,8 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature  /u001b[31m✘/u001b[39m/u001b[2m⊂/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
-    "symbols": "⊂✘"
+    "statusline": "feature  /u001b[31m✘/u001b[39m/u001b[33m✗/u001b[39m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "symbols": "✗✘"
   }
 ]
 
