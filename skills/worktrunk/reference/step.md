@@ -876,4 +876,6 @@ $ wt step deploy --yes                      # skip approval prompt
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 
+Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
+
 Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.

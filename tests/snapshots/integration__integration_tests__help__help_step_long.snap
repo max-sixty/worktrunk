@@ -114,4 +114,6 @@ Custom command templates configured in user config ([2m~/.config/worktrunk/conf
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require command approval on first run, same as project hooks. User-config aliases are trusted.
 
+Inside an alias body, an inner [2mwt switch[0m (or [2mwt switch --create[0m) passes its [2mcd[0m through to the parent shell, so an alias wrapping [2mwt switch --create[0m lands the shell in the new worktree just like running it directly.
+
 Alias names that match a built-in step command ([2mcommit[0m, [2msquash[0m, etc.) are shadowed by the built-in and will never run.

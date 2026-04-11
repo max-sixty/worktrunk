@@ -294,6 +294,14 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // already arbitrary shell that can `cd`/`rm`/`exec` anything locally, so
     // letting it ask the parent shell to `cd` is strictly less powerful than
     // what the body can already do.
+    //
+    // TODO: unify hook and alias execution so both pass the directive file
+    // through. Hooks currently scrub it (see `process.rs` and the `None`
+    // branch in `for_each::run_command_streaming`), so an inner `wt switch`
+    // inside a hook body still drops its `cd`. Foreground `pre-*` hooks have
+    // the same trust profile as aliases and could pass through too;
+    // background `post-*` hooks outlive the parent shell, so any unification
+    // needs to keep scrubbing in the detached spawn paths.
     let parent_directive_file: Option<PathBuf> =
         std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
 
