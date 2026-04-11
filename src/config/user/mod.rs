@@ -76,7 +76,10 @@ impl std::error::Error for LoadError {}
 /// Stores both typed and string versions because we can't know the target type
 /// at parse time. Typed values work for `Option<u64>`/`Option<bool>` fields;
 /// string values work for `Option<String>` fields with numeric-looking values
-/// (e.g., `WORKTRUNK_WORKTREE_PATH=42`).
+/// (e.g., `WORKTRUNK_WORKTREE_PATH=42`). The load flow tries typed first, then
+/// falls back to strings. A mixed case (one var needing typed, another needing
+/// string) would fail both passes — unlikely in practice since String fields
+/// hold paths/commands, not numeric values.
 struct EnvOverrides {
     typed_table: toml::Table,
     string_table: toml::Table,
