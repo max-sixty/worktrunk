@@ -72,8 +72,14 @@ impl std::error::Error for LoadError {}
 // ---- Env-var overlay ----
 
 /// Parsed WORKTRUNK_* env-var overrides ready to merge into a TOML table.
+///
+/// Stores both typed and string versions because we can't know the target type
+/// at parse time. Typed values work for `Option<u64>`/`Option<bool>` fields;
+/// string values work for `Option<String>` fields with numeric-looking values
+/// (e.g., `WORKTRUNK_WORKTREE_PATH=42`).
 struct EnvOverrides {
-    table: toml::Table,
+    typed_table: toml::Table,
+    string_table: toml::Table,
     var_names: Vec<String>,
 }
 
@@ -93,7 +99,8 @@ fn parse_worktrunk_env_vars() -> EnvOverrides {
         "WORKTRUNK_APPROVALS_PATH",
     ];
 
-    let mut table = toml::Table::new();
+    let mut typed_table = toml::Table::new();
+    let mut string_table = toml::Table::new();
     let mut var_names = Vec::new();
 
     let mut env_vars: Vec<_> = std::env::vars()
@@ -122,11 +129,15 @@ fn parse_worktrunk_env_vars() -> EnvOverrides {
             continue;
         }
 
-        let typed_value = try_parse_value(&value);
-        set_nested_value(&mut table, &segments, typed_value);
+        set_nested_value(&mut typed_table, &segments, try_parse_value(&value));
+        set_nested_value(&mut string_table, &segments, toml::Value::String(value));
     }
 
-    EnvOverrides { table, var_names }
+    EnvOverrides {
+        typed_table,
+        string_table,
+        var_names,
+    }
 }
 
 /// Try to coerce a string into a typed TOML value (bool → i64 → f64 → string).
@@ -369,26 +380,33 @@ impl UserConfig {
 
         // 3. Env-var overrides (highest priority)
         let env = parse_worktrunk_env_vars();
-        if !env.table.is_empty() {
-            deep_merge_table(&mut merged_table, env.table);
+        let has_env_vars = !env.var_names.is_empty();
+        let file_table = merged_table.clone();
+
+        if !env.typed_table.is_empty() {
+            deep_merge_table(&mut merged_table, env.typed_table);
         }
 
-        // 4. Deserialize the merged table
-        let config: Self =
-            toml::Value::Table(merged_table)
-                .try_into()
-                .map_err(|err: toml::de::Error| {
-                    // Files were validated above, so a failure here is from env vars
-                    // (or a rare table-merge edge case).
-                    if env.var_names.is_empty() {
-                        LoadError::Validation(err.to_string())
-                    } else {
-                        LoadError::Env {
-                            err: err.to_string(),
-                            vars: env.var_names,
-                        }
-                    }
-                })?;
+        // 4. Deserialize the merged table.
+        //
+        // Try typed env values first (handles Option<u64>, Option<bool>).
+        // If that fails and env vars are present, retry with string values
+        // (handles Option<String> fields with numeric-looking values like
+        // WORKTRUNK_WORKTREE_PATH=42).
+        let config: Self = match toml::Value::Table(merged_table).try_into() {
+            Ok(config) => config,
+            Err(typed_err) if has_env_vars => {
+                let mut string_merged = file_table;
+                deep_merge_table(&mut string_merged, env.string_table);
+                toml::Value::Table(string_merged)
+                    .try_into()
+                    .map_err(|_: toml::de::Error| LoadError::Env {
+                        err: typed_err.to_string(),
+                        vars: env.var_names,
+                    })?
+            }
+            Err(err) => return Err(LoadError::Validation(err.to_string())),
+        };
 
         config.validate().map_err(|e| LoadError::Validation(e.0))?;
 

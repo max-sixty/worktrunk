@@ -434,6 +434,29 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
+/// Numeric-looking env var values for String fields must not break config
+/// loading. WORKTRUNK_WORKTREE_PATH=42 should be treated as the string "42",
+/// not the integer 42 (which would fail to deserialize into Option<String>).
+#[rstest]
+fn test_list_config_env_override_numeric_string_field(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // worktree-path is Option<String>; "42" must round-trip as a string
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "42");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("Failed"),
+            "numeric string should not fail: {stderr}"
+        );
+        assert!(output.status.success());
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars. These fields are NOT caught by
 /// the OverridableConfig pre-validation (which only covers section fields) —
