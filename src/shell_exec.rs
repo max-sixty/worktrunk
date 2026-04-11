@@ -715,6 +715,10 @@ impl Cmd {
             !self.shell_wrap,
             "Cmd::shell() commands must use .stream(), not .run()"
         );
+        debug_assert!(
+            self.directive_file.is_none(),
+            "directive_file is only applied by .stream(), not .run()"
+        );
 
         let cmd_str = self.command_string();
         let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());

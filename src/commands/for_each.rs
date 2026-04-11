@@ -99,7 +99,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let (exit_info, exit_code, error_msg) =
+                let (exit_info, exit_code, error_msg, show_detail) =
                     if let Some(WorktrunkError::ChildProcessExited { code, message }) =
                         err.downcast_ref::<WorktrunkError>()
                     {
@@ -107,16 +107,24 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             format!(" (exit code {code})"),
                             serde_json::json!(code),
                             message.clone(),
+                            false,
                         )
                     } else {
                         let msg = err.to_string();
-                        eprintln!("{}", format_with_gutter(&msg, None));
-                        (" (spawn failed)".to_string(), serde_json::json!(null), msg)
+                        (
+                            " (spawn failed)".to_string(),
+                            serde_json::json!(null),
+                            msg,
+                            true,
+                        )
                     };
                 eprintln!(
                     "{}",
                     error_message(cformat!("Failed in <bold>{display_name}</>{exit_info}"))
                 );
+                if show_detail {
+                    eprintln!("{}", format_with_gutter(&error_msg, None));
+                }
                 failed.push(display_name.to_string());
                 if json_mode {
                     json_results.push(serde_json::json!({

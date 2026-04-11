@@ -575,6 +575,36 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// Concurrent alias steps (named table) execute all commands
+#[rstest]
+fn test_alias_concurrent_steps(mut repo: TestRepo) {
+    // Named table form: commands run concurrently within the step
+    repo.write_test_config(
+        r#"
+[aliases.build]
+lint = "echo LINT"
+test = "echo TEST"
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "build"]).current_dir(&feature_path);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "concurrent alias failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Both commands should have run (order may vary due to concurrency)
+    assert!(stderr.contains("LINT"), "expected LINT in output: {stderr}");
+    assert!(stderr.contains("TEST"), "expected TEST in output: {stderr}");
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {

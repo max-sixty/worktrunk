@@ -2790,3 +2790,60 @@ cleanup = "echo done"
         Some(repo.root_path()),
     );
 }
+
+/// Foreground hooks pass the directive file through to child processes,
+/// so inner `wt switch --create` can write shell directives back to the
+/// parent shell.
+#[rstest]
+fn test_foreground_hook_passes_directive_file(repo: TestRepo) {
+    use crate::common::{configure_directive_file, directive_file, wt_bin};
+
+    repo.commit("initial");
+
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    let wt_toml = wt_str.replace('\\', "\\\\");
+
+    // Pre-start hook that creates a new worktree via `wt switch --create`.
+    // If the directive file is passed through, the inner wt will write a
+    // `cd` directive. If scrubbed, it prints the "shell integration not
+    // installed" hint instead.
+    repo.write_test_config(&format!(
+        r#"
+[pre-start]
+setup = "'{wt_toml}' switch --create hook-created --no-hooks"
+"#,
+    ));
+
+    let (directive_path, _guard) = directive_file();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &directive_path);
+    // Run the pre-start hook manually in foreground
+    cmd.args(["hook", "pre-start", "setup"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "hook failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.contains("cd '"),
+        "foreground hook running `wt switch --create` should write a cd directive \
+         to the parent directive file, got: {directives:?}"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("shell integration"),
+        "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
+    );
+}
