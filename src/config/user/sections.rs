@@ -465,8 +465,7 @@ impl Merge for StepConfig {
 /// This is a merge-only type — not a serde target. Fields are inlined directly
 /// into `UserConfig` and `UserProjectOverrides` for deserialization (avoiding
 /// `#[serde(flatten)]` which causes toml to lose error locations). Use
-/// `UserConfig::overridable_config()` or `UserProjectOverrides::overridable_config()`
-/// to construct this for merging.
+/// `UserProjectOverrides::overridable_config()` to construct this for merging.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OverridableConfig {
     pub hooks: HooksConfig,

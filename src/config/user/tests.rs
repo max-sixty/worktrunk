@@ -2392,3 +2392,19 @@ fn test_load_error_display_validation() {
     let err = LoadError::Validation("bad".into());
     assert_eq!(err.to_string(), "bad");
 }
+
+#[test]
+fn test_try_parse_value() {
+    use super::try_parse_value;
+
+    assert_eq!(try_parse_value("true"), toml::Value::Boolean(true));
+    assert_eq!(try_parse_value("TRUE"), toml::Value::Boolean(true));
+    assert_eq!(try_parse_value("false"), toml::Value::Boolean(false));
+    assert_eq!(try_parse_value("42"), toml::Value::Integer(42));
+    assert_eq!(try_parse_value("0"), toml::Value::Integer(0));
+    assert_eq!(try_parse_value("1.5"), toml::Value::Float(1.5));
+    assert_eq!(
+        try_parse_value("hello"),
+        toml::Value::String("hello".into())
+    );
+}

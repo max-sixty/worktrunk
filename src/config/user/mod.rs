@@ -190,14 +190,11 @@ fn load_config_file(
             err: Box::new(err),
         });
     }
-    // Parse as table for merging (infallible after the above succeeds).
-    migrated
+    // Parse as table for merging. Infallible after from_str::<UserConfig>
+    // succeeds — valid UserConfig TOML is always valid TOML.
+    Ok(migrated
         .parse::<toml::Table>()
-        .map_err(|err| LoadError::File {
-            path: path.to_path_buf(),
-            label,
-            err: Box::new(err),
-        })
+        .expect("valid TOML after UserConfig parse"))
 }
 
 /// User-level configuration for worktree path formatting and LLM integration.
@@ -297,24 +294,6 @@ pub struct UserConfig {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub skip_commit_generation_prompt: bool,
-}
-
-impl UserConfig {
-    /// Construct an `OverridableConfig` from this config's inlined fields.
-    ///
-    /// Used for the `Merge` trait when combining global + per-project settings.
-    pub fn overridable_config(&self) -> OverridableConfig {
-        OverridableConfig {
-            hooks: self.hooks.clone(),
-            worktree_path: self.worktree_path.clone(),
-            list: self.list.clone(),
-            commit: self.commit.clone(),
-            merge: self.merge.clone(),
-            switch: self.switch.clone(),
-            step: self.step.clone(),
-            aliases: self.aliases.clone(),
-        }
-    }
 }
 
 impl UserConfig {
