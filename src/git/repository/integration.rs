@@ -5,6 +5,7 @@
 
 use anyhow::Context;
 use dashmap::mapref::entry::Entry;
+use serde::{Deserialize, Serialize};
 
 use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
@@ -15,7 +16,7 @@ use crate::shell_exec::Cmd;
 /// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
 /// check if merging would add anything, then fall back to patch-id matching
 /// when merge-tree conflicts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProbeResult {
     /// Whether merging the branch into target would change the target's tree.
     /// Always `true` when merge-tree conflicts (conservative).
@@ -143,21 +144,38 @@ impl Repository {
         let base = self.resolve_preferring_branch(base);
         let head = self.resolve_preferring_branch(head);
 
+        // Resolve refs to commit SHAs for the persistent cache key.
+        // merge-tree conflict results are a pure function of the two
+        // committed trees, so SHA pairs are eternally valid cache keys.
+        let base_sha = self.rev_parse_commit(&base)?;
+        let head_sha = self.rev_parse_commit(&head)?;
+
+        if let Some(cached) = super::probe_cache::get_merge_conflicts(self, &base_sha, &head_sha) {
+            return Ok(cached);
+        }
+
         // Unrelated histories (no common ancestor) can't be merged — that's a conflict.
-        if self.merge_base(&base, &head)?.is_none() {
+        if self.merge_base(&base_sha, &head_sha)?.is_none() {
+            super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
             return Ok(true);
         }
 
         // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
-        let output = self.run_command_output(&["merge-tree", "--write-tree", &base, &head])?;
+        let output =
+            self.run_command_output(&["merge-tree", "--write-tree", &base_sha, &head_sha])?;
 
         if output.status.code() == Some(1) {
+            super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
             return Ok(true);
         }
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git merge-tree failed for {base} {head}: {}", stderr.trim());
+            anyhow::bail!(
+                "git merge-tree failed for {base_sha} {head_sha}: {}",
+                stderr.trim()
+            );
         }
+        super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, false);
         Ok(false)
     }
 
@@ -266,35 +284,54 @@ impl Repository {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
 
+        // Resolve refs to commit SHAs for the persistent cache key.
+        // The probe result depends only on the two committed trees (the
+        // patch-id fallback reads commits in merge_base..target, also a
+        // pure function of the two SHAs). Asymmetric key: branch first,
+        // then target, because the merge-tree result is compared against
+        // target's tree.
+        let branch_sha = self.rev_parse_commit(&branch)?;
+        let target_sha = self.rev_parse_commit(&target)?;
+
+        if let Some(cached) =
+            super::probe_cache::get_merge_add_probe(self, &branch_sha, &target_sha)
+        {
+            return Ok(cached);
+        }
+
         // Orphan branches (no common ancestor) can't be merge-tree simulated
         // (git exits 128 with "refusing to merge unrelated histories") and have
         // no merge-base for patch-id either. Short-circuit: they always have changes.
-        if self.merge_base(&target, &branch)?.is_none() {
-            return Ok(MergeProbeResult {
+        if self.merge_base(&target_sha, &branch_sha)?.is_none() {
+            let result = MergeProbeResult {
                 would_merge_add: true,
                 is_patch_id_match: false,
-            });
+            };
+            super::probe_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+            return Ok(result);
         }
 
-        let merge_result = self.would_merge_add_to_target(&branch, &target)?;
-        match merge_result {
-            Some(would_add) => Ok(MergeProbeResult {
+        let merge_result = self.would_merge_add_to_target(&branch_sha, &target_sha)?;
+        let result = match merge_result {
+            Some(would_add) => MergeProbeResult {
                 would_merge_add: would_add,
                 is_patch_id_match: false,
-            }),
+            },
             None => {
                 // merge-tree conflicted — try patch-id fallback.
                 // Patch-id errors are non-fatal: if we can't compute patch-ids,
                 // conservatively report no match (branch appears not integrated).
                 let matched = self
-                    .is_squash_merged_via_patch_id(&branch, &target)
+                    .is_squash_merged_via_patch_id(&branch_sha, &target_sha)
                     .unwrap_or(false);
-                Ok(MergeProbeResult {
+                MergeProbeResult {
                     would_merge_add: true,
                     is_patch_id_match: matched,
-                })
+                }
             }
-        }
+        };
+        super::probe_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+        Ok(result)
     }
 
     /// Determine the effective target for integration checks.
@@ -370,6 +407,23 @@ impl Repository {
             Entry::Vacant(e) => {
                 let sha = self
                     .run_command(&["rev-parse", spec])
+                    .map(|output| output.trim().to_string())?;
+                Ok(e.insert(sha).clone())
+            }
+        }
+    }
+
+    /// Resolve a ref to its commit SHA (cached).
+    ///
+    /// Unlike [`rev_parse_tree`], this returns the commit SHA rather than the
+    /// tree SHA. Used by the persistent `probe_cache` to convert ref names into
+    /// stable SHA-based cache keys before looking up cached merge-tree results.
+    pub(super) fn rev_parse_commit(&self, r: &str) -> anyhow::Result<String> {
+        match self.cache.commit_shas.entry(r.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let sha = self
+                    .run_command(&["rev-parse", r])
                     .map(|output| output.trim().to_string())?;
                 Ok(e.insert(sha).clone())
             }
