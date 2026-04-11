@@ -239,7 +239,7 @@ fn load_config_file(
 ///
 /// # Per-project configuration
 /// [projects."github.com/user/repo"]
-/// approved-commands = ["npm install", "npm test"]
+/// worktree-path = ".worktrees/{{ branch | sanitize }}"
 /// ```
 ///
 /// Config file location:

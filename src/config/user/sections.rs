@@ -470,7 +470,6 @@ impl Merge for StepConfig {
 /// ```toml
 /// [projects."github.com/user/repo"]
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
-/// approved-commands = ["npm install", "npm test"]
 ///
 /// [projects."github.com/user/repo".commit.generation]
 /// command = "llm -m gpt-4"
