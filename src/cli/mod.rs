@@ -8,7 +8,7 @@ pub(crate) use config::{
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
-pub(crate) use hook::HookCommand;
+pub(crate) use hook::{HookCommand, rewrite_var_shorthand};
 pub(crate) use list::ListSubcommand;
 pub(crate) use step::StepCommand;
 
@@ -1404,11 +1404,12 @@ $ wt hook pre-merge user:test    # Run only user's "test" hook
 $ wt hook pre-merge project:test # Run only project's "test" hook
 $ wt hook pre-merge --yes        # Skip approval prompts (for CI)
 $ wt hook pre-start --var branch=feature/test     # Override template variable
+$ wt hook pre-start --branch=feature/test         # Shorthand for the above
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
+The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context. As a shorthand, any unknown `--KEY=VALUE` flag is treated as a template variable assignment, so `--branch=feature` is equivalent to `--var branch=feature`. Use the long `--var` form when a variable name collides with a built-in flag (e.g. `config`, `yes`, `dry-run`, `foreground`, `verbose`).
 
 # Pipeline Ordering [experimental]
 

@@ -1957,6 +1957,106 @@ test = "echo '{{ target }}' > target_output.txt"
 }
 
 #[rstest]
+fn test_var_shorthand_overrides_template_variable(repo: TestRepo) {
+    // `--KEY=VALUE` is equivalent to `--var KEY=VALUE` for template variables.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }}' > shorthand_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--branch=SHORTHAND_BRANCH"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_file = repo.root_path().join("shorthand_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("SHORTHAND_BRANCH"),
+        "Shorthand should override template variable, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_shorthand_mixed_with_long_form(repo: TestRepo) {
+    // Shorthand and `--var` forms coexist in the same invocation.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--branch=SHORT",
+            "--var",
+            "target=LONG",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let output_file = repo.root_path().join("mixed_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("SHORT") && contents.contains("LONG"),
+        "Both forms should coexist, got: {contents}"
+    );
+}
+
+#[test]
+fn test_var_shorthand_unknown_variable_fails() {
+    // Unknown variable names are rejected by the existing `parse_key_val`
+    // validator — same error path as the long `--var` form.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["hook", "post-create", "--custom_var=value"])
+        .output()
+        .expect("Failed to run wt");
+
+    assert!(
+        !output.status.success(),
+        "Unknown variable via shorthand should fail"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variable"),
+        "Error should mention unknown variable, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_var_shorthand_does_not_leak_into_hook_show() {
+    // `wt hook show` doesn't accept `--var`, so shorthand preprocessing must
+    // leave its argv alone — an unknown flag should still produce clap's
+    // "unexpected argument" error, not a template-variable error.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["hook", "show", "--branch=feature"])
+        .output()
+        .expect("Failed to run wt");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("--branch"),
+        "Expected clap to reject --branch on `hook show`, got: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_var_flag_deprecated_alias_works(repo: TestRepo) {
     // Test that deprecated variable aliases (main_worktree, repo_root, worktree) can be overridden
     repo.write_test_config(
