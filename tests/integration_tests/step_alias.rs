@@ -605,6 +605,66 @@ test = "echo TEST"
     assert!(stderr.contains("TEST"), "expected TEST in output: {stderr}");
 }
 
+/// A failing concurrent step causes the alias to fail. Covers the error
+/// propagation path in the `HookStep::Concurrent` join loop, complementing
+/// the happy-path `test_alias_concurrent_steps` above.
+#[rstest]
+fn test_alias_concurrent_step_failure(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases.check]
+ok = "true"
+fail = "exit 1"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "check"]);
+    let output = cmd.output().expect("wt step check failed to spawn");
+    assert!(
+        !output.status.success(),
+        "wt step check should fail when a concurrent step exits non-zero"
+    );
+}
+
+/// Pipeline-form aliases (list of steps) run sequentially. A later step
+/// referencing `{{ vars.X }}` must see vars set by an earlier step. Exercises
+/// the lazy re-expansion path in `AliasExecCtx::run` (which only triggers
+/// when `is_pipeline && template references vars.`).
+#[rstest]
+fn test_alias_pipeline_lazy_vars(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = [
+    "git config worktrunk.state.main.vars.target 'staging'",
+    { publish = "echo target={{ vars.target }} > alias_lazy.txt" },
+]
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "deploy"]);
+    let output = cmd.output().expect("wt step deploy failed to spawn");
+    assert!(
+        output.status.success(),
+        "wt step deploy failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let marker = repo.root_path().join("alias_lazy.txt");
+    let content = std::fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("missing marker {marker:?}: {e}"));
+    assert_eq!(
+        content.trim(),
+        "target=staging",
+        "lazy step should see var set by prior serial step"
+    );
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {
