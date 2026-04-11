@@ -1,12 +1,26 @@
-//! Alias command implementation
+//! Alias command implementation.
 //!
-//! Runs user-defined command aliases configured in `[aliases]` sections
-//! of user config or project config. Aliases are command templates that
-//! support the same template variables as hooks.
+//! Aliases are user-defined commands configured in `[aliases]` sections of user
+//! or project config. They share execution infrastructure with hooks:
+//! `execute_shell_command` (signal forwarding, ANSI reset, `Cmd` tracing),
+//! `CommandConfig` (pipeline steps), template expansion, and the approval system.
 //!
-//! Project-config aliases require command approval (same as project hooks).
-//! User-config aliases are trusted and skip approval. When an alias exists
-//! in both configs, both run — user first, then project (with approval).
+//! ## Execution model
+//!
+//! Aliases iterate `CommandConfig::steps()`, preserving pipeline structure:
+//! - `HookStep::Single` — serial execution, fail-fast
+//! - `HookStep::Concurrent` — commands spawn via `thread::scope`, all run to
+//!   completion, first error propagated
+//!
+//! In pipelines, templates referencing `vars.*` use lazy expansion — deferred
+//! until execution time so prior steps can set vars via git config.
+//!
+//! ## Trust model
+//!
+//! User-config aliases are trusted (skip approval). Project-config aliases
+//! require command approval. When both define the same alias, both run — user
+//! first, then project. The directive file is passed through to child processes
+//! (same trust profile as foreground hooks).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

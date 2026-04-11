@@ -1364,21 +1364,34 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
 
 /// Run a shell command with streaming output, signal forwarding, and ANSI reset.
 ///
-/// Unified entry point for hooks, aliases, and `for-each`. Redirects child stdout
-/// to stderr for deterministic output ordering, forwards SIGINT/SIGTERM to the
-/// child process group, and resets ANSI codes before the child runs.
+/// Unified entry point for all foreground command execution — hooks, aliases,
+/// and `for-each` all call this. The background pipeline runner
+/// (`run_pipeline.rs`) has its own spawning logic since it redirects to log
+/// files and runs detached.
+///
+/// Capabilities: stdout→stderr redirect for deterministic ordering,
+/// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
+/// runs, `Cmd` tracing/logging, and directive file control.
+///
+/// ## Directive file
 ///
 /// `directive_file` controls whether the child can write shell integration
 /// directives (e.g. `cd`) back to the parent shell:
-/// - `None` — scrubs `WORKTRUNK_DIRECTIVE_FILE` from the child environment
-/// - `Some(path)` — passes the env var through for trusted contexts (aliases,
-///   foreground hooks)
 ///
-/// ## Color Bleeding Prevention
+/// - `None` — scrubs `WORKTRUNK_DIRECTIVE_FILE` from the child (default;
+///   used by `for-each` which runs in other worktrees, and hooks prior to
+///   Phase 3).
+/// - `Some(path)` — passes the env var through. Used by aliases and
+///   foreground hooks, which have the same trust profile: the command body
+///   is already arbitrary shell, so letting it write a `cd` directive is
+///   strictly less powerful than what it can already do. Background hooks
+///   must never pass through (they outlive the parent shell).
 ///
-/// Resets ANSI codes on stderr before executing child commands. Terminal
-/// emulators maintain a single rendering state machine — if stdout writes color
-/// codes but stderr's output arrives next, the terminal applies stdout's color
+/// ## ANSI reset
+///
+/// Resets ANSI codes on stderr before the child runs. Terminal emulators
+/// maintain a single rendering state machine — if stdout writes color codes
+/// but stderr's output arrives next, the terminal applies stdout's color
 /// state to stderr's text. The reset to stderr prevents this.
 pub fn execute_shell_command(
     working_dir: &std::path::Path,
