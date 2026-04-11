@@ -874,6 +874,24 @@ $ wt step deploy --var env=staging          # pass extra template variables
 $ wt step deploy --yes                      # skip approval prompt
 ```
 
+Multi-line aliases work too. This `up` alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[aliases]
+up = '''
+git fetch --all --prune && wt step for-each -- '
+  git rev-parse --verify @{u} &>/dev/null || exit 0
+  g=$(git rev-parse --git-dir)
+  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git rebase @{u} --no-autostash || git rebase --abort
+''''
+```
+
+```bash
+$ wt step up
+```
+
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 
 Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
