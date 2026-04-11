@@ -4,7 +4,7 @@ use ansi_str::AnsiStr;
 use color_print::cformat;
 
 /// Line-level diff totals (added/deleted counts) used across git operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct LineDiff {
     pub added: usize,
     pub deleted: usize,

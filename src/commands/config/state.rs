@@ -886,7 +886,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
-    // Clear git commands cache (merge-tree, patch-id results)
+    // Clear git commands cache (merge-tree, ancestry, diff results)
     let probe_cleared = repo.clear_git_commands_cache();
     if probe_cleared > 0 {
         eprintln!(

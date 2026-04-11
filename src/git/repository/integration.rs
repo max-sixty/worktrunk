@@ -58,7 +58,18 @@ impl Repository {
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         let base = self.resolve_preferring_branch(base);
         let head = self.resolve_preferring_branch(head);
-        self.run_command_check(&["merge-base", "--is-ancestor", &base, &head])
+
+        let base_sha = self.rev_parse_commit(&base)?;
+        let head_sha = self.rev_parse_commit(&head)?;
+
+        if let Some(cached) = super::probe_cache::get_is_ancestor(self, &base_sha, &head_sha) {
+            return Ok(cached);
+        }
+
+        let result =
+            self.run_command_check(&["merge-base", "--is-ancestor", &base_sha, &head_sha])?;
+        super::probe_cache::put_is_ancestor(self, &base_sha, &head_sha, result);
+        Ok(result)
     }
 
     /// Check if two refs point to the same commit.
@@ -86,16 +97,27 @@ impl Repository {
     pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let branch = self.resolve_preferring_branch(branch);
         let target = self.resolve_preferring_branch(target);
-        // Try to get merge-base (cached). Orphan branches return None.
-        let Some(merge_base) = self.merge_base(&target, &branch)? else {
-            // Orphan branches have no common ancestor, so all their changes are unique
+
+        let branch_sha = self.rev_parse_commit(&branch)?;
+        let target_sha = self.rev_parse_commit(&target)?;
+
+        if let Some(cached) =
+            super::probe_cache::get_has_added_changes(self, &branch_sha, &target_sha)
+        {
+            return Ok(cached);
+        }
+
+        // Orphan branches have no common ancestor, so all their changes are unique
+        let Some(merge_base) = self.merge_base(&target_sha, &branch_sha)? else {
+            super::probe_cache::put_has_added_changes(self, &branch_sha, &target_sha, true);
             return Ok(true);
         };
 
-        // git diff --name-only merge_base..branch shows files changed from merge-base to branch
-        let range = format!("{merge_base}..{branch}");
+        let range = format!("{merge_base}..{branch_sha}");
         let output = self.run_command(&["diff", "--name-only", &range])?;
-        Ok(!output.trim().is_empty())
+        let result = !output.trim().is_empty();
+        super::probe_cache::put_has_added_changes(self, &branch_sha, &target_sha, result);
+        Ok(result)
     }
 
     /// Check if two refs have identical tree content (same files/directories).

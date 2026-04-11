@@ -322,7 +322,6 @@ pub fn handle_picker(
         },
         false, // show_progress (no progress bars)
         false, // render_table (picker renders its own UI)
-        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());

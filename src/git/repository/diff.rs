@@ -286,26 +286,47 @@ impl Repository {
     ///
     /// For orphan branches with no common ancestor, returns zeros.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
-        // Limit concurrent diff operations to reduce mmap thrash on pack files
+        let base_sha = self.rev_parse_commit(base)?;
+        let head_sha = self.rev_parse_commit(head)?;
+
+        // Sparse checkout filters the diff by path, making the result
+        // environment-dependent rather than purely SHA-determined. Skip the
+        // persistent cache when sparse checkout is active.
+        let sparse_paths = self.sparse_checkout_paths();
+        let use_cache = sparse_paths.is_empty();
+
+        if use_cache
+            && let Some(cached) = super::probe_cache::get_diff_stats(self, &base_sha, &head_sha)
+        {
+            return Ok(cached);
+        }
+
+        // Limit concurrent diff operations to reduce mmap thrash on pack files.
+        // Acquired after cache check to avoid holding the semaphore on cache hits.
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base, head)? else {
+        let Some(merge_base) = self.merge_base(&base_sha, &head_sha)? else {
+            if use_cache {
+                super::probe_cache::put_diff_stats(self, &base_sha, &head_sha, LineDiff::default());
+            }
             return Ok(LineDiff::default());
         };
 
-        // Use two-dot syntax with the cached merge-base
-        let range = format!("{}..{}", merge_base, head);
+        let range = format!("{}..{}", merge_base, head_sha);
         let mut args = vec!["diff", "--shortstat", &range];
 
-        let sparse_paths = self.sparse_checkout_paths();
         if !sparse_paths.is_empty() {
             args.push("--");
             args.extend(sparse_paths.iter().map(|s| s.as_str()));
         }
 
         let stdout = self.run_command(&args)?;
-        Ok(LineDiff::from_shortstat(&stdout))
+        let result = LineDiff::from_shortstat(&stdout);
+        if use_cache {
+            super::probe_cache::put_diff_stats(self, &base_sha, &head_sha, result);
+        }
+        Ok(result)
     }
 
     /// Get formatted diff stats summary for display.
