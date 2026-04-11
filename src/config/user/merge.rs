@@ -26,3 +26,11 @@ pub fn merge_optional<T: Merge + Clone>(global: Option<&T>, project: Option<&T>)
         (None, None) => None,
     }
 }
+
+/// Returns true if the given value equals `T::default()`.
+///
+/// Used as `skip_serializing_if` so section types like `ListConfig` /
+/// `MergeConfig` are omitted from serialized TOML when no fields are set.
+pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
