@@ -130,7 +130,7 @@ None of this is tracked by git or pushed to remotes.
 - No files outside `.git/`, config directories, or worktree directories
 - No global git hooks
 - No modifications to `~/.gitconfig`
-- No background processes or daemons
+- No long-running background processes or daemons
 
 ## What can Worktrunk delete?
 
