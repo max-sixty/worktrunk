@@ -148,7 +148,7 @@
 //! Some task outputs depend on state outside the commit graph:
 //!
 //! - `WorkingTreeDiff`, `WorkingTreeConflicts` — uncommitted changes and index state
-//! - `GitOperation` — presence of `.git/rebase-merge` or `MERGE_HEAD`
+//! - `GitOperation` — presence of `.git/rebase-merge`, `.git/rebase-apply`, or `MERGE_HEAD`
 //! - `UserMarker` — local git config value
 //! - `UrlStatus` — TCP connect to a local dev server port; real-time by nature
 //!
