@@ -11,7 +11,8 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{
-    CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
+    CommandContext, PreparedCommand, PreparedStep, expand_shell_template, prepare_commands,
+    prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::execute_shell_command;
@@ -521,7 +522,10 @@ pub fn run_hook_with_filter(
         // so that vars set by earlier commands in the pipeline are available.
         let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
             let name = cmd.summary_name();
-            expand_lazy_template(template, &cmd.prepared.context_json, ctx.repo, &name)?
+            let context: std::collections::HashMap<String, String> =
+                serde_json::from_str(&cmd.prepared.context_json)
+                    .context("failed to deserialize context_json")?;
+            expand_shell_template(template, &context, ctx.repo, &name)?
         } else {
             cmd.prepared.expanded.clone()
         };
@@ -664,28 +668,6 @@ pub(crate) fn prepare_background_hooks(
     }
 
     Ok(groups)
-}
-
-/// Expand a lazy template using its command's context JSON.
-///
-/// Used by `run_hook_with_filter` (foreground) to expand templates that
-/// reference `vars.*` at execution time. Background hooks handle lazy
-/// expansion inside the pipeline runner process instead.
-fn expand_lazy_template(
-    template: &str,
-    context_json: &str,
-    repo: &worktrunk::git::Repository,
-    label: &str,
-) -> anyhow::Result<String> {
-    let context_map: std::collections::HashMap<String, String> =
-        serde_json::from_str(context_json).context("failed to deserialize context_json")?;
-    let vars: std::collections::HashMap<&str, &str> = context_map
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    Ok(worktrunk::config::expand_template(
-        template, &vars, true, repo, label,
-    )?)
 }
 
 #[cfg(test)]
