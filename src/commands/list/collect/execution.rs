@@ -39,12 +39,12 @@ use super::types::{TaskError, TaskKind, TaskResult};
 // These are skipped for branches that are far behind the default branch (in `wt switch` interactive picker).
 // AheadBehind is NOT here - we use batch data for it instead of skipping.
 // CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
+// WouldMergeAdd and MergeTreeConflicts are NOT here - they use the persistent SHA-keyed
+// probe cache, so they're instant on cache hits (only slow on the first invocation).
 const EXPENSIVE_TASKS: &[TaskKind] = &[
-    TaskKind::HasFileChanges,     // git diff with three-dot range
-    TaskKind::IsAncestor,         // git merge-base --is-ancestor
-    TaskKind::WouldMergeAdd,      // git merge-tree simulation
-    TaskKind::BranchDiff,         // git diff with three-dot range
-    TaskKind::MergeTreeConflicts, // git merge-tree simulation
+    TaskKind::HasFileChanges, // git diff with three-dot range
+    TaskKind::IsAncestor,     // git merge-base --is-ancestor
+    TaskKind::BranchDiff,     // git diff with three-dot range
 ];
 
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
