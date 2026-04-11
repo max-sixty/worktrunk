@@ -117,6 +117,29 @@ Alias names that collide with built-in step commands (`commit`, `squash`, `rebas
 
 See [`wt step` — Aliases](https://worktrunk.dev/step/#aliases) for the full reference.
 
+### Common patterns
+
+Three aliases for a recurring case — changes accumulated on `main` that belong on a feature branch. Each composes `wt switch --create` with `--execute`, so the inner command runs in the new worktree and shell integration carries both the `cd` and the `--execute` step back to the parent shell.
+
+```toml
+# .config/wt.toml
+[aliases]
+# Move all in-progress changes (staged + unstaged + untracked) to a new
+# worktree. Source becomes clean.
+#   wt step move-changes --var to=feature-xyz
+move-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
+
+# Copy all changes (staged + unstaged + untracked). Source is unchanged.
+#   wt step copy-changes --var to=feature-xyz
+copy-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && git stash apply --index --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
+
+# Copy only staged changes. Source is unchanged.
+#   wt step copy-staged --var to=feature-xyz
+copy-staged = '''if git diff --cached --quiet; then wt switch --create {{ to }}; else p=$(mktemp) && git diff --cached > "$p" && wt switch --create {{ to }} --execute="git apply --index '$p' && rm '$p'"; fi'''
+```
+
+`--index` preserves the staged-vs-unstaged split when popping. The `git diff --quiet HEAD` guard skips the stash dance when the source is already clean, avoiding noise and never touching a pre-existing stash. If `--base` differs from `HEAD`, `git apply` and `git stash pop` may reject hunks that don't match — the same constraint a native flag would face.
+
 ## External subcommands
 
 [experimental]
