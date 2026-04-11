@@ -1362,35 +1362,30 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
     }
 }
 
-/// Execute a command in a worktree directory
+/// Run a shell command with streaming output, signal forwarding, and ANSI reset.
 ///
-/// Redirects child stdout to stderr (via `.stdout(Stdio::from(std::io::stderr()))`) for
-/// deterministic output ordering. Per CLAUDE.md guidelines: child process output goes to
-/// stderr, worktrunk output goes to stdout.
+/// Unified entry point for hooks, aliases, and `for-each`. Redirects child stdout
+/// to stderr for deterministic output ordering, forwards SIGINT/SIGTERM to the
+/// child process group, and resets ANSI codes before the child runs.
 ///
-/// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
-/// hook context as JSON to hook commands.
+/// `directive_file` controls whether the child can write shell integration
+/// directives (e.g. `cd`) back to the parent shell:
+/// - `None` — scrubs `WORKTRUNK_DIRECTIVE_FILE` from the child environment
+/// - `Some(path)` — passes the env var through for trusted contexts (aliases,
+///   foreground hooks)
 ///
 /// ## Color Bleeding Prevention
 ///
-/// This function explicitly resets ANSI codes on stderr before executing child commands.
-///
-/// Root cause: Terminal emulators maintain a single rendering state machine. When stdout
-/// and stderr both connect to the same TTY, output from both streams passes through this
-/// state machine in arrival order. If stdout writes color codes but stderr's output arrives
-/// next, the terminal applies stdout's color state to stderr's text. The flush ensures stdout
-/// completes, but doesn't reset the terminal state - hence this explicit reset to stderr.
-///
-/// We write the reset to stderr (not stdout) because:
-/// 1. Child process output goes to stderr (per CLAUDE.md guidelines)
-/// 2. The reset must reach the terminal before child output
-/// 3. Writing to stdout could arrive after stderr due to buffering
-///
-pub fn execute_command_in_worktree(
-    worktree_path: &std::path::Path,
+/// Resets ANSI codes on stderr before executing child commands. Terminal
+/// emulators maintain a single rendering state machine — if stdout writes color
+/// codes but stderr's output arrives next, the terminal applies stdout's color
+/// state to stderr's text. The reset to stderr prevents this.
+pub fn execute_shell_command(
+    working_dir: &std::path::Path,
     command: &str,
     stdin_content: Option<&str>,
     command_log_label: Option<&str>,
+    directive_file: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1404,7 +1399,7 @@ pub fn execute_command_in_worktree(
 
     // Execute with stdout→stderr redirect for deterministic ordering
     let mut cmd = Cmd::shell(command)
-        .current_dir(worktree_path)
+        .current_dir(working_dir)
         .stdout(Stdio::from(std::io::stderr()))
         .forward_signals();
 
@@ -1414,6 +1409,10 @@ pub fn execute_command_in_worktree(
 
     if let Some(content) = stdin_content {
         cmd = cmd.stdin_bytes(content);
+    }
+
+    if let Some(path) = directive_file {
+        cmd = cmd.directive_file(path);
     }
 
     cmd.stream()?;

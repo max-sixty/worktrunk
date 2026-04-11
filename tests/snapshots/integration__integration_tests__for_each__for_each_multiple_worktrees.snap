@@ -49,12 +49,12 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-main
+[0mmain
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-feature-a
+[0mfeature-a
 [36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-feature-b
+[0mfeature-b
 [36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-feature-c
+[0mfeature-c
 
 [32m✓[39m [32mCompleted in 4 worktrees[39m

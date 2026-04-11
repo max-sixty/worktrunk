@@ -45,4 +45,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mdeploy[22m[39m
-deploying from user config
+[0mdeploying from user config

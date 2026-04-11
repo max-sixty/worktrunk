@@ -14,7 +14,7 @@ use super::command_executor::{
     CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
-use crate::output::execute_command_in_worktree;
+use crate::output::execute_shell_command;
 
 /// A prepared command with its source information.
 pub struct SourcedCommand {
@@ -520,11 +520,12 @@ pub fn run_hook_with_filter(
         };
 
         let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
-        if let Err(err) = execute_command_in_worktree(
+        if let Err(err) = execute_shell_command(
             ctx.worktree_path,
             &expanded,
             Some(&cmd.prepared.context_json),
             Some(&log_label),
+            None, // TODO: Phase 3 — pass directive file for foreground hooks
         ) {
             // Extract raw message and exit code from error
             let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {

@@ -24,7 +24,7 @@ use worktrunk::styling::{
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
-use crate::commands::for_each::{CommandError, run_command_streaming};
+use crate::output::execute_shell_command;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// shadowed by the built-in and will never run.
@@ -281,48 +281,29 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         progress_message(cformat!("Running alias <bold>{}</>", opts.name))
     );
 
-    // Pass the parent shell's directive file through to the alias subprocess
-    // so inner `wt` invocations (e.g. `wt switch --create` inside an alias
-    // body) can write shell integration directives like `cd '/path'` that the
-    // parent shell wrapper will source after `wt` exits. Without this the
-    // inner `wt` would see a scrubbed env var, print the "shell integration
-    // not installed" hint, and drop the `cd`.
-    //
-    // This is a deliberate relaxation of the usual env scrub: aliases are
-    // explicit, named, user-authorised commands (user-config aliases are
-    // trusted; project-config aliases require approval), and an alias body is
-    // already arbitrary shell that can `cd`/`rm`/`exec` anything locally, so
-    // letting it ask the parent shell to `cd` is strictly less powerful than
-    // what the body can already do.
-    //
-    // TODO: unify hook and alias execution so both pass the directive file
-    // through. Hooks currently scrub it (see `process.rs` and the `None`
-    // branch in `for_each::run_command_streaming`), so an inner `wt switch`
-    // inside a hook body still drops its `cd`. Foreground `pre-*` hooks have
-    // the same trust profile as aliases and could pass through too;
-    // background `post-*` hooks outlive the parent shell, so any unification
-    // needs to keep scrubbing in the detached spawn paths.
+    // Pass the parent shell's directive file through so inner `wt` invocations
+    // (e.g. `wt switch --create`) can write shell directives that the parent
+    // shell wrapper will source after `wt` exits. The Cmd builder scrubs the
+    // env var by default; `.directive_file()` re-adds it for trusted contexts.
     let parent_directive_file: Option<PathBuf> =
         std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
 
     for cmd in commands {
         let command = expand_template(&cmd.template, &vars, true, &repo, &opts.name)?;
-        match run_command_streaming(
-            &command,
+        if let Err(err) = execute_shell_command(
             &wt_path,
+            &command,
             Some(&context_json),
+            None,
             parent_directive_file.as_deref(),
         ) {
-            Ok(()) => {}
-            Err(CommandError::SpawnFailed(err)) => {
-                bail!("Failed to run alias '{}': {}", opts.name, err);
+            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+                err.downcast_ref::<WorktrunkError>()
+            {
+                // Command ran but exited non-zero; output already streamed to terminal
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
             }
-            Err(CommandError::ExitCode(exit_code)) => {
-                return Err(WorktrunkError::AlreadyDisplayed {
-                    exit_code: exit_code.unwrap_or(1),
-                }
-                .into());
-            }
+            bail!("Failed to run alias '{}': {}", opts.name, err);
         }
     }
 

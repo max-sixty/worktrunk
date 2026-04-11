@@ -46,5 +46,5 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mdeploy[22m[39m
-user deploy
-project deploy
+[0muser deploy
+[0mproject deploy

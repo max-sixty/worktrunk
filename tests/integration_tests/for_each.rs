@@ -167,7 +167,7 @@ fn test_for_each_json_with_failure(repo: TestRepo) {
     for item in items {
         assert_eq!(item["success"], false);
         assert_eq!(item["exit_code"], 1);
-        // error field is always present on failure (both ExitCode and SpawnFailed)
-        assert_eq!(item["error"], "exit code 1");
+        // error field contains the raw message from the child process
+        assert_eq!(item["error"], "exit status: 1");
     }
 }

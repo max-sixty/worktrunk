@@ -45,4 +45,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mgreet[22m[39m
-Greetings from feature
+[0mGreetings from feature
