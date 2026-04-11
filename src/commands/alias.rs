@@ -14,7 +14,8 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    CommandConfig, ProjectConfig, UserConfig, append_aliases, expand_template,
+    CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, expand_template,
+    template_references_var,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
@@ -254,11 +255,9 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
 
-    let commands: Vec<_> = cmd_config.commands().collect();
-
     if opts.dry_run {
-        let expanded: Vec<_> = commands
-            .iter()
+        let expanded: Vec<_> = cmd_config
+            .commands()
             .map(|cmd| expand_template(&cmd.template, &vars, true, &repo, &opts.name))
             .collect::<Result<_, _>>()?;
         eprintln!(
@@ -288,26 +287,79 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let parent_directive_file: Option<PathBuf> =
         std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
 
-    for cmd in commands {
-        let command = expand_template(&cmd.template, &vars, true, &repo, &opts.name)?;
-        if let Err(err) = execute_shell_command(
-            &wt_path,
-            &command,
-            Some(&context_json),
-            None,
-            parent_directive_file.as_deref(),
-        ) {
-            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
-                err.downcast_ref::<WorktrunkError>()
-            {
-                // Command ran but exited non-zero; output already streamed to terminal
-                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+    let exec = AliasExecCtx {
+        vars: &vars,
+        repo: &repo,
+        alias_name: &opts.name,
+        wt_path: &wt_path,
+        context_json: &context_json,
+        directive_file: parent_directive_file.as_deref(),
+        is_pipeline: cmd_config.is_pipeline(),
+    };
+
+    for step in cmd_config.steps() {
+        match step {
+            HookStep::Single(cmd) => exec.run(cmd)?,
+            HookStep::Concurrent(cmds) => {
+                std::thread::scope(|s| {
+                    let handles: Vec<_> =
+                        cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
+                    for handle in handles {
+                        handle.join().expect("alias command thread panicked")?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })?;
             }
-            bail!("Failed to run alias '{}': {}", opts.name, err);
         }
     }
 
     Ok(())
+}
+
+/// Shared state for executing alias commands within a pipeline.
+struct AliasExecCtx<'a> {
+    vars: &'a HashMap<&'a str, &'a str>,
+    repo: &'a Repository,
+    alias_name: &'a str,
+    wt_path: &'a std::path::Path,
+    context_json: &'a str,
+    directive_file: Option<&'a std::path::Path>,
+    is_pipeline: bool,
+}
+
+impl AliasExecCtx<'_> {
+    /// Expand and execute a single alias command.
+    ///
+    /// In pipelines, templates referencing `vars.*` are deferred to execution
+    /// time so that vars set by earlier steps are available.
+    fn run(&self, cmd: &worktrunk::config::Command) -> anyhow::Result<()> {
+        let command = if self.is_pipeline && template_references_var(&cmd.template, "vars") {
+            let fresh_context: HashMap<String, String> = serde_json::from_str(self.context_json)
+                .context("failed to deserialize context_json")?;
+            let fresh_vars: HashMap<&str, &str> = fresh_context
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            expand_template(&cmd.template, &fresh_vars, true, self.repo, self.alias_name)?
+        } else {
+            expand_template(&cmd.template, self.vars, true, self.repo, self.alias_name)?
+        };
+        if let Err(err) = execute_shell_command(
+            self.wt_path,
+            &command,
+            Some(self.context_json),
+            None,
+            self.directive_file,
+        ) {
+            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+                err.downcast_ref::<WorktrunkError>()
+            {
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+            }
+            bail!("Failed to run alias '{}': {}", self.alias_name, err);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

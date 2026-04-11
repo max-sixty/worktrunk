@@ -98,36 +98,6 @@ worktrees, not the current one.
 internal. Config stays separate because the *meaning* differs (event-driven vs
 user-invoked), even though the mechanism becomes shared.
 
-## Implementation order
-
-### Phase 1: Unified leaf executor
-
-Add `directive_file` parameter to `execute_command_in_worktree` (or replace both
-functions). Delete `run_command_streaming`. All three consumers call the new function.
-
-Files touched:
-- `src/output/handlers.rs` — extend or replace `execute_command_in_worktree`
-- `src/commands/for_each.rs` — delete `run_command_streaming`, call unified function
-- `src/commands/alias.rs` — call unified function
-- `src/commands/hooks.rs` — pass directive file in foreground path
-
-### Phase 2: Aliases use pipeline machinery
-
-`step_alias` calls `prepare_steps` + step iteration instead of `commands().flat_map()`.
-Aliases gain concurrent steps and lazy `vars.*` expansion.
-
-Files touched:
-- `src/commands/alias.rs` — rewrite execution loop to use pipeline steps
-- `src/commands/command_executor.rs` — may need to expose step iteration for alias use
-
-### Phase 3: Foreground hooks get directive file
-
-Pass directive file through in `run_hook_with_filter` for foreground execution. The
-unified executor already supports it from Phase 1; this wires it in for hooks.
-
-Files touched:
-- `src/commands/hooks.rs` — pass `directive_file` to executor in foreground path
-
 ## What stays separate
 
 - **Background execution**: Aliases are always foreground. Background spawning
