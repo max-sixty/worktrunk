@@ -1910,20 +1910,6 @@ fn test_hooks_none_project_uses_global() {
     assert_eq!(commands[0].template, "echo global");
 }
 
-#[test]
-fn test_hooks_in_overridable_config_is_empty() {
-    // Default hooks should be considered empty
-    let config = OverridableConfig::default();
-    assert!(config.is_empty());
-
-    // With hooks set, should not be empty
-    let config = OverridableConfig {
-        hooks: parse_hooks("post-start = \"echo test\""),
-        ..Default::default()
-    };
-    assert!(!config.is_empty());
-}
-
 /// Validates that valid_user_config_keys() includes all hook types from HookType enum.
 ///
 /// The JsonSchema derivation should include all HooksConfig fields, which correspond

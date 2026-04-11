@@ -28,9 +28,8 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
-    UserProjectOverrides,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StageMode,
+    StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
 };
 
 /// Distinguishes *why* `UserConfig::load()` failed so callers can emit
