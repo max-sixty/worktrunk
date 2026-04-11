@@ -145,9 +145,41 @@ pub struct UserConfig {
     #[serde(default)]
     pub projects: std::collections::BTreeMap<String, UserProjectOverrides>,
 
-    /// Settings that can be overridden per-project (worktree-path, list, commit, merge, switch, step, hooks)
+    /// Hooks configuration (top-level keys like pre-merge, post-switch, etc.)
     #[serde(flatten, default)]
-    pub configs: OverridableConfig,
+    pub hooks: crate::config::HooksConfig,
+
+    /// Worktree path template
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub worktree_path: Option<String>,
+
+    /// Configuration for the `wt list` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<sections::ListConfig>,
+
+    /// Configuration for the `wt step commit` command (also used by merge)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<sections::CommitConfig>,
+
+    /// Configuration for the `wt merge` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<sections::MergeConfig>,
+
+    /// Configuration for the `wt switch` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<sections::SwitchConfig>,
+
+    /// Configuration for `wt step` subcommands
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<sections::StepConfig>,
+
+    /// Command aliases for `wt step <name>`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<std::collections::BTreeMap<String, crate::config::commands::CommandConfig>>,
 
     /// Skip the first-run shell integration prompt
     #[serde(
@@ -164,6 +196,24 @@ pub struct UserConfig {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub skip_commit_generation_prompt: bool,
+}
+
+impl UserConfig {
+    /// Construct an `OverridableConfig` from this config's inlined fields.
+    ///
+    /// Used for the `Merge` trait when combining global + per-project settings.
+    pub fn overridable_config(&self) -> OverridableConfig {
+        OverridableConfig {
+            hooks: self.hooks.clone(),
+            worktree_path: self.worktree_path.clone(),
+            list: self.list.clone(),
+            commit: self.commit.clone(),
+            merge: self.merge.clone(),
+            switch: self.switch.clone(),
+            step: self.step.clone(),
+            aliases: self.aliases.clone(),
+        }
+    }
 }
 
 impl UserConfig {
@@ -203,18 +253,8 @@ impl UserConfig {
             let migrated = super::deprecation::migrate_content(&content);
 
             // Pre-validate with the toml crate for rich line/col errors.
-            // Try OverridableConfig first — it has section fields (list,
-            // commit, merge, ...) as direct fields, so toml tracks their
-            // location correctly. UserConfig's flatten loses field paths.
-            // Then try UserConfig to catch non-section fields (projects,
-            // skip-*-prompt) that OverridableConfig silently ignores.
-            if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
-                return Err(LoadError::File {
-                    path: system_path,
-                    label: "System config",
-                    err: Box::new(err),
-                });
-            }
+            // Section fields (list, commit, merge, ...) are direct fields on
+            // UserConfig now (no flatten), so toml tracks their location correctly.
             if let Err(err) = toml::from_str::<Self>(&migrated) {
                 return Err(LoadError::File {
                     path: system_path,
@@ -257,14 +297,7 @@ impl UserConfig {
                 );
 
                 // Pre-validate with the toml crate for rich line/col errors
-                // (see system config comment above for the two-pass rationale).
-                if let Err(err) = toml::from_str::<OverridableConfig>(&migrated) {
-                    return Err(LoadError::File {
-                        path: config_path.clone(),
-                        label: "User config",
-                        err: Box::new(err),
-                    });
-                }
+                // (see system config comment above).
                 if let Err(err) = toml::from_str::<Self>(&migrated) {
                     return Err(LoadError::File {
                         path: config_path.clone(),

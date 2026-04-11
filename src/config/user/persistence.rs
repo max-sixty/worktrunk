@@ -84,7 +84,7 @@ impl UserConfig {
 
     /// Update the [commit.generation] section in the document.
     fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
-        if let Some(ref commit_cfg) = self.configs.commit
+        if let Some(ref commit_cfg) = self.commit
             && let Some(ref gen_cfg) = commit_cfg.generation
         {
             // Ensure [commit] table exists
@@ -145,28 +145,24 @@ impl UserConfig {
                 Self::sync_string_field(
                     project_table,
                     "worktree-path",
-                    project_config.overrides.worktree_path.as_ref(),
+                    project_config.worktree_path.as_ref(),
                 );
 
-                Self::sync_serialized_section(
-                    project_table,
-                    "list",
-                    project_config.overrides.list.as_ref(),
-                );
+                Self::sync_serialized_section(project_table, "list", project_config.list.as_ref());
                 Self::sync_serialized_section(
                     project_table,
                     "commit",
-                    project_config.overrides.commit.as_ref(),
+                    project_config.commit.as_ref(),
                 );
                 Self::sync_serialized_section(
                     project_table,
                     "merge",
-                    project_config.overrides.merge.as_ref(),
+                    project_config.merge.as_ref(),
                 );
                 Self::sync_serialized_section(
                     project_table,
                     "switch",
-                    project_config.overrides.switch.as_ref(),
+                    project_config.switch.as_ref(),
                 );
             }
         }
@@ -278,7 +274,7 @@ impl UserConfig {
     /// Validate configuration values.
     pub(super) fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
-        if let Some(ref path) = self.configs.worktree_path
+        if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
             return Err(ConfigError::Message("worktree-path cannot be empty".into()));
@@ -287,7 +283,7 @@ impl UserConfig {
         // Validate per-project configs
         for (project, project_config) in &self.projects {
             // Validate worktree path
-            if let Some(ref path) = project_config.overrides.worktree_path
+            if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
                 return Err(ConfigError::Message(format!(
@@ -295,14 +291,14 @@ impl UserConfig {
                 )));
             }
 
-            if let Some(ref commit) = project_config.overrides.commit
+            if let Some(ref commit) = project_config.commit
                 && let Some(ref cg) = commit.generation
             {
                 Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
             }
         }
 
-        if let Some(ref commit) = self.configs.commit
+        if let Some(ref commit) = self.commit
             && let Some(ref cg) = commit.generation
         {
             if cg.template.is_some() && cg.template_file.is_some() {

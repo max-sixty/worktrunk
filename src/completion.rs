@@ -257,7 +257,7 @@ impl ValueCompleter for HookCommandCompleter {
 
         // Load user config and add user hook names
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.configs.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks.get(hook_type)
         {
             add_named_commands(&mut candidates, config);
         }

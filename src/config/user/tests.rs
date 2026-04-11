@@ -158,18 +158,16 @@ fn test_stage_mode_serde() {
 #[test]
 fn test_user_project_config_default() {
     let config = UserProjectOverrides::default();
-    assert!(config.overrides.worktree_path.is_none());
+    assert!(config.worktree_path.is_none());
     assert!(config.approved_commands.is_empty());
 }
 
 #[test]
 fn test_user_project_config_with_worktree_path_serde() {
     let config = UserProjectOverrides {
-        overrides: OverridableConfig {
-            worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
         approved_commands: vec!["npm install".to_string()],
+        ..Default::default()
     };
     let toml = toml::to_string(&config).unwrap();
     insta::assert_snapshot!(toml, @r#"
@@ -179,7 +177,7 @@ fn test_user_project_config_with_worktree_path_serde() {
 
     let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
     assert_eq!(
-        parsed.overrides.worktree_path,
+        parsed.worktree_path,
         Some(".worktrees/{{ branch | sanitize }}".to_string())
     );
     assert_eq!(parsed.approved_commands, vec!["npm install".to_string()]);
@@ -191,11 +189,8 @@ fn test_worktree_path_for_project_uses_project_specific() {
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
-                ..Default::default()
-            },
-            approved_commands: vec![],
+            worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
         },
     );
 
@@ -209,20 +204,15 @@ fn test_worktree_path_for_project_uses_project_specific() {
 #[test]
 fn test_worktree_path_for_project_falls_back_to_global() {
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("../{{ repo }}-{{ branch | sanitize }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("../{{ repo }}-{{ branch | sanitize }}".to_string()),
         ..Default::default()
     };
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                worktree_path: None, // No project-specific path
-                ..Default::default()
-            },
+            worktree_path: None, // No project-specific path
             approved_commands: vec!["npm install".to_string()],
+            ..Default::default()
         },
     );
 
@@ -248,20 +238,14 @@ fn test_worktree_path_for_project_falls_back_to_default() {
 fn test_format_path_with_project_override() {
     let test = test_repo();
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("../{{ repo }}.{{ branch | sanitize }}".to_string()),
         ..Default::default()
     };
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
-                ..Default::default()
-            },
-            approved_commands: vec![],
+            worktree_path: Some(".worktrees/{{ branch | sanitize }}".to_string()),
+            ..Default::default()
         },
     );
 
@@ -313,15 +297,15 @@ fn test_commit_config_default() {
 fn test_worktrunk_config_default() {
     let config = UserConfig::default();
     // worktree_path is None by default, but the getter returns the default
-    assert!(config.configs.worktree_path.is_none());
+    assert!(config.worktree_path.is_none());
     assert_eq!(
         config.worktree_path(),
         "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
     );
     assert!(config.projects.is_empty());
-    assert!(config.configs.list.is_none());
-    assert!(config.configs.commit.is_none());
-    assert!(config.configs.merge.is_none());
+    assert!(config.list.is_none());
+    assert!(config.commit.is_none());
+    assert!(config.merge.is_none());
     assert!(!config.skip_shell_integration_prompt);
 }
 
@@ -356,10 +340,7 @@ fn test_worktrunk_config_format_path() {
 fn test_worktrunk_config_format_path_custom_template() {
     let test = test_repo();
     let config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some(".worktrees/{{ branch }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some(".worktrees/{{ branch }}".to_string()),
         ..Default::default()
     };
     let path = config
@@ -372,11 +353,8 @@ fn test_worktrunk_config_format_path_custom_template() {
 fn test_worktrunk_config_format_path_repo_path_variable() {
     let test = test_repo();
     let config = UserConfig {
-        configs: OverridableConfig {
-            // Use forward slashes in template (works on all platforms)
-            worktree_path: Some("{{ repo_path }}/worktrees/{{ branch | sanitize }}".to_string()),
-            ..Default::default()
-        },
+        // Use forward slashes in template (works on all platforms)
+        worktree_path: Some("{{ repo_path }}/worktrees/{{ branch | sanitize }}".to_string()),
         ..Default::default()
     };
     let path = config
@@ -404,10 +382,7 @@ fn test_worktrunk_config_format_path_repo_path_variable() {
 fn test_worktrunk_config_format_path_tilde_expansion() {
     let test = test_repo();
     let config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("~/worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("~/worktrees/{{ repo }}/{{ branch | sanitize }}".to_string()),
         ..Default::default()
     };
     let path = config
@@ -442,10 +417,7 @@ fn test_worktrunk_config_format_path_owner_variable() {
     ]);
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
         ..Default::default()
     };
 
@@ -468,10 +440,7 @@ fn test_worktrunk_config_format_path_owner_uses_full_namespace() {
     ]);
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("{{ owner }}/{{ repo }}/{{ branch }}".to_string()),
         ..Default::default()
     };
 
@@ -827,16 +796,13 @@ fn test_commit_generation_merge_squash_template_mutual_exclusivity() {
 #[test]
 fn test_effective_commit_generation_no_project() {
     let config = UserConfig {
-        configs: OverridableConfig {
-            commit: Some(CommitConfig {
-                stage: None,
-                generation: Some(CommitGenerationConfig {
-                    command: Some("global-llm".to_string()),
-                    ..Default::default()
-                }),
+        commit: Some(CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("global-llm".to_string()),
+                ..Default::default()
             }),
-            ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
@@ -847,32 +813,26 @@ fn test_effective_commit_generation_no_project() {
 #[test]
 fn test_effective_commit_generation_with_project_override() {
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            commit: Some(CommitConfig {
-                stage: None,
-                generation: Some(CommitGenerationConfig {
-                    command: Some("global-llm".to_string()),
-                    ..Default::default()
-                }),
+        commit: Some(CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("global-llm".to_string()),
+                ..Default::default()
             }),
-            ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                commit: Some(CommitConfig {
-                    stage: None,
-                    generation: Some(CommitGenerationConfig {
-                        command: Some("project-llm".to_string()),
-                        ..Default::default()
-                    }),
+            commit: Some(CommitConfig {
+                stage: None,
+                generation: Some(CommitGenerationConfig {
+                    command: Some("project-llm".to_string()),
+                    ..Default::default()
                 }),
-                ..Default::default()
-            },
+            }),
             ..Default::default()
         },
     );
@@ -892,34 +852,28 @@ fn test_effective_commit_generation_with_project_override() {
 #[test]
 fn test_effective_merge_with_partial_override() {
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            merge: Some(MergeConfig {
-                squash: Some(true),
-                commit: Some(true),
-                rebase: Some(true),
-                remove: Some(true),
-                verify: Some(true),
-                ff: Some(true),
-            }),
-            ..Default::default()
-        },
+        merge: Some(MergeConfig {
+            squash: Some(true),
+            commit: Some(true),
+            rebase: Some(true),
+            remove: Some(true),
+            verify: Some(true),
+            ff: Some(true),
+        }),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                merge: Some(MergeConfig {
-                    squash: Some(false), // Only override squash
-                    commit: None,
-                    rebase: None,
-                    remove: None,
-                    verify: None,
-                    ff: None,
-                }),
-                ..Default::default()
-            },
+            merge: Some(MergeConfig {
+                squash: Some(false), // Only override squash
+                commit: None,
+                rebase: None,
+                remove: None,
+                verify: None,
+                ff: None,
+            }),
             ..Default::default()
         },
     );
@@ -934,18 +888,15 @@ fn test_effective_merge_with_partial_override() {
 fn test_effective_list_project_only() {
     // No global list config, only project config
     let mut config = UserConfig::default();
-    assert!(config.configs.list.is_none());
+    assert!(config.list.is_none());
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                list: Some(ListConfig {
-                    full: Some(true),
-                    ..Default::default()
-                }),
+            list: Some(ListConfig {
+                full: Some(true),
                 ..Default::default()
-            },
+            }),
             ..Default::default()
         },
     );
@@ -962,13 +913,10 @@ fn test_effective_list_project_only() {
 fn test_effective_commit_global_only() {
     // Only global config, no project config
     let config = UserConfig {
-        configs: OverridableConfig {
-            commit: Some(CommitConfig {
-                stage: Some(StageMode::Tracked),
-                generation: None,
-            }),
-            ..Default::default()
-        },
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::Tracked),
+            generation: None,
+        }),
         ..Default::default()
     };
 
@@ -1047,14 +995,14 @@ fn test_merge_config_accessor_methods_with_values() {
 #[test]
 fn test_deprecated_no_ff_migrated_to_ff() {
     let config = UserConfig::load_from_str("[merge]\nno-ff = true\n").unwrap();
-    assert!(!config.configs.merge.unwrap().ff());
+    assert!(!config.merge.unwrap().ff());
 }
 
 #[test]
 fn test_deprecated_no_ff_does_not_override_explicit_ff() {
     // If both `ff` and `no-ff` are set, `ff` wins (no-ff is ignored)
     let config = UserConfig::load_from_str("[merge]\nff = true\nno-ff = true\n").unwrap();
-    assert!(config.configs.merge.unwrap().ff());
+    assert!(config.merge.unwrap().ff());
 }
 
 #[test]
@@ -1126,14 +1074,7 @@ pager = "delta --paging=never"
 timeout-ms = 300
 "#;
     let config: UserConfig = toml::from_str(content).unwrap();
-    let picker = config
-        .configs
-        .switch
-        .as_ref()
-        .unwrap()
-        .picker
-        .as_ref()
-        .unwrap();
+    let picker = config.switch.as_ref().unwrap().picker.as_ref().unwrap();
     assert_eq!(picker.pager.as_deref(), Some("delta --paging=never"));
     assert_eq!(picker.timeout_ms, Some(300));
 }
@@ -1272,13 +1213,13 @@ cd = false
 #[test]
 fn test_deprecated_no_cd_migrated_to_cd() {
     let config = UserConfig::load_from_str("[switch]\nno-cd = true\n").unwrap();
-    assert!(!config.configs.switch.unwrap().cd());
+    assert!(!config.switch.unwrap().cd());
 }
 
 #[test]
 fn test_deprecated_no_cd_does_not_override_explicit_cd() {
     let config = UserConfig::load_from_str("[switch]\ncd = true\nno-cd = true\n").unwrap();
-    assert!(config.configs.switch.unwrap().cd());
+    assert!(config.switch.unwrap().cd());
 }
 
 #[test]
@@ -1296,7 +1237,6 @@ pager = "bat"
     // [select] is migrated to [switch.picker] at the TOML level before parsing
     assert_eq!(
         config
-            .configs
             .switch
             .as_ref()
             .and_then(|switch| switch.picker.as_ref())
@@ -1335,32 +1275,26 @@ fn test_switch_picker_project_override() {
     use crate::config::user::{SwitchConfig, SwitchPickerConfig};
 
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("delta".to_string()),
-                    timeout_ms: Some(200),
-                }),
-                ..Default::default()
+        switch: Some(SwitchConfig {
+            picker: Some(SwitchPickerConfig {
+                pager: Some("delta".to_string()),
+                timeout_ms: Some(200),
             }),
             ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                switch: Some(SwitchConfig {
-                    picker: Some(SwitchPickerConfig {
-                        pager: Some("bat".to_string()),
-                        timeout_ms: None, // Fall back to global
-                    }),
-                    ..Default::default()
+            switch: Some(SwitchConfig {
+                picker: Some(SwitchPickerConfig {
+                    pager: Some("bat".to_string()),
+                    timeout_ms: None, // Fall back to global
                 }),
                 ..Default::default()
-            },
+            }),
             ..Default::default()
         },
     );
@@ -1394,7 +1328,6 @@ pager = "bat"
             .projects
             .get("github.com/user/repo")
             .unwrap()
-            .overrides
             .switch
             .as_ref()
             .and_then(|s| s.picker.as_ref())
@@ -1409,28 +1342,25 @@ fn test_resolved_config_for_project() {
     use crate::config::user::SwitchPickerConfig;
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            list: Some(ListConfig {
-                full: Some(true),
-                ..Default::default()
-            }),
-            merge: Some(MergeConfig {
-                squash: Some(false),
-                ..Default::default()
-            }),
-            commit: Some(CommitConfig {
-                stage: Some(StageMode::None),
-                ..Default::default()
-            }),
-            switch: Some(SwitchConfig {
-                picker: Some(SwitchPickerConfig {
-                    pager: Some("less".to_string()),
-                    timeout_ms: Some(300),
-                }),
-                ..Default::default()
+        list: Some(ListConfig {
+            full: Some(true),
+            ..Default::default()
+        }),
+        merge: Some(MergeConfig {
+            squash: Some(false),
+            ..Default::default()
+        }),
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::None),
+            ..Default::default()
+        }),
+        switch: Some(SwitchConfig {
+            picker: Some(SwitchPickerConfig {
+                pager: Some("less".to_string()),
+                timeout_ms: Some(300),
             }),
             ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
@@ -1455,37 +1385,34 @@ fn test_resolved_config_for_project() {
 fn test_user_project_config_with_nested_configs_serde() {
     let config = UserProjectOverrides {
         approved_commands: vec!["npm install".to_string()],
-        overrides: OverridableConfig {
-            worktree_path: Some(".worktrees/{{ branch }}".to_string()),
-            list: Some(ListConfig {
-                full: Some(true),
-                ..Default::default()
-            }),
-            commit: Some(CommitConfig {
-                stage: Some(StageMode::Tracked),
-                generation: Some(CommitGenerationConfig {
-                    command: Some("llm -m gpt-4".to_string()),
-                    ..Default::default()
-                }),
-            }),
-            merge: Some(MergeConfig {
-                squash: Some(false),
-                ..Default::default()
-            }),
+        worktree_path: Some(".worktrees/{{ branch }}".to_string()),
+        list: Some(ListConfig {
+            full: Some(true),
             ..Default::default()
-        },
+        }),
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::Tracked),
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm -m gpt-4".to_string()),
+                ..Default::default()
+            }),
+        }),
+        merge: Some(MergeConfig {
+            squash: Some(false),
+            ..Default::default()
+        }),
+        ..Default::default()
     };
 
     let toml = toml::to_string(&config).unwrap();
     let parsed: UserProjectOverrides = toml::from_str(&toml).unwrap();
 
     assert_eq!(
-        parsed.overrides.worktree_path,
+        parsed.worktree_path,
         Some(".worktrees/{{ branch }}".to_string())
     );
     assert_eq!(
         parsed
-            .overrides
             .commit
             .as_ref()
             .unwrap()
@@ -1495,12 +1422,12 @@ fn test_user_project_config_with_nested_configs_serde() {
             .command,
         Some("llm -m gpt-4".to_string())
     );
-    assert_eq!(parsed.overrides.list.as_ref().unwrap().full, Some(true));
+    assert_eq!(parsed.list.as_ref().unwrap().full, Some(true));
     assert_eq!(
-        parsed.overrides.commit.as_ref().unwrap().stage,
+        parsed.commit.as_ref().unwrap().stage,
         Some(StageMode::Tracked)
     );
-    assert_eq!(parsed.overrides.merge.as_ref().unwrap().squash, Some(false));
+    assert_eq!(parsed.merge.as_ref().unwrap().squash, Some(false));
 }
 
 #[test]
@@ -1530,12 +1457,11 @@ squash = false
 
     // Global config
     assert_eq!(
-        config.configs.worktree_path,
+        config.worktree_path,
         Some("../{{ repo }}.{{ branch | sanitize }}".to_string())
     );
     assert_eq!(
         config
-            .configs
             .commit
             .as_ref()
             .unwrap()
@@ -1549,12 +1475,11 @@ squash = false
     // Project config
     let project = config.projects.get("github.com/user/repo").unwrap();
     assert_eq!(
-        project.overrides.worktree_path,
+        project.worktree_path,
         Some(".worktrees/{{ branch | sanitize }}".to_string())
     );
     assert_eq!(
         project
-            .overrides
             .commit
             .as_ref()
             .unwrap()
@@ -1564,11 +1489,8 @@ squash = false
             .command,
         Some("claude -p --model opus".to_string())
     );
-    assert_eq!(project.overrides.list.as_ref().unwrap().full, Some(true));
-    assert_eq!(
-        project.overrides.merge.as_ref().unwrap().squash,
-        Some(false)
-    );
+    assert_eq!(project.list.as_ref().unwrap().full, Some(true));
+    assert_eq!(project.merge.as_ref().unwrap().squash, Some(false));
 
     // Effective config for project
     let effective_cg = config.commit_generation(Some("github.com/user/repo"));
@@ -1633,7 +1555,6 @@ command = "claude -p --model opus"
 
     assert_eq!(
         config
-            .configs
             .commit
             .as_ref()
             .and_then(|commit| commit.generation.as_ref())
@@ -1644,7 +1565,6 @@ command = "claude -p --model opus"
     let project = config.projects.get("github.com/user/repo").unwrap();
     assert_eq!(
         project
-            .overrides
             .commit
             .as_ref()
             .and_then(|commit| commit.generation.as_ref())
@@ -1672,7 +1592,6 @@ args = ["-m", "claude-haiku-4.5"]
     // Migration merges args into command and renames section
     assert_eq!(
         config
-            .configs
             .commit
             .as_ref()
             .and_then(|c| c.generation.as_ref())
@@ -1773,16 +1692,13 @@ fn test_save_to_new_file_with_commit_generation() {
     let config_path = dir.path().join("config.toml");
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            commit: Some(CommitConfig {
-                stage: None,
-                generation: Some(CommitGenerationConfig {
-                    command: Some("llm -m haiku".to_string()),
-                    ..Default::default()
-                }),
+        commit: Some(CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm -m haiku".to_string()),
+                ..Default::default()
             }),
-            ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
@@ -1811,16 +1727,13 @@ fn test_save_to_new_file_commit_with_stage_and_generation() {
     let config_path = dir.path().join("config.toml");
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            commit: Some(CommitConfig {
-                stage: Some(StageMode::Tracked),
-                generation: Some(CommitGenerationConfig {
-                    command: Some("llm -m haiku".to_string()),
-                    ..Default::default()
-                }),
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::Tracked),
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm -m haiku".to_string()),
+                ..Default::default()
             }),
-            ..Default::default()
-        },
+        }),
         ..Default::default()
     };
 
@@ -1868,10 +1781,7 @@ fn test_save_to_new_file_with_worktree_path() {
     let config_path = dir.path().join("config.toml");
 
     let config = UserConfig {
-        configs: OverridableConfig {
-            worktree_path: Some("../{{ repo }}.{{ branch }}".to_string()),
-            ..Default::default()
-        },
+        worktree_path: Some("../{{ repo }}.{{ branch }}".to_string()),
         ..Default::default()
     };
 
@@ -1898,20 +1808,14 @@ fn test_hooks_merge_append_semantics() {
     // Global has post-start, per-project has post-start
     // Both should run (global first, then per-project)
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            hooks: parse_hooks("post-start = \"echo global\""),
-            ..Default::default()
-        },
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                hooks: parse_hooks("post-start = \"echo project\""),
-                ..Default::default()
-            },
+            hooks: parse_hooks("post-start = \"echo project\""),
             ..Default::default()
         },
     );
@@ -1928,10 +1832,7 @@ fn test_hooks_merge_append_semantics() {
 fn test_hooks_no_project_override_uses_global() {
     // Global has hooks, project doesn't - global hooks used
     let config = UserConfig {
-        configs: OverridableConfig {
-            hooks: parse_hooks("post-start = \"echo global\""),
-            ..Default::default()
-        },
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
@@ -1950,10 +1851,7 @@ fn test_hooks_project_only_no_global() {
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                hooks: parse_hooks("post-start = \"echo project\""),
-                ..Default::default()
-            },
+            hooks: parse_hooks("post-start = \"echo project\""),
             ..Default::default()
         },
     );
@@ -1970,20 +1868,14 @@ fn test_hooks_different_hook_types_not_merged() {
     // Global has post-start, per-project has pre-commit
     // These should remain separate (different hook types)
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            hooks: parse_hooks("post-start = \"echo global-start\""),
-            ..Default::default()
-        },
+        hooks: parse_hooks("post-start = \"echo global-start\""),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                hooks: parse_hooks("pre-commit = \"echo project-commit\""),
-                ..Default::default()
-            },
+            hooks: parse_hooks("pre-commit = \"echo project-commit\""),
             ..Default::default()
         },
     );
@@ -2007,10 +1899,7 @@ fn test_hooks_different_hook_types_not_merged() {
 fn test_hooks_none_project_uses_global() {
     // When no project is provided, only global hooks are used
     let config = UserConfig {
-        configs: OverridableConfig {
-            hooks: parse_hooks("post-start = \"echo global\""),
-            ..Default::default()
-        },
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
@@ -2125,20 +2014,14 @@ setup = "echo setup"
     );
 
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            hooks: global_hooks,
-            ..Default::default()
-        },
+        hooks: global_hooks,
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                hooks: project_hooks,
-                ..Default::default()
-            },
+            hooks: project_hooks,
             ..Default::default()
         },
     );
@@ -2170,20 +2053,14 @@ test = "npm test"
     );
 
     let mut config = UserConfig {
-        configs: OverridableConfig {
-            hooks: global_hooks,
-            ..Default::default()
-        },
+        hooks: global_hooks,
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            overrides: OverridableConfig {
-                hooks: project_hooks,
-                ..Default::default()
-            },
+            hooks: project_hooks,
             ..Default::default()
         },
     );
@@ -2257,32 +2134,20 @@ squash = true
     let user_config = UserConfig::load_from_str(user_toml).unwrap();
 
     // Verify system config values
-    assert_eq!(
-        system_config.configs.merge.as_ref().unwrap().squash,
-        Some(false)
-    );
-    assert_eq!(
-        system_config.configs.merge.as_ref().unwrap().rebase,
-        Some(false)
-    );
-    assert_eq!(
-        system_config.configs.list.as_ref().unwrap().full,
-        Some(true)
-    );
+    assert_eq!(system_config.merge.as_ref().unwrap().squash, Some(false));
+    assert_eq!(system_config.merge.as_ref().unwrap().rebase, Some(false));
+    assert_eq!(system_config.list.as_ref().unwrap().full, Some(true));
 
     // Verify user config values
-    assert_eq!(
-        user_config.configs.merge.as_ref().unwrap().squash,
-        Some(true)
-    );
+    assert_eq!(user_config.merge.as_ref().unwrap().squash, Some(true));
 
     // Simulate the merge that happens via the config crate's builder:
     // When both system and user configs define [merge], the config crate
     // performs a deep merge where user values override system values.
     // This is tested end-to-end via integration tests; here we verify
     // the Merge trait works correctly for the layering.
-    let system_merge = system_config.configs.merge.as_ref().unwrap();
-    let user_merge = user_config.configs.merge.as_ref().unwrap();
+    let system_merge = system_config.merge.as_ref().unwrap();
+    let user_merge = user_config.merge.as_ref().unwrap();
     let merged = system_merge.merge_with(user_merge);
 
     assert_eq!(merged.squash, Some(true)); // User overrides
@@ -2501,7 +2366,7 @@ fn test_reload_projects_from_permission_error() {
 
 #[test]
 fn test_load_error_display_file() {
-    let toml_err = toml::from_str::<OverridableConfig>("[list]\nbranches = \"bad\"\n").unwrap_err();
+    let toml_err = toml::from_str::<UserConfig>("[list]\nbranches = \"bad\"\n").unwrap_err();
     let err = LoadError::File {
         path: std::path::PathBuf::from("/tmp/config.toml"),
         label: "User config",

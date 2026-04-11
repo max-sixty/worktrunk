@@ -462,69 +462,20 @@ impl Merge for StepConfig {
 
 /// Settings that can be set globally or per-project.
 ///
-/// This struct is flattened into both `UserConfig` (global) and `UserProjectOverrides`
-/// (per-project), ensuring new settings are automatically available in both
-/// contexts without manual synchronization.
-///
-/// Note: Hooks use append semantics when merging global with per-project:
-/// - Global hooks (top-level in TOML) are in `UserConfig.configs.hooks`
-/// - Per-project hooks are in `UserProjectOverrides.overrides.hooks`
-/// - The `UserConfig::hooks()` method merges both with global running first
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+/// This is a merge-only type — not a serde target. Fields are inlined directly
+/// into `UserConfig` and `UserProjectOverrides` for deserialization (avoiding
+/// `#[serde(flatten)]` which causes toml to lose error locations). Use
+/// `UserConfig::overridable_config()` or `UserProjectOverrides::overridable_config()`
+/// to construct this for merging.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct OverridableConfig {
-    /// Hooks configuration.
-    ///
-    /// At top level: global hooks that run for all projects.
-    /// In `[projects."..."]`: per-project hooks that append to global hooks.
-    #[serde(flatten, default)]
     pub hooks: HooksConfig,
-
-    /// Worktree path template
-    #[serde(
-        rename = "worktree-path",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
     pub worktree_path: Option<String>,
-
-    /// Configuration for the `wt list` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListConfig>,
-
-    /// Configuration for the `wt step commit` command (also used by merge)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitConfig>,
-
-    /// Configuration for the `wt merge` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeConfig>,
-
-    /// Configuration for the `wt switch` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch: Option<SwitchConfig>,
-
-    /// Configuration for `wt step` subcommands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<StepConfig>,
-
-    /// \[experimental\] Command aliases for `wt step <name>`.
-    ///
-    /// Each alias maps a name to one or more command templates. All hook
-    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
-    ///
-    /// Per-project aliases append to global aliases on name collision (global
-    /// first, then per-project), matching hook merge semantics.
-    ///
-    /// Uses `CommandConfig` for consistency with hooks. This means the
-    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
-    /// technically works, but the single-string format is the expected usage.
-    ///
-    /// ```toml
-    /// [aliases]
-    /// deploy = "cd {{ worktree_path }} && make deploy"
-    /// lint = "npm run lint"
-    /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }
 
@@ -615,9 +566,35 @@ pub struct UserProjectOverrides {
     )]
     pub approved_commands: Vec<String>,
 
-    /// Per-project overrides (worktree-path, list, commit, merge, switch, step)
+    /// Per-project hooks (append to global hooks)
     #[serde(flatten, default)]
-    pub overrides: OverridableConfig,
+    pub hooks: HooksConfig,
+
+    /// Per-project worktree path template override
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub worktree_path: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<SwitchConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }
 
 impl UserProjectOverrides {
@@ -626,7 +603,21 @@ impl UserProjectOverrides {
     /// Approvals are stored in `approvals.toml`, so `approved_commands` is only
     /// kept here for backward-compatible parsing and migration — not checked.
     pub fn is_empty(&self) -> bool {
-        self.overrides.is_empty()
+        self.overridable_config().is_empty()
+    }
+
+    /// Construct an `OverridableConfig` from this project's inlined fields.
+    pub fn overridable_config(&self) -> OverridableConfig {
+        OverridableConfig {
+            hooks: self.hooks.clone(),
+            worktree_path: self.worktree_path.clone(),
+            list: self.list.clone(),
+            commit: self.commit.clone(),
+            merge: self.merge.clone(),
+            switch: self.switch.clone(),
+            step: self.step.clone(),
+            aliases: self.aliases.clone(),
+        }
     }
 }
 

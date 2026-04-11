@@ -161,10 +161,10 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             let entry = config.projects.entry(project.to_string()).or_default();
-            if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
+            if entry.worktree_path.as_ref() == Some(&worktree_path) {
                 return false;
             }
-            entry.overrides.worktree_path = Some(worktree_path);
+            entry.worktree_path = Some(worktree_path);
             true
         })
     }
@@ -181,10 +181,7 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             // Ensure commit config exists
-            let commit_config = config
-                .configs
-                .commit
-                .get_or_insert_with(CommitConfig::default);
+            let commit_config = config.commit.get_or_insert_with(CommitConfig::default);
             let gen_config = commit_config
                 .generation
                 .get_or_insert_with(CommitGenerationConfig::default);

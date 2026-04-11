@@ -22,5 +22,5 @@ fn test_select_config_optional() {
 full = true
 "#;
     let config: UserConfig = toml::from_str(content).unwrap();
-    assert!(config.configs.switch.is_none());
+    assert!(config.switch.is_none());
 }
