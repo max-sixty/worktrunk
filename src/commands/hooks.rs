@@ -188,7 +188,58 @@ pub struct SourcedStep {
     pub display_path: Option<PathBuf>,
 }
 
-/// Format a summary description of a pipeline for display.
+/// Format a pipeline summary from per-step command names.
+///
+/// `step_names[i]` is the list of commands in step `i`; `Some(name)` for named
+/// commands, `None` for unnamed. Serial steps are joined by `;`, concurrent
+/// commands within a step by `,`. Contiguous runs of unnamed commands (across
+/// steps, until the next named command) are collapsed into a single
+/// `label_unnamed(count)` entry; return `None` from that closure to drop
+/// unnamed commands entirely.
+///
+/// Shared by hook announcements (where unnamed commands collapse to
+/// `user ×N`) and alias announcements (which skip unnamed commands since
+/// aliases have no natural fallback label).
+pub(crate) fn format_pipeline_summary_from_names(
+    step_names: &[Vec<Option<&str>>],
+    label_named: impl Fn(&str) -> String,
+    label_unnamed: impl Fn(usize) -> Option<String>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut unnamed_count: usize = 0;
+
+    for step in step_names {
+        let mut named = Vec::new();
+        for entry in step {
+            match entry {
+                Some(name) => named.push(label_named(name)),
+                None => unnamed_count += 1,
+            }
+        }
+
+        if !named.is_empty() {
+            // Flush any pending unnamed count before named labels.
+            if unnamed_count > 0
+                && let Some(s) = label_unnamed(unnamed_count)
+            {
+                parts.push(s);
+            }
+            unnamed_count = 0;
+            parts.push(named.join(", "));
+        }
+    }
+
+    // Flush trailing unnamed count.
+    if unnamed_count > 0
+        && let Some(s) = label_unnamed(unnamed_count)
+    {
+        parts.push(s);
+    }
+
+    parts.join("; ")
+}
+
+/// Format a summary description of a hook pipeline for display.
 ///
 /// Named steps show as `source:name`; unnamed steps are collapsed into a single
 /// `source ×N` count. Serial steps are separated by `;`, concurrent steps by `,`.
@@ -201,46 +252,25 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     // All steps in a group share the same source.
     let source_label = steps[0].source.to_string();
 
-    // Collect named labels per step (None = unnamed).
-    let mut parts: Vec<String> = Vec::new();
-    let mut unnamed_count: usize = 0;
-
-    for step in steps {
-        let step_names: Vec<Option<&str>> = match &step.step {
+    let step_names: Vec<Vec<Option<&str>>> = steps
+        .iter()
+        .map(|step| match &step.step {
             PreparedStep::Single(cmd) => vec![cmd.name.as_deref()],
             PreparedStep::Concurrent(cmds) => cmds.iter().map(|c| c.name.as_deref()).collect(),
-        };
+        })
+        .collect();
 
-        let named: Vec<_> = step_names
-            .iter()
-            .filter_map(|n| n.map(|name| cformat!("<bold>{source_label}:{name}</>")))
-            .collect();
-        unnamed_count += step_names.iter().filter(|n| n.is_none()).count();
-
-        if !named.is_empty() {
-            // Flush any pending unnamed count before named labels.
-            if unnamed_count > 0 {
-                parts.push(format_unnamed(&source_label, unnamed_count));
-                unnamed_count = 0;
-            }
-            parts.push(named.join(", "));
-        }
-    }
-
-    // Flush trailing unnamed count.
-    if unnamed_count > 0 {
-        parts.push(format_unnamed(&source_label, unnamed_count));
-    }
-
-    parts.join("; ")
-}
-
-fn format_unnamed(source_label: &str, count: usize) -> String {
-    if count == 1 {
-        cformat!("<bold>{source_label}</>")
-    } else {
-        cformat!("<bold>{source_label}</> ×{count}")
-    }
+    format_pipeline_summary_from_names(
+        &step_names,
+        |name| cformat!("<bold>{source_label}:{name}</>"),
+        |count| {
+            Some(if count == 1 {
+                cformat!("<bold>{source_label}</>")
+            } else {
+                cformat!("<bold>{source_label}</> ×{count}")
+            })
+        },
+    )
 }
 
 /// Announce and spawn background hooks for one or more hook types.

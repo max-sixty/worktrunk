@@ -181,22 +181,39 @@ fn spawn_shell_command(
 }
 
 /// Spawn all commands in a concurrent group, then wait for all.
+///
+/// When `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` is set, each command's child is
+/// awaited before the next one is spawned, so output ordering is deterministic
+/// for snapshot tests. The serial path bails on the first failure rather than
+/// collecting all failures (the test hatch is for ordering, not error semantics).
 fn run_concurrent_group(
     commands: &[super::pipeline_spec::PipelineCommandSpec],
     spec: &PipelineSpec,
     repo: &Repository,
     cmd_index: &mut usize,
 ) -> anyhow::Result<()> {
-    let mut children = Vec::with_capacity(commands.len());
+    let serial = super::force_serial_concurrent();
+    let mut children = Vec::with_capacity(if serial { 0 } else { commands.len() });
 
     for cmd in commands {
         let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
         let log_file = create_command_log(spec, &log_name)?;
         let expanded = expand_now(&cmd.template, spec, repo, cmd.name.as_deref())?;
         let cmd_json = build_step_context_json(&spec.context, cmd.name.as_deref())?;
-        let child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
-        children.push((cmd.name.clone(), expanded, child));
+        let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
         *cmd_index += 1;
+
+        if serial {
+            let status = child
+                .wait()
+                .with_context(|| format!("failed to wait for: {expanded}"))?;
+            if !status.success() {
+                let label = cmd.name.as_deref().unwrap_or(&expanded);
+                bail!("command failed: {label}");
+            }
+        } else {
+            children.push((cmd.name.clone(), expanded, child));
+        }
     }
 
     let mut failures = Vec::new();
