@@ -156,9 +156,8 @@ impl Approvals {
     /// Save approvals to a specific file path.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                ConfigError(format!("Failed to create approvals directory: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConfigError(format!("Failed to create approvals directory: {e}")))?;
         }
 
         let mut doc = toml_edit::DocumentMut::new();

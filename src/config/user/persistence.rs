@@ -211,9 +211,8 @@ impl UserConfig {
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                ConfigError(format!("Failed to create config directory: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConfigError(format!("Failed to create config directory: {}", e)))?;
         }
 
         let toml_string = if config_path.exists() {

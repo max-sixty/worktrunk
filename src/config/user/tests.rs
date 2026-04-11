@@ -2381,14 +2381,14 @@ fn test_load_error_display_file() {
 #[test]
 fn test_load_error_display_env() {
     let err = LoadError::Env {
-        err: crate::config::ConfigError("invalid type".into()),
-        override_vars: vec!["WORKTRUNK__LIST__BRANCHES".into()],
+        err: "invalid type".into(),
+        vars: vec!["WORKTRUNK__LIST__BRANCHES".into()],
     };
     assert_eq!(err.to_string(), "invalid type");
 }
 
 #[test]
-fn test_load_error_display_other() {
-    let err = LoadError::Other(crate::config::ConfigError("bad".into()));
+fn test_load_error_display_validation() {
+    let err = LoadError::Validation("bad".into());
     assert_eq!(err.to_string(), "bad");
 }

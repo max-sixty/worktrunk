@@ -51,5 +51,6 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mFailed to apply WORKTRUNK_* env var override, using defaults: invalid type: string "not-a-bool", expected a boolean for key `list.branches` in the environment[39m
+[33m▲[39m [33mFailed to apply WORKTRUNK_* env var override, using defaults: invalid type: string "not-a-bool", expected a boolean
+in `list.branches`[39m
 [2m↳[22m [2mCurrently set: WORKTRUNK__LIST__BRANCHES[22m

@@ -13,9 +13,7 @@ mod sections;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
-
-use config::{Case, Config, File};
+use std::path::{Path, PathBuf};
 
 use super::ConfigError;
 use schemars::JsonSchema;
@@ -47,13 +45,10 @@ pub enum LoadError {
         err: Box<toml::de::Error>,
     },
     /// Config files parsed cleanly; applying env-var overrides failed.
-    /// `override_vars` lists `WORKTRUNK_*` env vars that could be the cause.
-    Env {
-        err: ConfigError,
-        override_vars: Vec<String>,
-    },
-    /// Other errors (validation, config-crate internals).
-    Other(ConfigError),
+    /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed.
+    Env { err: String, vars: Vec<String> },
+    /// Validation errors (e.g. empty worktree-path).
+    Validation(String),
 }
 
 impl std::fmt::Display for LoadError {
@@ -67,38 +62,142 @@ impl std::fmt::Display for LoadError {
                 )
             }
             LoadError::Env { err, .. } => write!(f, "{err}"),
-            LoadError::Other(err) => write!(f, "{err}"),
+            LoadError::Validation(err) => write!(f, "{err}"),
         }
     }
 }
 
 impl std::error::Error for LoadError {}
 
-/// Returns names of `WORKTRUNK_*` env vars that could be value overrides,
-/// excluding infrastructure paths and the `WORKTRUNK_TEST_` namespace.
-// TODO: This hardcoded exclusion list is a smell — ideally the config loading
-// layer would track which source each value came from, making attribution
-// automatic rather than heuristic. Consider integrating this into the config
-// crate's source-tracking or building our own env-var overlay.
-fn collect_worktrunk_override_vars() -> Vec<String> {
+// ---- Env-var overlay ----
+
+/// Parsed WORKTRUNK_* env-var overrides ready to merge into a TOML table.
+struct EnvOverrides {
+    table: toml::Table,
+    var_names: Vec<String>,
+}
+
+/// Read `WORKTRUNK_*` env vars and build a nested TOML table.
+///
+/// Env-var convention (matches the config crate's prior behavior):
+/// - `WORKTRUNK_WORKTREE_PATH=foo` → `worktree-path = "foo"`
+/// - `WORKTRUNK__LIST__TIMEOUT_MS=30` → `[list]\ntimeout-ms = 30`
+/// - `WORKTRUNK_COMMIT__GENERATION__COMMAND=cmd` → `[commit.generation]\ncommand = "cmd"`
+///
+/// Infrastructure vars (`_CONFIG_PATH`, `_SYSTEM_CONFIG_PATH`,
+/// `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
+fn parse_worktrunk_env_vars() -> EnvOverrides {
     const INFRA_VARS: &[&str] = &[
         "WORKTRUNK_CONFIG_PATH",
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
         "WORKTRUNK_APPROVALS_PATH",
     ];
-    let mut vars: Vec<String> = std::env::vars()
-        .filter_map(|(k, _)| {
-            if !k.starts_with("WORKTRUNK_") {
-                return None;
-            }
-            if INFRA_VARS.contains(&k.as_str()) || k.starts_with("WORKTRUNK_TEST_") {
-                return None;
-            }
-            Some(k)
-        })
+
+    let mut table = toml::Table::new();
+    let mut var_names = Vec::new();
+
+    let mut env_vars: Vec<_> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("WORKTRUNK_"))
+        .filter(|(k, _)| !INFRA_VARS.contains(&k.as_str()))
+        .filter(|(k, _)| !k.starts_with("WORKTRUNK_TEST_"))
         .collect();
-    vars.sort();
-    vars
+    env_vars.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (key, value) in env_vars {
+        var_names.push(key.clone());
+        // Strip WORKTRUNK_ prefix, split by __ for nesting, convert to kebab-case
+        let stripped = &key["WORKTRUNK_".len()..];
+        let segments: Vec<String> = stripped
+            .split("__")
+            .map(|s| {
+                s.to_lowercase()
+                    .replace('_', "-")
+                    .trim_start_matches('-')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if segments.is_empty() {
+            continue;
+        }
+
+        let typed_value = try_parse_value(&value);
+        set_nested_value(&mut table, &segments, typed_value);
+    }
+
+    EnvOverrides { table, var_names }
+}
+
+/// Try to coerce a string into a typed TOML value (bool → i64 → f64 → string).
+fn try_parse_value(s: &str) -> toml::Value {
+    if s.eq_ignore_ascii_case("true") {
+        return toml::Value::Boolean(true);
+    }
+    if s.eq_ignore_ascii_case("false") {
+        return toml::Value::Boolean(false);
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return toml::Value::Integer(n);
+    }
+    if let Ok(n) = s.parse::<f64>() {
+        return toml::Value::Float(n);
+    }
+    toml::Value::String(s.to_string())
+}
+
+/// Set a value at a nested path in a TOML table, creating intermediate tables.
+fn set_nested_value(table: &mut toml::Table, path: &[String], value: toml::Value) {
+    if path.len() == 1 {
+        table.insert(path[0].clone(), value);
+        return;
+    }
+    let entry = table
+        .entry(&path[0])
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if let toml::Value::Table(inner) = entry {
+        set_nested_value(inner, &path[1..], value);
+    }
+}
+
+/// Recursively merge `overlay` into `base`. Overlay values win for scalars;
+/// nested tables merge recursively.
+fn deep_merge_table(base: &mut toml::Table, overlay: toml::Table) {
+    for (key, value) in overlay {
+        match (base.get_mut(&key), &value) {
+            (Some(toml::Value::Table(base_t)), toml::Value::Table(overlay_t)) => {
+                deep_merge_table(base_t, overlay_t.clone());
+            }
+            _ => {
+                base.insert(key, value);
+            }
+        }
+    }
+}
+
+/// Load and validate a single config file. Returns the parsed table for
+/// merging and validates via `toml::from_str::<UserConfig>` for rich errors.
+fn load_config_file(
+    path: &Path,
+    migrated: &str,
+    label: &'static str,
+) -> Result<toml::Table, LoadError> {
+    // Validate by deserializing — gives rich line/col errors.
+    if let Err(err) = toml::from_str::<UserConfig>(migrated) {
+        return Err(LoadError::File {
+            path: path.to_path_buf(),
+            label,
+            err: Box::new(err),
+        });
+    }
+    // Parse as table for merging (infallible after the above succeeds).
+    migrated
+        .parse::<toml::Table>()
+        .map_err(|err| LoadError::File {
+            path: path.to_path_buf(),
+            label,
+            err: Box::new(err),
+        })
 }
 
 /// User-level configuration for worktree path formatting and LLM integration.
@@ -235,48 +334,27 @@ impl UserConfig {
     /// env-var override failures. Used by `Repository::user_config()`
     /// to emit targeted diagnostics.
     pub(crate) fn load_with_cause() -> Result<Self, LoadError> {
-        // Note: worktree-path has no default set here - it's handled by the getter
-        // which returns the default when None. This allows us to distinguish
-        // "user explicitly set this" from "using default".
-        let mut builder = Config::builder();
+        let mut merged_table = toml::Table::new();
 
-        // Add system config if it exists (lowest priority file source)
+        // 1. System config (lowest priority)
         if let Some(system_path) = path::system_config_path()
             && let Ok(content) = std::fs::read_to_string(&system_path)
         {
-            // Warn about unknown fields in system config
             super::deprecation::warn_unknown_fields::<UserConfig>(
                 &system_path,
                 &find_unknown_keys(&content),
                 "System config",
             );
-
-            // Feed migrated content to serde so deprecated patterns parse correctly
             let migrated = super::deprecation::migrate_content(&content);
-
-            // Pre-validate with the toml crate for rich line/col errors.
-            // Section fields (list, commit, merge, ...) are direct fields on
-            // UserConfig now (no flatten), so toml tracks their location correctly.
-            if let Err(err) = toml::from_str::<Self>(&migrated) {
-                return Err(LoadError::File {
-                    path: system_path,
-                    label: "System config",
-                    err: Box::new(err),
-                });
-            }
-
-            builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
+            let table = load_config_file(&system_path, &migrated, "System config")?;
+            deep_merge_table(&mut merged_table, table);
         }
 
-        // Add user config file if it exists (overrides system config)
+        // 2. User config (overrides system)
         let config_path = config_path();
         if let Some(config_path) = config_path.as_ref()
             && config_path.exists()
         {
-            // Check for deprecated template variables and create migration file if needed
-            // User config always gets migration file (it's global, not worktree-specific)
-            // Use show_brief_warning=true to emit a brief pointer to `wt config show`
-            // Warning is deduplicated per-process via WARNED_DEPRECATED_PATHS.
             if let Ok(content) = std::fs::read_to_string(config_path) {
                 let migrated = super::deprecation::check_and_migrate(
                     config_path,
@@ -284,38 +362,23 @@ impl UserConfig {
                     true,
                     "User config",
                     None,
-                    true, // show_brief_warning
+                    true,
                 )
                 .map(|result| result.migrated_content)
                 .unwrap_or_else(|_| super::deprecation::migrate_content(&content));
 
-                // Warn about unknown fields in the config file
-                // (must check file content directly, not config.unknown, because
-                // config.unknown includes env vars which shouldn't trigger warnings)
                 super::deprecation::warn_unknown_fields::<UserConfig>(
                     config_path,
                     &find_unknown_keys(&content),
                     "User config",
                 );
 
-                // Pre-validate with the toml crate for rich line/col errors
-                // (see system config comment above).
-                if let Err(err) = toml::from_str::<Self>(&migrated) {
-                    return Err(LoadError::File {
-                        path: config_path.clone(),
-                        label: "User config",
-                        err: Box::new(err),
-                    });
-                }
-
-                // Feed migrated content from check_and_migrate to serde so deprecated
-                // patterns parse correctly without reparsing the TOML here.
-                builder = builder.add_source(File::from_str(&migrated, config::FileFormat::Toml));
+                let table = load_config_file(config_path, &migrated, "User config")?;
+                deep_merge_table(&mut merged_table, table);
             }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
         {
-            // Warn if user explicitly specified a config path that doesn't exist
             crate::styling::eprintln!(
                 "{}",
                 crate::styling::warning_message(format!(
@@ -325,43 +388,30 @@ impl UserConfig {
             );
         }
 
-        // Add environment variables with WORKTRUNK prefix
-        // - prefix_separator("_"): strip prefix with single underscore (WORKTRUNK_ → key)
-        // - separator("__"): double underscore for nested fields (COMMIT__GENERATION__COMMAND → commit.generation.command)
-        // - convert_case(Kebab): converts snake_case to kebab-case to match serde field names
-        // - try_parsing(true): coerce env-var strings into bool/i64/f64 so any
-        //   non-String typed field (e.g. `list.timeout-ms: Option<u64>`) accepts
-        //   overrides like `WORKTRUNK__LIST__TIMEOUT_MS=30`. String fields still
-        //   round-trip through `into_string()` in the config deserializer, so
-        //   `WORKTRUNK_WORKTREE_PATH=42` stringifies back to "42" as expected.
-        //   Without this, a single typed override fails the whole config deserialize
-        //   and silently falls back to defaults.
-        // Example: WORKTRUNK_WORKTREE_PATH → worktree-path
-        builder = builder.add_source(
-            config::Environment::with_prefix("WORKTRUNK")
-                .prefix_separator("_")
-                .separator("__")
-                .convert_case(Case::Kebab)
-                .try_parsing(true),
-        );
+        // 3. Env-var overrides (highest priority)
+        let env = parse_worktrunk_env_vars();
+        if !env.table.is_empty() {
+            deep_merge_table(&mut merged_table, env.table);
+        }
 
-        // The config crate's `preserve_order` feature ensures TOML insertion order
-        // is preserved (uses IndexMap instead of HashMap internally).
-        // See: https://github.com/max-sixty/worktrunk/issues/737
-        let config: Self = builder
-            .build()
-            .map_err(|e| LoadError::Other(ConfigError(e.to_string())))?
-            .try_deserialize()
-            .map_err(|err| {
-                // Files were pre-validated above, so a deserialize failure here
-                // is caused by env-var overrides.
-                LoadError::Env {
-                    err: ConfigError(err.to_string()),
-                    override_vars: collect_worktrunk_override_vars(),
-                }
-            })?;
+        // 4. Deserialize the merged table
+        let config: Self =
+            toml::Value::Table(merged_table)
+                .try_into()
+                .map_err(|err: toml::de::Error| {
+                    // Files were validated above, so a failure here is from env vars
+                    // (or a rare table-merge edge case).
+                    if env.var_names.is_empty() {
+                        LoadError::Validation(err.to_string())
+                    } else {
+                        LoadError::Env {
+                            err: err.to_string(),
+                            vars: env.var_names,
+                        }
+                    }
+                })?;
 
-        config.validate().map_err(LoadError::Other)?;
+        config.validate().map_err(|e| LoadError::Validation(e.0))?;
 
         Ok(config)
     }
@@ -370,8 +420,7 @@ impl UserConfig {
     #[cfg(test)]
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
         let migrated = crate::config::deprecation::migrate_content(content);
-        let config: Self =
-            toml::from_str(&migrated).map_err(|e| ConfigError(e.to_string()))?;
+        let config: Self = toml::from_str(&migrated).map_err(|e| ConfigError(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }
