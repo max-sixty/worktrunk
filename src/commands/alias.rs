@@ -9,6 +9,7 @@
 //! in both configs, both run — user first, then project (with approval).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
@@ -16,6 +17,7 @@ use worktrunk::config::{
     CommandConfig, ProjectConfig, UserConfig, append_aliases, expand_template,
 };
 use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
 };
@@ -279,9 +281,30 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         progress_message(cformat!("Running alias <bold>{}</>", opts.name))
     );
 
+    // Pass the parent shell's directive file through to the alias subprocess
+    // so inner `wt` invocations (e.g. `wt switch --create` inside an alias
+    // body) can write shell integration directives like `cd '/path'` that the
+    // parent shell wrapper will source after `wt` exits. Without this the
+    // inner `wt` would see a scrubbed env var, print the "shell integration
+    // not installed" hint, and drop the `cd`.
+    //
+    // This is a deliberate relaxation of the usual env scrub: aliases are
+    // explicit, named, user-authorised commands (user-config aliases are
+    // trusted; project-config aliases require approval), and an alias body is
+    // already arbitrary shell that can `cd`/`rm`/`exec` anything locally, so
+    // letting it ask the parent shell to `cd` is strictly less powerful than
+    // what the body can already do.
+    let parent_directive_file: Option<PathBuf> =
+        std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
+
     for cmd in commands {
         let command = expand_template(&cmd.template, &vars, true, &repo, &opts.name)?;
-        match run_command_streaming(&command, &wt_path, Some(&context_json)) {
+        match run_command_streaming(
+            &command,
+            &wt_path,
+            Some(&context_json),
+            parent_directive_file.as_deref(),
+        ) {
             Ok(()) => {}
             Err(CommandError::SpawnFailed(err)) => {
                 bail!("Failed to run alias '{}': {}", opts.name, err);

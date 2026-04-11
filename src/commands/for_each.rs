@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::Path;
 use std::process::Stdio;
 
 use color_print::cformat;
@@ -87,8 +88,11 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
             .expect("HashMap<String, String> serialization should never fail");
 
         // Execute command: stream both stdout and stderr in real-time
-        // Pipe context JSON to stdin for scripts that want structured data
-        match run_command_streaming(&command, &wt.path, Some(&context_json)) {
+        // Pipe context JSON to stdin for scripts that want structured data.
+        // `for-each` scrubs the directive file env var (see `run_command_streaming`
+        // docs) so commands run in each worktree cannot influence the parent
+        // shell's working directory.
+        match run_command_streaming(&command, &wt.path, Some(&context_json), None) {
             Ok(()) => {
                 if json_mode {
                     json_results.push(serde_json::json!({
@@ -203,6 +207,18 @@ impl std::fmt::Display for CommandError {
 /// Both stdout and stderr stream to the terminal (stderr) in real-time.
 /// If `stdin_content` is provided, it's piped to the command's stdin.
 ///
+/// `directive_file` controls whether the child process can write shell
+/// integration directives back to the parent shell:
+///
+/// - `None` — the `WORKTRUNK_DIRECTIVE_FILE` env var is removed from the
+///   child's environment. Inner `wt` invocations will print the "shell
+///   integration not installed" hint and drop any `cd` directives. This is
+///   the default for sandboxed contexts like `wt step for-each`.
+/// - `Some(path)` — the env var is set to `path`, so inner `wt` invocations
+///   (and any child they spawn) can write directives that the parent shell
+///   wrapper will source after `wt` exits. `wt step alias` uses this to let
+///   aliases wrapping `wt switch --create` land the user in the new worktree.
+///
 /// # TODO: Streaming vs Gutter Tradeoff
 ///
 /// Currently stderr streams directly without gutter formatting, same as hooks.
@@ -213,8 +229,9 @@ impl std::fmt::Display for CommandError {
 /// - Accept current behavior as consistent with hooks
 pub(crate) fn run_command_streaming(
     command: &str,
-    working_dir: &std::path::Path,
+    working_dir: &Path,
     stdin_content: Option<&str>,
+    directive_file: Option<&Path>,
 ) -> Result<(), CommandError> {
     let shell = ShellConfig::get().map_err(|e| CommandError::SpawnFailed(e.to_string()))?;
 
@@ -226,17 +243,29 @@ pub(crate) fn run_command_streaming(
         Stdio::inherit() // Allow interactive commands when no stdin content
     };
 
-    let mut child = shell
-        .command(command)
-        .current_dir(working_dir)
+    let mut cmd = shell.command(command);
+    cmd.current_dir(working_dir)
         .stdin(stdin_mode)
         // Redirect stdout to stderr to keep stdout reserved for data output
         // Note: Stdio::from(Stderr) works since Rust 1.74 (impl From<Stderr> for Stdio)
         .stdout(Stdio::from(std::io::stderr()))
         // Stream stderr to terminal in real-time
-        .stderr(Stdio::inherit())
-        // Prevent subprocesses from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+        .stderr(Stdio::inherit());
+
+    match directive_file {
+        // Propagate the parent's directive file so inner `wt` calls can write
+        // shell integration directives (e.g. `wt switch --create` inside a
+        // user alias body).
+        Some(path) => {
+            cmd.env(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR, path);
+        }
+        // Default: prevent subprocesses from writing to the directive file.
+        None => {
+            cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
+        }
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| CommandError::SpawnFailed(e.to_string()))?;
 

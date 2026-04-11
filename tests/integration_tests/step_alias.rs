@@ -1,6 +1,9 @@
 //! Integration tests for `wt step <alias>`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo,
+    setup_snapshot_settings, wt_bin,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -497,6 +500,74 @@ deploy = "echo deploying"
     assert_cmd_snapshot!(
         "alias_approval_yes_second_run_prompts",
         make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path),)
+    );
+}
+
+// ============================================================================
+// Directive file passthrough
+// ============================================================================
+
+/// `wt step <alias>` passes the parent's `WORKTRUNK_DIRECTIVE_FILE` through to
+/// the alias subprocess so inner `wt switch --create` calls can land the user
+/// in the new worktree.
+///
+/// Regression test for #2075: without the passthrough, an alias that wraps
+/// `wt switch --create` prints the "shell integration not installed" hint and
+/// the parent shell never `cd`s into the new worktree.
+#[rstest]
+fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Escape the wt binary path for embedding in a sh -c command string.
+    // Test temp paths never contain single quotes.
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+
+    // Alias body invokes the test wt binary directly (PATH lookup in the
+    // subprocess shell wouldn't find it).
+    repo.write_test_config(&format!(
+        r#"
+[aliases]
+new-branch = "'{wt_str}' switch --create alias-created"
+"#
+    ));
+
+    let (directive_path, _guard) = directive_file();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["step", "new-branch"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt step new-branch failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.contains("cd '"),
+        "alias wrapping `wt switch --create` should write a cd directive to the \
+         parent directive file, got: {directives:?}"
+    );
+    assert!(
+        directives.contains("alias-created"),
+        "cd directive should target the new worktree (alias-created), got: {directives:?}"
+    );
+
+    // Stderr should NOT contain the "shell integration not installed" hint
+    // — that hint is what appears when the inner wt can't find the directive
+    // file, which is exactly the bug this test guards against.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("shell integration"),
+        "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
     );
 }
 
