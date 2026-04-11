@@ -21,16 +21,16 @@
 //!
 //! For now, we keep `for-each` under `step` as a pragmatic choice.
 
-use std::collections::HashMap;
-
 use color_print::cformat;
-use worktrunk::config::{UserConfig, expand_template};
+use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
 
-use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::command_executor::{
+    CommandContext, build_hook_context, expand_shell_template,
+};
 use crate::commands::worktree_display_name;
 use crate::output::execute_shell_command;
 
@@ -70,14 +70,9 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
         let context_map = build_hook_context(&ctx, &[])?;
 
-        // Convert to &str references for expand_template
-        let vars: HashMap<&str, &str> = context_map
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
         // Expand template with full context (shell-escaped)
-        let command = expand_template(&command_template, &vars, true, &repo, "for-each command")?;
+        let command =
+            expand_shell_template(&command_template, &context_map, &repo, "for-each command")?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)
