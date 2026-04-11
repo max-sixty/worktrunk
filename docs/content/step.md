@@ -822,7 +822,9 @@ deploy = "make deploy BRANCH={{ branch }}"
 port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --env=staging              # pass template variable|||wt step deploy --var env=staging          # equivalent long form|||wt step deploy --yes                      # skip approval prompt") }}
+{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --env=staging              # pass template variable|||wt step deploy --var env=staging          # equivalent long form|||wt step deploy --my-var=value             # hyphens become underscores (__WT_OPEN2__ my_var __WT_CLOSE2__)|||wt step deploy --yes                      # skip approval prompt") }}
+
+Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
 
 Multi-line aliases work too. This `up` alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
 

@@ -78,6 +78,10 @@ impl AliasOptions {
     /// so `--env=staging` is equivalent to `--var env=staging`. The `=` is
     /// required — bare `--key` flags (without a value) are rejected. Use
     /// `--var KEY=VALUE` if a variable name collides with a built-in flag.
+    ///
+    /// Hyphens in variable names are canonicalized to underscores so users can
+    /// write `--my-var=value` and reference `{{ my_var }}` in templates
+    /// (minijinja parses `{{ my-var }}` as subtraction).
     pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
@@ -109,7 +113,7 @@ impl AliasOptions {
                         if key.is_empty() {
                             bail!("Variable name must not be empty (got '--={value}')");
                         }
-                        vars.push((key.to_string(), value.to_string()));
+                        vars.push((key.replace('-', "_"), value.to_string()));
                     } else {
                         bail!(
                             "Unknown flag '{arg}' for alias '{name}' (use --{rest}=VALUE to pass a variable)"
@@ -137,7 +141,7 @@ fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
     if key.is_empty() {
         bail!("--var key must not be empty (got '={value}')");
     }
-    Ok((key.to_string(), value.to_string()))
+    Ok((key.replace('-', "_"), value.to_string()))
 }
 
 /// Determine whether an alias requires project-config approval.
@@ -565,6 +569,90 @@ mod tests {
                 (
                     "env",
                     "",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in shorthand key are canonicalized to underscores
+        assert_debug_snapshot!(parse(&["deploy", "--my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var KEY=VALUE are canonicalized too
+        assert_debug_snapshot!(parse(&["deploy", "--var", "my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var=KEY=VALUE form
+        assert_debug_snapshot!(parse(&["deploy", "--var=my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Already-underscored keys pass through unchanged
+        assert_debug_snapshot!(parse(&["deploy", "--my_var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Multiple hyphens in a single key
+        assert_debug_snapshot!(parse(&["deploy", "--long-var-name=x"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "long_var_name",
+                    "x",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in value are preserved (only key is canonicalized)
+        assert_debug_snapshot!(parse(&["deploy", "--region=us-east-1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "region",
+                    "us-east-1",
                 ),
             ],
         }
