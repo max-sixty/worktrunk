@@ -518,6 +518,6 @@ pub struct UserProjectOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<StepConfig>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, CommandConfig>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
 }

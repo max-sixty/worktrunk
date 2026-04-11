@@ -289,8 +289,8 @@ pub struct UserConfig {
     pub step: Option<sections::StepConfig>,
 
     /// Command aliases for `wt step <name>`
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<std::collections::BTreeMap<String, crate::config::commands::CommandConfig>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub aliases: std::collections::BTreeMap<String, crate::config::commands::CommandConfig>,
 
     /// Skip the first-run shell integration prompt
     #[serde(

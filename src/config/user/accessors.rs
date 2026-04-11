@@ -186,12 +186,9 @@ impl UserConfig {
     /// Merges global user aliases with per-project user aliases using append
     /// semantics: both run on name collision (global first, then per-project).
     pub fn aliases(&self, project: Option<&str>) -> BTreeMap<String, CommandConfig> {
-        let mut result = self.aliases.clone().unwrap_or_default();
-        if let Some(proj_aliases) = project
-            .and_then(|p| self.projects.get(p))
-            .and_then(|proj| proj.aliases.as_ref())
-        {
-            crate::config::commands::append_aliases(&mut result, proj_aliases);
+        let mut result = self.aliases.clone();
+        if let Some(proj) = self.project_overrides(project) {
+            crate::config::commands::append_aliases(&mut result, &proj.aliases);
         }
         result
     }
