@@ -52,6 +52,7 @@
 //! Template values are shell-escaped at expansion time (`shell_escape=true`)
 //! since the expanded string is passed to a shell for interpretation.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
@@ -60,10 +61,10 @@ use std::process::{Child, Stdio};
 
 use anyhow::{Context, bail};
 
-use worktrunk::config::expand_template;
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::ShellConfig;
 
+use super::command_executor::{expand_shell_template, wait_first_error};
 use super::pipeline_spec::{PipelineSpec, PipelineStepSpec};
 use super::process::HookLog;
 
@@ -98,8 +99,11 @@ pub fn run_pipeline() -> anyhow::Result<()> {
             PipelineStepSpec::Single { template, name } => {
                 let log_name = command_log_name(name.as_deref(), cmd_index);
                 let log_file = create_command_log(&spec, &log_name)?;
-                let expanded = expand_now(template, &spec, &repo, name.as_deref())?;
-                let step_json = build_step_context_json(&spec.context, name.as_deref())?;
+                let step_ctx = step_context(&spec.context, name.as_deref());
+                let label = name.as_deref().unwrap_or("pipeline step");
+                let expanded = expand_shell_template(template, &step_ctx, &repo, label)?;
+                let step_json = serde_json::to_string(&*step_ctx)
+                    .context("failed to serialize step context")?;
                 let mut child =
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = child.wait().context("failed to wait for child process")?;
@@ -121,28 +125,22 @@ pub fn run_pipeline() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Expand a template using the spec's context and fresh vars from git config.
+/// Build a per-step context, injecting `hook_name` when the step has a name.
 ///
-/// Injects per-step `hook_name` into the vars so each step sees its own name,
-/// not the first step's name (the shared context has `hook_name` stripped).
-fn expand_now(
-    template: &str,
-    spec: &PipelineSpec,
-    repo: &Repository,
+/// The shared pipeline context has `hook_name` stripped (it varies per step).
+/// Returns a `Cow` so unnamed steps borrow the base context without cloning.
+fn step_context<'a>(
+    base: &'a HashMap<String, String>,
     name: Option<&str>,
-) -> anyhow::Result<String> {
-    let mut vars: HashMap<&str, &str> = spec
-        .context
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    if let Some(n) = name {
-        vars.insert("hook_name", n);
+) -> Cow<'a, HashMap<String, String>> {
+    match name {
+        Some(n) => {
+            let mut ctx = base.clone();
+            ctx.insert("hook_name".into(), n.into());
+            Cow::Owned(ctx)
+        }
+        None => Cow::Borrowed(base),
     }
-    let label = name.unwrap_or("pipeline step");
-    // shell_escape=true — values are interpolated into a string passed to a shell,
-    // so they must be escaped to prevent word splitting and metachar injection.
-    Ok(expand_template(template, &vars, true, repo, label)?)
 }
 
 /// Spawn a shell command with context JSON piped to stdin.
@@ -181,6 +179,10 @@ fn spawn_shell_command(
 }
 
 /// Spawn all commands in a concurrent group, then wait for all.
+///
+/// Waits every spawned child before returning. If any failed, the first
+/// failure (in spawn order) is returned, matching the serial-step bail
+/// format. Per-command output already lives in each command's log file.
 fn run_concurrent_group(
     commands: &[super::pipeline_spec::PipelineCommandSpec],
     spec: &PipelineSpec,
@@ -192,46 +194,31 @@ fn run_concurrent_group(
     for cmd in commands {
         let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
         let log_file = create_command_log(spec, &log_name)?;
-        let expanded = expand_now(&cmd.template, spec, repo, cmd.name.as_deref())?;
-        let cmd_json = build_step_context_json(&spec.context, cmd.name.as_deref())?;
+        let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
+        let label = cmd.name.as_deref().unwrap_or("pipeline step");
+        let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, label)?;
+        let cmd_json =
+            serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
         let child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
         children.push((cmd.name.clone(), expanded, child));
         *cmd_index += 1;
     }
 
-    let mut failures = Vec::new();
-    for (name, expanded, mut child) in children {
-        let status = child
-            .wait()
-            .with_context(|| format!("failed to wait for: {expanded}"))?;
-        if !status.success() {
-            let label = name.as_deref().unwrap_or(&expanded);
-            failures.push(label.to_string());
-        }
-    }
-
-    if !failures.is_empty() {
-        bail!("concurrent group had failures: {}", failures.join(", "));
-    }
-    Ok(())
-}
-
-/// Build per-step context JSON, injecting `hook_name` when the step has a name.
-///
-/// The shared pipeline context has `hook_name` stripped (it varies per step).
-/// This function adds it back for the specific step so commands receive the
-/// correct `hook_name` on stdin.
-fn build_step_context_json(
-    base_context: &HashMap<String, String>,
-    name: Option<&str>,
-) -> anyhow::Result<String> {
-    if let Some(n) = name {
-        let mut ctx = base_context.clone();
-        ctx.insert("hook_name".into(), n.into());
-        serde_json::to_string(&ctx).context("failed to serialize step context")
-    } else {
-        serde_json::to_string(base_context).context("failed to serialize step context")
-    }
+    wait_first_error(children.into_iter().map(
+        |(name, expanded, mut child)| -> anyhow::Result<()> {
+            let status = child
+                .wait()
+                .with_context(|| format!("failed to wait for: {expanded}"))?;
+            if !status.success() {
+                bail!(
+                    "command failed with {}: {}",
+                    format_exit(status.code()),
+                    name.as_deref().unwrap_or(&expanded),
+                );
+            }
+            Ok(())
+        },
+    ))
 }
 
 /// Derive the log file name for a command.

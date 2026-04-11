@@ -38,7 +38,9 @@ use worktrunk::styling::{
 };
 
 use crate::commands::command_approval::approve_alias_commands;
-use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::command_executor::{
+    CommandContext, build_hook_context, expand_shell_template, wait_first_error,
+};
 use crate::output::execute_shell_command;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
@@ -336,10 +338,11 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
                 std::thread::scope(|s| {
                     let handles: Vec<_> =
                         cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
-                    for handle in handles {
-                        handle.join().expect("alias command thread panicked")?;
-                    }
-                    Ok::<(), anyhow::Error>(())
+                    wait_first_error(
+                        handles
+                            .into_iter()
+                            .map(|h| h.join().expect("alias command thread panicked")),
+                    )
                 })?;
             }
         }
@@ -368,11 +371,7 @@ impl AliasExecCtx<'_> {
         let command = if self.is_pipeline && template_references_var(&cmd.template, "vars") {
             let fresh_context: HashMap<String, String> = serde_json::from_str(self.context_json)
                 .context("failed to deserialize context_json")?;
-            let fresh_vars: HashMap<&str, &str> = fresh_context
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
-            expand_template(&cmd.template, &fresh_vars, true, self.repo, self.alias_name)?
+            expand_shell_template(&cmd.template, &fresh_context, self.repo, self.alias_name)?
         } else {
             expand_template(&cmd.template, self.vars, true, self.repo, self.alias_name)?
         };
