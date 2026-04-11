@@ -10,8 +10,10 @@
 //!
 //! One file per cached entry under `.git/wt/cache/{kind}/{key}.json`,
 //! where `kind` is the task kind (`merge-tree-conflicts`,
-//! `merge-add-probe`) and `key` is the SHA-pair filename. This is the
-//! same top-level layout as `ci-status/` and `summaries/`.
+//! `merge-add-probe`) and `key` is the SHA-pair filename. The sibling
+//! `ci-status/` and `summaries/` caches use different key schemes; see
+//! `commands::list::collect` for the cross-cutting design across all
+//! four caches.
 //!
 //! Symmetric kinds (merge-tree-conflicts) sort the SHA pair so
 //! `merge-tree(A, B)` and `merge-tree(B, A)` hit the same entry.
