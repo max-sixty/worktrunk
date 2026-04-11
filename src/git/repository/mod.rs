@@ -410,31 +410,25 @@ impl Repository {
                             crate::styling::format_with_gutter(&err.to_string(), None)
                         );
                     }
-                    LoadError::Env {
-                        err,
-                        override_vars,
-                    } => {
+                    LoadError::Env { err, vars } => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "Failed to apply WORKTRUNK_* env var override, using defaults: {err}"
+                                "Failed to apply WORKTRUNK_* env var override, using defaults: {}",
+                                err.trim()
                             ))
                         );
-                        // TODO: With source-tracking in the config layer
-                        // (see collect_worktrunk_override_vars TODO) we could
-                        // pinpoint the exact var and show its value, rather
-                        // than dumping all override vars.
-                        if !override_vars.is_empty() {
+                        if !vars.is_empty() {
                             crate::styling::eprintln!(
                                 "{}",
                                 crate::styling::hint_message(format!(
                                     "Currently set: {}",
-                                    override_vars.join(", ")
+                                    vars.join(", ")
                                 ))
                             );
                         }
                     }
-                    LoadError::Other(err) => {
+                    LoadError::Validation(err) => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(

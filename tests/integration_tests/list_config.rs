@@ -434,10 +434,31 @@ fn test_list_config_env_override_bad_value_warns_on_stderr(repo: TestRepo) {
     });
 }
 
+/// Numeric-looking env var values for String fields must not break config
+/// loading. WORKTRUNK_WORKTREE_PATH=42 should be treated as the string "42",
+/// not the integer 42 (which would fail to deserialize into Option<String>).
+#[rstest]
+fn test_list_config_env_override_numeric_string_field(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // worktree-path is Option<String>; "42" must round-trip as a string
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "42");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("Failed"),
+            "numeric string should not fail: {stderr}"
+        );
+        assert!(output.status.success());
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
-/// attributed to the file, not to env vars. These fields are NOT caught by
-/// the OverridableConfig pre-validation (which only covers section fields) —
-/// the UserConfig fallback validation catches them.
+/// attributed to the file, not to env vars.
 #[rstest]
 fn test_list_config_malformed_non_section_field_warns_on_stderr(repo: TestRepo) {
     fs::write(
@@ -473,7 +494,7 @@ fn test_list_config_validation_error_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// System config with a section-field error (caught by OverridableConfig).
+/// System config with a section-field type error must be attributed to the file.
 #[rstest]
 fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     let system_config = repo.root_path().join("system-config.toml");
@@ -491,8 +512,7 @@ fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// System config with a non-section field error (skips OverridableConfig,
-/// caught by the UserConfig fallback validation).
+/// System config with a non-section field type error must be attributed to the file.
 #[rstest]
 fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
     let system_config = repo.root_path().join("system-config.toml");

@@ -460,130 +460,6 @@ impl Merge for StepConfig {
     }
 }
 
-/// Settings that can be set globally or per-project.
-///
-/// This struct is flattened into both `UserConfig` (global) and `UserProjectOverrides`
-/// (per-project), ensuring new settings are automatically available in both
-/// contexts without manual synchronization.
-///
-/// Note: Hooks use append semantics when merging global with per-project:
-/// - Global hooks (top-level in TOML) are in `UserConfig.configs.hooks`
-/// - Per-project hooks are in `UserProjectOverrides.overrides.hooks`
-/// - The `UserConfig::hooks()` method merges both with global running first
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
-pub struct OverridableConfig {
-    /// Hooks configuration.
-    ///
-    /// At top level: global hooks that run for all projects.
-    /// In `[projects."..."]`: per-project hooks that append to global hooks.
-    #[serde(flatten, default)]
-    pub hooks: HooksConfig,
-
-    /// Worktree path template
-    #[serde(
-        rename = "worktree-path",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub worktree_path: Option<String>,
-
-    /// Configuration for the `wt list` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list: Option<ListConfig>,
-
-    /// Configuration for the `wt step commit` command (also used by merge)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<CommitConfig>,
-
-    /// Configuration for the `wt merge` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merge: Option<MergeConfig>,
-
-    /// Configuration for the `wt switch` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub switch: Option<SwitchConfig>,
-
-    /// Configuration for `wt step` subcommands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<StepConfig>,
-
-    /// \[experimental\] Command aliases for `wt step <name>`.
-    ///
-    /// Each alias maps a name to one or more command templates. All hook
-    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
-    ///
-    /// Per-project aliases append to global aliases on name collision (global
-    /// first, then per-project), matching hook merge semantics.
-    ///
-    /// Uses `CommandConfig` for consistency with hooks. This means the
-    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
-    /// technically works, but the single-string format is the expected usage.
-    ///
-    /// ```toml
-    /// [aliases]
-    /// deploy = "cd {{ worktree_path }} && make deploy"
-    /// lint = "npm run lint"
-    /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, CommandConfig>>,
-}
-
-impl OverridableConfig {
-    /// Returns true if all settings are None/default.
-    ///
-    /// Includes hooks check for per-project configs where hooks are stored here.
-    pub fn is_empty(&self) -> bool {
-        self.hooks == HooksConfig::default()
-            && self.worktree_path.is_none()
-            && self.list.is_none()
-            && self.commit.is_none()
-            && self.merge.is_none()
-            && self.switch.is_none()
-            && self.step.is_none()
-            && self.aliases.is_none()
-    }
-}
-
-impl Merge for OverridableConfig {
-    fn merge_with(&self, other: &Self) -> Self {
-        use super::merge::merge_optional;
-
-        Self {
-            hooks: self.hooks.merge_with(&other.hooks), // Append semantics
-            worktree_path: other
-                .worktree_path
-                .clone()
-                .or_else(|| self.worktree_path.clone()),
-            list: merge_optional(self.list.as_ref(), other.list.as_ref()),
-            commit: merge_optional(self.commit.as_ref(), other.commit.as_ref()),
-            merge: merge_optional(self.merge.as_ref(), other.merge.as_ref()),
-            switch: merge_optional(self.switch.as_ref(), other.switch.as_ref()),
-            step: merge_optional(self.step.as_ref(), other.step.as_ref()),
-            aliases: merge_alias_maps(&self.aliases, &other.aliases), // Append semantics
-        }
-    }
-}
-
-/// Merge two optional alias maps using append semantics.
-///
-/// Both base and other aliases run on name collision (base first, then other),
-/// matching how `HooksConfig::merge_with` appends hooks.
-fn merge_alias_maps(
-    base: &Option<BTreeMap<String, CommandConfig>>,
-    other: &Option<BTreeMap<String, CommandConfig>>,
-) -> Option<BTreeMap<String, CommandConfig>> {
-    match (base, other) {
-        (None, None) => None,
-        (Some(b), None) => Some(b.clone()),
-        (None, Some(o)) => Some(o.clone()),
-        (Some(b), Some(o)) => {
-            let mut merged = b.clone();
-            crate::config::commands::append_aliases(&mut merged, o);
-            Some(merged)
-        }
-    }
-}
-
 /// Per-project overrides in the user's config file
 ///
 /// Stored under `[projects."project-id"]` in the user's config.
@@ -615,61 +491,33 @@ pub struct UserProjectOverrides {
     )]
     pub approved_commands: Vec<String>,
 
-    /// Per-project overrides (worktree-path, list, commit, merge, switch, step)
+    /// Per-project hooks (append to global hooks)
     #[serde(flatten, default)]
-    pub overrides: OverridableConfig,
-}
+    pub hooks: HooksConfig,
 
-impl UserProjectOverrides {
-    /// Returns true if all fields are empty/None (no settings configured).
-    ///
-    /// Approvals are stored in `approvals.toml`, so `approved_commands` is only
-    /// kept here for backward-compatible parsing and migration — not checked.
-    pub fn is_empty(&self) -> bool {
-        self.overrides.is_empty()
-    }
-}
+    /// Per-project worktree path template override
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub worktree_path: Option<String>,
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListConfig>,
 
-    #[test]
-    fn test_merge_alias_maps_both_none() {
-        assert_eq!(merge_alias_maps(&None, &None), None);
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitConfig>,
 
-    #[test]
-    fn test_merge_alias_maps_base_only() {
-        let base = BTreeMap::from([("a".into(), CommandConfig::single("1"))]);
-        let result = merge_alias_maps(&Some(base.clone()), &None);
-        assert_eq!(result, Some(base));
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeConfig>,
 
-    #[test]
-    fn test_merge_alias_maps_other_only() {
-        let other = BTreeMap::from([("b".into(), CommandConfig::single("2"))]);
-        let result = merge_alias_maps(&None, &Some(other.clone()));
-        assert_eq!(result, Some(other));
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<SwitchConfig>,
 
-    #[test]
-    fn test_merge_alias_maps_appends_on_collision() {
-        let base = BTreeMap::from([
-            ("a".into(), CommandConfig::single("1")),
-            ("shared".into(), CommandConfig::single("base-cmd")),
-        ]);
-        let other = BTreeMap::from([
-            ("b".into(), CommandConfig::single("2")),
-            ("shared".into(), CommandConfig::single("other-cmd")),
-        ]);
-        let result = merge_alias_maps(&Some(base), &Some(other)).unwrap();
-        assert_eq!(result["a"].commands().count(), 1);
-        assert_eq!(result["b"].commands().count(), 1);
-        // Collision: both commands are preserved (base first, then other)
-        let shared: Vec<_> = result["shared"].commands().collect();
-        assert_eq!(shared.len(), 2);
-        assert_eq!(shared[0].template, "base-cmd");
-        assert_eq!(shared[1].template, "other-cmd");
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<BTreeMap<String, CommandConfig>>,
 }

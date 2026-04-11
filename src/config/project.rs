@@ -4,10 +4,10 @@
 
 use std::collections::BTreeMap;
 
-use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::ConfigError;
 use super::commands::CommandConfig;
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
@@ -200,7 +200,7 @@ impl ProjectConfig {
     ) -> Result<Option<Self>, ConfigError> {
         let config_path = match repo
             .project_config_path()
-            .map_err(|e| ConfigError::Message(format!("Failed to get config path: {}", e)))?
+            .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
         {
             Some(path) if path.exists() => path,
             _ => return Ok(None),
@@ -208,7 +208,7 @@ impl ProjectConfig {
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
         let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees
@@ -234,7 +234,7 @@ impl ProjectConfig {
         }
 
         let config: ProjectConfig = toml::from_str(&contents).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Project config at {} failed to parse:\n{e}",
                 crate::path::format_path_for_display(&config_path),
             ))

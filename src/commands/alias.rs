@@ -58,7 +58,9 @@ use worktrunk::styling::{
 };
 
 use crate::commands::command_approval::approve_alias_commands;
-use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::command_executor::{
+    CommandContext, build_hook_context, expand_shell_template, wait_first_error,
+};
 use crate::commands::force_serial_concurrent;
 use crate::commands::hooks::format_pipeline_summary_from_names;
 use crate::output::execute_shell_command;
@@ -92,7 +94,16 @@ impl AliasOptions {
     /// Parse alias options from the external subcommand args.
     ///
     /// First element is the alias name, remaining are flags:
-    /// `--dry-run`, `--yes`/`-y`, and `--var KEY=VALUE`.
+    /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`.
+    ///
+    /// Unknown `--key=value` flags are treated as template variable assignments,
+    /// so `--env=staging` is equivalent to `--var env=staging`. The `=` is
+    /// required — bare `--key` flags (without a value) are rejected. Use
+    /// `--var KEY=VALUE` if a variable name collides with a built-in flag.
+    ///
+    /// Hyphens in variable names are canonicalized to underscores so users can
+    /// write `--my-var=value` and reference `{{ my_var }}` in templates
+    /// (minijinja parses `{{ my-var }}` as subtraction).
     pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
@@ -118,6 +129,19 @@ impl AliasOptions {
                     let pair = parse_var(arg.strip_prefix("--var=").unwrap())?;
                     vars.push(pair);
                 }
+                arg if arg.starts_with("--") => {
+                    let rest = &arg[2..];
+                    if let Some((key, value)) = rest.split_once('=') {
+                        if key.is_empty() {
+                            bail!("Variable name must not be empty (got '--={value}')");
+                        }
+                        vars.push((key.replace('-', "_"), value.to_string()));
+                    } else {
+                        bail!(
+                            "Unknown flag '{arg}' for alias '{name}' (use --{rest}=VALUE to pass a variable)"
+                        );
+                    }
+                }
                 other => {
                     bail!("Unexpected argument '{other}' for alias '{name}'");
                 }
@@ -139,7 +163,7 @@ fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
     if key.is_empty() {
         bail!("--var key must not be empty (got '={value}')");
     }
-    Ok((key.to_string(), value.to_string()))
+    Ok((key.replace('-', "_"), value.to_string()))
 }
 
 /// Determine whether an alias requires project-config approval.
@@ -377,10 +401,11 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
                     std::thread::scope(|s| {
                         let handles: Vec<_> =
                             cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
-                        for handle in handles {
-                            handle.join().expect("alias command thread panicked")?;
-                        }
-                        Ok::<(), anyhow::Error>(())
+                        wait_first_error(
+                            handles
+                                .into_iter()
+                                .map(|h| h.join().expect("alias command thread panicked")),
+                        )
                     })?;
                 }
             }
@@ -410,11 +435,7 @@ impl AliasExecCtx<'_> {
         let command = if self.is_pipeline && template_references_var(&cmd.template, "vars") {
             let fresh_context: HashMap<String, String> = serde_json::from_str(self.context_json)
                 .context("failed to deserialize context_json")?;
-            let fresh_vars: HashMap<&str, &str> = fresh_context
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
-            expand_template(&cmd.template, &fresh_vars, true, self.repo, self.alias_name)?
+            expand_shell_template(&cmd.template, &fresh_context, self.repo, self.alias_name)?
         } else {
             expand_template(&cmd.template, self.vars, true, self.repo, self.alias_name)?
         };
@@ -624,6 +645,150 @@ cmd = [
             ],
         }
         "#);
+        // --key=value shorthand
+        assert_debug_snapshot!(parse(&["deploy", "--env=staging"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "staging",
+                ),
+            ],
+        }
+        "#);
+        // --key=value with equals in value
+        assert_debug_snapshot!(parse(&["deploy", "--url=http://host?a=1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "url",
+                    "http://host?a=1",
+                ),
+            ],
+        }
+        "#);
+        // --key=value mixed with --var and flags
+        assert_debug_snapshot!(parse(&["deploy", "--env=prod", "--var", "region=us-east", "--dry-run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: true,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "prod",
+                ),
+                (
+                    "region",
+                    "us-east",
+                ),
+            ],
+        }
+        "#);
+        // --key= (empty value)
+        assert_debug_snapshot!(parse(&["deploy", "--env="]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in shorthand key are canonicalized to underscores
+        assert_debug_snapshot!(parse(&["deploy", "--my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var KEY=VALUE are canonicalized too
+        assert_debug_snapshot!(parse(&["deploy", "--var", "my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var=KEY=VALUE form
+        assert_debug_snapshot!(parse(&["deploy", "--var=my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Already-underscored keys pass through unchanged
+        assert_debug_snapshot!(parse(&["deploy", "--my_var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Multiple hyphens in a single key
+        assert_debug_snapshot!(parse(&["deploy", "--long-var-name=x"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "long_var_name",
+                    "x",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in value are preserved (only key is canonicalized)
+        assert_debug_snapshot!(parse(&["deploy", "--region=us-east-1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "region",
+                    "us-east-1",
+                ),
+            ],
+        }
+        "#);
     }
 
     #[test]
@@ -632,9 +797,10 @@ cmd = [
         assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
         assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
         assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"--var value must be KEY=VALUE");
-        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unexpected argument '--verbose' for alias 'deploy'");
+        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unknown flag '--verbose' for alias 'deploy' (use --verbose=VALUE to pass a variable)");
         assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
         assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"--var key must not be empty (got '=value')");
+        assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"Variable name must not be empty (got '--=value')");
     }
 
     #[test]

@@ -3,8 +3,9 @@
 //! These methods modify the UserConfig and persist changes to disk,
 //! using file locking to prevent race conditions between concurrent processes.
 
-use config::ConfigError;
 use fs2::FileExt;
+
+use crate::config::ConfigError;
 
 use crate::path::format_path_for_display;
 
@@ -24,7 +25,7 @@ pub(crate) fn acquire_config_lock(
     // Create parent directory if needed
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| ConfigError::Message(format!("Failed to create config directory: {e}")))?;
+            .map_err(|e| ConfigError(format!("Failed to create config directory: {e}")))?;
     }
 
     let file = std::fs::OpenOptions::new()
@@ -33,10 +34,10 @@ pub(crate) fn acquire_config_lock(
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
+        .map_err(|e| ConfigError(format!("Failed to open lock file: {e}")))?;
 
     file.lock_exclusive()
-        .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
+        .map_err(|e| ConfigError(format!("Failed to acquire config lock: {e}")))?;
 
     Ok(file)
 }
@@ -56,7 +57,7 @@ impl UserConfig {
         let path = match config_path {
             Some(p) => p.to_path_buf(),
             None => path::config_path().ok_or_else(|| {
-                ConfigError::Message(
+                ConfigError(
                     "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
                 )
             })?,
@@ -93,7 +94,7 @@ impl UserConfig {
         }
 
         let content = std::fs::read_to_string(&path).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to read config file {}: {}",
                 format_path_for_display(&path),
                 e
@@ -102,7 +103,7 @@ impl UserConfig {
 
         let migrated = crate::config::deprecation::migrate_content(&content);
         let disk_config: UserConfig = toml::from_str(&migrated).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to parse config file {}: {}",
                 format_path_for_display(&path),
                 e
@@ -161,10 +162,10 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             let entry = config.projects.entry(project.to_string()).or_default();
-            if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
+            if entry.worktree_path.as_ref() == Some(&worktree_path) {
                 return false;
             }
-            entry.overrides.worktree_path = Some(worktree_path);
+            entry.worktree_path = Some(worktree_path);
             true
         })
     }
@@ -181,10 +182,7 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             // Ensure commit config exists
-            let commit_config = config
-                .configs
-                .commit
-                .get_or_insert_with(CommitConfig::default);
+            let commit_config = config.commit.get_or_insert_with(CommitConfig::default);
             let gen_config = commit_config
                 .generation
                 .get_or_insert_with(CommitGenerationConfig::default);

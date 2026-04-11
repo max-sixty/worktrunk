@@ -508,7 +508,7 @@ fn render_user_hooks(
     // Collect all user hooks (global hooks from the user config file)
     // Note: uses overrides.hooks for display, not the merged hooks() accessor.
     // get() handles the post-create → pre-start deprecation merge.
-    let user_hooks = &config.configs.hooks;
+    let user_hooks = &config.hooks;
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
