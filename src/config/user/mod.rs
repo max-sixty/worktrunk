@@ -15,7 +15,9 @@ mod tests;
 
 use std::path::PathBuf;
 
-use config::{Case, Config, ConfigError, File};
+use config::{Case, Config, File};
+
+use super::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -225,7 +227,7 @@ impl UserConfig {
     /// 3. User config file (personal preferences)
     /// 4. Environment variables (WORKTRUNK_*)
     pub fn load() -> Result<Self, ConfigError> {
-        Self::load_with_cause().map_err(|e| ConfigError::Message(e.to_string()))
+        Self::load_with_cause().map_err(|e| ConfigError(e.to_string()))
     }
 
     /// Like [`load()`](Self::load), but returns a [`LoadError`] that
@@ -348,13 +350,13 @@ impl UserConfig {
         // See: https://github.com/max-sixty/worktrunk/issues/737
         let config: Self = builder
             .build()
-            .map_err(LoadError::Other)?
+            .map_err(|e| LoadError::Other(ConfigError(e.to_string())))?
             .try_deserialize()
             .map_err(|err| {
                 // Files were pre-validated above, so a deserialize failure here
                 // is caused by env-var overrides.
                 LoadError::Env {
-                    err,
+                    err: ConfigError(err.to_string()),
                     override_vars: collect_worktrunk_override_vars(),
                 }
             })?;
@@ -369,7 +371,7 @@ impl UserConfig {
     pub(crate) fn load_from_str(content: &str) -> Result<Self, ConfigError> {
         let migrated = crate::config::deprecation::migrate_content(content);
         let config: Self =
-            toml::from_str(&migrated).map_err(|e| ConfigError::Message(e.to_string()))?;
+            toml::from_str(&migrated).map_err(|e| ConfigError(e.to_string()))?;
         config.validate()?;
         Ok(config)
     }

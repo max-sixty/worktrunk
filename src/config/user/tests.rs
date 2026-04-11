@@ -2381,7 +2381,7 @@ fn test_load_error_display_file() {
 #[test]
 fn test_load_error_display_env() {
     let err = LoadError::Env {
-        err: config::ConfigError::Message("invalid type".into()),
+        err: crate::config::ConfigError("invalid type".into()),
         override_vars: vec!["WORKTRUNK__LIST__BRANCHES".into()],
     };
     assert_eq!(err.to_string(), "invalid type");
@@ -2389,6 +2389,6 @@ fn test_load_error_display_env() {
 
 #[test]
 fn test_load_error_display_other() {
-    let err = LoadError::Other(config::ConfigError::Message("bad".into()));
+    let err = LoadError::Other(crate::config::ConfigError("bad".into()));
     assert_eq!(err.to_string(), "bad");
 }

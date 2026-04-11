@@ -3,8 +3,9 @@
 //! Handles TOML serialization with formatting (multiline arrays, implicit tables)
 //! and preserves comments when updating existing files.
 
-use config::ConfigError;
 use serde::Serialize;
+
+use crate::config::ConfigError;
 
 use super::UserConfig;
 use super::path;
@@ -73,7 +74,7 @@ impl UserConfig {
             Some(path) => self.save_to(path),
             None => {
                 let path = path::config_path().ok_or_else(|| {
-                    ConfigError::Message(
+                    ConfigError(
                         "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
                     )
                 })?;
@@ -211,18 +212,18 @@ impl UserConfig {
         // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                ConfigError::Message(format!("Failed to create config directory: {}", e))
+                ConfigError(format!("Failed to create config directory: {}", e))
             })?;
         }
 
         let toml_string = if config_path.exists() {
             // Surgically update sections to preserve comments
             let existing_content = std::fs::read_to_string(config_path)
-                .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+                .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
             let mut doc: toml_edit::DocumentMut = existing_content
                 .parse()
-                .map_err(|e| ConfigError::Message(format!("Failed to parse config file: {}", e)))?;
+                .map_err(|e| ConfigError(format!("Failed to parse config file: {}", e)))?;
 
             // Update all programmatically-modifiable sections
             // NOTE: If you add a new setter that modifies config, add the update here too!
@@ -245,7 +246,7 @@ impl UserConfig {
         } else {
             // No existing file: serialize struct directly, then post-process formatting
             let mut doc = toml_edit::ser::to_document(&self)
-                .map_err(|e| ConfigError::Message(format!("Serialization error: {e}")))?;
+                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
 
             // Convert inline tables to standard tables for readability
             Self::expand_inline_tables(doc.as_table_mut());
@@ -260,7 +261,7 @@ impl UserConfig {
         };
 
         std::fs::write(config_path, toml_string)
-            .map_err(|e| ConfigError::Message(format!("Failed to write config file: {}", e)))?;
+            .map_err(|e| ConfigError(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
     }
@@ -277,7 +278,7 @@ impl UserConfig {
         if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
+            return Err(ConfigError("worktree-path cannot be empty".into()));
         }
 
         // Validate per-project configs
@@ -286,7 +287,7 @@ impl UserConfig {
             if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError::Message(format!(
+                return Err(ConfigError(format!(
                     "projects.{project}.worktree-path cannot be empty"
                 )));
             }
@@ -302,13 +303,13 @@ impl UserConfig {
             && let Some(ref cg) = commit.generation
         {
             if cg.template.is_some() && cg.template_file.is_some() {
-                return Err(ConfigError::Message(
+                return Err(ConfigError(
                     "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
                 ));
             }
 
             if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
-                return Err(ConfigError::Message(
+                return Err(ConfigError(
                     "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
                 ));
             }
@@ -322,12 +323,12 @@ impl UserConfig {
         prefix: &str,
     ) -> Result<(), ConfigError> {
         if cg.template.is_some() && cg.template_file.is_some() {
-            return Err(ConfigError::Message(format!(
+            return Err(ConfigError(format!(
                 "{prefix}.commit-generation.template and template-file are mutually exclusive"
             )));
         }
         if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
-            return Err(ConfigError::Message(format!(
+            return Err(ConfigError(format!(
                 "{prefix}.commit-generation.squash-template and squash-template-file are mutually exclusive"
             )));
         }
