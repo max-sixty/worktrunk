@@ -244,7 +244,7 @@ Creates a worktree that builds on the current branch's changes.
 
 ## Agent handoffs
 
-Spawn a worktree with Claude running in the background:
+Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
 
 **tmux** (new detached session):
 ```bash
@@ -258,9 +258,9 @@ $ zellij run -- wt switch --create fix-auth-bug -x claude -- \
 $   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
 
-This lets one Claude session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
+This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
-The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to `CLAUDE.md`:
+The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
 ```markdown
 When I ask you to spawn parallel worktrees, use the agent handoff pattern

@@ -296,7 +296,7 @@ impl Repository {
         let use_cache = sparse_paths.is_empty();
 
         if use_cache
-            && let Some(cached) = super::probe_cache::get_diff_stats(self, &base_sha, &head_sha)
+            && let Some(cached) = super::sha_cache::get_diff_stats(self, &base_sha, &head_sha)
         {
             return Ok(cached);
         }
@@ -308,7 +308,7 @@ impl Repository {
         // Get merge-base (cached in shared repo cache)
         let Some(merge_base) = self.merge_base(&base_sha, &head_sha)? else {
             if use_cache {
-                super::probe_cache::put_diff_stats(self, &base_sha, &head_sha, LineDiff::default());
+                super::sha_cache::put_diff_stats(self, &base_sha, &head_sha, LineDiff::default());
             }
             return Ok(LineDiff::default());
         };
@@ -324,7 +324,7 @@ impl Repository {
         let stdout = self.run_command(&args)?;
         let result = LineDiff::from_shortstat(&stdout);
         if use_cache {
-            super::probe_cache::put_diff_stats(self, &base_sha, &head_sha, result);
+            super::sha_cache::put_diff_stats(self, &base_sha, &head_sha, result);
         }
         Ok(result)
     }
