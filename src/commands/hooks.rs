@@ -14,8 +14,7 @@ use super::command_executor::{
     CommandContext, PreparedCommand, PreparedStep, prepare_commands, prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
-use crate::output::execute_shell_command;
-use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
+use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// A prepared command with its source information.
 pub struct SourcedCommand {
@@ -507,12 +506,14 @@ pub fn run_hook_with_filter(
         return Ok(());
     }
 
-    // Foreground hooks have the same trust profile as aliases — the hook body
-    // is already arbitrary shell. Pass the directive file through so inner `wt`
-    // invocations (e.g. `wt switch --create` in a pre-start hook) can write
-    // shell directives back to the parent shell.
-    let directive_file: Option<PathBuf> =
-        std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
+    // Foreground hooks get CD directive pass-through so inner `wt` invocations
+    // (e.g. `wt switch --create` in a pre-start hook) can influence the parent
+    // shell's working directory. The EXEC directive file is scrubbed: a hook
+    // body is arbitrary shell, and letting it write EXEC directives would
+    // amount to shell injection into the interactive session. Nested `wt` calls
+    // that try to emit `--execute` payloads while running inside a hook body
+    // warn and drop (see `output::global`).
+    let directives = DirectivePassthrough::inherit_from_env();
 
     for cmd in commands {
         cmd.announce()?;
@@ -532,7 +533,7 @@ pub fn run_hook_with_filter(
             &expanded,
             Some(&cmd.prepared.context_json),
             Some(&log_label),
-            directive_file.as_deref(),
+            directives.clone(),
         ) {
             // Extract raw message and exit code from error
             let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {

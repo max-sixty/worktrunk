@@ -298,6 +298,8 @@ fn spawn_detached_unix(
         ))
         .stderr(Stdio::from(log_file))
         // Prevent hooks from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .process_group(0) // New process group, not in PTY's foreground group
         .spawn()
@@ -371,6 +373,8 @@ fn spawn_detached_windows(
         ))
         .stderr(Stdio::from(log_file))
         // Prevent hooks from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
@@ -442,6 +446,8 @@ fn spawn_detached_exec_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .process_group(0)
         .spawn()
@@ -479,6 +485,8 @@ fn spawn_detached_exec_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()

@@ -90,6 +90,8 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env("COLUMNS", width.to_string())
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
     {

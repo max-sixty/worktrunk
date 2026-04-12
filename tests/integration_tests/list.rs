@@ -1945,7 +1945,7 @@ fn mock_summary_cache(
 /// Generate Quick Start example: `wt switch --create feature-auth` output
 ///
 /// Shows the switch output when creating a new worktree from main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_switch.snap
 #[rstest]
@@ -1960,7 +1960,7 @@ fn test_quickstart_switch(mut repo: TestRepo) {
     std::fs::write(&directive_file, "").unwrap();
     assert_cmd_snapshot!("quickstart_switch", {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-auth"], None);
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         cmd
     });
 }
@@ -1981,7 +1981,7 @@ fn test_quickstart_list(mut repo: TestRepo) {
 /// Generate Quick Start example: `wt merge` output
 ///
 /// Shows merge output when merging feature-auth into main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_merge.snap
 #[rstest]
@@ -2084,7 +2084,7 @@ mod tests {
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
         cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
         // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths

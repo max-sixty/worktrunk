@@ -1,6 +1,7 @@
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, repo, repo_with_feature_worktree,
-    repo_with_remote, repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_files, configure_legacy_directive_file, directive_files,
+    legacy_directive_file, repo, repo_with_feature_worktree, repo_with_remote,
+    repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -10,15 +11,24 @@ use std::os::unix::fs as unix_fs;
 use std::path::Path;
 
 // ============================================================================
-// Directive File Tests
+// Directive File Tests (split protocol)
 // ============================================================================
-// These tests verify that WORKTRUNK_DIRECTIVE_FILE env var causes directives to be
-// written to the file. The shell wrapper sources this file after wt exits.
+// These tests verify the split directive-file protocol:
+// - WORKTRUNK_DIRECTIVE_CD_FILE: wt writes a raw path (no `cd ` prefix, no quotes).
+//   The shell wrapper runs `cd -- "$(< file)"`.
+// - WORKTRUNK_DIRECTIVE_EXEC_FILE: wt writes arbitrary shell (e.g. from --execute).
+//   The shell wrapper sources the file.
+
+// ============================================================================
+// Legacy Directive File Tests (single WORKTRUNK_DIRECTIVE_FILE)
+// ============================================================================
+// These tests verify the legacy single-file protocol still works for users
+// who haven't restarted their shell after upgrading.
 
 #[rstest]
-fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_switch_legacy_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (directive_path, _guard) = legacy_directive_file();
 
     let mut settings = setup_snapshot_settings(&repo);
     // Normalize the directive file cd path
@@ -27,19 +37,55 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_legacy_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("feature")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file contains cd command
+        // Verify directive file contains cd command (legacy format)
         let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
         assert!(
             directives.contains("cd '"),
-            "Directive file should contain cd command, got: {}",
+            "Legacy directive file should contain cd command, got: {}",
             directives
+        );
+    });
+}
+
+// ============================================================================
+// Split Protocol Tests
+// ============================================================================
+
+#[rstest]
+fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.arg("switch")
+            .arg("feature")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify cd file contains a raw path (no `cd ` prefix, no quotes)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
+        assert!(
+            !cd_content.trim().is_empty(),
+            "CD file should contain a path, got: {}",
+            cd_content
+        );
+        assert!(
+            !cd_content.contains("cd "),
+            "CD file should contain a raw path (no cd prefix), got: {}",
+            cd_content
         );
     });
 }
@@ -48,25 +94,29 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
     let repo = &mut repo_with_remote_and_feature;
     let feature_wt = &repo.worktrees["feature"];
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+    let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file contains cd command (back to main)
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file contains a raw path (back to main)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Directive file should contain cd command, got: {}",
-            directives
+            !cd_content.trim().is_empty(),
+            "CD file should contain a path, got: {}",
+            cd_content
+        );
+        assert!(
+            !cd_content.contains("cd "),
+            "CD file should contain a raw path (no cd prefix), got: {}",
+            cd_content
         );
     });
 }
@@ -74,25 +124,29 @@ fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
 #[rstest]
 fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
-    let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("remove").current_dir(&feature_wt);
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file contains cd command (back to main)
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file contains a raw path (back to main)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Directive file should contain cd command, got: {}",
-            directives
+            !cd_content.trim().is_empty(),
+            "CD file should contain a path, got: {}",
+            cd_content
+        );
+        assert!(
+            !cd_content.contains("cd "),
+            "CD file should contain a raw path (no cd prefix), got: {}",
+            cd_content
         );
     });
 }
@@ -105,7 +159,7 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 #[rstest]
 fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create the same subdirectory in both worktrees
     let subdir = "apps/gateway";
@@ -114,7 +168,7 @@ fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.arg("switch")
         .arg("feature")
         .current_dir(repo.root_path().join(subdir));
@@ -122,16 +176,16 @@ fn test_switch_preserves_subdir(#[from(repo_with_remote)] mut repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt switch failed: {:?}", output);
 
-    // Verify directive file contains cd to the subdirectory, not the root.
+    // Verify cd file contains path to the subdirectory, not the root.
     // Use Path::join for each component so separators are native on Windows.
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
     let expected_subdir = feature_wt.join(Path::new("apps").join("gateway"));
     let expected_str = expected_subdir.to_string_lossy();
     assert!(
-        directives.contains(&*expected_str),
-        "Directive should cd to subdirectory {}, got: {}",
+        cd_content.contains(&*expected_str),
+        "CD file should contain subdirectory path {}, got: {}",
         expected_str,
-        directives
+        cd_content
     );
 }
 
@@ -140,7 +194,7 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create subdirectory only in the source worktree, not in the target
     let subdir = "apps/gateway";
@@ -149,7 +203,7 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.arg("switch")
         .arg("feature")
         .current_dir(repo.root_path().join(subdir));
@@ -157,30 +211,30 @@ fn test_switch_falls_back_to_root_when_subdir_missing(
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt switch failed: {:?}", output);
 
-    // Verify directive file contains cd to worktree root (not the missing subdir)
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    // Verify cd file contains path to worktree root (not the missing subdir)
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
     let feature_str = feature_wt.to_string_lossy();
     assert!(
-        directives.contains(&*feature_str),
-        "Directive should cd to worktree root {}, got: {}",
+        cd_content.contains(&*feature_str),
+        "CD file should contain worktree root {}, got: {}",
         feature_str,
-        directives
+        cd_content
     );
     // Make sure it doesn't contain the subdir path.
     // Use Path::join for each component so separators are native on Windows.
     let subdir_path = feature_wt.join(Path::new("apps").join("gateway"));
     let subdir_str = subdir_path.to_string_lossy();
     assert!(
-        !directives.contains(&*subdir_str),
-        "Directive should NOT cd to missing subdirectory {}, got: {}",
+        !cd_content.contains(&*subdir_str),
+        "CD file should NOT contain missing subdirectory path {}, got: {}",
         subdir_str,
-        directives
+        cd_content
     );
 }
 
 #[rstest]
 fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create a subdirectory in the source worktree and commit it so it appears in the new branch
     let subdir = "apps/gateway";
@@ -191,7 +245,7 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "new-feature"])
         .current_dir(repo.root_path().join(subdir));
 
@@ -200,13 +254,13 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
 
     // The subdirectory was committed, so the new worktree should have it.
     // Use Path to construct the expected substring so separators match on Windows.
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
     let subdir_suffix = Path::new("apps").join("gateway");
     let subdir_str = subdir_suffix.to_string_lossy();
     assert!(
-        directives.contains(&*subdir_str),
-        "New worktree should cd to preserved subdirectory, got: {}",
-        directives
+        cd_content.contains(&*subdir_str),
+        "CD file should contain preserved subdirectory path, got: {}",
+        cd_content
     );
 }
 
@@ -218,57 +272,57 @@ fn test_switch_create_preserves_subdir(#[from(repo_with_remote)] repo: TestRepo)
 #[rstest]
 fn test_switch_no_cd_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.args(["switch", "feature", "--no-cd"])
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file does NOT contain cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file is empty (no path written with --no-cd)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            !directives.contains("cd '"),
-            "Directive file should NOT contain cd command with --no-cd, got: {}",
-            directives
+            cd_content.trim().is_empty(),
+            "CD file should be empty with --no-cd, got: {}",
+            cd_content
         );
     });
 }
 
 #[rstest]
 fn test_switch_no_cd_create_suppresses_directive(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.args(["switch", "--create", "new-feature", "--no-cd"])
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file does NOT contain cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file is empty (no path written with --no-cd)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            !directives.contains("cd '"),
-            "Directive file should NOT contain cd command with --no-cd, got: {}",
-            directives
+            cd_content.trim().is_empty(),
+            "CD file should be empty with --no-cd, got: {}",
+            cd_content
         );
     });
 }
 
 #[rstest]
 fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create project config with a post-switch hook
     let config_dir = repo.root_path().join(".config");
@@ -286,33 +340,33 @@ fn test_switch_no_cd_hooks_show_path_annotation(#[from(repo_with_remote)] repo: 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         // Use --yes to auto-approve the hook command
         cmd.args(["switch", "--create", "hook-test", "--no-cd", "--yes"])
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file does NOT contain cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file is empty (no path written with --no-cd)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            !directives.contains("cd '"),
-            "Directive file should NOT contain cd command with --no-cd, got: {}",
-            directives
+            cd_content.trim().is_empty(),
+            "CD file should be empty with --no-cd, got: {}",
+            cd_content
         );
     });
 }
 
 #[rstest]
 fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         // pwd should print the target worktree path, even with --no-cd
         cmd.args([
             "switch",
@@ -326,12 +380,12 @@ fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] r
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file does NOT contain cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file is empty (no path written with --no-cd)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            !directives.contains("cd '"),
-            "Directive file should NOT contain cd command with --no-cd, got: {}",
-            directives
+            cd_content.trim().is_empty(),
+            "CD file should be empty with --no-cd, got: {}",
+            cd_content
         );
     });
 }
@@ -340,7 +394,7 @@ fn test_switch_no_cd_execute_runs_in_target_worktree(#[from(repo_with_remote)] r
 #[rstest]
 fn test_switch_no_cd_config_suppresses_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Set up config with cd = false
     repo.write_test_config(
@@ -356,18 +410,18 @@ cd = false
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.args(["switch", "feature"])
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file does NOT contain cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file is empty (no path written with cd=false config)
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            !directives.contains("cd '"),
-            "Directive file should NOT contain cd command with no-cd config, got: {}",
-            directives
+            cd_content.trim().is_empty(),
+            "CD file should be empty with no-cd config, got: {}",
+            cd_content
         );
     });
 }
@@ -408,14 +462,14 @@ fn test_remove_without_directive_file(repo: TestRepo) {
 fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("merge")
             .arg("main")
             .arg("--no-remove")
@@ -429,25 +483,29 @@ fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
 fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
-    let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+    let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 
         assert_cmd_snapshot!(cmd);
 
-        // Verify directive file contains cd command
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // Verify cd file contains a raw path
+        let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Directive file should contain cd command, got: {}",
-            directives
+            !cd_content.trim().is_empty(),
+            "CD file should contain a path, got: {}",
+            cd_content
+        );
+        assert!(
+            !cd_content.contains("cd "),
+            "CD file should contain a raw path (no cd prefix), got: {}",
+            cd_content
         );
     });
 }
@@ -462,7 +520,7 @@ fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
 #[rstest]
 fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
@@ -476,7 +534,7 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     // Set PWD to the logical (symlink) path — this is what the shell sets
     cmd.env("PWD", &logical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&logical_cwd);
@@ -488,25 +546,25 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The directive should use the logical (symlink) path, not the canonical one
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    // The cd file should use the logical (symlink) path, not the canonical one
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
 
-    // The symlink prefix should appear in the directive
+    // The symlink prefix should appear in the cd path
     let symlink_prefix = symlink_path.to_string_lossy();
     assert!(
-        directives.contains(&*symlink_prefix),
-        "Directive should use symlink path (containing {}), got: {}",
+        cd_content.contains(&*symlink_prefix),
+        "CD file should use symlink path (containing {}), got: {}",
         symlink_prefix,
-        directives
+        cd_content
     );
 
     // The canonical (real) parent path should NOT appear
     let real_prefix = real_parent.to_string_lossy();
     assert!(
-        !directives.contains(&*real_prefix),
-        "Directive should NOT contain canonical path {}, got: {}",
+        !cd_content.contains(&*real_prefix),
+        "CD file should NOT contain canonical path {}, got: {}",
         real_prefix,
-        directives
+        cd_content
     );
 
     // Display messages (stderr) should also use the logical path
@@ -528,7 +586,7 @@ fn test_switch_preserves_symlink_path(#[from(repo_with_remote)] mut repo: TestRe
 #[cfg(unix)]
 #[rstest]
 fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create a symlink to the repo's parent directory
     let real_parent = repo.root_path().parent().unwrap();
@@ -541,7 +599,7 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.env("PWD", &logical_cwd);
     cmd.args(["switch", "--create", "new-feature"])
         .current_dir(&logical_cwd);
@@ -553,13 +611,13 @@ fn test_switch_create_preserves_symlink_path(#[from(repo_with_remote)] repo: Tes
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
     let symlink_prefix = symlink_path.to_string_lossy();
     assert!(
-        directives.contains(&*symlink_prefix),
-        "Directive should use symlink path (containing {}), got: {}",
+        cd_content.contains(&*symlink_prefix),
+        "CD file should use symlink path (containing {}), got: {}",
         symlink_prefix,
-        directives
+        cd_content
     );
 
     // Display messages (stderr) should also use the logical path
@@ -585,7 +643,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
     #[from(repo_with_remote)] mut repo: TestRepo,
 ) {
     let feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Create subdirectory in both worktrees
     let subdir = "apps/gateway";
@@ -603,7 +661,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.env("PWD", &logical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&logical_cwd);
 
@@ -614,24 +672,24 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
 
     // Should use symlink prefix AND preserve subdirectory
     let symlink_prefix = symlink_path.to_string_lossy();
     assert!(
-        directives.contains(&*symlink_prefix),
-        "Directive should use symlink path (containing {}), got: {}",
+        cd_content.contains(&*symlink_prefix),
+        "CD file should use symlink path (containing {}), got: {}",
         symlink_prefix,
-        directives
+        cd_content
     );
 
     let subdir_suffix = Path::new("apps").join("gateway");
     let subdir_str = subdir_suffix.to_string_lossy();
     assert!(
-        directives.contains(&*subdir_str),
-        "Directive should preserve subdirectory {}, got: {}",
+        cd_content.contains(&*subdir_str),
+        "CD file should preserve subdirectory {}, got: {}",
         subdir_str,
-        directives
+        cd_content
     );
 }
 
@@ -640,13 +698,13 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: TestRepo) {
     // When PWD matches current_dir (no symlink), canonical path is used as before
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let canonical_cwd = dunce::canonicalize(repo.root_path()).unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     // Set PWD to canonical (same as current_dir — no symlink)
     cmd.env("PWD", &canonical_cwd);
     cmd.arg("switch").arg("feature").current_dir(&canonical_cwd);
@@ -658,11 +716,11 @@ fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: Tes
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Should still have a cd directive (just with canonical path)
-    let directives = fs::read_to_string(&directive_path).unwrap_or_default();
+    // Should still have a path in the cd file (just with canonical path)
+    let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        directives.contains("cd '"),
-        "Directive file should contain cd command, got: {}",
-        directives
+        !cd_content.trim().is_empty(),
+        "CD file should contain a path, got: {}",
+        cd_content
     );
 }

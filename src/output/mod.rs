@@ -18,14 +18,17 @@
 //!
 //! ## Shell Integration
 //!
-//! When `WORKTRUNK_DIRECTIVE_FILE` env var is set (by shell wrapper):
-//! - Shell commands (cd, exec) are written to that file
-//! - Shell wrapper sources the file after wt exits
-//! - This allows the parent shell to change directory
+//! Two split directive files, one for each trust level:
+//! - `WORKTRUNK_DIRECTIVE_CD_FILE` — raw path; the wrapper `cd`s to it.
+//! - `WORKTRUNK_DIRECTIVE_EXEC_FILE` — arbitrary shell; the wrapper sources it.
 //!
-//! When not set (direct binary call):
-//! - Commands execute directly
-//! - Shell hints are shown for missing integration
+//! The legacy single-file `WORKTRUNK_DIRECTIVE_FILE` env var is still honored
+//! for one release to bridge users who upgraded `wt` without restarting
+//! their shell. See `global` for the `DirectiveMode` selection logic.
+//!
+//! When no directive env vars are set (direct binary call):
+//! - Commands execute directly.
+//! - Shell hints are shown for missing integration.
 //!
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
@@ -37,13 +40,14 @@ pub(crate) mod shell_integration;
 
 // Re-export the public API
 pub(crate) use global::{
-    change_directory, execute, is_shell_integration_active, mark_cwd_removed,
-    post_hook_display_path, pre_hook_display_path, set_verbosity, terminate_output,
-    to_logical_path, was_cwd_removed,
+    change_directory, exec_would_be_refused, execute, is_shell_integration_active,
+    mark_cwd_removed, post_hook_display_path, pre_hook_display_path, set_verbosity,
+    terminate_output, to_logical_path, was_cwd_removed,
 };
 // Re-export output handlers
 pub(crate) use handlers::{
-    execute_shell_command, execute_user_command, handle_remove_output, handle_switch_output,
+    DirectivePassthrough, execute_shell_command, execute_user_command, handle_remove_output,
+    handle_switch_output,
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{

@@ -147,7 +147,9 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         // Safe to suppress because we're only probing shell state, not doing anything
         // security-sensitive, and this only affects our subprocess.
         .env("ZSH_DISABLE_COMPFIX", "true")
-        // Prevent subprocesses from writing to the directive file
+        // Prevent subprocesses from writing to directive files
+        .env_remove(crate::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+        .env_remove(crate::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
         .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
         .ok()?;

@@ -751,6 +751,8 @@ impl Repository {
         let result = std::process::Command::new("git")
             .args(["fsmonitor--daemon", "start"])
             .current_dir(path)
+            .env_remove(crate::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+            .env_remove(crate::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
             .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -924,6 +926,8 @@ impl Repository {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .env_remove(crate::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
+            .env_remove(crate::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
             .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
             .spawn()
             .with_context(|| format!("Failed to spawn: {}", cmd_str))?;

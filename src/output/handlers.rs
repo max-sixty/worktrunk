@@ -598,8 +598,8 @@ fn resolve_subdir_in_target(target_root: &Path, source_root: Option<&Path>, cwd:
 /// Always warn when the shell's directory won't change. Users expect to be in
 /// the target worktree after switching.
 ///
-/// **When to warn:** Shell integration is not active (`WORKTRUNK_DIRECTIVE_FILE`
-/// not set). This applies to both `Existing` and `Created` results.
+/// **When to warn:** Shell integration is not active (no directive files set).
+/// This applies to both `Existing` and `Created` results.
 ///
 /// **When NOT to warn:**
 /// - `AlreadyAt` — user is already in the target directory
@@ -664,11 +664,22 @@ pub fn handle_switch_output(
     Ok(display_path_for_hooks)
 }
 
-/// Execute the --execute command after hooks have run
+/// Execute the --execute command after hooks have run.
 ///
-/// `display_path` is shown when the user's shell won't be in the worktree directory
-/// (shell integration not active). This helps users understand where the command runs.
+/// `display_path` is shown when the user's shell won't be in the worktree
+/// directory (shell integration not active). This helps users understand where
+/// the command runs.
+///
+/// When the conservative EXEC scrub is in effect (nested `wt` inside an alias
+/// or hook body), no `Executing` header is printed — `execute()` emits its own
+/// warning explaining the skip, and a contradictory header would read as a
+/// broken promise. See `output::global::warn_exec_scrubbed_once`.
 pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyhow::Result<()> {
+    if super::exec_would_be_refused() {
+        // execute() will emit the conservative-scrub warning and return Ok.
+        return super::execute(command);
+    }
+
     // Show what command is being executed (section header + gutter content)
     // Include path when user's shell won't be there (shell integration not active)
     let header = match display_path {
@@ -1373,19 +1384,21 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
 /// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
 /// runs, `Cmd` tracing/logging, and directive file control.
 ///
-/// ## Directive file
+/// ## Directive files
 ///
-/// `directive_file` controls whether the child can write shell integration
-/// directives (e.g. `cd`) back to the parent shell:
+/// `directives` controls whether the child can write shell-integration
+/// directives back to the parent shell. The CD file is always safe to pass
+/// through (raw path, no injection surface); the EXEC file is never passed
+/// through — only wt-internal Rust code writes arbitrary shell directives.
 ///
-/// - `None` — scrubs `WORKTRUNK_DIRECTIVE_FILE` from the child (default;
-///   used by `for-each` which runs in other worktrees, and hooks prior to
-///   Phase 3).
-/// - `Some(path)` — passes the env var through. Used by aliases and
-///   foreground hooks, which have the same trust profile: the command body
-///   is already arbitrary shell, so letting it write a `cd` directive is
-///   strictly less powerful than what it can already do. Background hooks
-///   must never pass through (they outlive the parent shell).
+/// - `DirectivePassthrough::none()` — scrubs all directive env vars from the
+///   child. Used by `for-each` (runs in other worktrees) and background hooks
+///   (outlive the parent shell).
+/// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
+///   env vars are currently set in this process. Used by aliases and
+///   foreground hooks, which may emit `cd` directives. In new-protocol mode
+///   only the CD file passes through; in legacy compat mode the single
+///   legacy file passes through to preserve pre-split behavior.
 ///
 /// ## ANSI reset
 ///
@@ -1398,7 +1411,7 @@ pub fn execute_shell_command(
     command: &str,
     stdin_content: Option<&str>,
     command_log_label: Option<&str>,
-    directive_file: Option<&std::path::Path>,
+    directives: DirectivePassthrough,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1424,8 +1437,11 @@ pub fn execute_shell_command(
         cmd = cmd.stdin_bytes(content);
     }
 
-    if let Some(path) = directive_file {
-        cmd = cmd.directive_file(path);
+    if let Some(path) = directives.cd_file {
+        cmd = cmd.directive_cd_file(path);
+    }
+    if let Some(path) = directives.legacy_file {
+        cmd = cmd.directive_legacy_file(path);
     }
 
     cmd.stream()?;
@@ -1434,6 +1450,42 @@ pub fn execute_shell_command(
     stderr().flush()?;
 
     Ok(())
+}
+
+/// Selector for which directive file env vars to pass through to a child shell.
+///
+/// Constructed by callers via [`DirectivePassthrough::none`] or
+/// [`DirectivePassthrough::inherit_from_env`]. The EXEC file is intentionally
+/// never included — alias/hook shell bodies must not inject arbitrary shell
+/// into the parent session.
+#[derive(Debug, Default, Clone)]
+pub struct DirectivePassthrough {
+    pub cd_file: Option<std::path::PathBuf>,
+    pub legacy_file: Option<std::path::PathBuf>,
+}
+
+impl DirectivePassthrough {
+    /// Scrub all directive file env vars from the child process.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Pass CD and legacy directive files through to the child, reading the
+    /// current process environment. Used by trusted contexts (aliases,
+    /// foreground hooks) that may legitimately emit a `cd` directive. The
+    /// EXEC file is deliberately omitted.
+    pub fn inherit_from_env() -> Self {
+        use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR};
+        let read = |var: &str| {
+            std::env::var_os(var)
+                .map(std::path::PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty())
+        };
+        Self {
+            cd_file: read(DIRECTIVE_CD_FILE_ENV_VAR),
+            legacy_file: read(DIRECTIVE_FILE_ENV_VAR),
+        }
+    }
 }
 
 #[cfg(test)]
