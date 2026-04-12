@@ -50,4 +50,4 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mFailed to load user config, using defaults: worktree-path cannot be empty[39m
+[33m▲[39m [33mConfig validation warning: worktree-path cannot be empty[39m

@@ -390,18 +390,19 @@ impl Repository {
     /// for operations that require the full `UserConfig` (e.g., path template formatting,
     /// approval state, hook resolution).
     ///
-    /// Falls back to defaults on load errors so a single bad field does not break
-    /// unrelated commands, but surfaces the error on stderr — a silent `log::warn!`
-    /// would hide it from anyone not running with `RUST_LOG=warn`.
+    /// Each config layer (system file, user file, env vars) degrades
+    /// independently — a failure in one preserves data from earlier layers.
+    /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load_with_cause()
-                .inspect_err(|err| match err {
+            let (config, warnings) = UserConfig::load_with_warnings();
+            for warning in &warnings {
+                match warning {
                     LoadError::File { path, label, err } => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "{label} at {} failed to parse, using defaults",
+                                "{label} at {} failed to parse, skipping",
                                 crate::path::format_path_for_display(path),
                             ))
                         );
@@ -411,33 +412,33 @@ impl Repository {
                         );
                     }
                     LoadError::Env { err, vars } => {
+                        let var_list: Vec<_> = vars
+                            .iter()
+                            .map(|(name, value)| format!("{name}={value}"))
+                            .collect();
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "Failed to apply WORKTRUNK_* env var override, using defaults: {}",
-                                err.trim()
+                                "Ignoring env var overrides: {}",
+                                var_list.join(", ")
                             ))
                         );
-                        if !vars.is_empty() {
-                            crate::styling::eprintln!(
-                                "{}",
-                                crate::styling::hint_message(format!(
-                                    "Currently set: {}",
-                                    vars.join(", ")
-                                ))
-                            );
-                        }
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(err.trim(), None)
+                        );
                     }
                     LoadError::Validation(err) => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "Failed to load user config, using defaults: {err}"
+                                "Config validation warning: {err}"
                             ))
                         );
                     }
-                })
-                .unwrap_or_default()
+                }
+            }
+            config
         })
     }
 

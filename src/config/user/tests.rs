@@ -2422,7 +2422,7 @@ fn test_load_error_display_file() {
 fn test_load_error_display_env() {
     let err = LoadError::Env {
         err: "invalid type".into(),
-        vars: vec!["WORKTRUNK__LIST__BRANCHES".into()],
+        vars: vec![("WORKTRUNK__LIST__BRANCHES".into(), "not-a-bool".into())],
     };
     assert_eq!(err.to_string(), "invalid type");
 }
