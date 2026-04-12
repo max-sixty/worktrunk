@@ -185,8 +185,8 @@ pub struct ProjectConfig {
     /// deploy = "cd {{ worktree_path }} && make deploy"
     /// lint = "npm run lint"
     /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, CommandConfig>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
 }
 
 impl ProjectConfig {

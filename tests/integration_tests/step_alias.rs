@@ -598,6 +598,35 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// Pipeline aliases announce their structure: named serial and concurrent
+/// steps appear in the "Running alias" line, joined by `;` and `,`.
+///
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` forces the concurrent step to run
+/// commands sequentially (in declaration order) so the snapshot captures a
+/// deterministic interleaving — analogous to how `RAYON_NUM_THREADS=1` is
+/// used in `step_prune` tests.
+#[rstest]
+fn test_alias_pipeline_announcement(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = [
+    { install = "echo INSTALL" },
+    { build = "echo BUILD", lint = "echo LINT" },
+]
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path));
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    assert_cmd_snapshot!(cmd);
+}
+
 /// Concurrent alias steps (named table) execute all commands
 #[rstest]
 fn test_alias_concurrent_steps(mut repo: TestRepo) {

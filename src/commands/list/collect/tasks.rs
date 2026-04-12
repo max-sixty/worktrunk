@@ -162,11 +162,18 @@ impl Task for AheadBehindTask {
         // Check cache first (populated by batch_ahead_behind if it ran).
         // Cache lookup has minor overhead (rev-parse for cache key + allocations),
         // but saves the expensive ahead_behind computation on cache hit.
+        //
+        // When the ref has a branch name, compute counts against the branch — not
+        // the worktree's current HEAD sha. During rebase/merge conflicts, HEAD is
+        // transiently at a different commit than the branch tip, so using the sha
+        // would report misleading counts (e.g., `0/0 same_commit` when the branch
+        // is actually diverged). The batch path already uses branch names, so this
+        // keeps both paths consistent.
         let (ahead, behind) = if let Some(branch) = ctx.branch_ref.branch.as_deref() {
             if let Some(counts) = repo.cached_ahead_behind(&base, branch) {
                 counts
             } else {
-                repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
+                repo.ahead_behind(&base, branch)
                     .map_err(|e| ctx.error(Self::KIND, &e))?
             }
         } else {
@@ -199,10 +206,17 @@ impl Task for CommittedTreesMatchTask {
             });
         };
         let repo = &ctx.repo;
-        // Use the item's commit instead of HEAD, since for branches without
-        // worktrees, HEAD is the main worktree's HEAD.
+        // Prefer the branch name when present: during a rebase-in-progress, the
+        // worktree's HEAD is at a transient replayed commit, so using commit_sha
+        // would compare the wrong tree. For branch-only items the two are
+        // equivalent; for detached HEAD, commit_sha is the only option.
+        let ref_to_check = ctx
+            .branch_ref
+            .branch
+            .as_deref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let committed_trees_match = repo
-            .trees_match(&ctx.branch_ref.commit_sha, &base)
+            .trees_match(ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
@@ -325,8 +339,15 @@ impl Task for IsAncestorTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .branch
+            .as_deref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let is_ancestor = repo
-            .is_ancestor(&ctx.branch_ref.commit_sha, &base)
+            .is_ancestor(ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::IsAncestor {
@@ -351,8 +372,15 @@ impl Task for BranchDiffTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .branch
+            .as_deref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let diff = repo
-            .branch_diff_stats(&base, &ctx.branch_ref.commit_sha)
+            .branch_diff_stats(&base, ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
@@ -420,8 +448,15 @@ impl Task for MergeTreeConflictsTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .branch
+            .as_deref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(&base, &ctx.branch_ref.commit_sha)
+            .has_merge_conflicts(&base, ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,

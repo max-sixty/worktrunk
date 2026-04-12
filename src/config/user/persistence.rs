@@ -8,7 +8,6 @@ use serde::Serialize;
 use crate::config::ConfigError;
 
 use super::UserConfig;
-use super::path;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
@@ -34,11 +33,15 @@ impl UserConfig {
         }
     }
 
-    fn sync_serialized_section(
+    fn sync_serialized_section<T: Serialize + Default + PartialEq>(
         table: &mut toml_edit::Table,
         section_name: &str,
-        config: Option<&impl Serialize>,
+        config: &T,
     ) {
+        if *config == T::default() {
+            table.remove(section_name);
+            return;
+        }
         match Self::serialize_section_item(config) {
             Some(item) => {
                 table[section_name] = item;
@@ -49,9 +52,8 @@ impl UserConfig {
         }
     }
 
-    fn serialize_section_item(config: Option<&impl Serialize>) -> Option<toml_edit::Item> {
-        let cfg = config?;
-        let toml_value = toml::to_string(cfg).ok()?;
+    fn serialize_section_item(config: &impl Serialize) -> Option<toml_edit::Item> {
+        let toml_value = toml::to_string(config).ok()?;
         let parsed = toml_value.parse::<toml_edit::DocumentMut>().ok()?;
         let mut table = toml_edit::Table::new();
         for (k, v) in parsed.iter() {
@@ -60,34 +62,9 @@ impl UserConfig {
         Some(toml_edit::Item::Table(table))
     }
 
-    /// Save the current configuration to the default config file location
-    pub fn save(&self) -> Result<(), ConfigError> {
-        self.save_impl(None)
-    }
-
-    /// Internal save implementation that handles both default and custom paths
-    pub(super) fn save_impl(
-        &self,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        match config_path {
-            Some(path) => self.save_to(path),
-            None => {
-                let path = path::config_path().ok_or_else(|| {
-                    ConfigError(
-                        "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
-                    )
-                })?;
-                self.save_to(&path)
-            }
-        }
-    }
-
     /// Update the [commit.generation] section in the document.
     fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
-        if let Some(ref commit_cfg) = self.commit
-            && let Some(ref gen_cfg) = commit_cfg.generation
-        {
+        if let Some(ref gen_cfg) = self.commit.generation {
             // Ensure [commit] table exists
             if !doc.contains_key("commit") {
                 doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
@@ -149,22 +126,10 @@ impl UserConfig {
                     project_config.worktree_path.as_ref(),
                 );
 
-                Self::sync_serialized_section(project_table, "list", project_config.list.as_ref());
-                Self::sync_serialized_section(
-                    project_table,
-                    "commit",
-                    project_config.commit.as_ref(),
-                );
-                Self::sync_serialized_section(
-                    project_table,
-                    "merge",
-                    project_config.merge.as_ref(),
-                );
-                Self::sync_serialized_section(
-                    project_table,
-                    "switch",
-                    project_config.switch.as_ref(),
-                );
+                Self::sync_serialized_section(project_table, "list", &project_config.list);
+                Self::sync_serialized_section(project_table, "commit", &project_config.commit);
+                Self::sync_serialized_section(project_table, "merge", &project_config.merge);
+                Self::sync_serialized_section(project_table, "switch", &project_config.switch);
             }
         }
     }
@@ -182,8 +147,6 @@ impl UserConfig {
                 let mut new_table = inline.clone().into_table();
                 Self::expand_inline_tables(&mut new_table);
                 *item = toml_edit::Item::Table(new_table);
-            } else if let Some(t) = item.as_table_mut() {
-                Self::expand_inline_tables(t);
             }
         }
     }
@@ -291,16 +254,12 @@ impl UserConfig {
                 )));
             }
 
-            if let Some(ref commit) = project_config.commit
-                && let Some(ref cg) = commit.generation
-            {
+            if let Some(ref cg) = project_config.commit.generation {
                 Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
             }
         }
 
-        if let Some(ref commit) = self.commit
-            && let Some(ref cg) = commit.generation
-        {
+        if let Some(ref cg) = self.commit.generation {
             if cg.template.is_some() && cg.template_file.is_some() {
                 return Err(ConfigError(
                     "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),

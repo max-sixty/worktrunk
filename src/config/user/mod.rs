@@ -28,9 +28,8 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::{find_unknown_keys, valid_user_config_keys};
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
-    UserProjectOverrides,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StageMode,
+    StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
 };
 
 /// Distinguishes *why* `UserConfig::load()` failed so callers can emit
@@ -240,7 +239,7 @@ fn load_config_file(
 ///
 /// # Per-project configuration
 /// [projects."github.com/user/repo"]
-/// approved-commands = ["npm install", "npm test"]
+/// worktree-path = ".worktrees/{{ branch | sanitize }}"
 /// ```
 ///
 /// Config file location:
@@ -270,28 +269,28 @@ pub struct UserConfig {
     pub worktree_path: Option<String>,
 
     /// Configuration for the `wt list` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list: Option<sections::ListConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub list: sections::ListConfig,
 
     /// Configuration for the `wt step commit` command (also used by merge)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<sections::CommitConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub commit: sections::CommitConfig,
 
     /// Configuration for the `wt merge` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merge: Option<sections::MergeConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub merge: sections::MergeConfig,
 
     /// Configuration for the `wt switch` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub switch: Option<sections::SwitchConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub switch: sections::SwitchConfig,
 
     /// Configuration for `wt step` subcommands
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<sections::StepConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub step: sections::StepConfig,
 
     /// Command aliases for `wt step <name>`
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<std::collections::BTreeMap<String, crate::config::commands::CommandConfig>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub aliases: std::collections::BTreeMap<String, crate::config::commands::CommandConfig>,
 
     /// Skip the first-run shell integration prompt
     #[serde(

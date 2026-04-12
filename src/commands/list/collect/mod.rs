@@ -92,6 +92,69 @@
 //! **Task ordering**: Work items are sorted so local git operations run first, network tasks
 //! (CI status, URL health checks) run last. This ensures the table fills in quickly with local
 //! data while slower network requests complete in the background.
+//!
+//! ## Caching
+//!
+//! Sibling caches live under `.git/wt/cache/`. Each uses a different key scheme because
+//! the underlying operations differ in what their output depends on.
+//!
+//! | Directory | Module | Key | Staleness |
+//! |-----------|--------|-----|-----------|
+//! | `merge-tree-conflicts/` | `git::repository::probe_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
+//! | `merge-add-probe/` | `git::repository::probe_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
+//! | `is-ancestor/` | `git::repository::probe_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `has-added-changes/` | `git::repository::probe_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
+//! | `diff-stats/` | `git::repository::probe_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
+//! | `summaries/` | `summary` | `{branch}.json` | `diff_hash` mismatch |
+//!
+//! ### Key schemes
+//!
+//! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
+//!   Used by all `probe_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
+//!   checks, file-change probes, diff stats).
+//! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
+//!   staleness; the HEAD check invalidates early when the branch moves.
+//! - **Branch + content hash**: deterministic function of a mutable input (e.g. an LLM call
+//!   over a diff). Invalidates on hash mismatch.
+//!
+//! ### Which tasks hit which cache
+//!
+//! | Task | Cache |
+//! |------|-------|
+//! | `MergeTreeConflicts` | `probe_cache` (merge-tree-conflicts) |
+//! | `WouldMergeAdd` | `probe_cache` (merge-add-probe) |
+//! | `IsAncestor` | `probe_cache` (is-ancestor) |
+//! | `HasFileChanges` | `probe_cache` (has-added-changes) |
+//! | `BranchDiff` | `probe_cache` (diff-stats, skipped when sparse checkout is active) |
+//! | `CiStatus` | `ci_status::cache` |
+//! | `SummaryGenerate` | `summary` |
+//!
+//! Every other task re-runs on each invocation.
+//!
+//! ### Cacheable but uncached
+//!
+//! A few tasks take ref *names* and reduce to a SHA pair once the refs are resolved. Same
+//! SHA-pair pattern as `probe_cache`, just not wired up yet:
+//!
+//! - `AheadBehind` — counts against the default branch
+//! - `CommittedTreesMatch` — tree equality against the integration target
+//! - `Upstream` — ahead/behind counts against the tracking branch
+//!
+//! Reuse `probe_cache` for any of these rather than inventing a new scheme.
+//!
+//! ### Fundamentally uncacheable
+//!
+//! Some task outputs depend on state outside the commit graph:
+//!
+//! - `WorkingTreeDiff`, `WorkingTreeConflicts` — uncommitted changes and index state
+//! - `GitOperation` — presence of `.git/rebase-merge`, `.git/rebase-apply`, or `MERGE_HEAD`
+//! - `UserMarker` — local git config value
+//! - `UrlStatus` — TCP connect to a local dev server port; real-time by nature
+//!
+//! All but `UrlStatus` are cheap enough that caching would not pay back. `UrlStatus` is
+//! bounded at 50ms per item; a stale "active" result when the server just died is worse
+//! than the probe cost.
 
 mod execution;
 mod results;
@@ -180,47 +243,6 @@ pub struct CollectOptions {
     /// LLM command for summary generation (from commit.generation config).
     /// None if not configured — SummaryGenerate task will be skipped.
     pub llm_command: Option<String>,
-
-    /// Branches to skip expensive tasks for (behind > threshold).
-    ///
-    /// Presence in set = skip expensive tasks for this branch (HasFileChanges,
-    /// IsAncestor, WouldMergeAdd, BranchDiff, MergeTreeConflicts).
-    ///
-    /// ## Why "commits behind" as the heuristic
-    ///
-    /// The expensive operations (`git merge-tree`, `git diff`) scale with:
-    /// - **Files changed on both sides** — each needs 3-way merge or diff
-    /// - **Size of those files** — content loading and merge algorithm
-    ///
-    /// Commit count isn't directly in the algorithm, but "commits behind" is a
-    /// cheap proxy: more commits on main since divergence → more files main has
-    /// touched → more potential overlap with the branch's changes.
-    ///
-    /// We use "behind" rather than "ahead" because feature branches typically
-    /// have small ahead counts, so behind dominates. A more accurate heuristic
-    /// would be `min(files_changed_on_main, files_changed_on_branch)`, but
-    /// computing that requires per-branch git commands, defeating the optimization.
-    ///
-    /// The batch `git for-each-ref --format='%(ahead-behind:...)'` gives us all
-    /// counts in a single command, making this heuristic essentially free.
-    ///
-    /// ## Implementation
-    ///
-    /// Built by filtering `batch_ahead_behind()` results on local branches only.
-    /// Remote-only branches are never in this set (they use individual git commands).
-    /// The threshold (default 50) is applied at construction time. Ahead/behind
-    /// counts are cached in Repository and looked up by AheadBehindTask.
-    ///
-    /// **Display implications:** When tasks are skipped:
-    /// - BranchDiff column shows `…` instead of diff stats
-    /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
-    ///   since they depend on skipped tasks
-    ///
-    /// Note: `wt switch` interactive picker doesn't show the BranchDiff column, so `…` isn't visible there.
-    ///
-    /// TODO: Consider adding a visible indicator in Status column when integration
-    /// checks are skipped, so users know the `⊂` symbol may be incomplete.
-    pub stale_branches: std::collections::HashSet<String>,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -259,17 +281,11 @@ pub enum ShowConfig {
 /// When false, behavior depends on `render_table`:
 /// - If `render_table` is true: renders final table (buffered mode)
 /// - If `render_table` is false: returns data without rendering (JSON mode)
-///
-/// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
-/// skipping expensive merge-base operations for branches far behind the default branch.
-/// This dramatically improves performance for repos with many stale branches.
-///
 pub fn collect(
     repo: &Repository,
     show_config: ShowConfig,
     show_progress: bool,
     render_table: bool,
-    skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     worktrunk::shell_exec::trace_instant("List collect started");
 
@@ -604,11 +620,10 @@ pub fn collect(
 
     // Create collection options from skip set
     let returned_skip_tasks = effective_skip_tasks.clone();
-    let mut options = CollectOptions {
+    let options = CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
         llm_command,
-        ..Default::default()
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -729,34 +744,15 @@ pub fn collect(
         }
     }
 
-    // Batch-fetch ahead/behind counts to identify branches that are far behind.
-    // This allows skipping expensive merge-base operations for diverged branches, dramatically
-    // improving performance on repos with many stale branches (e.g., `wt switch` interactive picker).
+    // Batch-fetch ahead/behind counts for all local branches in a single
+    // `git for-each-ref` call. Primes the Repository cache so each
+    // `AheadBehindTask` hits the cache instead of spawning its own
+    // `git rev-list --count`. One git call replaces N.
     //
-    // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
-    // counts in a single command. On older git versions, returns empty and all tasks run.
-    // Skip if default_branch is unknown.
-    if skip_expensive_for_stale && let Some(ref db) = default_branch {
-        // Branches more than 50 commits behind skip expensive operations.
-        // 50 is low enough to catch truly stale branches while keeping info for
-        // recently-diverged ones.
-        //
-        // "Behind" is a proxy for the actual cost driver: files changed on both
-        // sides since the merge-base. More commits on main → more files touched →
-        // more overlap with the branch. See `CollectOptions::stale_branches` for
-        // detailed rationale.
-        let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(50);
-        // batch_ahead_behind populates the Repository cache with all counts
-        let ahead_behind = repo.batch_ahead_behind(db);
-        // Filter to stale branches (behind > threshold). The set indicates which
-        // branches should skip expensive tasks; counts come from the cache.
-        options.stale_branches = ahead_behind
-            .into_iter()
-            .filter_map(|(branch, (_, behind))| (behind > threshold).then_some(branch))
-            .collect();
+    // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
+    // unknown, skip the batch — individual tasks fall back to direct calls.
+    if let Some(ref db) = default_branch {
+        repo.batch_ahead_behind(db);
     }
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive

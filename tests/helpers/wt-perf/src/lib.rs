@@ -356,6 +356,9 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
 
     // Remove packed refs
     let _ = std::fs::remove_file(git_dir.join("packed-refs"));
+
+    // Remove worktrunk's persistent SHA-keyed caches (diff-stats, is-ancestor, etc.)
+    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
 }
 
 /// Get or clone the rust-lang/rust repository for real-world benchmarks.

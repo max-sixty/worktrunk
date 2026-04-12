@@ -458,9 +458,7 @@ fn test_list_config_env_override_numeric_string_field(repo: TestRepo) {
 }
 
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
-/// attributed to the file, not to env vars. These fields are NOT caught by
-/// the OverridableConfig pre-validation (which only covers section fields) —
-/// the UserConfig fallback validation catches them.
+/// attributed to the file, not to env vars.
 #[rstest]
 fn test_list_config_malformed_non_section_field_warns_on_stderr(repo: TestRepo) {
     fs::write(
@@ -496,7 +494,7 @@ fn test_list_config_validation_error_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// System config with a section-field error (caught by OverridableConfig).
+/// System config with a section-field type error must be attributed to the file.
 #[rstest]
 fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     let system_config = repo.root_path().join("system-config.toml");
@@ -514,8 +512,7 @@ fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     });
 }
 
-/// System config with a non-section field error (skips OverridableConfig,
-/// caught by the UserConfig fallback validation).
+/// System config with a non-section field type error must be attributed to the file.
 #[rstest]
 fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
     let system_config = repo.root_path().join("system-config.toml");
