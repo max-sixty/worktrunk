@@ -74,22 +74,23 @@ Ports are deterministic — `fix-auth` always gets port 16460, regardless of whi
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](https://worktrunk.dev/config/#wt-config-state-vars), then later steps and hooks reference them:
 
 ```toml
-post-start = [
-  """
-  wt config state vars set \
-    container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-    port='{{ ('db-' ~ branch) | hash_port }}' \
-    db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
-  """,
-  { db = """
-  docker run -d --rm \
-    --name {{ vars.container }} \
-    -p {{ vars.port }}:5432 \
-    -e POSTGRES_DB={{ branch | sanitize_db }} \
-    -e POSTGRES_PASSWORD=dev \
-    postgres:16
-  """},
-]
+[[post-start]]
+set-vars = """
+wt config state vars set \
+  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
+  port='{{ ('db-' ~ branch) | hash_port }}' \
+  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+"""
+
+[[post-start]]
+db = """
+docker run -d --rm \
+  --name {{ vars.container }} \
+  -p {{ vars.port }}:5432 \
+  -e POSTGRES_DB={{ branch | sanitize_db }} \
+  -e POSTGRES_PASSWORD=dev \
+  postgres:16
+"""
 
 [pre-remove]
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
@@ -123,10 +124,11 @@ All gitignored files are copied by default. To limit what gets copied, create `.
 `pre-merge` hooks run before merging. Failures abort the merge:
 
 ```toml
-pre-merge = [
-    {"lint" = "uv run ruff check"},
-    {"test" = "uv run pytest"},
-]
+[[pre-merge]]
+lint = "uv run ruff check"
+
+[[pre-merge]]
+test = "uv run pytest"
 ```
 
 This catches issues locally before pushing — like running CI locally.

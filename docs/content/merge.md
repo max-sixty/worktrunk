@@ -70,10 +70,11 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
-pre-merge = [
-    {test = "cargo test"},
-    {lint = "cargo clippy"},
-]
+[[pre-merge]]
+test = "cargo test"
+
+[[pre-merge]]
+lint = "cargo clippy"
 ```
 
 ## See also

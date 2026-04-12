@@ -52,11 +52,13 @@ watcher = "npm run watch"
 ```
 
 ```toml
-# Pipeline: steps run in order, commands within a step run concurrently
-post-start = [
-    "npm ci",
-    { server = "npm start", build = "npm run build" }
-]
+# Pipeline: blocks run in order, commands within a block run concurrently
+[[post-start]]
+install = "npm ci"
+
+[[post-start]]
+server = "npm start"
+build = "npm run build"
 ```
 
 ### Template variables

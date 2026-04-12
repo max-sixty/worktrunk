@@ -150,10 +150,11 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
-[107m [0m [2mpre-merge = [[0m
-[107m [0m [2m    {test = [0m[2m[32m"cargo test"[0m[2m},[0m
-[107m [0m [2m    {lint = [0m[2m[32m"cargo clippy"[0m[2m},[0m
-[107m [0m [2m][0m
+[107m [0m [2m[36m[[pre-merge]][0m
+[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
+[107m [0m 
+[107m [0m [2m[36m[[pre-merge]][0m
+[107m [0m [2mlint = [0m[2m[32m"cargo clippy"[0m
 
 [1m[32mSee also[0m
 
