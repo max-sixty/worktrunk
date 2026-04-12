@@ -160,22 +160,6 @@
 //! no commit is created. This makes the cache-hit path a single `git write-tree`
 //! (~15ms) instead of the previous `git stash create` (~50-265ms).
 //!
-//! ### Cached via tree SHA
-//!
-//! `WorkingTreeConflicts` uses `git write-tree` to snapshot the index as a tree SHA,
-//! then checks for merge conflicts via `has_merge_conflicts_by_tree`. The tree SHA is
-//! content-addressed and stable — identical index state produces the same SHA.
-//!
-//! When there are unstaged modifications or untracked files, the task copies the
-//! index to a temp file, runs `git add -A` to stage all working tree content,
-//! then `write-tree`.
-//!
-//! The cache key is `(base_commit_sha, branch_head_sha+tree_sha)`. The branch HEAD
-//! SHA captures the merge-base dependency. On cache miss, `has_merge_conflicts_by_tree`
-//! creates an ephemeral commit via `git commit-tree` for merge-tree; on cache hit,
-//! no commit is created. This makes the cache-hit path a single `git write-tree`
-//! (~15ms) instead of the previous `git stash create` (~50-265ms).
-//!
 //! ### Fundamentally uncacheable
 //!
 //! Some task outputs depend on state outside the commit graph:
