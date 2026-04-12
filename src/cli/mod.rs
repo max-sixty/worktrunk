@@ -1519,12 +1519,12 @@ Each worktree can have its own database. A pipeline sets up the container name a
 
 ```toml
 post-start = [
-  """
+  { set-vars = """
   wt config state vars set \
     container='{{ repo }}-{{ branch | sanitize }}-postgres' \
     port='{{ ('db-' ~ branch) | hash_port }}' \
     db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
-  """,
+  """ },
   { db = """
   docker run -d --rm \
     --name {{ vars.container }} \
