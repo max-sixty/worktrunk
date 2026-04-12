@@ -119,10 +119,11 @@ fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[pre-start]
-first = "echo 'First command'"
-second = "echo 'Second command'"
-third = "echo 'Third command'"
+        r#"pre-start = [
+    {first = "echo 'First command'"},
+    {second = "echo 'Second command'"},
+    {third = "echo 'Third command'"},
+]
 "#,
     );
     repo.commit("Add config");
@@ -224,10 +225,11 @@ fn test_approval_prompt_named_commands(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[pre-start]
-install = "echo 'Installing dependencies...'"
-build = "echo 'Building project...'"
-test = "echo 'Running tests...'"
+        r#"pre-start = [
+    {install = "echo 'Installing dependencies...'"},
+    {build = "echo 'Building project...'"},
+    {test = "echo 'Running tests...'"},
+]
 "#,
     );
     repo.commit("Add config");
@@ -266,10 +268,11 @@ fn test_approval_prompt_mixed_approved_unapproved_accept(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[pre-start]
-first = "echo 'First command'"
-second = "echo 'Second command'"
-third = "echo 'Third command'"
+        r#"pre-start = [
+    {first = "echo 'First command'"},
+    {second = "echo 'Second command'"},
+    {third = "echo 'Third command'"},
+]
 "#,
     );
     repo.commit("Add config");
@@ -322,10 +325,11 @@ fn test_approval_prompt_mixed_approved_unapproved_decline(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[pre-start]
-first = "echo 'First command'"
-second = "echo 'Second command'"
-third = "echo 'Third command'"
+        r#"pre-start = [
+    {first = "echo 'First command'"},
+    {second = "echo 'Second command'"},
+    {third = "echo 'Third command'"},
+]
 "#,
     );
     repo.commit("Add config");
