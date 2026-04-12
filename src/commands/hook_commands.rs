@@ -223,6 +223,9 @@ fn warn_unreferenced_custom_vars(
         }
     }
 
+    // TODO: show the original (pre-canonicalized) key in the warning so
+    // `--my-env=staging` produces "my-env" not "my_env". Requires threading
+    // the raw input through parse_key_val.
     for (key, _) in custom_vars {
         if !referenced.contains(key) {
             eprintln!(
