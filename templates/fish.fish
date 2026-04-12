@@ -37,8 +37,9 @@ function {{ cmd }}
     if test -s "$cd_file"
         set -l target (string trim < "$cd_file")
         cd -- "$target"
+        set -l cd_exit $status
         if test $exit_code -eq 0
-            set exit_code $status
+            set exit_code $cd_exit
         end
     end
 
@@ -46,8 +47,9 @@ function {{ cmd }}
     if test -s "$exec_file"
         set -l directive (string collect < "$exec_file")
         eval $directive
+        set -l src_exit $status
         if test $exit_code -eq 0
-            set exit_code $status
+            set exit_code $src_exit
         end
     end
 
