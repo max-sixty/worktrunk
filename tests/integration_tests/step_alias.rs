@@ -716,6 +716,37 @@ deploy = [
     );
 }
 
+/// `wt step` with no subcommand lists built-in steps plus configured aliases.
+#[rstest]
+fn test_step_list_with_aliases(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+port = "echo http://localhost:{{ branch | hash_port }}"
+squash = "this shadows the built-in"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &[], Some(&feature_path)));
+}
+
+/// `wt step` without configured aliases still works — just prints help.
+#[rstest]
+fn test_step_list_no_aliases(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &[], Some(&feature_path)));
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {
