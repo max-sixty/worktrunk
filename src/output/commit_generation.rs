@@ -107,12 +107,10 @@ fn command_exists(cmd: &str) -> bool {
     #[cfg(not(windows))]
     let check_cmd = "which";
 
-    std::process::Command::new(check_cmd)
+    worktrunk::shell_exec::Cmd::new(check_cmd)
         .arg(cmd)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+        .run()
+        .map(|output| output.status.success())
         .unwrap_or(false)
 }
 

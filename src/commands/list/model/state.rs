@@ -273,23 +273,9 @@ pub enum Tier<T> {
     Wait,
 }
 
-impl<T> Tier<T> {
-    /// Convert to `Option`, treating `Wait` and `RuledOut` both as `None`.
-    /// Callers use this at the bottom of a tier chain when they've run out
-    /// of tiers and need to collapse the result.
-    #[allow(dead_code)] // Used by `refresh_status_symbols` (step 4).
-    pub fn or_none(self) -> Option<T> {
-        match self {
-            Self::Fired(v) => Some(v),
-            Self::RuledOut | Self::Wait => None,
-        }
-    }
-}
-
 /// Tier 1: `IsMain`. Resolves immediately since `is_main` is metadata.
 ///
 /// Returns `Fired(IsMain)` for main worktrees, `RuledOut` otherwise.
-#[allow(dead_code)] // Used by `refresh_status_symbols` (step 4).
 pub fn tier_is_main(is_main: bool) -> Tier<MainState> {
     if is_main {
         Tier::Fired(MainState::IsMain)
@@ -304,7 +290,6 @@ pub fn tier_is_main(is_main: bool) -> Tier<MainState> {
 /// every lower-priority signal (ahead/behind, integration, conflict) is
 /// meaningless for them. Once we know `is_orphan == Some(true)`, the gate
 /// short-circuits without needing anything else.
-#[allow(dead_code)] // Used by `refresh_status_symbols` (step 4).
 pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
     match is_orphan {
         Some(true) => Tier::Fired(MainState::Orphan),
@@ -333,7 +318,6 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
 /// - If both report "no conflict" (HEAD probe `Some(false)` and
 ///   working-tree probe either `Some(None)` or `Some(Some(false))`), rule
 ///   out.
-#[allow(dead_code)] // Used by `refresh_status_symbols` (step 4).
 pub fn tier_would_conflict(
     has_merge_tree_conflicts: Option<bool>,
     has_working_tree_conflicts: Option<Option<bool>>,
@@ -370,7 +354,6 @@ pub fn tier_would_conflict(
 ///   may be `MainState::None` when there's nothing to display, which
 ///   callers should still treat as a resolved gate.)
 /// - `Wait` if either `counts` or `is_clean` is still loading.
-#[allow(dead_code)] // Used by `refresh_status_symbols` (step 4).
 pub fn tier_integration_or_counts(
     counts: Option<super::stats::AheadBehind>,
     is_clean: Option<bool>,

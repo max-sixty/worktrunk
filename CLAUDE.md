@@ -256,6 +256,8 @@ Top-level *files* are shared logs (`commands.jsonl*`, `verbose.log`, `diagnostic
 
 The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
 
+**Coverage includes all feature flags.** Both CI (`code-coverage` job) and local (`task coverage`) coverage runs pass `--features shell-integration-tests`. Code behind this feature flag is compiled and measured — do not dismiss codecov failures by claiming the feature is not enabled during coverage.
+
 ### Investigating codecov/patch Failures
 
 When CI shows a codecov/patch failure, investigate before declaring "ready to merge":

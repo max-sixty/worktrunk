@@ -366,10 +366,7 @@ fn load_template(
                 eprintln!(
                     "{}",
                     warning_message(format!(
-                        "{} is deprecated and will be removed in a future release. \
-                        Use inline template instead. To request this feature, comment on: \
-                        https://github.com/max-sixty/worktrunk/issues/444",
-                        file_type_name
+                        "{file_type_name} is deprecated and will be removed in a future release. Use inline template instead. To request this feature, comment on: https://github.com/max-sixty/worktrunk/issues/444"
                     ))
                 );
             }

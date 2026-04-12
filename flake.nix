@@ -27,7 +27,7 @@
           inherit system overlays;
         };
 
-        # Use latest stable Rust (must meet MSRV of 1.89)
+        # Use latest stable Rust (must meet MSRV of 1.93)
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
             "rust-src"

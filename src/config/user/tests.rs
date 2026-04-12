@@ -2422,7 +2422,7 @@ fn test_load_error_display_file() {
 fn test_load_error_display_env() {
     let err = LoadError::Env {
         err: "invalid type".into(),
-        vars: vec!["WORKTRUNK__LIST__BRANCHES".into()],
+        vars: vec![("WORKTRUNK__LIST__BRANCHES".into(), "not-a-bool".into())],
     };
     assert_eq!(err.to_string(), "invalid type");
 }
@@ -2447,6 +2447,24 @@ fn test_try_parse_value() {
         try_parse_value("hello"),
         toml::Value::String("hello".into())
     );
+}
+
+// =========================================================================
+// finalize() — defensive fallback
+// =========================================================================
+
+#[test]
+fn test_finalize_with_undeserializable_table() {
+    // finalize() falls back to defaults when the table can't deserialize.
+    // This shouldn't happen in practice (files are individually validated),
+    // but the fallback exists for safety.
+    let mut table = toml::Table::new();
+    table.insert("list".into(), toml::Value::String("not-a-table".into()));
+
+    let (config, warnings) = UserConfig::finalize(table, Vec::new());
+    assert_eq!(config.worktree_path, None); // defaults
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(&warnings[0], LoadError::Validation(_)));
 }
 
 // =========================================================================

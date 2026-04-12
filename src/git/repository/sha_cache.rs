@@ -1,10 +1,12 @@
 //! Persistent cache for SHA-keyed git command results.
 //!
-//! Caches the results of expensive git operations keyed on pairs of commit
-//! SHAs. Because commit SHAs are content-addressed and immutable, cached
-//! entries never go stale — the result of diffing commit A against commit B
-//! is the same today as it was last week. No TTL, no invalidation logic,
-//! only a size bound to prevent unbounded growth.
+//! Caches the results of expensive git operations keyed on pairs of
+//! content-addressed SHAs. Most entries use commit SHA pairs — the result
+//! of diffing commit A against commit B is the same today as last week.
+//! One variant (working-tree conflict checks) uses a composite key that
+//! includes a tree SHA; see [`Repository::has_merge_conflicts_by_tree`].
+//! No TTL, no invalidation logic, only a size bound to prevent unbounded
+//! growth.
 //!
 //! # Layout
 //!
@@ -177,7 +179,7 @@ fn sweep_lru(dir: &Path, max: usize) {
 /// Look up a cached `has_merge_conflicts(sha1, sha2)` result.
 ///
 /// The key is order-independent: `(A, B)` and `(B, A)` hit the same entry.
-pub(super) fn get_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
+pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
     let path = cache_dir(repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key(sha1, sha2));
     read::<bool>(&path)
 }
@@ -199,7 +201,7 @@ pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, val
 ///
 /// The key is order-dependent: the merge result is compared against
 /// `target`'s tree, so swapping arguments changes the semantics.
-pub(super) fn get_merge_add_probe(
+pub(super) fn merge_add_probe(
     repo: &Repository,
     branch_sha: &str,
     target_sha: &str,
@@ -229,7 +231,7 @@ pub(super) fn put_merge_add_probe(
 /// Look up a cached `is_ancestor(base_sha, head_sha)` result.
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
-pub(super) fn get_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
+pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
     let path = cache_dir(repo, KIND_IS_ANCESTOR).join(asymmetric_key(base_sha, head_sha));
     read::<bool>(&path)
 }
@@ -249,7 +251,7 @@ pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str,
 /// Look up a cached `has_added_changes(branch_sha, target_sha)` result.
 ///
 /// Asymmetric: diff from merge-base to branch is directional.
-pub(super) fn get_has_added_changes(
+pub(super) fn has_added_changes(
     repo: &Repository,
     branch_sha: &str,
     target_sha: &str,
@@ -278,11 +280,7 @@ pub(super) fn put_has_added_changes(
 /// Look up cached `branch_diff_stats(base_sha, head_sha)` result.
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
-pub(super) fn get_diff_stats(
-    repo: &Repository,
-    base_sha: &str,
-    head_sha: &str,
-) -> Option<LineDiff> {
+pub(super) fn diff_stats(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<LineDiff> {
     let path = cache_dir(repo, KIND_DIFF_STATS).join(asymmetric_key(base_sha, head_sha));
     read::<LineDiff>(&path)
 }
@@ -349,17 +347,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), None);
 
         put_merge_conflicts(&repo, "aaaa", "bbbb", true);
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), Some(true));
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), Some(true));
 
         // Symmetric: swapped args hit the same entry
-        assert_eq!(get_merge_conflicts(&repo, "bbbb", "aaaa"), Some(true));
+        assert_eq!(merge_conflicts(&repo, "bbbb", "aaaa"), Some(true));
 
         // Overwrite with a new value
         put_merge_conflicts(&repo, "aaaa", "bbbb", false);
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), Some(false));
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), Some(false));
     }
 
     #[test]
@@ -367,17 +365,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), None);
 
         let value = MergeProbeResult {
             would_merge_add: true,
             is_patch_id_match: false,
         };
         put_merge_add_probe(&repo, "aaaa", "bbbb", value);
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), Some(value));
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), Some(value));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_merge_add_probe(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(merge_add_probe(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -387,7 +385,7 @@ mod tests {
 
         put_merge_conflicts(&repo, "aaaa", "bbbb", true);
         // Same SHA pair in a different kind is a separate entry
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), None);
     }
 
     #[test]
@@ -400,7 +398,7 @@ mod tests {
         let path = cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key("aaaa", "bbbb"));
         fs::write(&path, "not valid json {{{").unwrap();
 
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), None);
     }
 
     // LRU sweep
@@ -488,6 +486,116 @@ mod tests {
     }
 
     #[test]
+    fn test_has_merge_conflicts_by_tree_uses_composite_cache_key() {
+        let test = TestRepo::with_initial_commit();
+
+        // Create a feature branch with a staged change
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("dirty.txt"), "uncommitted\n").unwrap();
+        test.run_git(&["add", "dirty.txt"]);
+
+        let branch_head = test.git_output(&["rev-parse", "HEAD"]);
+        let tree_sha = test.git_output(&["write-tree"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Call with composite keying — computes and caches
+        let result = repo
+            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .unwrap();
+
+        // Verify the cache entry uses the composite key
+        let dir = cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS);
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+            .collect();
+        assert_eq!(entries.len(), 1, "exactly one cache entry expected");
+
+        let filename = entries[0].file_name().to_string_lossy().into_owned();
+        assert!(
+            filename.contains(&tree_sha),
+            "cache filename should contain tree SHA ({tree_sha}), got: {filename}"
+        );
+
+        // Tamper with the cache and verify a fresh repo reads the tampered value
+        let tampered = !result;
+        fs::write(entries[0].path(), serde_json::to_string(&tampered).unwrap()).unwrap();
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let cached = repo2
+            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .unwrap();
+        assert_eq!(cached, tampered, "should read tampered value from cache");
+    }
+
+    #[test]
+    fn test_has_merge_conflicts_by_tree_invalidates_on_branch_head_change() {
+        let test = TestRepo::with_initial_commit();
+
+        // Set up a common ancestor with shared.txt
+        fs::write(test.root_path().join("shared.txt"), "initial\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "base: add shared.txt"]);
+
+        // Create feature branch from this point, then diverge both branches
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("shared.txt"), "feature content\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "feature: modify shared.txt"]);
+
+        test.run_git(&["checkout", "main"]);
+        fs::write(test.root_path().join("shared.txt"), "main content\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "main: modify shared.txt"]);
+
+        // Back to feature, stage an extra file
+        test.run_git(&["checkout", "feature"]);
+        fs::write(test.root_path().join("extra.txt"), "extra\n").unwrap();
+        test.run_git(&["add", "extra.txt"]);
+
+        let head_before = test.git_output(&["rev-parse", "HEAD"]);
+        let tree1 = test.git_output(&["write-tree"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Before rebase: feature conflicts with main (both modified shared.txt)
+        let result_before = repo
+            .has_merge_conflicts_by_tree("main", &head_before, &tree1)
+            .unwrap();
+        assert!(result_before, "should conflict before rebase");
+
+        // Unstage, rebase, then re-stage (rebase requires a clean index)
+        test.run_git(&["reset", "HEAD", "extra.txt"]);
+        fs::remove_file(test.root_path().join("extra.txt")).unwrap();
+        test.run_git(&["rebase", "main", "--strategy-option=theirs"]);
+
+        // Re-stage the same extra file
+        fs::write(test.root_path().join("extra.txt"), "extra\n").unwrap();
+        test.run_git(&["add", "extra.txt"]);
+
+        let head_after = test.git_output(&["rev-parse", "HEAD"]);
+        let tree2 = test.git_output(&["write-tree"]);
+
+        assert_ne!(
+            head_before, head_after,
+            "branch HEAD should change after rebase"
+        );
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let result_after = repo2
+            .has_merge_conflicts_by_tree("main", &head_after, &tree2)
+            .unwrap();
+
+        // After rebase onto main, feature is based on main — no conflicts
+        assert!(
+            !result_after,
+            "should not conflict after rebase (different branch HEAD = different cache key)"
+        );
+    }
+
+    #[test]
     fn test_merge_integration_probe_reads_cache() {
         let test = TestRepo::with_initial_commit();
 
@@ -533,13 +641,13 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_is_ancestor(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(is_ancestor(&repo, "aaaa", "bbbb"), None);
 
         put_is_ancestor(&repo, "aaaa", "bbbb", true);
-        assert_eq!(get_is_ancestor(&repo, "aaaa", "bbbb"), Some(true));
+        assert_eq!(is_ancestor(&repo, "aaaa", "bbbb"), Some(true));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_is_ancestor(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(is_ancestor(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -547,13 +655,13 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_has_added_changes(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(has_added_changes(&repo, "aaaa", "bbbb"), None);
 
         put_has_added_changes(&repo, "aaaa", "bbbb", false);
-        assert_eq!(get_has_added_changes(&repo, "aaaa", "bbbb"), Some(false));
+        assert_eq!(has_added_changes(&repo, "aaaa", "bbbb"), Some(false));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_has_added_changes(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(has_added_changes(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -561,17 +669,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_diff_stats(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(diff_stats(&repo, "aaaa", "bbbb"), None);
 
         let value = LineDiff {
             added: 42,
             deleted: 7,
         };
         put_diff_stats(&repo, "aaaa", "bbbb", value);
-        assert_eq!(get_diff_stats(&repo, "aaaa", "bbbb"), Some(value));
+        assert_eq!(diff_stats(&repo, "aaaa", "bbbb"), Some(value));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_diff_stats(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(diff_stats(&repo, "bbbb", "aaaa"), None);
     }
 
     // Cache consultation: is_ancestor, has_added_changes, branch_diff_stats
@@ -703,10 +811,10 @@ mod tests {
         assert_eq!(cleared, 5, "should clear one entry per kind");
 
         // All kinds should be empty
-        assert_eq!(get_merge_conflicts(&repo, "a", "b"), None);
-        assert_eq!(get_merge_add_probe(&repo, "a", "b"), None);
-        assert_eq!(get_is_ancestor(&repo, "a", "b"), None);
-        assert_eq!(get_has_added_changes(&repo, "a", "b"), None);
-        assert_eq!(get_diff_stats(&repo, "a", "b"), None);
+        assert_eq!(merge_conflicts(&repo, "a", "b"), None);
+        assert_eq!(merge_add_probe(&repo, "a", "b"), None);
+        assert_eq!(is_ancestor(&repo, "a", "b"), None);
+        assert_eq!(has_added_changes(&repo, "a", "b"), None);
+        assert_eq!(diff_stats(&repo, "a", "b"), None);
     }
 }

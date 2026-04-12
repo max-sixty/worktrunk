@@ -906,7 +906,8 @@ fn parse_cli() -> Option<Cli> {
     // When available, use built-in setting. Until then, could use try_parse() to intercept
     // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
-    let matches = cmd.try_get_matches().unwrap_or_else(|e| {
+    let args = cli::rewrite_var_shorthand(std::env::args_os().collect());
+    let matches = cmd.try_get_matches_from(args).unwrap_or_else(|e| {
         enhance_and_exit_error(e);
     });
     Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
