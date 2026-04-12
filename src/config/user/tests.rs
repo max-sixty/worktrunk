@@ -2450,6 +2450,24 @@ fn test_try_parse_value() {
 }
 
 // =========================================================================
+// finalize() — defensive fallback
+// =========================================================================
+
+#[test]
+fn test_finalize_with_undeserializable_table() {
+    // finalize() falls back to defaults when the table can't deserialize.
+    // This shouldn't happen in practice (files are individually validated),
+    // but the fallback exists for safety.
+    let mut table = toml::Table::new();
+    table.insert("list".into(), toml::Value::String("not-a-table".into()));
+
+    let (config, warnings) = UserConfig::finalize(table, Vec::new());
+    assert_eq!(config.worktree_path, None); // defaults
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(&warnings[0], LoadError::Validation(_)));
+}
+
+// =========================================================================
 // save_to() tests — existing-file branch
 // =========================================================================
 
