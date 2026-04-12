@@ -40,26 +40,21 @@ impl UserConfig {
     ) {
         if *config == T::default() {
             table.remove(section_name);
-            return;
-        }
-        match Self::serialize_section_item(config) {
-            Some(item) => {
-                table[section_name] = item;
-            }
-            None => {
-                table.remove(section_name);
-            }
+        } else {
+            table[section_name] = Self::serialize_section_item(config);
         }
     }
 
-    fn serialize_section_item(config: &impl Serialize) -> Option<toml_edit::Item> {
-        let toml_value = toml::to_string(config).ok()?;
-        let parsed = toml_value.parse::<toml_edit::DocumentMut>().ok()?;
+    fn serialize_section_item(config: &impl Serialize) -> toml_edit::Item {
+        let toml_value = toml::to_string(config).expect("config type should be serializable");
+        let parsed = toml_value
+            .parse::<toml_edit::DocumentMut>()
+            .expect("serialized TOML should be parseable");
         let mut table = toml_edit::Table::new();
         for (k, v) in parsed.iter() {
             table[k] = v.clone();
         }
-        Some(toml_edit::Item::Table(table))
+        toml_edit::Item::Table(table)
     }
 
     /// Update the [commit.generation] section in the document.

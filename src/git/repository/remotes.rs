@@ -331,8 +331,7 @@ impl Repository {
         self.load_project_config()
             .ok()
             .flatten()
-            .and_then(|config| config.list)
-            .and_then(|list| list.url)
+            .and_then(|config| config.list.url)
     }
 
     /// Check if a ref is a remote tracking branch.
