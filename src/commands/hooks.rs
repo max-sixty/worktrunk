@@ -4,60 +4,15 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommandConfig;
-use worktrunk::git::WorktrunkError;
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{
-    eprintln, error_message, format_bash_with_gutter, progress_message, warning_message,
-};
+use worktrunk::styling::{eprintln, progress_message, warning_message};
 
 use super::command_executor::{
-    CommandContext, PreparedCommand, PreparedStep, expand_shell_template, prepare_steps,
+    CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
+    execute_pipeline_foreground, prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
-use crate::output::{DirectivePassthrough, execute_shell_command};
-
-/// Short summary name: "user:name" for named commands, "user" otherwise.
-pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
-    match name {
-        Some(n) => format!("{source}:{n}"),
-        None => source.to_string(),
-    }
-}
-
-/// Announce a hook command before execution.
-///
-/// Format: "Running pre-merge user:foo" for named, "Running pre-start user hook" for unnamed.
-/// When `display_path` is set, appends "@ path" to show where the command runs.
-fn announce_hook_command(
-    cmd: &PreparedCommand,
-    source: HookSource,
-    hook_type: HookType,
-    display_path: Option<&Path>,
-) {
-    let summary = command_summary_name(cmd.name.as_deref(), source);
-    let full_label = match &cmd.name {
-        Some(_) => crate::commands::format_command_label(&hook_type.to_string(), Some(&summary)),
-        None => format!("Running {hook_type} {summary} hook"),
-    };
-    let message = match display_path {
-        Some(path) => {
-            let path_display = format_path_for_display(path);
-            cformat!("{full_label} @ <bold>{path_display}</>")
-        }
-        None => full_label,
-    };
-    eprintln!("{}", progress_message(message));
-    eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
-}
-
-/// Controls how hook execution should respond to failures.
-#[derive(Clone, Copy)]
-pub enum HookFailureStrategy {
-    /// Stop on first failure and surface a `HookCommandFailed` error.
-    FailFast,
-    /// Log warnings and continue executing remaining commands.
-    Warn,
-}
+use crate::output::DirectivePassthrough;
 
 // Re-export for backward compatibility with existing imports
 pub use super::hook_filter::{HookSource, ParsedFilter};
@@ -523,7 +478,7 @@ pub(crate) fn check_name_filter_matched(
 pub fn run_hook_with_filter(
     ctx: &CommandContext,
     spec: HookCommandSpec<'_, '_, '_, '_>,
-    failure_strategy: HookFailureStrategy,
+    failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     let sourced_steps = prepare_sourced_steps(ctx, spec)?;
     let HookCommandSpec {
@@ -544,91 +499,33 @@ pub fn run_hook_with_filter(
         return Ok(());
     }
 
-    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
     let directives = DirectivePassthrough::inherit_from_env();
+
+    // Convert SourcedSteps → ForegroundSteps for the shared executor.
+    let foreground_steps: Vec<ForegroundStep> = sourced_steps
+        .into_iter()
+        .map(|sourced| ForegroundStep {
+            step: sourced.step,
+            origin: CommandOrigin::Hook {
+                source: sourced.source,
+                hook_type: sourced.hook_type,
+                display_path: sourced.display_path,
+            },
+        })
+        .collect();
 
     // Foreground hooks always execute serially, even when the prepared step is
     // `Concurrent`. The documented contract is "for pre-* hooks, commands in a
     // table run sequentially" (`src/cli/mod.rs`). Concurrent execution is
     // reserved for the background pipeline runner (`run_pipeline.rs`).
-    for sourced in sourced_steps {
-        let display_path_ref = sourced.display_path.as_deref();
-        for cmd in &sourced.step.into_commands() {
-            announce_hook_command(cmd, sourced.source, sourced.hook_type, display_path_ref);
-            execute_one_hook_command(
-                ctx,
-                cmd,
-                sourced.source,
-                sourced.hook_type,
-                &directives,
-                failure_strategy,
-            )?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Execute a single prepared hook command (caller has already announced it).
-fn execute_one_hook_command(
-    ctx: &CommandContext,
-    cmd: &PreparedCommand,
-    source: HookSource,
-    hook_type: HookType,
-    directives: &DirectivePassthrough,
-    failure_strategy: HookFailureStrategy,
-) -> anyhow::Result<()> {
-    let summary = command_summary_name(cmd.name.as_deref(), source);
-
-    let lazy_expanded;
-    let command_str = if let Some(template) = &cmd.lazy_template {
-        let context: std::collections::HashMap<String, String> =
-            serde_json::from_str(&cmd.context_json)
-                .context("failed to deserialize context_json")?;
-        lazy_expanded = expand_shell_template(template, &context, ctx.repo, &summary)?;
-        &lazy_expanded
-    } else {
-        &cmd.expanded
-    };
-
-    let log_label = format!("{hook_type} {summary}");
-
-    let Err(err) = execute_shell_command(
+    execute_pipeline_foreground(
+        &foreground_steps,
+        ctx.repo,
         ctx.worktree_path,
-        command_str,
-        Some(&cmd.context_json),
-        Some(&log_label),
-        directives.clone(),
-    ) else {
-        return Ok(());
-    };
-
-    let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
-        match wt_err {
-            WorktrunkError::ChildProcessExited { message, code } => (message.clone(), Some(*code)),
-            _ => (err.to_string(), None),
-        }
-    } else {
-        (err.to_string(), None)
-    };
-
-    match failure_strategy {
-        HookFailureStrategy::FailFast => Err(WorktrunkError::HookCommandFailed {
-            hook_type,
-            command_name: cmd.name.clone(),
-            error: err_msg,
-            exit_code,
-        }
-        .into()),
-        HookFailureStrategy::Warn => {
-            let message = match &cmd.name {
-                Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
-                None => format!("Command failed: {err_msg}"),
-            };
-            eprintln!("{}", error_message(message));
-            Ok(())
-        }
-    }
+        &directives,
+        failure_strategy,
+        false,
+    )
 }
 
 /// Look up user and project configs for a given hook type.
@@ -656,7 +553,7 @@ pub fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    failure_strategy: HookFailureStrategy,
+    failure_strategy: FailureStrategy,
     name_filters: &[String],
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
@@ -740,14 +637,14 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_failure_strategy_copy() {
-        let strategy = HookFailureStrategy::FailFast;
+    fn test_failure_strategy_copy() {
+        let strategy = FailureStrategy::FailFast;
         let copied = strategy; // Copy trait
-        assert!(matches!(copied, HookFailureStrategy::FailFast));
+        assert!(matches!(copied, FailureStrategy::FailFast));
 
-        let warn = HookFailureStrategy::Warn;
+        let warn = FailureStrategy::Warn;
         let copied_warn = warn;
-        assert!(matches!(copied_warn, HookFailureStrategy::Warn));
+        assert!(matches!(copied_warn, FailureStrategy::Warn));
     }
 
     #[test]

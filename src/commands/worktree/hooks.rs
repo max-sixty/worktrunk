@@ -10,7 +10,8 @@ use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
-use crate::commands::hooks::{HookFailureStrategy, execute_hook};
+use crate::commands::command_executor::FailureStrategy;
+use crate::commands::hooks::execute_hook;
 
 impl<'a> CommandContext<'a> {
     /// Execute pre-start commands sequentially (blocking)
@@ -25,7 +26,7 @@ impl<'a> CommandContext<'a> {
             self,
             HookType::PreStart,
             extra_vars,
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
             &[],
             crate::output::post_hook_display_path(self.worktree_path),
         )

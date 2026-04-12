@@ -25,11 +25,11 @@ use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
+use super::command_executor::{FailureStrategy, command_summary_name};
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, command_summary_name,
-    count_sourced_commands, prepare_background_hooks, prepare_sourced_steps, run_hook_with_filter,
-    spawn_hook_pipeline,
+    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_background_hooks,
+    prepare_sourced_steps, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -40,7 +40,7 @@ fn run_filtered_hook(
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
-    failure_strategy: HookFailureStrategy,
+    failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     run_hook_with_filter(
         ctx,
@@ -102,7 +102,7 @@ fn run_post_hook(
         hook_type,
         extra_vars,
         name_filters,
-        HookFailureStrategy::Warn,
+        FailureStrategy::Warn,
     )
 }
 
@@ -286,7 +286,7 @@ pub fn run_hook(
             hook_type,
             &extra_vars,
             name_filters,
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
         ),
         HookType::PostStart
         | HookType::PostSwitch

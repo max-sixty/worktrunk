@@ -34,11 +34,11 @@ use worktrunk::styling::{
 };
 
 use super::command_approval::approve_hooks;
+use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
-    spawn_hook_pipeline,
+    HookCommandSpec, prepare_background_hooks, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
@@ -209,7 +209,7 @@ pub fn handle_squash(
                 name_filters: &[],
                 display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
             },
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
