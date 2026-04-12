@@ -559,26 +559,19 @@ fn has_select_without_picker(table: &toml_edit::Table) -> bool {
 }
 
 fn find_post_create_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    // Check top-level hooks section (project config: `post-create = "..."`)
+    // Top-level (user config or project config): hooks are flattened here
     if doc.get("pre-start").is_none() && doc.get("post-create").is_some_and(is_non_empty_item) {
         return true;
     }
 
-    // Check [hooks] section (user config: `[hooks] post-create = "..."`)
-    if let Some(hooks) = doc.get("hooks").and_then(|h| h.as_table())
-        && hooks.get("pre-start").is_none()
-        && hooks.get("post-create").is_some_and(is_non_empty_item)
-    {
-        return true;
-    }
-
-    // Check project-level hooks
+    // Per-project overrides (user config): hooks are flattened into `[projects."id"]`
     if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
         for (_key, project_value) in projects.iter() {
             if let Some(project_table) = project_value.as_table()
-                && let Some(hooks) = project_table.get("hooks").and_then(|h| h.as_table())
-                && hooks.get("pre-start").is_none()
-                && hooks.get("post-create").is_some_and(is_non_empty_item)
+                && project_table.get("pre-start").is_none()
+                && project_table
+                    .get("post-create")
+                    .is_some_and(is_non_empty_item)
             {
                 return true;
             }
@@ -603,7 +596,7 @@ fn is_non_empty_item(item: &toml_edit::Item) -> bool {
 fn migrate_post_create_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
-    // Top-level (project config format)
+    // Top-level (user config or project config)
     if doc.get("pre-start").is_none()
         && let Some(value) = doc.remove("post-create")
     {
@@ -611,26 +604,14 @@ fn migrate_post_create_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         modified = true;
     }
 
-    // [hooks] section (user config format)
-    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_table_mut())
-        && hooks.get("pre-start").is_none()
-        && let Some(value) = hooks.remove("post-create")
-    {
-        hooks.insert("pre-start", value);
-        modified = true;
-    }
-
-    // Project-level hooks
+    // Per-project overrides (user config)
     if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
         for (_key, project_value) in projects.iter_mut() {
             if let Some(project_table) = project_value.as_table_mut()
-                && let Some(hooks) = project_table
-                    .get_mut("hooks")
-                    .and_then(|h| h.as_table_mut())
-                && hooks.get("pre-start").is_none()
-                && let Some(value) = hooks.remove("post-create")
+                && project_table.get("pre-start").is_none()
+                && let Some(value) = project_table.remove("post-create")
             {
-                hooks.insert("pre-start", value);
+                project_table.insert("pre-start", value);
                 modified = true;
             }
         }
@@ -3118,20 +3099,10 @@ post-create = "npm install"
     }
 
     #[test]
-    fn test_find_post_create_deprecation_hooks_section() {
-        // User config format: under [hooks]
-        let content = r#"
-[hooks]
-post-create = "npm install"
-"#;
-        assert!(find_post_create_deprecation(content));
-    }
-
-    #[test]
     fn test_find_post_create_deprecation_project_level() {
-        // User config format: under [projects."...".hooks]
+        // User config format: hooks flattened into [projects."..."]
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "npm install"
 "#;
         assert!(find_post_create_deprecation(content));
@@ -3168,21 +3139,10 @@ pre-start = "new"
     }
 
     #[test]
-    fn test_find_post_create_deprecation_skips_when_pre_start_exists_hooks() {
-        // Both present in [hooks] — don't flag
-        let content = r#"
-[hooks]
-post-create = "old"
-pre-start = "new"
-"#;
-        assert!(!find_post_create_deprecation(content));
-    }
-
-    #[test]
     fn test_find_post_create_deprecation_skips_when_pre_start_exists_project() {
         // Both present in project hooks — don't flag
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "old"
 pre-start = "new"
 "#;
@@ -3213,26 +3173,9 @@ server = "npm run dev"
     }
 
     #[test]
-    fn test_migrate_post_create_hooks_section() {
-        let content = r#"
-[hooks]
-post-create = "npm install"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert!(
-            result.contains("pre-start"),
-            "Should have pre-start: {result}"
-        );
-        assert!(
-            !result.contains("post-create"),
-            "Should not have post-create: {result}"
-        );
-    }
-
-    #[test]
     fn test_migrate_post_create_project_level() {
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "npm install"
 "#;
         let result = migrate_post_create_to_pre_start(content);
