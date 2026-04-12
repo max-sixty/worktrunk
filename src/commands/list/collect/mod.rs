@@ -132,16 +132,16 @@
 //!
 //! Every other task re-runs on each invocation.
 //!
+//! ### Already optimized (not cache candidates)
+//!
+//! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
+//!   (~11ms for all branches); per-branch tasks read the in-memory cache
+//! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
+//!
 //! ### Cacheable but uncached
 //!
-//! A few tasks take ref *names* and reduce to a SHA pair once the refs are resolved. Same
-//! SHA-pair pattern as `sha_cache`, just not wired up yet:
-//!
-//! - `AheadBehind` — counts against the default branch
-//! - `CommittedTreesMatch` — tree equality against the integration target
-//! - `Upstream` — ahead/behind counts against the tracking branch
-//!
-//! Reuse `sha_cache` for any of these rather than inventing a new scheme.
+//! - `Upstream` — `ahead_behind()` against the tracking branch; same SHA-pair
+//!   pattern as `sha_cache`, just not wired up yet
 //!
 //! ### Fundamentally uncacheable
 //!

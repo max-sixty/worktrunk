@@ -1,9 +1,12 @@
 //! Config persistence - loading and saving to disk.
 //!
 //! Handles TOML serialization with formatting (multiline arrays, implicit tables)
-//! and preserves comments when updating existing files.
-
-use serde::Serialize;
+//! and preserves comments when updating existing files via diff-based merge.
+//!
+//! The existing-file save path works by diffing the serialized in-memory state
+//! against the parsed file and merging only changed keys. This automatically
+//! handles any new fields without manual wiring — if a struct field is
+//! serializable, save_to persists it.
 
 use crate::config::ConfigError;
 
@@ -11,124 +14,6 @@ use super::UserConfig;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
-    fn update_bool_flag(doc: &mut toml_edit::DocumentMut, key: &str, enabled: bool) {
-        if enabled {
-            doc[key] = toml_edit::value(true);
-        } else {
-            doc.remove(key);
-        }
-    }
-
-    fn sync_string_field(table: &mut toml_edit::Table, key: &str, new_value: Option<&String>) {
-        match new_value {
-            Some(v) => {
-                let current = table.get(key).and_then(|i| i.as_str());
-                if current != Some(v.as_str()) {
-                    table[key] = toml_edit::value(v.as_str());
-                }
-            }
-            None => {
-                table.remove(key);
-            }
-        }
-    }
-
-    fn sync_serialized_section<T: Serialize + Default + PartialEq>(
-        table: &mut toml_edit::Table,
-        section_name: &str,
-        config: &T,
-    ) {
-        if *config == T::default() {
-            table.remove(section_name);
-        } else {
-            table[section_name] = Self::serialize_section_item(config);
-        }
-    }
-
-    fn serialize_section_item(config: &impl Serialize) -> toml_edit::Item {
-        let toml_value = toml::to_string(config).expect("config type should be serializable");
-        let parsed = toml_value
-            .parse::<toml_edit::DocumentMut>()
-            .expect("serialized TOML should be parseable");
-        let mut table = toml_edit::Table::new();
-        for (k, v) in parsed.iter() {
-            table[k] = v.clone();
-        }
-        toml_edit::Item::Table(table)
-    }
-
-    /// Update the [commit.generation] section in the document.
-    fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
-        if let Some(ref gen_cfg) = self.commit.generation {
-            // Ensure [commit] table exists
-            if !doc.contains_key("commit") {
-                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
-            }
-            if let Some(commit_table) = doc["commit"].as_table_mut() {
-                // Ensure [commit.generation] table exists
-                if !commit_table.contains_key("generation") {
-                    commit_table["generation"] = toml_edit::Item::Table(toml_edit::Table::new());
-                }
-                if let Some(gen_table) = commit_table["generation"].as_table_mut() {
-                    for (key, value) in [
-                        ("command", gen_cfg.command.as_ref()),
-                        ("template", gen_cfg.template.as_ref()),
-                        ("template-file", gen_cfg.template_file.as_ref()),
-                        ("squash-template", gen_cfg.squash_template.as_ref()),
-                        (
-                            "squash-template-file",
-                            gen_cfg.squash_template_file.as_ref(),
-                        ),
-                    ] {
-                        Self::sync_string_field(gen_table, key, value);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Update the \[projects\] section in the document.
-    fn update_projects_section(&self, doc: &mut toml_edit::DocumentMut) {
-        // Ensure projects table exists
-        if !doc.contains_key("projects") {
-            doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
-        }
-
-        if let Some(projects) = doc["projects"].as_table_mut() {
-            // Remove stale projects
-            let stale: Vec<_> = projects
-                .iter()
-                .filter(|(k, _)| !self.projects.contains_key(*k))
-                .map(|(k, _)| k.to_string())
-                .collect();
-            for key in stale {
-                projects.remove(&key);
-            }
-
-            // Add/update projects
-            for (project_id, project_config) in &self.projects {
-                if !projects.contains_key(project_id) {
-                    projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
-                }
-
-                let Some(project_table) = projects[project_id].as_table_mut() else {
-                    continue;
-                };
-
-                Self::sync_string_field(
-                    project_table,
-                    "worktree-path",
-                    project_config.worktree_path.as_ref(),
-                );
-
-                Self::sync_serialized_section(project_table, "list", &project_config.list);
-                Self::sync_serialized_section(project_table, "commit", &project_config.commit);
-                Self::sync_serialized_section(project_table, "merge", &project_config.merge);
-                Self::sync_serialized_section(project_table, "switch", &project_config.switch);
-            }
-        }
-    }
-
     /// Recursively convert inline tables to standard tables for readability.
     ///
     /// When using `toml_edit::ser::to_document()`, nested structs are serialized as inline tables
@@ -157,59 +42,142 @@ impl UserConfig {
         }
     }
 
-    /// Save the current configuration to a specific file path
+    /// Recursively merge desired state into existing document.
     ///
-    /// Use this in tests to save to a temporary location instead of the user's config.
-    /// Preserves comments and formatting in the existing file when possible.
+    /// - Keys in desired but not existing: inserted
+    /// - Keys in existing but not desired: removed (unless in `preserve`)
+    /// - Both standard tables: recurse (preserves existing formatting and comments)
+    /// - Existing inline table, desired standard table: compare contents, preserve
+    ///   inline format when semantically equal
+    /// - Both exist, values differ: update existing to desired
+    /// - Both exist, values equal: leave existing unchanged (preserves comments)
+    fn merge_tables(
+        existing: &mut toml_edit::Table,
+        desired: &toml_edit::Table,
+        preserve: &std::collections::HashSet<String>,
+    ) {
+        let stale_keys: Vec<_> = existing
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .filter(|k| !desired.contains_key(k) && !preserve.contains(k))
+            .collect();
+        for key in &stale_keys {
+            existing.remove(key);
+        }
+
+        let empty = std::collections::HashSet::new();
+        for (key, desired_item) in desired.iter() {
+            match existing.get_mut(key) {
+                // Both standard tables: recurse
+                Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
+                    Self::merge_tables(
+                        existing_item.as_table_mut().unwrap(),
+                        desired_item.as_table().unwrap(),
+                        &empty,
+                    );
+                }
+                // Existing inline table, desired standard table: compare contents
+                // to preserve the user's inline formatting when nothing changed
+                Some(existing_item)
+                    if existing_item.is_inline_table() && desired_item.is_table() =>
+                {
+                    let as_table = existing_item
+                        .as_inline_table()
+                        .unwrap()
+                        .clone()
+                        .into_table();
+                    if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
+                        *existing_item = desired_item.clone();
+                    }
+                }
+                Some(existing_item) => {
+                    if !Self::items_equal(existing_item, desired_item) {
+                        *existing_item = desired_item.clone();
+                    }
+                }
+                None => {
+                    existing[key] = desired_item.clone();
+                }
+            }
+        }
+    }
+
+    /// Compare two Items for value equality, ignoring formatting and comments.
+    fn items_equal(a: &toml_edit::Item, b: &toml_edit::Item) -> bool {
+        match (a, b) {
+            (toml_edit::Item::Value(va), toml_edit::Item::Value(vb)) => Self::values_equal(va, vb),
+            (toml_edit::Item::Table(ta), toml_edit::Item::Table(tb)) => Self::tables_equal(ta, tb),
+            _ => false,
+        }
+    }
+
+    fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
+        use toml_edit::Value;
+        match (a, b) {
+            (Value::String(a), Value::String(b)) => a.value() == b.value(),
+            (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
+            (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
+            (Value::Array(a), Value::Array(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(a, b)| Self::values_equal(a, b))
+            }
+            _ => false,
+        }
+    }
+
+    fn tables_equal(a: &toml_edit::Table, b: &toml_edit::Table) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .all(|(k, v)| b.get(k).is_some_and(|bv| Self::items_equal(v, bv)))
+    }
+
+    /// Save the current configuration to a specific file path.
     ///
-    /// TODO: This design is fragile. When file exists, we surgically update specific
-    /// sections to preserve comments. If a new programmatically-modifiable field is added
-    /// but not handled here, changes won't persist. Consider using a diff-based approach:
-    /// compare self vs existing config and only update what changed.
+    /// Preserves comments and formatting in the existing file by diffing the
+    /// serialized in-memory state against the parsed file and merging only
+    /// changed keys.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
-        // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| ConfigError(format!("Failed to create config directory: {}", e)))?;
         }
 
         let toml_string = if config_path.exists() {
-            // Surgically update sections to preserve comments
             let existing_content = std::fs::read_to_string(config_path)
                 .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
-            let mut doc: toml_edit::DocumentMut = existing_content
+            let mut existing_doc: toml_edit::DocumentMut = existing_content
                 .parse()
                 .map_err(|e| ConfigError(format!("Failed to parse config file: {}", e)))?;
 
-            // Update all programmatically-modifiable sections
-            // NOTE: If you add a new setter that modifies config, add the update here too!
-            Self::update_bool_flag(
-                &mut doc,
-                "skip-shell-integration-prompt",
-                self.skip_shell_integration_prompt,
-            );
-            Self::update_bool_flag(
-                &mut doc,
-                "skip-commit-generation-prompt",
-                self.skip_commit_generation_prompt,
-            );
+            let mut desired_doc = toml_edit::ser::to_document(&self)
+                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
+            Self::expand_inline_tables(desired_doc.as_table_mut());
 
-            self.update_commit_generation_section(&mut doc);
-            self.update_projects_section(&mut doc);
-            Self::make_commit_table_implicit_if_only_subtables(&mut doc);
+            // Preserve unknown top-level keys (typos, future fields, deprecated
+            // keys not yet migrated) so they aren't silently deleted on save.
+            let unknown_keys: std::collections::HashSet<String> =
+                super::find_unknown_keys(&existing_content)
+                    .into_keys()
+                    .collect();
 
-            doc.to_string()
+            Self::merge_tables(
+                existing_doc.as_table_mut(),
+                desired_doc.as_table(),
+                &unknown_keys,
+            );
+            Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
+
+            existing_doc.to_string()
         } else {
-            // No existing file: serialize struct directly, then post-process formatting
             let mut doc = toml_edit::ser::to_document(&self)
                 .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
 
-            // Convert inline tables to standard tables for readability
             Self::expand_inline_tables(doc.as_table_mut());
             Self::make_commit_table_implicit_if_only_subtables(&mut doc);
 
-            // Make [projects] implicit to avoid emitting header for readability
             if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
                 projects.set_implicit(true);
             }

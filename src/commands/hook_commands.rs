@@ -27,8 +27,9 @@ use super::command_executor::build_hook_context;
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, SourcedStep, check_name_filter_matched,
-    prepare_background_hooks, prepare_hook_commands, run_hook_with_filter, spawn_hook_pipeline,
+    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, command_summary_name,
+    count_sourced_commands, prepare_background_hooks, prepare_sourced_steps, run_hook_with_filter,
+    spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -67,9 +68,7 @@ fn run_post_hook(
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
         if !name_filters.is_empty() {
-            // Name filtering operates on individual commands — extract matching
-            // commands, convert to pipeline steps, and spawn via pipeline runner.
-            let commands = prepare_hook_commands(
+            let steps = prepare_sourced_steps(
                 ctx,
                 HookCommandSpec {
                     user_config,
@@ -80,16 +79,12 @@ fn run_post_hook(
                     display_path: None,
                 },
             )?;
-            check_name_filter_matched(name_filters, commands.len(), user_config, project_config)?;
-            let steps: Vec<SourcedStep> = commands
-                .into_iter()
-                .map(|cmd| SourcedStep {
-                    step: super::command_executor::PreparedStep::Single(cmd.prepared),
-                    source: cmd.source,
-                    hook_type: cmd.hook_type,
-                    display_path: cmd.display_path,
-                })
-                .collect();
+            check_name_filter_matched(
+                name_filters,
+                count_sourced_commands(&steps),
+                user_config,
+                project_config,
+            )?;
             return spawn_hook_pipeline(ctx, steps);
         }
 
@@ -239,7 +234,7 @@ pub fn run_hook(
     );
 
     if dry_run {
-        let commands = prepare_hook_commands(
+        let steps = prepare_sourced_steps(
             &ctx,
             HookCommandSpec {
                 user_config,
@@ -250,23 +245,29 @@ pub fn run_hook(
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(name_filters, commands.len(), user_config, proj_config)?;
+        check_name_filter_matched(
+            name_filters,
+            count_sourced_commands(&steps),
+            user_config,
+            proj_config,
+        )?;
 
-        for cmd in &commands {
-            let label = match &cmd.prepared.name {
-                Some(n) => {
-                    let display_name = format!("{}:{}", cmd.source, n);
-                    cformat!("{hook_type} <bold>{display_name}</> would run:")
-                }
-                None => cformat!("{hook_type} {} hook would run:", cmd.source),
-            };
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "{label}\n{}",
-                    format_bash_with_gutter(&cmd.prepared.expanded)
-                ))
-            );
+        for sourced in steps {
+            for cmd in sourced.step.into_commands() {
+                let summary = command_summary_name(cmd.name.as_deref(), sourced.source);
+                let label = if cmd.name.is_some() {
+                    cformat!("{hook_type} <bold>{summary}</> would run:")
+                } else {
+                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
+                };
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "{label}\n{}",
+                        format_bash_with_gutter(&cmd.expanded)
+                    ))
+                );
+            }
         }
         return Ok(());
     }

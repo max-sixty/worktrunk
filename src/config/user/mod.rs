@@ -3,7 +3,7 @@
 //! Personal preferences and per-project approved commands, not checked into git.
 
 mod accessors;
-pub(crate) mod merge;
+mod merge;
 pub(crate) mod mutation;
 mod path;
 mod persistence;
@@ -294,23 +294,23 @@ pub struct UserConfig {
     pub worktree_path: Option<String>,
 
     /// Configuration for the `wt list` command
-    #[serde(default, skip_serializing_if = "merge::is_default")]
+    #[serde(default, skip_serializing_if = "super::is_default")]
     pub list: sections::ListConfig,
 
     /// Configuration for the `wt step commit` command (also used by merge)
-    #[serde(default, skip_serializing_if = "merge::is_default")]
+    #[serde(default, skip_serializing_if = "super::is_default")]
     pub commit: sections::CommitConfig,
 
     /// Configuration for the `wt merge` command
-    #[serde(default, skip_serializing_if = "merge::is_default")]
+    #[serde(default, skip_serializing_if = "super::is_default")]
     pub merge: sections::MergeConfig,
 
     /// Configuration for the `wt switch` command
-    #[serde(default, skip_serializing_if = "merge::is_default")]
+    #[serde(default, skip_serializing_if = "super::is_default")]
     pub switch: sections::SwitchConfig,
 
     /// Configuration for `wt step` subcommands
-    #[serde(default, skip_serializing_if = "merge::is_default")]
+    #[serde(default, skip_serializing_if = "super::is_default")]
     pub step: sections::StepConfig,
 
     /// Command aliases for `wt step <name>`
