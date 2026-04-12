@@ -3100,6 +3100,106 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         assert_snapshot!(completions);
     }
 
+    /// Shell integration test: completing an external subcommand's flags
+    /// forwards the request to the `wt-*` binary on PATH.
+    ///
+    /// Places a `wt-fake` script in the hermetic PATH, then triggers
+    /// `wt fake --<tab>` via the fish completion protocol. Verifies that:
+    /// 1. The external script's output appears (forwarding works)
+    /// 2. `_CLAP_COMPLETE_INDEX` is decremented by 1 (index adjustment)
+    #[test]
+    fn test_fish_completion_forwards_to_external() {
+        use std::os::unix::fs::PermissionsExt;
+        let wt_bin = wt_bin();
+        let (dir, clean_path) = completion_test_path(&wt_bin);
+
+        // Place a wt-fake script that outputs distinctive completions and
+        // echoes the received _CLAP_COMPLETE_INDEX so we can verify adjustment.
+        let script = dir.path().join("wt-fake");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s\\n%s\\n' '--fake-flag' \"idx:${_CLAP_COMPLETE_INDEX}\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Fish protocol: `wt -- wt fake --` with COMPLETE=fish.
+        // _CLAP_COMPLETE_INDEX=2 (completing the 3rd word "—" in "wt fake --").
+        // The forwarding code should detect "fake" is external, forward to
+        // wt-fake, and decrement the index to 1.
+        let output = std::process::Command::new(&wt_bin)
+            .args(["--", "wt", "fake", "--"])
+            .env("COMPLETE", "fish")
+            .env("_CLAP_COMPLETE_INDEX", "2")
+            .env("PATH", &clean_path)
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--fake-flag"),
+            "Forwarded completions should include external script output: {stdout}"
+        );
+        assert!(
+            stdout.contains("idx:1"),
+            "_CLAP_COMPLETE_INDEX should be adjusted from 2 to 1: {stdout}"
+        );
+    }
+
+    /// Shell integration test: bash completion forwards to external subcommands.
+    ///
+    /// Sources the real `wt config shell init bash` output, places a `wt-fake`
+    /// script on the hermetic PATH, and triggers `wt fake --<tab>` through
+    /// bash's completion machinery.
+    #[test]
+    fn test_bash_completion_forwards_to_external() {
+        use std::os::unix::fs::PermissionsExt;
+        let wt_bin = wt_bin();
+        let (dir, clean_path) = completion_test_path(&wt_bin);
+
+        // Place a wt-fake script that outputs completions
+        let ext_script = dir.path().join("wt-fake");
+        std::fs::write(
+            &ext_script,
+            "#!/bin/sh\nprintf '%s\\n%s\\n' '--fake-opt' '--fake-verbose'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ext_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let init = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "bash"])
+            .output()
+            .unwrap();
+        let shell_integration = String::from_utf8_lossy(&init.stdout);
+
+        // Trigger completion for "wt fake --" through bash's completion system.
+        let script = format!(
+            r#"
+{shell_integration}
+COMP_WORDS=(wt fake --) COMP_CWORD=2
+_wt_lazy_complete
+for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
+"#
+        );
+
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env("PATH", &clean_path)
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--fake-opt"),
+            "Bash completion should forward to wt-fake and show its output: {stdout}"
+        );
+        assert!(
+            stdout.contains("--fake-verbose"),
+            "Bash completion should include all external completions: {stdout}"
+        );
+    }
+
     // ========================================================================
     // Stderr/Stdout Redirection Tests
     // ========================================================================
