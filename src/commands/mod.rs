@@ -28,7 +28,7 @@ pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
-pub(crate) use alias::{AliasOptions, step_alias};
+pub(crate) use alias::{AliasOptions, step_alias, step_list};
 pub(crate) use config::{
     handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,

@@ -45,7 +45,7 @@
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
 //! arbitrary shell into the interactive session.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
@@ -431,6 +431,164 @@ impl AliasExecCtx<'_> {
     }
 }
 
+/// Render `wt step` help and list any configured aliases.
+///
+/// Invoked when `wt step` is run with no subcommand — gives users one place
+/// to discover both built-in steps and aliases. Unlike `step_alias`, this
+/// tolerates running outside a repository: user-config aliases still list,
+/// project-config aliases just get skipped.
+pub(crate) fn step_list() -> anyhow::Result<()> {
+    // Route through clap's own `-h` error path so styles, display_name, and
+    // global settings (`disable_help_subcommand`, etc.) are propagated from
+    // the root Cli. Rendering the subcommand's help directly via
+    // `find_subcommand_mut(...).render_help()` skips that propagation.
+    let mut cmd = crate::cli::build_command();
+    let help = match cmd.try_get_matches_from_mut(["wt", "step", "-h"]) {
+        Ok(_) => bail!("Expected clap to emit help, got a successful parse"),
+        Err(e)
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+            ) =>
+        {
+            e.render().ansi().to_string()
+        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to render step help: {e}")),
+    };
+
+    let aliases = load_aliases_for_listing();
+    if aliases.is_empty() {
+        eprint!("{help}");
+        return Ok(());
+    }
+
+    // Place the Aliases section right after Commands so it sits next to the
+    // built-ins it extends. Clap has no template-level hook for inserting
+    // between sections, so we splice around the `Options:` heading in the
+    // rendered output. The search prefix is derived from the same style
+    // clap uses (our `help_styles().get_header()`), so if the header
+    // styling changes both sides move together.
+    let aliases_section = render_aliases_section(&aliases);
+    let options_heading = format!(
+        "{}Options:",
+        crate::cli::help_styles().get_header().render()
+    );
+    match help.find(&options_heading) {
+        Some(pos) => {
+            eprint!("{}", &help[..pos]);
+            eprint!("{aliases_section}\n\n");
+            eprint!("{}", &help[pos..]);
+        }
+        None => {
+            // Clap's styling changed; fall back to appending so we don't
+            // silently drop the aliases list.
+            eprint!("{help}");
+            eprintln!();
+            eprint!("{aliases_section}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Format the list of aliases as a styled help section.
+///
+/// Matches clap's "Commands:" / "Options:" styling (bold+green heading,
+/// bold+cyan names) so the Aliases section blends in with the rest of
+/// `-h` output. Returns the block without leading or trailing blank lines —
+/// the caller positions it.
+fn render_aliases_section(aliases: &BTreeMap<String, CommandConfig>) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", cformat!("<bold><green>Aliases:</></>"));
+    let name_width = aliases.keys().map(|n| n.len()).max().unwrap_or(0);
+    let mut first = true;
+    for (name, cfg) in aliases {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        let padding = " ".repeat(name_width - name.len());
+        let summary = format_alias_summary(cfg);
+        let suffix = if BUILTIN_STEP_COMMANDS.contains(&name.as_str()) {
+            cformat!(" <yellow>(shadowed by built-in)</>")
+        } else {
+            String::new()
+        };
+        let _ = write!(
+            out,
+            "  {name_styled}{padding}  {summary}{suffix}",
+            name_styled = cformat!("<bold><cyan>{name}</></>"),
+        );
+    }
+    out
+}
+
+/// Load merged aliases (user + project) for display.
+///
+/// Tolerates missing or unloadable config: this is a discovery surface, not
+/// an execution surface, so we'd rather show the built-in commands than
+/// error out when a repo isn't detected or a config file is malformed.
+/// `step_alias` surfaces those errors at execution time.
+fn load_aliases_for_listing() -> BTreeMap<String, CommandConfig> {
+    let Ok(user_config) = UserConfig::load() else {
+        return BTreeMap::new();
+    };
+    let (project_id, project_config) = match Repository::current() {
+        Ok(repo) => (
+            repo.project_identifier().ok(),
+            ProjectConfig::load(&repo, true).ok().flatten(),
+        ),
+        Err(_) => (None, None),
+    };
+    let mut aliases = user_config.aliases(project_id.as_deref());
+    if let Some(pc) = project_config.as_ref() {
+        append_aliases(&mut aliases, &pc.aliases);
+    }
+    aliases
+}
+
+/// One-line summary of an alias's command(s) suitable for a help listing.
+///
+/// Single-command aliases show the template's first line (with `…` if the
+/// template spans multiple lines). Pipelines show the shared named-step
+/// summary used by the "Running alias" announcement.
+fn format_alias_summary(cfg: &CommandConfig) -> String {
+    // `is_pipeline()` is `steps.len() > 1`, but a single-step concurrent
+    // alias (one `HookStep::Concurrent` holding several commands) would
+    // fall into the else branch and hide all but the first command. Count
+    // actual commands instead.
+    if cfg.commands().count() > 1 {
+        let step_names: Vec<Vec<Option<&str>>> = cfg
+            .steps()
+            .iter()
+            .map(|step| match step {
+                HookStep::Single(cmd) => vec![cmd.name.as_deref()],
+                HookStep::Concurrent(cmds) => cmds.iter().map(|c| c.name.as_deref()).collect(),
+            })
+            .collect();
+        let summary = format_pipeline_summary_from_names(&step_names, |n| n.to_string(), |_| None);
+        if summary.is_empty() {
+            format!("<{} steps>", cfg.commands().count())
+        } else {
+            summary
+        }
+    } else {
+        let cmd = cfg
+            .commands()
+            .next()
+            .expect("CommandConfig always contains at least one command");
+        let first = cmd.template.lines().next().unwrap_or("").trim_end();
+        if cmd.template.lines().count() > 1 {
+            format!("{first}…")
+        } else {
+            first.to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +636,58 @@ test = "cargo test"
         );
         let msg = format_alias_announcement("check", &cfg);
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
+    }
+
+    #[test]
+    fn test_format_alias_summary_single_command() {
+        let cfg = cfg_from_toml(r#"cmd = "echo hello""#);
+        assert_eq!(format_alias_summary(&cfg), "echo hello");
+    }
+
+    #[test]
+    fn test_format_alias_summary_multiline_gets_ellipsis() {
+        let cfg = cfg_from_toml(
+            r#"cmd = """
+git fetch --all --prune
+git rebase @{u}
+""""#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "git fetch --all --prune…");
+    }
+
+    #[test]
+    fn test_format_alias_summary_pipeline_named() {
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" },
+]
+"#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "install; build, lint");
+    }
+
+    #[test]
+    fn test_format_alias_summary_concurrent_named() {
+        // Single-step concurrent form: `[aliases.check]\nbuild=…\ntest=…`
+        // — one step, multiple commands. Must use the pipeline formatter,
+        // not fall back to "show first command's template".
+        let cfg = cfg_from_toml(
+            r#"
+[cmd]
+build = "cargo build"
+test = "cargo test"
+"#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "build, test");
+    }
+
+    #[test]
+    fn test_format_alias_summary_pipeline_all_unnamed() {
+        // Anonymous pipeline entries fall back to a step count.
+        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
+        assert_eq!(format_alias_summary(&cfg), "<2 steps>");
     }
 
     #[test]
