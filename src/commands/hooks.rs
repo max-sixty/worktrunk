@@ -11,60 +11,44 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{
-    CommandContext, PreparedCommand, PreparedStep, expand_shell_template, prepare_commands,
-    prepare_steps,
+    CommandContext, PreparedCommand, PreparedStep, expand_shell_template, prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::execute_shell_command;
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 
-/// A prepared command with its source information.
-pub struct SourcedCommand {
-    pub prepared: PreparedCommand,
-    pub source: HookSource,
-    pub hook_type: HookType,
-    /// Path to display in announcement, if different from user's current directory.
-    /// When `Some`, shows "@ path" suffix to clarify where the command runs.
-    pub display_path: Option<PathBuf>,
+/// Short summary name: "user:name" for named commands, "user" otherwise.
+pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
+    match name {
+        Some(n) => format!("{source}:{n}"),
+        None => source.to_string(),
+    }
 }
 
-impl SourcedCommand {
-    /// Short name for summary display: "user:name" or just "user" if unnamed.
-    fn summary_name(&self) -> String {
-        match &self.prepared.name {
-            Some(n) => format!("{}:{}", self.source, n),
-            None => self.source.to_string(),
+/// Announce a hook command before execution.
+///
+/// Format: "Running pre-merge user:foo" for named, "Running pre-start user hook" for unnamed.
+/// When `display_path` is set, appends "@ path" to show where the command runs.
+fn announce_hook_command(
+    cmd: &PreparedCommand,
+    source: HookSource,
+    hook_type: HookType,
+    display_path: Option<&Path>,
+) {
+    let summary = command_summary_name(cmd.name.as_deref(), source);
+    let full_label = match &cmd.name {
+        Some(_) => crate::commands::format_command_label(&hook_type.to_string(), Some(&summary)),
+        None => format!("Running {hook_type} {summary} hook"),
+    };
+    let message = match display_path {
+        Some(path) => {
+            let path_display = format_path_for_display(path);
+            cformat!("{full_label} @ <bold>{path_display}</>")
         }
-    }
-
-    /// Announce this command before execution.
-    ///
-    /// Format: "Running pre-merge user:foo" for named, "Running pre-start user hook" for unnamed
-    /// When display_path is set, appends "@ path" to show where the command runs.
-    fn announce(&self) -> anyhow::Result<()> {
-        // Named: "Running post-switch user:foo" with "user:foo" bold
-        // Unnamed: "Running post-switch user hook" with no bold
-        let full_label = match &self.prepared.name {
-            Some(n) => {
-                let display_name = format!("{}:{}", self.source, n);
-                crate::commands::format_command_label(
-                    &self.hook_type.to_string(),
-                    Some(&display_name),
-                )
-            }
-            None => format!("Running {} {} hook", self.hook_type, self.source),
-        };
-        let message = match &self.display_path {
-            Some(path) => {
-                let path_display = format_path_for_display(path);
-                cformat!("{full_label} @ <bold>{path_display}</>")
-            }
-            None => full_label,
-        };
-        eprintln!("{}", progress_message(message));
-        eprintln!("{}", format_bash_with_gutter(&self.prepared.expanded));
-        Ok(())
-    }
+        None => full_label,
+    };
+    eprintln!("{}", progress_message(message));
+    eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
 }
 
 /// Controls how hook execution should respond to failures.
@@ -90,18 +74,18 @@ pub struct HookCommandSpec<'cfg, 'vars, 'name, 'path> {
     pub display_path: Option<&'path Path>,
 }
 
-/// Prepare hook commands from both user and project configs.
+/// Prepare hook steps from both user and project configs, preserving pipeline structure.
 ///
-/// Collects commands from user config first, then project config, applying the name filter.
-/// The filter supports source prefixes: `user:foo` or `project:foo` to run only from one source.
-/// Returns a flat list of commands with source information for execution.
+/// Collects steps from user config first, then project config, applying the name filter
+/// to individual commands within each step. The filter supports source prefixes:
+/// `user:foo` or `project:foo` to run only from one source.
 ///
 /// `display_path`: When `Some`, the path is shown in hook announcements (e.g., "@ ~/repo").
 /// Use this when commands run in a different directory than where the user invoked the command.
-pub fn prepare_hook_commands(
+pub fn prepare_sourced_steps(
     ctx: &CommandContext,
     spec: HookCommandSpec<'_, '_, '_, '_>,
-) -> anyhow::Result<Vec<SourcedCommand>> {
+) -> anyhow::Result<Vec<SourcedStep>> {
     let HookCommandSpec {
         user_config,
         project_config,
@@ -115,11 +99,10 @@ pub fn prepare_hook_commands(
         .iter()
         .map(|f| ParsedFilter::parse(f))
         .collect();
-    let mut commands = Vec::new();
 
     let display_path = display_path.map(|p| p.to_path_buf());
+    let mut result = Vec::new();
 
-    // Process user config first, then project config (execution order)
     let sources = [
         (HookSource::User, user_config),
         (HookSource::Project, project_config),
@@ -128,57 +111,72 @@ pub fn prepare_hook_commands(
     for (source, config) in sources {
         let Some(config) = config else { continue };
 
-        // Skip if all filters specify a different source
         if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
             continue;
         }
 
-        let prepared = prepare_commands(config, ctx, extra_vars, hook_type, source)?;
-        let filtered = filter_by_name(prepared, &parsed_filters);
-        commands.extend(filtered.into_iter().map(|p| SourcedCommand {
-            prepared: p,
-            source,
-            hook_type,
-            display_path: display_path.clone(),
-        }));
+        let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
+        for step in steps {
+            if let Some(filtered) = filter_step_by_name(step, &parsed_filters) {
+                result.push(SourcedStep {
+                    step: filtered,
+                    source,
+                    hook_type,
+                    display_path: display_path.clone(),
+                });
+            }
+        }
     }
 
-    Ok(commands)
+    Ok(result)
 }
 
-/// Filter commands by name (returns empty vec if no names match).
-/// Empty slice matches all commands. Each filter's name component is checked
-/// independently — empty names (from `user:` or `project:`) match all commands
-/// from that source (source filtering is handled by the caller).
-fn filter_by_name(
-    commands: Vec<PreparedCommand>,
+/// Filter commands within a step by name. Returns `None` if all commands were
+/// filtered out. A `Concurrent` group reduced to one command collapses to `Single`.
+fn filter_step_by_name(
+    step: PreparedStep,
     parsed_filters: &[ParsedFilter<'_>],
-) -> Vec<PreparedCommand> {
+) -> Option<PreparedStep> {
     if parsed_filters.is_empty() {
-        return commands; // No filters = match all
+        return Some(step);
     }
-
-    // Collect the non-empty name parts from filters
     let filter_names: Vec<&str> = parsed_filters
         .iter()
         .map(|f| f.name)
         .filter(|n| !n.is_empty())
         .collect();
-
-    // If all filters have empty names (e.g., just "user:" or "project:"),
-    // match all commands (source filtering already handled by caller)
     if filter_names.is_empty() {
-        return commands;
+        return Some(step);
     }
 
-    commands
-        .into_iter()
-        .filter(|cmd| {
-            cmd.name
-                .as_deref()
-                .is_some_and(|n| filter_names.contains(&n))
+    let matches = |cmd: &PreparedCommand| {
+        cmd.name
+            .as_deref()
+            .is_some_and(|n| filter_names.contains(&n))
+    };
+
+    match step {
+        PreparedStep::Single(cmd) => matches(&cmd).then_some(PreparedStep::Single(cmd)),
+        PreparedStep::Concurrent(cmds) => {
+            let mut kept: Vec<_> = cmds.into_iter().filter(matches).collect();
+            match kept.len() {
+                0 => None,
+                1 => Some(PreparedStep::Single(kept.pop().unwrap())),
+                _ => Some(PreparedStep::Concurrent(kept)),
+            }
+        }
+    }
+}
+
+/// Count total commands across all sourced steps (for `check_name_filter_matched`).
+pub(crate) fn count_sourced_commands(steps: &[SourcedStep]) -> usize {
+    steps
+        .iter()
+        .map(|s| match &s.step {
+            PreparedStep::Single(_) => 1,
+            PreparedStep::Concurrent(cmds) => cmds.len(),
         })
-        .collect()
+        .sum()
 }
 
 /// A pipeline step with source information, for pipeline-aware execution.
@@ -528,18 +526,22 @@ pub fn run_hook_with_filter(
     spec: HookCommandSpec<'_, '_, '_, '_>,
     failure_strategy: HookFailureStrategy,
 ) -> anyhow::Result<()> {
-    let commands = prepare_hook_commands(ctx, spec)?;
+    let sourced_steps = prepare_sourced_steps(ctx, spec)?;
     let HookCommandSpec {
         user_config,
         project_config,
-        hook_type,
         name_filters,
         ..
     } = spec;
 
-    check_name_filter_matched(name_filters, commands.len(), user_config, project_config)?;
+    check_name_filter_matched(
+        name_filters,
+        count_sourced_commands(&sourced_steps),
+        user_config,
+        project_config,
+    )?;
 
-    if commands.is_empty() {
+    if sourced_steps.is_empty() {
         return Ok(());
     }
 
@@ -549,64 +551,90 @@ pub fn run_hook_with_filter(
     // shell directives back to the parent shell.
     let directive_file: Option<PathBuf> =
         std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
+    let directive_file_ref = directive_file.as_deref();
 
-    for cmd in commands {
-        cmd.announce()?;
-
-        // Lazy commands (referencing vars.) are expanded just before execution
-        // so that vars set by earlier commands in the pipeline are available.
-        let expanded = if let Some(ref template) = cmd.prepared.lazy_template {
-            let name = cmd.summary_name();
-            let context: std::collections::HashMap<String, String> =
-                serde_json::from_str(&cmd.prepared.context_json)
-                    .context("failed to deserialize context_json")?;
-            expand_shell_template(template, &context, ctx.repo, &name)?
-        } else {
-            cmd.prepared.expanded.clone()
-        };
-
-        let log_label = format!("{} {}", cmd.hook_type, cmd.summary_name());
-        if let Err(err) = execute_shell_command(
-            ctx.worktree_path,
-            &expanded,
-            Some(&cmd.prepared.context_json),
-            Some(&log_label),
-            directive_file.as_deref(),
-        ) {
-            // Extract raw message and exit code from error
-            let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
-                match wt_err {
-                    WorktrunkError::ChildProcessExited { message, code } => {
-                        (message.clone(), Some(*code))
-                    }
-                    _ => (err.to_string(), None),
-                }
-            } else {
-                (err.to_string(), None)
-            };
-
-            match &failure_strategy {
-                HookFailureStrategy::FailFast => {
-                    return Err(WorktrunkError::HookCommandFailed {
-                        hook_type,
-                        command_name: cmd.prepared.name.clone(),
-                        error: err_msg,
-                        exit_code,
-                    }
-                    .into());
-                }
-                HookFailureStrategy::Warn => {
-                    let message = match &cmd.prepared.name {
-                        Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
-                        None => format!("Command failed: {err_msg}"),
-                    };
-                    eprintln!("{}", error_message(message));
-                }
-            }
+    // Foreground hooks always execute serially, even when the prepared step is
+    // `Concurrent`. The documented contract is "for pre-* hooks, commands in a
+    // table run sequentially" (`src/cli/mod.rs`). Concurrent execution is
+    // reserved for the background pipeline runner (`run_pipeline.rs`).
+    for sourced in sourced_steps {
+        let display_path_ref = sourced.display_path.as_deref();
+        for cmd in &sourced.step.into_commands() {
+            announce_hook_command(cmd, sourced.source, sourced.hook_type, display_path_ref);
+            execute_one_hook_command(
+                ctx,
+                cmd,
+                sourced.source,
+                sourced.hook_type,
+                directive_file_ref,
+                failure_strategy,
+            )?;
         }
     }
 
     Ok(())
+}
+
+/// Execute a single prepared hook command (caller has already announced it).
+fn execute_one_hook_command(
+    ctx: &CommandContext,
+    cmd: &PreparedCommand,
+    source: HookSource,
+    hook_type: HookType,
+    directive_file: Option<&Path>,
+    failure_strategy: HookFailureStrategy,
+) -> anyhow::Result<()> {
+    let summary = command_summary_name(cmd.name.as_deref(), source);
+
+    let lazy_expanded;
+    let command_str = if let Some(template) = &cmd.lazy_template {
+        let context: std::collections::HashMap<String, String> =
+            serde_json::from_str(&cmd.context_json)
+                .context("failed to deserialize context_json")?;
+        lazy_expanded = expand_shell_template(template, &context, ctx.repo, &summary)?;
+        &lazy_expanded
+    } else {
+        &cmd.expanded
+    };
+
+    let log_label = format!("{hook_type} {summary}");
+
+    let Err(err) = execute_shell_command(
+        ctx.worktree_path,
+        command_str,
+        Some(&cmd.context_json),
+        Some(&log_label),
+        directive_file,
+    ) else {
+        return Ok(());
+    };
+
+    let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
+        match wt_err {
+            WorktrunkError::ChildProcessExited { message, code } => (message.clone(), Some(*code)),
+            _ => (err.to_string(), None),
+        }
+    } else {
+        (err.to_string(), None)
+    };
+
+    match failure_strategy {
+        HookFailureStrategy::FailFast => Err(WorktrunkError::HookCommandFailed {
+            hook_type,
+            command_name: cmd.name.clone(),
+            error: err_msg,
+            exit_code,
+        }
+        .into()),
+        HookFailureStrategy::Warn => {
+            let message = match &cmd.name {
+                Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
+                None => format!("Command failed: {err_msg}"),
+            };
+            eprintln!("{}", error_message(message));
+            Ok(())
+        }
+    }
 }
 
 /// Look up user and project configs for a given hook type.

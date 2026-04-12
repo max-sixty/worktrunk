@@ -120,20 +120,21 @@ impl AliasOptions {
                     if i >= args.len() {
                         bail!("--var requires a KEY=VALUE argument");
                     }
-                    let pair = parse_var(&args[i])?;
+                    let pair =
+                        crate::cli::parse_key_val(&args[i]).map_err(|e| anyhow::anyhow!(e))?;
                     vars.push(pair);
                 }
                 arg if arg.starts_with("--var=") => {
-                    let pair = parse_var(arg.strip_prefix("--var=").unwrap())?;
+                    let pair = crate::cli::parse_key_val(arg.strip_prefix("--var=").unwrap())
+                        .map_err(|e| anyhow::anyhow!(e))?;
                     vars.push(pair);
                 }
                 arg if arg.starts_with("--") => {
                     let rest = &arg[2..];
-                    if let Some((key, value)) = rest.split_once('=') {
-                        if key.is_empty() {
-                            bail!("Variable name must not be empty (got '--={value}')");
-                        }
-                        vars.push((key.replace('-', "_"), value.to_string()));
+                    if rest.contains('=') {
+                        let pair =
+                            crate::cli::parse_key_val(rest).map_err(|e| anyhow::anyhow!(e))?;
+                        vars.push(pair);
                     } else {
                         bail!(
                             "Unknown flag '{arg}' for alias '{name}' (use --{rest}=VALUE to pass a variable)"
@@ -154,14 +155,6 @@ impl AliasOptions {
             vars,
         })
     }
-}
-
-fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
-    let (key, value) = s.split_once('=').context("--var value must be KEY=VALUE")?;
-    if key.is_empty() {
-        bail!("--var key must not be empty (got '={value}')");
-    }
-    Ok((key.replace('-', "_"), value.to_string()))
 }
 
 /// Determine whether an alias requires project-config approval.
@@ -781,11 +774,11 @@ cmd = [
         use insta::assert_snapshot;
         assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
         assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
-        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"--var value must be KEY=VALUE");
+        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"invalid KEY=VALUE: no `=` found in `noequals`");
         assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unknown flag '--verbose' for alias 'deploy' (use --verbose=VALUE to pass a variable)");
         assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
-        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"--var key must not be empty (got '=value')");
-        assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"Variable name must not be empty (got '--=value')");
+        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
+        assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
     }
 
     #[test]

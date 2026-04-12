@@ -45,5 +45,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m pre-merge project hook would run:
+[2m○[22m pre-merge [1mproject[22m hook would run:
 [107m [0m [2m[0m[2m[34mecho[0m[2m branch=main

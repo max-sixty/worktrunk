@@ -133,16 +133,32 @@
 //!
 //! Every other task re-runs on each invocation.
 //!
+//! ### Already optimized (not cache candidates)
+//!
+//! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
+//!   (~11ms for all branches); per-branch tasks read the in-memory cache
+//! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
+//!
 //! ### Cacheable but uncached
 //!
-//! A few tasks take ref *names* and reduce to a SHA pair once the refs are resolved. Same
-//! SHA-pair pattern as `sha_cache`, just not wired up yet:
+//! - `Upstream` — `ahead_behind()` against the tracking branch; same SHA-pair
+//!   pattern as `sha_cache`, just not wired up yet
 //!
-//! - `AheadBehind` — counts against the default branch
-//! - `CommittedTreesMatch` — tree equality against the integration target
-//! - `Upstream` — ahead/behind counts against the tracking branch
+//! ### Cached via tree SHA
 //!
-//! Reuse `sha_cache` for any of these rather than inventing a new scheme.
+//! `WorkingTreeConflicts` uses `git write-tree` to snapshot the index as a tree SHA,
+//! then checks for merge conflicts via `has_merge_conflicts_by_tree`. The tree SHA is
+//! content-addressed and stable — identical index state produces the same SHA.
+//!
+//! When there are unstaged modifications or untracked files, the task copies the
+//! index to a temp file, runs `git add -A` to stage all working tree content,
+//! then `write-tree`.
+//!
+//! The cache key is `(base_commit_sha, branch_head_sha+tree_sha)`. The branch HEAD
+//! SHA captures the merge-base dependency. On cache miss, `has_merge_conflicts_by_tree`
+//! creates an ephemeral commit via `git commit-tree` for merge-tree; on cache hit,
+//! no commit is created. This makes the cache-hit path a single `git write-tree`
+//! (~15ms) instead of the previous `git stash create` (~50-265ms).
 //!
 //! ### Cached via tree SHA
 //!

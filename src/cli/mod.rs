@@ -8,7 +8,7 @@ pub(crate) use config::{
     ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
     HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
 };
-pub(crate) use hook::HookCommand;
+pub(crate) use hook::{HookCommand, rewrite_var_shorthand};
 pub(crate) use list::ListSubcommand;
 pub(crate) use step::StepCommand;
 
@@ -16,34 +16,25 @@ use clap::builder::styling::{AnsiColor, Color, Styles};
 use clap::{Args, Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::sync::OnceLock;
-use worktrunk::config::{DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS};
 
 use crate::commands::Shell;
 
-/// Parse key=value string into a tuple, validating that the key is a known template variable.
+/// Parse `KEY=VALUE` string into a tuple for `--var` on hook commands.
 ///
-/// Used by the `--var` flag on hook commands to override built-in template variables.
-/// Values are shell-escaped during template expansion (see `expand_template` in expansion.rs).
-pub(super) fn parse_key_val(s: &str) -> Result<(String, String), String> {
-    let (key, value) = s
-        .split_once('=')
-        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
-    if key.is_empty() {
-        return Err("invalid KEY=VALUE: key cannot be empty".to_string());
-    }
-    if !TEMPLATE_VARS.contains(&key) && !DEPRECATED_TEMPLATE_VARS.contains(&key) {
-        return Err(format!(
-            "unknown variable `{key}`; valid variables: {} (deprecated: {})",
-            TEMPLATE_VARS.join(", "),
-            DEPRECATED_TEMPLATE_VARS.join(", ")
-        ));
-    }
-    Ok((key.to_string(), value.to_string()))
+/// Accepts any variable name — built-in template variables (branch, target, …)
+/// are overridden; custom names are injected into the template context so hooks
+/// can reference `{{ my_var }}`. Hyphens in key names are canonicalized to
+/// underscores (minijinja parses `{{ my-var }}` as subtraction).
+///
+/// Values are shell-escaped during template expansion (see `expand_template`).
+pub(crate) fn parse_key_val(s: &str) -> Result<(String, String), String> {
+    let (key, value) = parse_vars_assignment(s)?;
+    Ok((key.replace('-', "_"), value))
 }
 
 /// Parse KEY=VALUE string for `wt config state vars set`.
 ///
-/// Like `parse_key_val`, but without template variable name validation.
+/// Like `parse_key_val`, but without hyphen→underscore canonicalization.
 /// Key validation is deferred to `validate_vars_key` in the command handler.
 pub(super) fn parse_vars_assignment(s: &str) -> Result<(String, String), String> {
     let (key, value) = s
@@ -1404,14 +1395,13 @@ $ wt hook pre-merge test build   # Run hooks named "test" and "build"
 $ wt hook pre-merge user:        # Run all user hooks
 $ wt hook pre-merge project:     # Run all project hooks
 $ wt hook pre-merge user:test    # Run only user's "test" hook
-$ wt hook pre-merge project:test # Run only project's "test" hook
 $ wt hook pre-merge --yes        # Skip approval prompts (for CI)
-$ wt hook pre-start --var branch=feature/test     # Override template variable
+$ wt hook pre-start --branch=feature/test    # Override a template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context.
+Any unknown `--KEY=VALUE` flag is treated as a template variable assignment — useful for testing hooks with different contexts without switching to that context. The long form `--var KEY=VALUE` is equivalent and remains the escape hatch when a variable name collides with a built-in flag (e.g. `config`, `yes`, `dry-run`, `foreground`, `verbose`).
 
 # Pipeline Ordering [experimental]
 
