@@ -276,6 +276,17 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
 /// serially — a compat fallback for the **deprecated** pre-hook table form.
 /// The canonical pre-* hook shape is a list of `Single` steps; concurrent
 /// execution is reserved for aliases and the background pipeline runner.
+///
+/// TODO(unify-hook-alias): this function centralized dispatch but left four
+/// per-origin branch points. Follow-ups to collapse them:
+///   1. Unify the error type: one `CommandFailed { origin_label, exit_code,
+///      message }` lets `handle_command_error` drop its origin match.
+///   2. Unify announcement policy (decide per-command vs single-summary for
+///      both); `announce_command`'s dispatch disappears.
+///   3. Push log/expansion labels onto `PreparedCommand` at prep time so
+///      `command_log_label` / `expansion_label` go away.
+///   4. Longer term: treat hooks as aliases bound to triggers so `hooks.rs`
+///      becomes a trigger-dispatcher + config loader over the alias machinery.
 pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
