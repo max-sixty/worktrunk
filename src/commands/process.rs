@@ -212,20 +212,43 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
-/// Build a [`Command`] that runs `program` at nice 19 when `low_priority` is set.
+/// Build a [`Command`] that runs `program` at lowered priority when `low_priority`
+/// is set.
 ///
 /// Used by the detached-spawn paths so internal cleanup ops (`wt remove`'s background
-/// `rm -rf`, trash sweep) don't compete with foreground work. The nice value is
-/// inherited across `fork`/`exec`, so wrapping the outer shell or the target binary
-/// is enough — any children inherit it too.
+/// `rm -rf`, trash sweep) don't compete with foreground work. The policy is inherited
+/// by children, so wrapping the outer shell or the target binary covers any grand-
+/// children too. Shells out for the same reason as
+/// [`worktrunk::copy::lower_process_priority`] — `forbid(unsafe_code)` rules out a
+/// direct `setpriority(2)` / `setiopolicy_np(3)` call.
+///
+/// - **macOS**: `/usr/sbin/taskpolicy -b` puts the child into `PRIO_DARWIN_BG`, which
+///   lowers CPU scheduling *and* throttles disk + network I/O (see `setpriority(2)`).
+///   `nice(1)`/`renice(8)` only touch CPU on Darwin, which leaves the dominant cost
+///   of `rm -rf` on APFS un-throttled. `taskpolicy` takes `program` as a positional
+///   arg (no `--` separator accepted); safe here because callers pass `sh` or an
+///   absolute path.
+/// - **Linux/other Unix**: `nice -n 19` — CPU only. Chaining `ionice -c 3` would cover
+///   I/O too, but `ionice` isn't guaranteed in base util-linux and making it
+///   mandatory here would fail the spawn outright. The self-lowering path in
+///   `copy.rs` does best-effort `ionice` since an individual `.status()` failure is
+///   ignored.
 #[cfg(unix)]
 fn low_priority_command(program: impl AsRef<std::ffi::OsStr>, low_priority: bool) -> Command {
-    if low_priority {
+    if !low_priority {
+        return Command::new(program);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = Command::new("/usr/sbin/taskpolicy");
+        cmd.arg("-b").arg(program);
+        cmd
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
         let mut cmd = Command::new("nice");
         cmd.arg("-n").arg("19").arg("--").arg(program);
         cmd
-    } else {
-        Command::new(program)
     }
 }
 
@@ -235,8 +258,9 @@ fn low_priority_command(program: impl AsRef<std::ffi::OsStr>, low_priority: bool
 /// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
 /// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
 ///
-/// Internal ops (`HookLog::Internal`) are run at nice 19 so their I/O and CPU don't
-/// compete with user-visible work; user hooks run at normal priority.
+/// Internal ops (`HookLog::Internal`) are run at lowered priority (`taskpolicy -b`
+/// on macOS, `nice -n 19` elsewhere — see `low_priority_command`) so their I/O
+/// and CPU don't compete with user-visible work; user hooks run at normal priority.
 ///
 /// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
@@ -309,10 +333,10 @@ fn spawn_detached_unix(
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
     // Since our process is in a different group, it doesn't receive the signal.
     //
-    // For low-priority ops (internal cleanup), wrap the shell in `nice -n 19` so the
-    // backgrounded command inherits nice 19. `nice` is POSIX and shipped in base
-    // macOS/Linux; a missing binary would fail the spawn (tolerable — these are the
-    // same environments where `renice` is already assumed present elsewhere).
+    // For low-priority ops (internal cleanup), wrap the shell via `low_priority_command`
+    // (`taskpolicy -b` on macOS, `nice -n 19` elsewhere). The policy is inherited by the
+    // backgrounded command and its grandchildren. Missing binaries would fail the spawn
+    // (tolerable — `taskpolicy` and `nice` ship in their respective base systems).
     let mut cmd = low_priority_command("sh", low_priority);
     cmd.arg("-c")
         .arg(&shell_cmd)
@@ -466,7 +490,8 @@ fn spawn_detached_exec_unix(
     use std::io::Write;
     use std::os::unix::process::CommandExt;
 
-    // See `spawn_detached_unix` for rationale on the `nice -n 19` wrapper.
+    // See `spawn_detached_unix` and `low_priority_command` for the priority-lowering
+    // rationale (macOS: `taskpolicy -b`; elsewhere: `nice -n 19`).
     let mut cmd = low_priority_command(program, low_priority);
     cmd.args(args)
         .current_dir(worktree_path)
@@ -728,29 +753,6 @@ mod tests {
     use path_slash::PathExt as _;
 
     use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn test_low_priority_command() {
-        use std::ffi::OsStr;
-
-        let cmd = low_priority_command("sh", true);
-        assert_eq!(cmd.get_program(), "nice");
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            &[
-                OsStr::new("-n"),
-                OsStr::new("19"),
-                OsStr::new("--"),
-                OsStr::new("sh"),
-            ]
-        );
-
-        let cmd = low_priority_command("sh", false);
-        assert_eq!(cmd.get_program(), "sh");
-        assert_eq!(cmd.get_args().count(), 0);
-    }
 
     #[test]
     fn test_sanitize_for_filename() {
