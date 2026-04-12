@@ -61,7 +61,7 @@ impl UserConfig {
             None => path::config_path().ok_or_else(|| ConfigError(NO_CONFIG_DIR_MSG.into()))?,
         };
         let _lock = acquire_config_lock(&path)?;
-        self.reload_projects_from(&path)?;
+        self.reload_from(&path)?;
 
         if mutate(self) {
             self.save_to(&path)?;
@@ -69,14 +69,16 @@ impl UserConfig {
         Ok(())
     }
 
-    /// Reload only the projects section from disk, preserving other in-memory state
+    /// Reload all fields from disk so the in-memory config matches the current
+    /// file state before applying mutations.
     ///
-    /// This replaces the in-memory projects with the authoritative disk state,
-    /// while keeping other config values (worktree-path, commit-generation, etc.).
-    /// Callers should reload before modifying and saving to avoid race conditions.
-    fn reload_projects_from(&mut self, path: &std::path::Path) -> Result<(), ConfigError> {
+    /// The diff-based `save_to` writes ALL serializable fields, so the reload
+    /// must refresh everything to avoid overwriting concurrent manual edits
+    /// with stale in-memory data. After reload, the mutator applies its
+    /// specific change, and `save_to` persists the full state.
+    fn reload_from(&mut self, path: &std::path::Path) -> Result<(), ConfigError> {
         if !path.exists() {
-            return Ok(()); // Nothing to reload
+            return Ok(());
         }
 
         let content = std::fs::read_to_string(path).map_err(|e| {
@@ -96,8 +98,7 @@ impl UserConfig {
             ))
         })?;
 
-        // Replace in-memory projects with disk state (disk is authoritative)
-        self.projects = disk_config.projects;
+        *self = disk_config;
 
         Ok(())
     }
