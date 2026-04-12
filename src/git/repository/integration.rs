@@ -62,13 +62,13 @@ impl Repository {
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::probe_cache::get_is_ancestor(self, &base_sha, &head_sha) {
+        if let Some(cached) = super::sha_cache::get_is_ancestor(self, &base_sha, &head_sha) {
             return Ok(cached);
         }
 
         let result =
             self.run_command_check(&["merge-base", "--is-ancestor", &base_sha, &head_sha])?;
-        super::probe_cache::put_is_ancestor(self, &base_sha, &head_sha, result);
+        super::sha_cache::put_is_ancestor(self, &base_sha, &head_sha, result);
         Ok(result)
     }
 
@@ -102,21 +102,21 @@ impl Repository {
         let target_sha = self.rev_parse_commit(&target)?;
 
         if let Some(cached) =
-            super::probe_cache::get_has_added_changes(self, &branch_sha, &target_sha)
+            super::sha_cache::get_has_added_changes(self, &branch_sha, &target_sha)
         {
             return Ok(cached);
         }
 
         // Orphan branches have no common ancestor, so all their changes are unique
         let Some(merge_base) = self.merge_base(&target_sha, &branch_sha)? else {
-            super::probe_cache::put_has_added_changes(self, &branch_sha, &target_sha, true);
+            super::sha_cache::put_has_added_changes(self, &branch_sha, &target_sha, true);
             return Ok(true);
         };
 
         let range = format!("{merge_base}..{branch_sha}");
         let output = self.run_command(&["diff", "--name-only", &range])?;
         let result = !output.trim().is_empty();
-        super::probe_cache::put_has_added_changes(self, &branch_sha, &target_sha, result);
+        super::sha_cache::put_has_added_changes(self, &branch_sha, &target_sha, result);
         Ok(result)
     }
 
@@ -172,13 +172,13 @@ impl Repository {
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::probe_cache::get_merge_conflicts(self, &base_sha, &head_sha) {
+        if let Some(cached) = super::sha_cache::get_merge_conflicts(self, &base_sha, &head_sha) {
             return Ok(cached);
         }
 
         // Unrelated histories (no common ancestor) can't be merged — that's a conflict.
         if self.merge_base(&base_sha, &head_sha)?.is_none() {
-            super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
+            super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
             return Ok(true);
         }
 
@@ -187,7 +187,7 @@ impl Repository {
             self.run_command_output(&["merge-tree", "--write-tree", &base_sha, &head_sha])?;
 
         if output.status.code() == Some(1) {
-            super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
+            super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
             return Ok(true);
         }
         if !output.status.success() {
@@ -197,7 +197,7 @@ impl Repository {
                 stderr.trim()
             );
         }
-        super::probe_cache::put_merge_conflicts(self, &base_sha, &head_sha, false);
+        super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, false);
         Ok(false)
     }
 
@@ -315,8 +315,7 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) =
-            super::probe_cache::get_merge_add_probe(self, &branch_sha, &target_sha)
+        if let Some(cached) = super::sha_cache::get_merge_add_probe(self, &branch_sha, &target_sha)
         {
             return Ok(cached);
         }
@@ -329,7 +328,7 @@ impl Repository {
                 would_merge_add: true,
                 is_patch_id_match: false,
             };
-            super::probe_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+            super::sha_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
             return Ok(result);
         }
 
@@ -352,7 +351,7 @@ impl Repository {
                 }
             }
         };
-        super::probe_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+        super::sha_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
         Ok(result)
     }
 
@@ -438,7 +437,7 @@ impl Repository {
     /// Resolve a ref to its commit SHA (cached).
     ///
     /// Unlike [`Self::rev_parse_tree`], this returns the commit SHA rather than the
-    /// tree SHA. Used by the persistent `probe_cache` to convert ref names into
+    /// tree SHA. Used by the persistent `sha_cache` to convert ref names into
     /// stable SHA-based cache keys before looking up cached merge-tree results.
     pub(super) fn rev_parse_commit(&self, r: &str) -> anyhow::Result<String> {
         match self.cache.commit_shas.entry(r.to_string()) {

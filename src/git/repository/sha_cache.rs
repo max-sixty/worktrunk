@@ -93,7 +93,7 @@ fn read<T: DeserializeOwned>(path: &Path) -> Option<T> {
     match serde_json::from_str::<T>(&json) {
         Ok(value) => Some(value),
         Err(e) => {
-            log::debug!("probe_cache: corrupt entry at {}: {}", path.display(), e);
+            log::debug!("sha_cache: corrupt entry at {}: {}", path.display(), e);
             None
         }
     }
@@ -106,7 +106,7 @@ fn write<T: Serialize>(path: &Path, value: &T) {
         && let Err(e) = fs::create_dir_all(parent)
     {
         log::debug!(
-            "probe_cache: failed to create dir {}: {}",
+            "sha_cache: failed to create dir {}: {}",
             parent.display(),
             e
         );
@@ -115,14 +115,14 @@ fn write<T: Serialize>(path: &Path, value: &T) {
 
     let Ok(json) = serde_json::to_string(value) else {
         log::debug!(
-            "probe_cache: failed to serialize entry for {}",
+            "sha_cache: failed to serialize entry for {}",
             path.display()
         );
         return;
     };
 
     if let Err(e) = fs::write(path, &json) {
-        log::debug!("probe_cache: failed to write {}: {}", path.display(), e);
+        log::debug!("sha_cache: failed to write {}: {}", path.display(), e);
     }
 }
 
@@ -167,11 +167,7 @@ fn sweep_lru(dir: &Path, max: usize) {
     for (path, _) in with_mtime.iter().take(excess) {
         let _ = fs::remove_file(path);
     }
-    log::debug!(
-        "probe_cache: swept {} entries from {}",
-        excess,
-        dir.display()
-    );
+    log::debug!("sha_cache: swept {} entries from {}", excess, dir.display());
 }
 
 // ============================================================================
@@ -303,7 +299,7 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
 // Maintenance
 // ============================================================================
 
-/// Clear all cached merge-probe entries, returning the count removed.
+/// Clear all cached SHA-keyed entries, returning the count removed.
 ///
 /// Called by `wt config state clear` to give users a clean slate.
 pub(crate) fn clear_all(repo: &Repository) -> usize {
