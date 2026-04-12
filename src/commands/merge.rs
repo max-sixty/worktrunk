@@ -6,11 +6,10 @@ use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
+use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
-};
+use super::hooks::{execute_hook, prepare_background_hooks, spawn_hook_pipeline};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -239,7 +238,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             &ctx,
             HookType::PreMerge,
             &extra,
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
             &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;

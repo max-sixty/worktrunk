@@ -70,10 +70,10 @@ function wt
 
     # --source: use cargo run (builds from source)
     if test $use_source = true
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file /
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
             cargo run --bin wt --quiet -- $args
     else
-        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file /
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
             $WORKTRUNK_BIN $args
     end
     set -l exit_code $status

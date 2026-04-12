@@ -1,0 +1,11 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &result)"
+---
+-[pre-merge]
+-test = "cargo test"
+-lint = "cargo clippy"
++pre-merge = [{ test = "cargo test" }, { lint = "cargo clippy" }]
+ 
+ [post-start]
+ server = "npm run dev"
