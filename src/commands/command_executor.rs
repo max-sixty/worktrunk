@@ -603,6 +603,179 @@ pub fn prepare_steps(
 mod tests {
     use super::*;
 
+    fn make_cmd(name: Option<&str>) -> PreparedCommand {
+        PreparedCommand {
+            name: name.map(String::from),
+            expanded: "echo test".to_string(),
+            context_json: "{}".to_string(),
+            lazy_template: None,
+        }
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_child_process_exited() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 42,
+            message: "command failed".into(),
+        }
+        .into();
+        let cmd = make_cmd(Some("lint"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: Some(42),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_non_child_worktrunk_error() {
+        // WorktrunkError that isn't ChildProcessExited (line 439 coverage)
+        let err: anyhow::Error = WorktrunkError::CommandNotApproved.into();
+        let cmd = make_cmd(Some("build"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_other_error() {
+        let err = anyhow::anyhow!("something else");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Hook {
+            source: HookSource::Project,
+            hook_type: HookType::PreCommit,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_alias_failfast_child_process_exited() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit 1".into(),
+        }
+        .into();
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::AlreadyDisplayed { exit_code: 1 }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_alias_failfast_other_error() {
+        let err = anyhow::anyhow!("template error");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to run alias 'deploy'"));
+        assert!(err_msg.contains("template error"));
+    }
+
+    #[test]
+    fn test_handle_command_error_warn_continues() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "lint failed".into(),
+        }
+        .into();
+        let cmd = make_cmd(Some("lint"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PostStart,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::Warn);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_command_error_warn_unnamed() {
+        let err = anyhow::anyhow!("unexpected failure");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PostStart,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::Warn);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_command_log_label() {
+        let cmd = make_cmd(Some("lint"));
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        assert_eq!(
+            command_log_label(&cmd, &hook_origin),
+            Some("pre-merge user:lint".to_string())
+        );
+
+        let alias_origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        assert_eq!(command_log_label(&cmd, &alias_origin), None);
+    }
+
+    #[test]
+    fn test_expansion_label() {
+        let cmd = make_cmd(Some("build"));
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::Project,
+            hook_type: HookType::PreStart,
+            display_path: None,
+        };
+        assert_eq!(expansion_label(&cmd, &hook_origin), "project:build");
+
+        let alias_origin = CommandOrigin::Alias { name: "ci".into() };
+        assert_eq!(expansion_label(&cmd, &alias_origin), "ci");
+    }
+
     #[test]
     fn test_template_references_var_for_vars() {
         // Real vars references
