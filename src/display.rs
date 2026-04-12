@@ -274,16 +274,13 @@ mod tests {
         // Path is main worktree
         assert_eq!(shorten_path(&main_worktree, &main_worktree), ".");
 
-        // Path is child of main worktree
+        // Path is child of main worktree (always forward-slash per display convention)
         let child = PathBuf::from(r"C:\Users\user\project\subdir");
-        assert_eq!(shorten_path(&child, &main_worktree), r".\subdir");
+        assert_eq!(shorten_path(&child, &main_worktree), "./subdir");
 
         // Path is sibling of main worktree
         let sibling = PathBuf::from(r"C:\Users\user\project.feature");
-        assert_eq!(
-            shorten_path(&sibling, &main_worktree),
-            r"..\project.feature"
-        );
+        assert_eq!(shorten_path(&sibling, &main_worktree), "../project.feature");
     }
 
     #[test]
