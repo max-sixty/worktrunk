@@ -555,7 +555,7 @@ pub fn run_hook_with_filter(
 
     // Foreground hooks always execute serially, even when the prepared step is
     // `Concurrent`. The documented contract is "for pre-* hooks, commands in a
-    // table run sequentially" (`src/cli/mod.rs:1268`). Concurrent execution is
+    // table run sequentially" (`src/cli/mod.rs`). Concurrent execution is
     // reserved for the background pipeline runner (`run_pipeline.rs`).
     for sourced in sourced_steps {
         let display_path_ref = sourced.display_path.as_deref();
