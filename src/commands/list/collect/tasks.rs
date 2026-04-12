@@ -516,7 +516,7 @@ impl Task for WorkingTreeConflictsTask {
         // produce a tree with conflict markers as content.
         let has_unmerged = status_output
             .lines()
-            .any(|l| l.len() >= 2 && l.as_bytes()[0..2].iter().any(|&b| b == b'U'));
+            .any(|l| l.len() >= 2 && l.as_bytes()[0..2].contains(&b'U'));
         if has_unmerged {
             return Ok(TaskResult::WorkingTreeConflicts {
                 item_idx: ctx.item_idx,
