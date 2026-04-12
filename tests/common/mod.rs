@@ -562,7 +562,15 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
         .ok()
         .and_then(|path| canonicalize(std::path::Path::new(&path)).ok());
     if let Some(root) = project_root {
-        settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
+        let root_str = root.to_str().unwrap();
+        // Raw (backslashes on Windows) and forward-slash forms. Worktrunk normalizes
+        // paths for display (`invocation_path`, `to_slash_lossy`), so output can use
+        // either form depending on the code path.
+        settings.add_filter(&regex::escape(root_str), "[PROJECT_ROOT]");
+        let root_str_normalized = root_str.replace('\\', "/");
+        if root_str_normalized != root_str {
+            settings.add_filter(&regex::escape(&root_str_normalized), "[PROJECT_ROOT]");
+        }
     }
 
     // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
