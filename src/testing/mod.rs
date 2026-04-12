@@ -505,32 +505,58 @@ pub trait TestRepoBase {
     }
 }
 
-/// Create a temporary file for directive output.
+/// Create a pair of temporary files for directive output (cd + exec).
 ///
-/// The shell wrapper sets WORKTRUNK_DIRECTIVE_FILE to a temp file before running wt.
-/// Use `configure_directive_file()` to set this on a Command for testing.
+/// The shell wrapper creates temp files and sets `WORKTRUNK_DIRECTIVE_CD_FILE`
+/// and `WORKTRUNK_DIRECTIVE_EXEC_FILE` before running wt. Use
+/// `configure_directive_files()` to set these on a Command for testing.
 ///
-/// Returns a tuple of (path, guard). The guard must be kept alive for the duration
-/// of the test - when dropped, the temp file is cleaned up.
-pub fn directive_file() -> (PathBuf, tempfile::TempPath) {
-    // Create temp file that persists until guard is dropped
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-
-    // Get the path before we persist
-    let path = file.path().to_path_buf();
-
-    // Convert to TempPath - file persists until TempPath is dropped
-    let guard = file.into_temp_path();
-
-    (path, guard)
+/// Returns `(cd_path, exec_path, guards)`. The guards must be kept alive for
+/// the duration of the test — when dropped the temp files are cleaned up.
+pub fn directive_files() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
+    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
+    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
+    let cd_path = cd.path().to_path_buf();
+    let exec_path = exec.path().to_path_buf();
+    (
+        cd_path,
+        exec_path,
+        (cd.into_temp_path(), exec.into_temp_path()),
+    )
 }
 
-/// Configure a Command to use directive file mode.
+/// Configure a Command to use the new split directive-file protocol.
 ///
-/// Sets the WORKTRUNK_DIRECTIVE_FILE environment variable to the given path.
-/// The wt binary will write shell directives (like cd) to this file instead of
-/// executing them directly.
-pub fn configure_directive_file(cmd: &mut Command, path: &Path) {
+/// Sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE` env
+/// vars so the wt binary writes a raw path to the cd file and arbitrary shell
+/// to the exec file.
+pub fn configure_directive_files(cmd: &mut Command, cd_path: &Path, exec_path: &Path) {
+    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
+    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", exec_path);
+}
+
+/// Configure a Command to use the split directive-file protocol with only the
+/// CD file (EXEC scrubbed). This simulates running inside an alias/hook body
+/// where the EXEC env var was stripped.
+pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
+    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
+}
+
+/// Create a temporary file for legacy single-file directive output.
+///
+/// Used to test the legacy fallback path where an old shell wrapper sets
+/// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
+pub fn legacy_directive_file() -> (PathBuf, tempfile::TempPath) {
+    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
+    let path = file.path().to_path_buf();
+    (path, file.into_temp_path())
+}
+
+/// Configure a Command to use the legacy single-file directive protocol.
+///
+/// Sets `WORKTRUNK_DIRECTIVE_FILE` env var (no new vars) to simulate an
+/// outdated shell wrapper that hasn't been updated to the split protocol.
+pub fn configure_legacy_directive_file(cmd: &mut Command, path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_FILE", path);
 }
 

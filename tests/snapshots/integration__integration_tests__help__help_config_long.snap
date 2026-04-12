@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_PAGER: ""
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -456,14 +456,15 @@ Override the LLM command in CI to use a mock:
 
 [32mOther environment variables[0m
 
-             Variable                                                   Purpose                                      
- ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
- [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds            
- [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                
- [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                              
- [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                     
- [2mWORKTRUNK_DIRECTIVE_FILE[0m          Internal: set by shell wrappers to enable directory changes                       
- [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)         
- [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
- [2mNO_COLOR[0m                          Disable colored output (standard)                                                 
+             Variable                                                      Purpose                                         
+ ───────────────────────────────── ─────────────────────────────────────────────────────────────────────────────────────── 
+ [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                  
+ [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                      
+ [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                    
+ [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                           
+ [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it            
+ [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file 
+ [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)               
+ [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.       
+ [2mNO_COLOR[0m                          Disable colored output (standard)                                                       
  [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY

@@ -595,8 +595,8 @@ fn exec_bash_truly_interactive(
 ///
 /// This simulates what actually happens when users run `wt switch`, etc. in their shell:
 /// 1. The `wt` function is defined (from shell integration)
-/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_FILE and runs the binary
-/// 3. The wrapper sources the directive file after wt exits (for cd, exec commands)
+/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_CD_FILE + WORKTRUNK_DIRECTIVE_EXEC_FILE
+/// 3. The wrapper reads the cd file and sources the exec file after wt exits
 /// 4. Users see stdout/stderr output in real-time
 ///
 /// Now uses PTY interactive mode for consistent behavior and potential input echoing.

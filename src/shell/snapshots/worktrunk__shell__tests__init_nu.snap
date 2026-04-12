@@ -39,12 +39,9 @@ export def "nu-complete wt" [context: string] {
     }
 }
 
-# Override wt command with file-based directive passing.
-# Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, executes directives after.
+# Override wt command with split directive passing.
+# Creates two temp files: one for cd (raw path) and one for exec (shell).
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
-#
-# Note: Nushell's `source` is parse-time only, so we can't source dynamic paths.
-# Instead, we read the directive file and execute each line.
 #
 # Nushell pipeline workaround (nushell/nushell#12643):
 #
@@ -62,7 +59,7 @@ export def "nu-complete wt" [context: string] {
 # - `list`: Direct passthrough. The binary is the last expression, so stdout
 #   streams to the terminal (progressive rendering) and flows through pipes
 #   (`wt list --format json | from json`). No directive processing — `list`
-#   never emits directives. No WORKTRUNK_DIRECTIVE_FILE is set.
+#   never emits directives. No directive env vars are set.
 #
 # - Everything else: Stdout is redirected to a temp file via `o>`, then
 #   returned as the function's last expression after directive processing.
@@ -96,14 +93,15 @@ export def --env --wrapped wt [...args: string@"nu-complete wt"] {
         # terminal and flows through nushell pipelines.
         ^$worktrunk_bin ...$args
     } else {
-        let directive_file = (mktemp --tmpdir)
+        let cd_file = (mktemp --tmpdir)
+        let exec_file = (mktemp --tmpdir)
         let stdout_file = (mktemp --tmpdir)
 
         # Capture stdout to file for pipeline passthrough; stderr flows to terminal.
         # Nushell 0.98+ throws ShellError on non-zero exit (like bash `set -e`).
         # `try` catches it so directive processing and temp file cleanup still run.
         let exit_code = (try {
-            with-env { WORKTRUNK_DIRECTIVE_FILE: $directive_file } {
+            with-env { WORKTRUNK_DIRECTIVE_CD_FILE: $cd_file, WORKTRUNK_DIRECTIVE_EXEC_FILE: $exec_file } {
                 ^$worktrunk_bin ...$args o> $stdout_file
             }
             0
@@ -111,30 +109,26 @@ export def --env --wrapped wt [...args: string@"nu-complete wt"] {
             $env.LAST_EXIT_CODE
         })
 
-        # Process directive file line by line
-        if ($directive_file | path exists) and (open $directive_file --raw | str trim | is-not-empty) {
-            let directives = open $directive_file --raw | str trim | lines
+        # cd file holds a raw path — no shell parsing needed
+        if ($cd_file | path exists) and (open $cd_file --raw | str trim | is-not-empty) {
+            let target_dir = open $cd_file --raw | str trim
+            cd $target_dir
+        }
+
+        # exec file holds arbitrary shell (e.g. from --execute).
+        # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
+        # Env changes (export) won't persist in the nushell session, but no
+        # worktrunk code emits export directives.
+        if ($exec_file | path exists) and (open $exec_file --raw | str trim | is-not-empty) {
+            let directives = open $exec_file --raw | str trim | lines
             for directive in $directives {
-                if ($directive | str starts-with "cd '") {
-                    # Parse cd command: worktrunk emits "cd '<path>'" with POSIX quoting.
-                    # Strip the "cd '" prefix and trailing "'" to extract the raw path.
-                    # Note: paths with embedded single quotes use POSIX '\'' escaping,
-                    # which this doesn't handle. A future improvement could have worktrunk
-                    # emit raw paths instead of POSIX shell commands, letting each shell
-                    # construct its native cd syntax.
-                    let target_dir = $directive | str substring 4..-2
-                    cd $target_dir
-                } else if ($directive | is-not-empty) {
-                    # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
-                    # --execute commands are user-provided shell expressions that expect
-                    # this. Env changes (export) won't persist in the nushell session,
-                    # but no worktrunk code emits export directives.
+                if ($directive | is-not-empty) {
                     ^sh -c $directive
                 }
             }
         }
 
-        rm -f $directive_file
+        rm -f $cd_file $exec_file
         let output = (open $stdout_file --raw)
         rm -f $stdout_file
 

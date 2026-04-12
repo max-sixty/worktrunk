@@ -1,105 +1,57 @@
-//! Security tests for shell script injection vulnerabilities
+//! Security tests for shell injection vulnerabilities
 //!
-//! # Attack Surface Analysis
+//! # Security Model: Split Directive Protocol
 //!
-//! Worktrunk uses a file-based directive protocol for shell integration. When `WORKTRUNK_DIRECTIVE_FILE`
-//! env var is set (pointing to a temp file), the wt binary:
-//! - Streams all user-visible output (progress, errors, hints) to stderr in real-time
-//! - Writes shell directives (cd commands, exec commands) to the directive file
+//! Worktrunk uses two directive files with different trust levels:
 //!
-//! The shell wrapper sources the directive file after wt exits:
-//! ```bash
-//! directive_file="$(mktemp)"
-//! WORKTRUNK_DIRECTIVE_FILE="$directive_file" wt ... || exit_code=$?
-//! source "$directive_file"
-//! ```
+//! - **CD file** (`WORKTRUNK_DIRECTIVE_CD_FILE`): Contains a raw path. The shell
+//!   wrapper runs `cd -- "$(< file)"`. Because the file is never sourced as
+//!   shell, there is **no injection surface** — even a malicious path cannot
+//!   inject commands. This file is safe to pass through to alias/hook bodies.
 //!
-//! ## Vulnerability: Shell Injection
+//! - **EXEC file** (`WORKTRUNK_DIRECTIVE_EXEC_FILE`): Contains arbitrary shell
+//!   (from `--execute`). The wrapper sources it. Only wt-internal Rust code
+//!   writes to this file — it is scrubbed from alias/hook child environments.
 //!
-//! If external content (branch names, file paths, git output) can inject malicious shell
-//! code into the directive file, the shell wrapper will execute it. This is analogous to SQL injection
-//! or command injection vulnerabilities.
+//! ## Defense in Depth
 //!
-//! ## Attack Vectors
+//! Multiple layers prevent injection even if one layer fails:
 //!
-//! ### 1. Path Injection via Single Quote Escaping (HIGH RISK if not escaped)
+//! 1. **Protocol separation**: CD file is a raw path (no shell parsing); EXEC
+//!    file is only written by Rust code, never by external content.
 //!
-//! Paths are emitted in single quotes: `cd '/path/to/worktree'`
-//! Single quotes prevent most shell metacharacter expansion, but embedded single quotes
-//! could break out of the quoting if not properly escaped.
+//! 2. **Channel separation**: User messages go to stderr; directive files are
+//!    separate. Malicious content in stderr cannot reach the directive files.
 //!
-//! **Example attack (if unescaped):**
-//! ```bash
-//! # Create directory with malicious name
-//! mkdir "test'; rm -rf /; echo '"
-//! WORKTRUNK_DIRECTIVE_FILE=/tmp/d wt switch branch  # If cd emits: cd 'test'; rm -rf /; echo ''
-//! ```
+//! 3. **Git layer**: Git REJECTS invalid characters in ref names (NUL, most
+//!    control characters, shell metacharacters like backtick).
 //!
-//! **Protection:** All paths are escaped using `replace('\'', "'\\''")` pattern,
-//! which is the standard POSIX approach for embedding single quotes in single-quoted strings.
+//! 4. **Filesystem layer**: OS enforces valid path characters (NUL is
+//!    universally invalid in paths).
 //!
-//! ### 2. Execute Command Injection (LOW RISK - user-controlled)
+//! 5. **Legacy escaping** (compat path only): When the pre-split legacy
+//!    wrapper is active, paths use POSIX single-quote escaping (`'\''`),
+//!    which handles `$`, `` ` ``, `;`, `&`, `|`, spaces, etc.
 //!
-//! The `--execute` flag lets users specify shell commands to run. This is intentionally
-//! user-controlled and not an injection vector (users can already run arbitrary commands).
+//! ## What These Tests Verify
 //!
-//! ### 3. Branch Name in Output (NO RISK)
+//! The CD file holds a raw path, so path-based shell injection is structurally
+//! impossible. These tests verify the remaining attack surface:
 //!
-//! Branch names appear in stderr messages, not in the stdout shell script.
-//! The shell wrapper only evals stdout, so stderr content cannot be executed.
+//! 1. Branch names with shell metacharacters don't corrupt the cd path
+//! 2. Malicious branch names don't create unexpected files
+//! 3. The EXEC file only contains user-provided `--execute` content
+//! 4. Git's ref-name validation rejects the most dangerous characters
 //!
-//! ## Current Protections
+//! ## Testing Limitations
 //!
-//! **Shell script protocol with proper escaping:**
-//!
-//! 1. **Channel separation**: User messages go to stderr, shell directives go to a temp file
-//!    - Shell wrapper only sources the directive file
-//!    - Malicious content in stderr cannot be executed
-//!
-//! 2. **Path escaping**: All paths use single quotes with `'\''` escape pattern
-//!    ```rust
-//!    let escaped = path_str.replace('\'', "'\\''");
-//!    writeln!(stdout, "cd '{}'", escaped)?;
-//!    ```
-//!    This handles all shell metacharacters: `$`, `` ` ``, `;`, `&`, `|`, spaces, etc.
-//!
-//! 3. **Git layer**: Git REJECTS invalid characters in ref names
-//!
-//! 4. **Filesystem layer**: OS enforces valid path characters
-//!
-//! ## Vulnerabilities We Test
-//!
-//! This test suite verifies that user-controlled content CANNOT inject shell commands:
-//!
-//! 1. ✅ Branch names with shell metacharacters
-//! 2. ✅ Branch names with single quotes
-//! 3. ✅ Paths with special characters
-//! 4. ✅ Git output with shell commands
-//!
-//! ## Security Model
-//!
-//! The file-based directive protocol is secure:
-//!
-//! 1. **Simpler parsing**: Just source a file, no command substitution needed
-//! 2. **Channel separation**: Messages on stderr, directives in temp file
-//! 3. **Standard escaping**: Uses well-understood POSIX single-quote escaping
-//! 4. **Smaller attack surface**: Only cd and exec commands in directive file
-//!
-//! ### Testing Limitations
-//!
-//! These tests verify that:
-//! - Path escaping is correct for shell metacharacters
-//! - Branch names with special characters don't break quoting
-//!
-//! However, they DON'T fully test shell execution security because:
-//! - Tests run the Rust binary, not the shell wrapper
-//! - Full end-to-end tests with malicious shell wrapper input are in `shell_wrapper.rs`
-//!
-//! For comprehensive security testing, see `tests/integration_tests/shell_wrapper.rs` which
-//! tests the full shell integration pipeline.
+//! These tests run the Rust binary, not the shell wrapper. They verify that
+//! directive file contents are safe, but they don't test that the wrapper
+//! handles the files correctly. Full end-to-end tests with the shell wrapper
+//! are in `tests/integration_tests/shell_wrapper.rs`.
 
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, repo, setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_files, directive_files, repo, setup_snapshot_settings, wt_command,
 };
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
@@ -204,10 +156,10 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -241,10 +193,10 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -340,10 +292,10 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
@@ -364,10 +316,10 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("switch")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
@@ -406,10 +358,10 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)

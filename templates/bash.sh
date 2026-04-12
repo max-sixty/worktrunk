@@ -3,8 +3,8 @@
 # Only initialize if {{ cmd }} is available (in PATH or via WORKTRUNK_BIN)
 if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
-    # Override {{ cmd }} command with file-based directive passing.
-    # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, sources it after.
+    # Override {{ cmd }} command with split directive passing.
+    # Creates two temp files: one for cd (raw path) and one for exec (shell).
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     {{ cmd }}() {
         local use_source=false
@@ -14,7 +14,7 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             if [[ "$arg" == "--source" ]]; then use_source=true; else args+=("$arg"); fi
         done
 
-        # Completion mode: call binary directly, no directive file needed.
+        # Completion mode: call binary directly, no directive files needed.
         # This check MUST be here (not in the binary) because clap's completion
         # handler runs before argument parsing.
         if [[ -n "${COMPLETE:-}" ]]; then
@@ -22,24 +22,38 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             return
         fi
 
-        local directive_file exit_code=0
-        directive_file="$(mktemp)"
+        local cd_file exec_file exit_code=0
+        cd_file="$(mktemp)"
+        exec_file="$(mktemp)"
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+                cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
         else
-            WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+                command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
         fi
 
-        if [[ -s "$directive_file" ]]; then
-            source "$directive_file"
+        # cd file holds a raw path (no shell escaping needed)
+        if [[ -s "$cd_file" ]]; then
+            cd -- "$(<"$cd_file")"
+            local cd_exit=$?
             if [[ $exit_code -eq 0 ]]; then
-                exit_code=$?
+                exit_code=$cd_exit
             fi
         fi
 
-        rm -f "$directive_file"
+        # exec file holds arbitrary shell (e.g. from --execute)
+        if [[ -s "$exec_file" ]]; then
+            source "$exec_file"
+            local src_exit=$?
+            if [[ $exit_code -eq 0 ]]; then
+                exit_code=$src_exit
+            fi
+        fi
+
+        rm -f "$cd_file" "$exec_file"
         return "$exit_code"
     }
 

@@ -14,8 +14,7 @@ use super::command_executor::{
     CommandContext, PreparedCommand, PreparedStep, expand_shell_template, prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
-use crate::output::execute_shell_command;
-use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
+use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// Short summary name: "user:name" for named commands, "user" otherwise.
 pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
@@ -545,13 +544,8 @@ pub fn run_hook_with_filter(
         return Ok(());
     }
 
-    // Foreground hooks have the same trust profile as aliases — the hook body
-    // is already arbitrary shell. Pass the directive file through so inner `wt`
-    // invocations (e.g. `wt switch --create` in a pre-start hook) can write
-    // shell directives back to the parent shell.
-    let directive_file: Option<PathBuf> =
-        std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
-    let directive_file_ref = directive_file.as_deref();
+    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
+    let directives = DirectivePassthrough::inherit_from_env();
 
     // Foreground hooks always execute serially, even when the prepared step is
     // `Concurrent`. The documented contract is "for pre-* hooks, commands in a
@@ -566,7 +560,7 @@ pub fn run_hook_with_filter(
                 cmd,
                 sourced.source,
                 sourced.hook_type,
-                directive_file_ref,
+                &directives,
                 failure_strategy,
             )?;
         }
@@ -581,7 +575,7 @@ fn execute_one_hook_command(
     cmd: &PreparedCommand,
     source: HookSource,
     hook_type: HookType,
-    directive_file: Option<&Path>,
+    directives: &DirectivePassthrough,
     failure_strategy: HookFailureStrategy,
 ) -> anyhow::Result<()> {
     let summary = command_summary_name(cmd.name.as_deref(), source);
@@ -604,7 +598,7 @@ fn execute_one_hook_command(
         command_str,
         Some(&cmd.context_json),
         Some(&log_label),
-        directive_file,
+        directives.clone(),
     ) else {
         return Ok(());
     };

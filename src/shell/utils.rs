@@ -123,8 +123,8 @@ pub fn detect_zsh_compinit() -> Option<bool> {
 
     log::debug!("$ zsh -ic '{}' (probe)", probe_cmd);
 
-    let mut child = Command::new("zsh")
-        .arg("-ic")
+    let mut cmd = Command::new("zsh");
+    cmd.arg("-ic")
         .arg(probe_cmd)
         .stdin(Stdio::null()) // Prevent compinit from prompting interactively
         .stdout(Stdio::piped())
@@ -146,11 +146,9 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         //
         // Safe to suppress because we're only probing shell state, not doing anything
         // security-sensitive, and this only affects our subprocess.
-        .env("ZSH_DISABLE_COMPFIX", "true")
-        // Prevent subprocesses from writing to the directive file
-        .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .spawn()
-        .ok()?;
+        .env("ZSH_DISABLE_COMPFIX", "true");
+    crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().ok()?;
 
     let timeout = Duration::from_secs(2);
 

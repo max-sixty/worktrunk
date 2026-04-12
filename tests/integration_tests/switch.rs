@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
     setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
@@ -39,16 +39,16 @@ fn snapshot_switch_impl(
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        // Directive file guard - declared at closure scope to live through command execution
+        // Directive file guards - declared at closure scope to live through command execution
         let maybe_directive = if with_directive_file {
-            Some(directive_file())
+            Some(directive_files())
         } else {
             None
         };
 
         let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
-        if let Some((ref directive_path, ref _guard)) = maybe_directive {
-            configure_directive_file(&mut cmd, directive_path);
+        if let Some((ref cd_path, ref exec_path, ref _guard)) = maybe_directive {
+            configure_directive_files(&mut cmd, cd_path, exec_path);
         }
         if let Some(shell_path) = shell {
             cmd.env("SHELL", shell_path);
