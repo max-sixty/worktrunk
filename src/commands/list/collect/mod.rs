@@ -136,7 +136,7 @@
 //!
 //! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
 //!   (~11ms for all branches); per-branch tasks read the in-memory cache
-//! - `CommittedTreesMatch` — two in-memory-cached `rev-parse` calls (~1ms)
+//! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
 //!
 //! ### Cacheable but uncached
 //!
