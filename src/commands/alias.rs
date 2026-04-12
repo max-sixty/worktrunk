@@ -12,8 +12,9 @@
 //! - `HookStep::Concurrent` — commands spawn via `thread::scope`, all run to
 //!   completion, first error propagated
 //!
-//! In pipelines, templates referencing `vars.*` use lazy expansion — deferred
-//! until execution time so prior steps can set vars via git config.
+//! Template expansion happens at execution time (not at a separate prep step),
+//! so `vars.*` references naturally read fresh values from git config — prior
+//! steps that set vars via `wt config state vars set` are visible to later steps.
 //!
 //! ## Why concurrent execution isn't shared with `run_pipeline`
 //!
@@ -47,10 +48,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{
-    CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, expand_template,
-    template_references_var,
-};
+use worktrunk::config::{CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::styling::{
@@ -177,8 +175,7 @@ fn alias_needs_approval(
 ) -> Option<CommandConfig> {
     project_config
         .as_ref()
-        .and_then(|pc| pc.aliases.as_ref())
-        .and_then(|a| a.get(alias_name))
+        .and_then(|pc| pc.aliases.get(alias_name))
         .cloned()
 }
 
@@ -242,8 +239,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // Matches hook merge semantics — both sources run, project commands
     // need approval regardless of whether user also defines the alias.
     let mut aliases = user_config.aliases(project_id.as_deref());
-    if let Some(project_aliases) = project_config.as_ref().and_then(|pc| pc.aliases.as_ref()) {
-        append_aliases(&mut aliases, project_aliases);
+    if let Some(pc) = project_config.as_ref() {
+        append_aliases(&mut aliases, &pc.aliases);
     }
 
     // Warn about aliases that shadow built-in step commands
@@ -336,12 +333,6 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .collect();
     let context_map = build_hook_context(&ctx, &extra_refs)?;
 
-    // Convert to &str references for expand_template
-    let vars: HashMap<&str, &str> = context_map
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
     // Build JSON context for stdin
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
@@ -349,7 +340,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     if opts.dry_run {
         let expanded: Vec<_> = cmd_config
             .commands()
-            .map(|cmd| expand_template(&cmd.template, &vars, true, &repo, &opts.name))
+            .map(|cmd| expand_shell_template(&cmd.template, &context_map, &repo, &opts.name))
             .collect::<Result<_, _>>()?;
         eprintln!(
             "{}",
@@ -379,13 +370,12 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
 
     let exec = AliasExecCtx {
-        vars: &vars,
+        context_map: &context_map,
         repo: &repo,
         alias_name: &opts.name,
         wt_path: &wt_path,
         context_json: &context_json,
         directive_file: parent_directive_file.as_deref(),
-        is_pipeline: cmd_config.is_pipeline(),
     };
 
     for step in cmd_config.steps() {
@@ -417,28 +407,23 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
 
 /// Shared state for executing alias commands within a pipeline.
 struct AliasExecCtx<'a> {
-    vars: &'a HashMap<&'a str, &'a str>,
+    context_map: &'a HashMap<String, String>,
     repo: &'a Repository,
     alias_name: &'a str,
     wt_path: &'a std::path::Path,
     context_json: &'a str,
     directive_file: Option<&'a std::path::Path>,
-    is_pipeline: bool,
 }
 
 impl AliasExecCtx<'_> {
     /// Expand and execute a single alias command.
     ///
-    /// In pipelines, templates referencing `vars.*` are deferred to execution
-    /// time so that vars set by earlier steps are available.
+    /// `vars.*` references are resolved from git config at expansion time,
+    /// so prior pipeline steps that set vars via `wt config state vars set`
+    /// are visible to later steps without special lazy-expansion handling.
     fn run(&self, cmd: &worktrunk::config::Command) -> anyhow::Result<()> {
-        let command = if self.is_pipeline && template_references_var(&cmd.template, "vars") {
-            let fresh_context: HashMap<String, String> = serde_json::from_str(self.context_json)
-                .context("failed to deserialize context_json")?;
-            expand_shell_template(&cmd.template, &fresh_context, self.repo, self.alias_name)?
-        } else {
-            expand_template(&cmd.template, self.vars, true, self.repo, self.alias_name)?
-        };
+        let command =
+            expand_shell_template(&cmd.template, self.context_map, self.repo, self.alias_name)?;
         if let Err(err) = execute_shell_command(
             self.wt_path,
             &command,

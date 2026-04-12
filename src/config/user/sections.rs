@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::merge::{Merge, merge_optional};
+use super::merge::{Merge, is_default, merge_optional};
 use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
 
@@ -502,20 +502,20 @@ pub struct UserProjectOverrides {
     )]
     pub worktree_path: Option<String>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list: Option<ListConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub list: ListConfig,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<CommitConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: CommitConfig,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merge: Option<MergeConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub merge: MergeConfig,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub switch: Option<SwitchConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub switch: SwitchConfig,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<StepConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub step: StepConfig,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub aliases: BTreeMap<String, CommandConfig>,

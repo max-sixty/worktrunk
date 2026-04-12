@@ -791,11 +791,11 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Git commands cache (probe cache)
+    // Git commands cache (SHA-keyed)
     let git_dir = repo.root_path().join(".git");
-    let probe_dir = git_dir.join("wt/cache/merge-tree-conflicts");
-    std::fs::create_dir_all(&probe_dir).unwrap();
-    std::fs::write(probe_dir.join("abc123-def456.json"), "true").unwrap();
+    let sha_cache_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("abc123-def456.json"), "true").unwrap();
 
     // Logs
     let log_dir = git_dir.join("wt/logs");

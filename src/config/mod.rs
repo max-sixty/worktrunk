@@ -536,7 +536,7 @@ template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
+            let generation = config.commit.generation.as_ref();
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.template.is_some() && g.template_file.is_some())
@@ -566,7 +566,7 @@ squash-template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config.commit.as_ref().and_then(|c| c.generation.as_ref());
+            let generation = config.commit.generation.as_ref();
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())

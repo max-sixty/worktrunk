@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ConfigError;
 use super::commands::CommandConfig;
+use super::user::merge::is_default;
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
@@ -97,27 +98,25 @@ impl ProjectConfig {
     ///
     /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
-        self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
+        self.ci.platform.as_deref()
     }
 
     /// Get the forge platform override, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
-            .as_ref()
-            .and_then(|f| f.platform.as_deref())
+            .platform
+            .as_deref()
             .or_else(|| self.ci_platform())
     }
 
     /// Get the forge API hostname if configured.
     pub fn forge_hostname(&self) -> Option<&str> {
-        self.forge.as_ref().and_then(|f| f.hostname.as_deref())
+        self.forge.hostname.as_deref()
     }
 
     /// Get `wt step copy-ignored` configuration if configured.
     pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
-        self.step
-            .as_ref()
-            .and_then(|step| step.copy_ignored.as_ref())
+        self.step.copy_ignored.as_ref()
     }
 }
 
@@ -156,20 +155,20 @@ pub struct ProjectConfig {
     pub hooks: HooksConfig,
 
     /// Configuration for `wt list` output
-    #[serde(default)]
-    pub list: Option<ProjectListConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub list: ProjectListConfig,
 
     /// CI configuration (platform override). Deprecated: use `[forge]` instead.
-    #[serde(default)]
-    pub ci: Option<ProjectCiConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub ci: ProjectCiConfig,
 
     /// Forge configuration (platform detection override, API hostname)
-    #[serde(default)]
-    pub forge: Option<ProjectForgeConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub forge: ProjectForgeConfig,
 
     /// Configuration for `wt step` subcommands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<StepConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub step: StepConfig,
 
     /// \[experimental\] Command aliases for `wt step <name>`.
     ///
@@ -185,8 +184,8 @@ pub struct ProjectConfig {
     /// deploy = "cd {{ worktree_path }} && make deploy"
     /// lint = "npm run lint"
     /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, CommandConfig>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
 }
 
 impl ProjectConfig {
@@ -315,13 +314,11 @@ pre-remove = "echo bye"
 url = "http://localhost:{{ branch | hash_port }}"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.list.is_some());
-        let list = config.list.unwrap();
         assert_eq!(
-            list.url.as_deref(),
+            config.list.url.as_deref(),
             Some("http://localhost:{{ branch | hash_port }}")
         );
-        assert!(list.is_configured());
+        assert!(config.list.is_configured());
     }
 
     #[test]
@@ -330,10 +327,8 @@ url = "http://localhost:{{ branch | hash_port }}"
 [list]
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.list.is_some());
-        let list = config.list.unwrap();
-        assert!(list.url.is_none());
-        assert!(!list.is_configured());
+        assert!(config.list.url.is_none());
+        assert!(!config.list.is_configured());
     }
 
     #[test]
@@ -360,9 +355,7 @@ exclude = [".conductor/", ".entire/"]
 platform = "github"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert_eq!(ci.platform.as_deref(), Some("github"));
+        assert_eq!(config.ci.platform.as_deref(), Some("github"));
     }
 
     #[test]
@@ -372,9 +365,7 @@ platform = "github"
 platform = "gitlab"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert_eq!(ci.platform.as_deref(), Some("gitlab"));
+        assert_eq!(config.ci.platform.as_deref(), Some("gitlab"));
     }
 
     #[test]
@@ -383,9 +374,7 @@ platform = "gitlab"
 [ci]
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert!(ci.platform.is_none());
+        assert!(config.ci.platform.is_none());
     }
 
     #[test]
