@@ -27,6 +27,16 @@ pub enum PreparedStep {
     Concurrent(Vec<PreparedCommand>),
 }
 
+impl PreparedStep {
+    /// Flatten into a vec of commands (Single becomes a one-element vec).
+    pub fn into_commands(self) -> Vec<PreparedCommand> {
+        match self {
+            Self::Single(cmd) => vec![cmd],
+            Self::Concurrent(cmds) => cmds,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
     pub repo: &'a Repository,
@@ -277,47 +287,11 @@ fn expand_commands(
     Ok(result)
 }
 
-/// Prepare commands for execution.
-///
-/// Expands command templates with context variables and returns prepared
-/// commands ready for execution, each with JSON context for stdin.
-///
-/// Note: Approval logic (for project commands) is handled at the call site,
-/// not here. User commands don't require approval since users implicitly
-/// approve them by adding them to their config.
-pub fn prepare_commands(
-    command_config: &CommandConfig,
-    ctx: &CommandContext<'_>,
-    extra_vars: &[(&str, &str)],
-    hook_type: HookType,
-    source: HookSource,
-) -> anyhow::Result<Vec<PreparedCommand>> {
-    let commands: Vec<Command> = command_config.commands().cloned().collect();
-    if commands.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Lazy expansion for pipeline configs (sequential ordering guarantees vars are
-    // set by prior steps). Flat configs (concurrent table) expand eagerly.
-    let lazy = command_config.is_pipeline();
-    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source, lazy)?;
-
-    Ok(expanded_with_json
-        .into_iter()
-        .map(|(cmd, context_json, lazy_template)| PreparedCommand {
-            name: cmd.name,
-            expanded: cmd.expanded,
-            context_json,
-            lazy_template,
-        })
-        .collect())
-}
-
 /// Prepare pipeline steps for execution, preserving serial/concurrent structure.
 ///
-/// Like `prepare_commands`, but returns `Vec<PreparedStep>` that preserves
-/// the pipeline structure from the config. Used by post-* hooks that need
-/// to distinguish serial steps from concurrent groups.
+/// Returns `Vec<PreparedStep>` that preserves the pipeline structure from
+/// the config — `Single` vs `Concurrent` grouping. All hook preparation
+/// goes through this function (both foreground and background paths).
 pub fn prepare_steps(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
