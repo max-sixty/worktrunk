@@ -2978,6 +2978,70 @@ fn test_save_to_new_file_expands_nested_project_inline_tables() {
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_integer_and_array_values() {
+    // Exercises values_equal for Integer (timeout-ms) and Array
+    // (approved-commands) — types beyond String and Boolean.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"# keep comment
+[list]
+timeout-ms = 5000
+full = true
+
+[projects."repo"]
+approved-commands = ["cargo test", "cargo build"]
+"#,
+    )
+    .unwrap();
+
+    let config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(saved.contains("# keep comment"), "comment lost: {saved}");
+    assert!(
+        saved.contains("timeout-ms = 5000"),
+        "integer value should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("full = true"),
+        "boolean value should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("cargo test") && saved.contains("cargo build"),
+        "array values should be preserved: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_replaces_changed_inline_table() {
+    // When an inline table's contents actually changed, the diff-based merge
+    // replaces it (even though this changes formatting from inline to standard).
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "post-start = { build = \"cargo build\" }\n").unwrap();
+
+    // Load, modify the hook, then save
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.hooks = toml::from_str("post-start = { build = \"cargo test\" }").unwrap();
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("cargo test"),
+        "changed value should be written: {saved}"
+    );
+    assert!(
+        !saved.contains("cargo build"),
+        "old value should be gone: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_unknown_keys() {
     // Unknown top-level keys (typos, future fields) must survive a save.
     // The diff-based merge skips unknown keys in its stale-key sweep.

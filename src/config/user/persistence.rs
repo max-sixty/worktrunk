@@ -116,19 +116,12 @@ impl UserConfig {
         match (a, b) {
             (Value::String(a), Value::String(b)) => a.value() == b.value(),
             (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
-            (Value::Float(a), Value::Float(b)) => a.value() == b.value(),
             (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
-            (Value::Datetime(a), Value::Datetime(b)) => a.value() == b.value(),
             (Value::Array(a), Value::Array(b)) => {
                 a.len() == b.len()
                     && a.iter()
                         .zip(b.iter())
                         .all(|(a, b)| Self::values_equal(a, b))
-            }
-            (Value::InlineTable(a), Value::InlineTable(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .all(|(k, v)| b.get(k).is_some_and(|bv| Self::values_equal(v, bv)))
             }
             _ => false,
         }
