@@ -1,7 +1,8 @@
 use crate::common::{
-    TestRepo, configure_directive_files, configure_legacy_directive_file, directive_files,
-    legacy_directive_file, repo, repo_with_feature_worktree, repo_with_remote,
-    repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_cd_only, configure_directive_files,
+    configure_legacy_directive_file, directive_files, legacy_directive_file, repo,
+    repo_with_feature_worktree, repo_with_remote, repo_with_remote_and_feature,
+    setup_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -51,6 +52,96 @@ fn test_switch_legacy_directive_file(#[from(repo_with_remote)] mut repo: TestRep
             "Legacy directive file should contain cd command, got: {}",
             directives
         );
+    });
+}
+
+/// Legacy directive file in PowerShell mode: single quotes are doubled
+/// instead of using POSIX escaping.
+#[rstest]
+fn test_switch_legacy_directive_file_powershell(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = legacy_directive_file();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_legacy_directive_file(&mut cmd, &directive_path);
+        cmd.env("WORKTRUNK_SHELL", "powershell");
+        cmd.arg("switch")
+            .arg("feature")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Legacy directive file should contain cd command, got: {directives}",
+        );
+    });
+}
+
+/// Legacy directive file with --execute: both cd and execute commands
+/// should be written to the single file.
+#[rstest]
+fn test_switch_legacy_directive_file_with_execute(#[from(repo_with_remote)] repo: TestRepo) {
+    let (directive_path, _guard) = legacy_directive_file();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_legacy_directive_file(&mut cmd, &directive_path);
+        cmd.args([
+            "switch",
+            "--create",
+            "exec-legacy",
+            "--execute",
+            "echo hello",
+        ])
+        .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Legacy directive file should contain cd command, got: {directives}",
+        );
+        assert!(
+            directives.contains("echo hello"),
+            "Legacy directive file should contain execute command, got: {directives}",
+        );
+    });
+}
+
+/// When only the CD file is set (EXEC scrubbed — running inside an alias/hook),
+/// --execute commands are refused with a warning.
+#[rstest]
+fn test_switch_exec_scrubbed_warns(#[from(repo_with_remote)] repo: TestRepo) {
+    let (cd_path, _exec_path, _guard) = directive_files();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Only set CD file, not EXEC — simulates running inside alias/hook body
+        configure_directive_cd_only(&mut cmd, &cd_path);
+        cmd.args([
+            "switch",
+            "--create",
+            "scrub-test",
+            "--execute",
+            "echo should-not-run",
+        ])
+        .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
     });
 }
 
