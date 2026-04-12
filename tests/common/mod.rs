@@ -568,9 +568,11 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
     settings.add_filter(r"/target/llvm-cov-target/", "/target/");
 
-    // Normalize backslashes FIRST so all subsequent path filters only need forward-slash versions.
-    // This must come before any path replacement filters.
-    settings.add_filter(r"\\", "/");
+    // Deliberately no global `\\` → `/` normalization here: it corrupts
+    // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
+    // continuations) and worktrunk already emits forward-slash paths via
+    // `path_slash`. If a test produces a raw Windows path, add a specific
+    // filter for it in `add_repo_and_worktree_path_filters`.
 }
 
 fn add_repo_and_worktree_path_filters(

@@ -77,7 +77,7 @@ index 0000000..a523607
 +++ b/file1.txt
 @@ -0,0 +1 @@
 +content 1
-/ No newline at end of file
+\ No newline at end of file
 diff --git a/file2.txt b/file2.txt
 new file mode 100644
 index 0000000..9f8f8ac
@@ -85,7 +85,7 @@ index 0000000..9f8f8ac
 +++ b/file2.txt
 @@ -0,0 +1 @@
 +content 2
-/ No newline at end of file
+\ No newline at end of file
 
 </diff>
 
