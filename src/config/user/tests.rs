@@ -1840,11 +1840,7 @@ fn test_save_to_removes_default_project_section() {
 
     let mut config =
         UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config
-        .projects
-        .get_mut("github.com/u/r")
-        .unwrap()
-        .list = ListConfig::default();
+    config.projects.get_mut("github.com/u/r").unwrap().list = ListConfig::default();
     config.save_to(&config_path).unwrap();
 
     let saved = std::fs::read_to_string(&config_path).unwrap();
