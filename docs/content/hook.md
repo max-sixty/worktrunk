@@ -266,11 +266,11 @@ build = "npm run build"
 lint = "npm run lint"
 ```
 
-In summary:
+In summary, the bracket count tracks the shape:
 
-- **String** — one command
-- **Table** of `name = "command"` pairs — run concurrently
-- **`[[hook]]` blocks** — run in order, with concurrent entries per block
+- `post-start = "npm install"` — one command
+- `[post-start]` — one section of concurrent commands
+- `[[post-start]]` — one in a sequence of sections, each section runs in order
 
 ## How it works
 
