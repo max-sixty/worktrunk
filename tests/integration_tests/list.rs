@@ -2820,7 +2820,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
 ///
 /// This specifically tests the WorkingTreeConflicts task which:
-/// 1. Uses `git stash create` to get a tree object from uncommitted changes
+/// 1. Uses `git write-tree` to snapshot the index (with temp index for unstaged/untracked)
 /// 2. Runs merge-tree against the default branch to detect conflicts
 ///
 /// Both kinds of conflicts are checked in both `wt list` and `wt list --full`:
@@ -2861,7 +2861,7 @@ fn test_list_working_tree_conflicts(mut repo: TestRepo) {
 }
 
 ///
-/// Even with --full, if the working tree is clean, we skip the stash-based check
+/// Even with --full, if the working tree is clean, we skip the working-tree check
 /// and just use the commit-level conflict detection.
 #[rstest]
 fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {

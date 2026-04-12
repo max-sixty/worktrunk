@@ -406,8 +406,8 @@ impl Task for WorkingTreeDiffTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
-        // `git stash create` which needs the index lock.
+        // Use --no-optional-locks to avoid index lock contention with
+        // WorkingTreeConflictsTask's `git write-tree`.
         let status_output = wt
             .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, &e))?;
@@ -510,6 +510,20 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
+        // Unmerged entries (UU, AU, UA, DU, UD, DD, AA) mean a merge/rebase
+        // conflict is in progress. Fall back to the commit-based check to
+        // preserve prior behavior — write-tree on unmerged entries would
+        // produce a tree with conflict markers as content.
+        let has_unmerged = status_output
+            .lines()
+            .any(|l| l.len() >= 2 && l.as_bytes()[0..2].iter().any(|&b| b == b'U'));
+        if has_unmerged {
+            return Ok(TaskResult::WorkingTreeConflicts {
+                item_idx: ctx.item_idx,
+                has_working_tree_conflicts: None,
+            });
+        }
+
         // Porcelain format: XY where X=index, Y=working-tree.
         // Fast path when all changes are staged (Y is space for every line):
         // write-tree on the real index is sufficient.
@@ -519,23 +533,12 @@ impl Task for WorkingTreeConflictsTask {
             .lines()
             .any(|l| l.starts_with("??") || l.as_bytes().get(1) != Some(&b' '));
 
-        let tree_result = if needs_working_tree {
-            write_tree_with_working_tree(&wt)
+        let tree_sha = if needs_working_tree {
+            write_tree_with_working_tree(&wt).map_err(|e| ctx.error(Self::KIND, &e))?
         } else {
             wt.run_command(&["write-tree"])
                 .map(|s| s.trim().to_string())
-        };
-
-        // write-tree fails when the index has unmerged entries (merge/rebase
-        // conflict in progress). Fall back to the commit-based check.
-        let tree_sha = match tree_result {
-            Ok(sha) => sha,
-            Err(_) => {
-                return Ok(TaskResult::WorkingTreeConflicts {
-                    item_idx: ctx.item_idx,
-                    has_working_tree_conflicts: None,
-                });
-            }
+                .map_err(|e| ctx.error(Self::KIND, &e))?
         };
 
         let has_conflicts = ctx
@@ -562,6 +565,12 @@ fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Res
     let git_dir = wt.git_dir()?;
     let worktree_root = wt.root()?;
     let real_index = git_dir.join("index");
+    let log_ctx = wt
+        .path()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(".")
+        .to_string();
 
     let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
     std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
@@ -574,6 +583,7 @@ fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Res
     Cmd::new("git")
         .args(["add", "-A"])
         .current_dir(&worktree_root)
+        .context(&log_ctx)
         .env("GIT_INDEX_FILE", temp_index_path)
         .run()
         .context("Failed to stage working tree changes")?;
@@ -581,6 +591,7 @@ fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Res
     let output = Cmd::new("git")
         .args(["write-tree"])
         .current_dir(&worktree_root)
+        .context(&log_ctx)
         .env("GIT_INDEX_FILE", temp_index_path)
         .run()
         .context("Failed to write tree from temporary index")?;
