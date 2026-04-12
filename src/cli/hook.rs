@@ -283,6 +283,52 @@ mod tests {
             vec!["wt", "hook", "pre-start", "--", "--branch=x"]
         );
     }
+
+    /// Verify HOOK_SUBCOMMANDS_WITH_VARS stays in sync with HookCommand variants
+    /// that accept `--var`. If a hook subcommand is added/removed without updating
+    /// the list, this test catches the drift.
+    ///
+    /// `post-create` is a deprecated alias for `pre-start` — it appears in the
+    /// list (users can still type `wt hook post-create`) but not as a separate
+    /// clap subcommand, so it's excluded from the reverse check.
+    #[test]
+    fn test_hook_subcommands_with_vars_matches_clap() {
+        use crate::cli::Cli;
+        use clap::CommandFactory;
+
+        let app = Cli::command();
+        let hook_cmd = app
+            .get_subcommands()
+            .find(|c| c.get_name() == "hook")
+            .expect("hook subcommand exists");
+
+        let subs_with_var: Vec<&str> = hook_cmd
+            .get_subcommands()
+            .filter(|c| c.get_arguments().any(|a| a.get_id() == "vars"))
+            .map(|c| c.get_name())
+            .collect();
+
+        for name in &subs_with_var {
+            assert!(
+                HOOK_SUBCOMMANDS_WITH_VARS.contains(name),
+                "Hook subcommand '{name}' accepts --var but is missing from \
+                 HOOK_SUBCOMMANDS_WITH_VARS. Add it so --KEY=VALUE shorthand works."
+            );
+        }
+
+        // Deprecated aliases live in the list but not as separate clap subcommands
+        let deprecated_aliases: &[&str] = &["post-create"];
+        for name in HOOK_SUBCOMMANDS_WITH_VARS {
+            if deprecated_aliases.contains(name) {
+                continue;
+            }
+            assert!(
+                subs_with_var.contains(name),
+                "HOOK_SUBCOMMANDS_WITH_VARS contains '{name}' but that subcommand \
+                 doesn't accept --var. Remove it from the list."
+            );
+        }
+    }
 }
 
 // Ordering: worktree lifecycle phases (switch → start → commit → merge →

@@ -190,6 +190,8 @@ fn warn_unreferenced_custom_vars(
         .map(|f| f.name)
         .collect();
 
+    // Empty environment: every variable reference in the template appears as
+    // "undeclared", giving us the full set of referenced top-level names.
     let env = minijinja::Environment::new();
     let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
 
