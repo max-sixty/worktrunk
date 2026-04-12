@@ -273,11 +273,9 @@ pub enum Tier<T> {
     Wait,
 }
 
-
 /// Tier 1: `IsMain`. Resolves immediately since `is_main` is metadata.
 ///
 /// Returns `Fired(IsMain)` for main worktrees, `RuledOut` otherwise.
-// TODO(refresh-status-symbols): Used by `refresh_status_symbols` (step 4).
 pub fn tier_is_main(is_main: bool) -> Tier<MainState> {
     if is_main {
         Tier::Fired(MainState::IsMain)
@@ -292,7 +290,6 @@ pub fn tier_is_main(is_main: bool) -> Tier<MainState> {
 /// every lower-priority signal (ahead/behind, integration, conflict) is
 /// meaningless for them. Once we know `is_orphan == Some(true)`, the gate
 /// short-circuits without needing anything else.
-// TODO(refresh-status-symbols): Used by `refresh_status_symbols` (step 4).
 pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
     match is_orphan {
         Some(true) => Tier::Fired(MainState::Orphan),
@@ -321,7 +318,6 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
 /// - If both report "no conflict" (HEAD probe `Some(false)` and
 ///   working-tree probe either `Some(None)` or `Some(Some(false))`), rule
 ///   out.
-// TODO(refresh-status-symbols): Used by `refresh_status_symbols` (step 4).
 pub fn tier_would_conflict(
     has_merge_tree_conflicts: Option<bool>,
     has_working_tree_conflicts: Option<Option<bool>>,
@@ -358,7 +354,6 @@ pub fn tier_would_conflict(
 ///   may be `MainState::None` when there's nothing to display, which
 ///   callers should still treat as a resolved gate.)
 /// - `Wait` if either `counts` or `is_clean` is still loading.
-// TODO(refresh-status-symbols): Used by `refresh_status_symbols` (step 4).
 pub fn tier_integration_or_counts(
     counts: Option<super::stats::AheadBehind>,
     is_clean: Option<bool>,
