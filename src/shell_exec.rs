@@ -385,6 +385,59 @@ fn log_output(output: &std::process::Output) {
     }
 }
 
+/// Emit a `[wt-trace]` line plus stdout/stderr for a finished command.
+fn log_command_result(
+    context: Option<&str>,
+    cmd_str: &str,
+    ts: u64,
+    tid: u64,
+    dur_us: u64,
+    result: &std::io::Result<std::process::Output>,
+) {
+    match (result, context) {
+        (Ok(output), Some(ctx)) => {
+            log::debug!(
+                r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} ok={}"#,
+                ts,
+                tid,
+                ctx,
+                cmd_str,
+                dur_us,
+                output.status.success()
+            );
+            log_output(output);
+        }
+        (Ok(output), None) => {
+            log::debug!(
+                r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} ok={}"#,
+                ts,
+                tid,
+                cmd_str,
+                dur_us,
+                output.status.success()
+            );
+            log_output(output);
+        }
+        (Err(e), Some(ctx)) => log::debug!(
+            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} err="{}""#,
+            ts,
+            tid,
+            ctx,
+            cmd_str,
+            dur_us,
+            e
+        ),
+        (Err(e), None) => log::debug!(
+            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} err="{}""#,
+            ts,
+            tid,
+            cmd_str,
+            dur_us,
+            e
+        ),
+    }
+}
+
 /// Implementation of timeout-based command execution.
 ///
 /// Spawns reader threads to drain stdout/stderr concurrently (preventing deadlock when
@@ -826,57 +879,163 @@ impl Cmd {
 
         // Log trace
         let dur_us = t0.elapsed().as_micros() as u64;
-        match (&result, &self.context) {
-            (Ok(output), Some(ctx)) => {
-                log::debug!(
-                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} ok={}",
-                    ts,
-                    tid,
-                    ctx,
-                    cmd_str,
-                    dur_us,
-                    output.status.success()
-                );
-                log_output(output);
-            }
-            (Ok(output), None) => {
-                log::debug!(
-                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} ok={}",
-                    ts,
-                    tid,
-                    cmd_str,
-                    dur_us,
-                    output.status.success()
-                );
-                log_output(output);
-            }
-            (Err(e), Some(ctx)) => {
-                log::debug!(
-                    "[wt-trace] ts={} tid={} context={} cmd=\"{}\" dur_us={} err=\"{}\"",
-                    ts,
-                    tid,
-                    ctx,
-                    cmd_str,
-                    dur_us,
-                    e
-                );
-            }
-            (Err(e), None) => {
-                log::debug!(
-                    "[wt-trace] ts={} tid={} cmd=\"{}\" dur_us={} err=\"{}\"",
-                    ts,
-                    tid,
-                    cmd_str,
-                    dur_us,
-                    e
-                );
-            }
-        }
+        log_command_result(self.context.as_deref(), &cmd_str, ts, tid, dur_us, &result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
 
         result
+    }
+
+    /// Run `self` with its stdout piped directly into `next`'s stdin, and
+    /// return both children's captured output.
+    ///
+    /// The intermediate data (`self`'s stdout) flows between the two child
+    /// processes via an OS pipe — it never lands in our process memory or
+    /// debug logs. This keeps large intermediate outputs (for example
+    /// `git diff-tree -p | git patch-id`) out of the `-vv` trace stream, where
+    /// `log_output` would otherwise dump every line of the raw diff.
+    ///
+    /// Each command is logged and traced individually (same format as
+    /// `.run()`), so `-vv` still shows both commands and their exit status.
+    /// The returned tuple is `(source_output, sink_output)` — callers can
+    /// inspect either child's exit status and stderr. `source_output.stdout`
+    /// is empty (it was routed to the sink via OS pipe).
+    ///
+    /// Timeouts, `stdin_bytes`, and `external()` logging are not supported on
+    /// either side. The pipeline consumes one semaphore permit even though it
+    /// runs two processes concurrently — acquiring two would deadlock under
+    /// `concurrency = 1`.
+    pub fn pipe_into(
+        self,
+        next: Cmd,
+    ) -> std::io::Result<(std::process::Output, std::process::Output)> {
+        assert!(
+            !self.shell_wrap && !next.shell_wrap,
+            "Cmd::shell() commands cannot be used with pipe_into"
+        );
+        assert!(
+            self.stdin_data.is_none(),
+            "pipe_into source cannot also use stdin_bytes"
+        );
+        assert!(
+            next.stdin_data.is_none(),
+            "pipe_into sink cannot use stdin_bytes (stdin comes from source)"
+        );
+        assert!(
+            self.timeout.is_none() && next.timeout.is_none(),
+            "pipe_into does not support timeouts"
+        );
+        assert!(
+            self.external_label.is_none() && next.external_label.is_none(),
+            "pipe_into does not support external() logging"
+        );
+        debug_assert!(
+            self.directive_cd_file.is_none()
+                && self.directive_legacy_file.is_none()
+                && next.directive_cd_file.is_none()
+                && next.directive_legacy_file.is_none(),
+            "directive_*_file is only applied by .stream(), not pipe_into"
+        );
+
+        let first_cmd_str = self.command_string();
+        let second_cmd_str = next.command_string();
+        self.log_run_start(&first_cmd_str);
+        next.log_run_start(&second_cmd_str);
+
+        let _guard = semaphore().acquire();
+
+        let t0 = Instant::now();
+        let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
+        let tid = thread_id_number();
+
+        let mut first = self.direct_command();
+        self.apply_common_settings(&mut first);
+        first
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut first_child = first.spawn()?;
+        let first_stdout = first_child
+            .stdout
+            .take()
+            .expect("stdout was configured as piped");
+
+        let mut second = next.direct_command();
+        next.apply_common_settings(&mut second);
+        second
+            .stdin(Stdio::from(first_stdout))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // Spawn `next` before waiting on either child so `self`'s stdout keeps
+        // flowing through the pipe (otherwise a full pipe buffer would wedge
+        // `self`). If the spawn itself fails, clean up `self` before returning.
+        let second_child = match second.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                let _ = first_child.kill();
+                let _ = first_child.wait();
+                return Err(e);
+            }
+        };
+
+        // `first`'s stderr must be drained concurrently with `second`'s
+        // execution; otherwise pathological stderr volume (~64 KiB pipe
+        // buffer) could block `first` on write, which then never closes its
+        // stdout, which wedges `second`. Scoped thread drains in parallel.
+        let mut first_stderr_pipe = first_child
+            .stderr
+            .take()
+            .expect("stderr was configured as piped");
+
+        let (first_result, second_result, first_dur_us, second_dur_us) = std::thread::scope(|s| {
+            let stderr_thread = s.spawn(move || {
+                let mut buf = Vec::new();
+                first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
+            });
+
+            // Drain `next` first (its `wait_with_output` reads its own
+            // stdout/stderr), so `first`'s writes can complete.
+            let second_result = second_child.wait_with_output();
+            let second_dur_us = t0.elapsed().as_micros() as u64;
+
+            // Reap `first`. Its stderr is already being drained; combine
+            // the captured stderr with the exit status into an Output.
+            let first_status = first_child.wait();
+            let first_stderr = stderr_thread.join().unwrap();
+            let first_dur_us = t0.elapsed().as_micros() as u64;
+
+            let first_result = first_status.and_then(|status| {
+                first_stderr.map(|stderr| std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr,
+                })
+            });
+
+            (first_result, second_result, first_dur_us, second_dur_us)
+        });
+
+        log_command_result(
+            self.context.as_deref(),
+            &first_cmd_str,
+            ts,
+            tid,
+            first_dur_us,
+            &first_result,
+        );
+        log_command_result(
+            next.context.as_deref(),
+            &second_cmd_str,
+            ts,
+            tid,
+            second_dur_us,
+            &second_result,
+        );
+
+        Ok((first_result?, second_result?))
     }
 
     /// Execute the command with streaming output (inherits stdio).
