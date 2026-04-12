@@ -259,7 +259,7 @@ fn low_priority_command(program: impl AsRef<std::ffi::OsStr>, low_priority: bool
 /// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
 ///
 /// Internal ops (`HookLog::Internal`) are run at lowered priority (`taskpolicy -b`
-/// on macOS, `nice -n 19` elsewhere — see [`low_priority_command`]) so their I/O
+/// on macOS, `nice -n 19` elsewhere — see `low_priority_command`) so their I/O
 /// and CPU don't compete with user-visible work; user hooks run at normal priority.
 ///
 /// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
