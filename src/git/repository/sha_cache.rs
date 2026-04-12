@@ -179,7 +179,7 @@ fn sweep_lru(dir: &Path, max: usize) {
 /// Look up a cached `has_merge_conflicts(sha1, sha2)` result.
 ///
 /// The key is order-independent: `(A, B)` and `(B, A)` hit the same entry.
-pub(super) fn get_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
+pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
     let path = cache_dir(repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key(sha1, sha2));
     read::<bool>(&path)
 }
@@ -201,7 +201,7 @@ pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, val
 ///
 /// The key is order-dependent: the merge result is compared against
 /// `target`'s tree, so swapping arguments changes the semantics.
-pub(super) fn get_merge_add_probe(
+pub(super) fn merge_add_probe(
     repo: &Repository,
     branch_sha: &str,
     target_sha: &str,
@@ -231,7 +231,7 @@ pub(super) fn put_merge_add_probe(
 /// Look up a cached `is_ancestor(base_sha, head_sha)` result.
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
-pub(super) fn get_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
+pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
     let path = cache_dir(repo, KIND_IS_ANCESTOR).join(asymmetric_key(base_sha, head_sha));
     read::<bool>(&path)
 }
@@ -251,7 +251,7 @@ pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str,
 /// Look up a cached `has_added_changes(branch_sha, target_sha)` result.
 ///
 /// Asymmetric: diff from merge-base to branch is directional.
-pub(super) fn get_has_added_changes(
+pub(super) fn has_added_changes(
     repo: &Repository,
     branch_sha: &str,
     target_sha: &str,
@@ -280,7 +280,7 @@ pub(super) fn put_has_added_changes(
 /// Look up cached `branch_diff_stats(base_sha, head_sha)` result.
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
-pub(super) fn get_diff_stats(
+pub(super) fn diff_stats(
     repo: &Repository,
     base_sha: &str,
     head_sha: &str,
@@ -351,17 +351,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), None);
 
         put_merge_conflicts(&repo, "aaaa", "bbbb", true);
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), Some(true));
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), Some(true));
 
         // Symmetric: swapped args hit the same entry
-        assert_eq!(get_merge_conflicts(&repo, "bbbb", "aaaa"), Some(true));
+        assert_eq!(merge_conflicts(&repo, "bbbb", "aaaa"), Some(true));
 
         // Overwrite with a new value
         put_merge_conflicts(&repo, "aaaa", "bbbb", false);
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), Some(false));
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), Some(false));
     }
 
     #[test]
@@ -369,17 +369,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), None);
 
         let value = MergeProbeResult {
             would_merge_add: true,
             is_patch_id_match: false,
         };
         put_merge_add_probe(&repo, "aaaa", "bbbb", value);
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), Some(value));
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), Some(value));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_merge_add_probe(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(merge_add_probe(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -389,7 +389,7 @@ mod tests {
 
         put_merge_conflicts(&repo, "aaaa", "bbbb", true);
         // Same SHA pair in a different kind is a separate entry
-        assert_eq!(get_merge_add_probe(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), None);
     }
 
     #[test]
@@ -402,7 +402,7 @@ mod tests {
         let path = cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key("aaaa", "bbbb"));
         fs::write(&path, "not valid json {{{").unwrap();
 
-        assert_eq!(get_merge_conflicts(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), None);
     }
 
     // LRU sweep
@@ -645,13 +645,13 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_is_ancestor(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(is_ancestor(&repo, "aaaa", "bbbb"), None);
 
         put_is_ancestor(&repo, "aaaa", "bbbb", true);
-        assert_eq!(get_is_ancestor(&repo, "aaaa", "bbbb"), Some(true));
+        assert_eq!(is_ancestor(&repo, "aaaa", "bbbb"), Some(true));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_is_ancestor(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(is_ancestor(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -659,13 +659,13 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_has_added_changes(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(has_added_changes(&repo, "aaaa", "bbbb"), None);
 
         put_has_added_changes(&repo, "aaaa", "bbbb", false);
-        assert_eq!(get_has_added_changes(&repo, "aaaa", "bbbb"), Some(false));
+        assert_eq!(has_added_changes(&repo, "aaaa", "bbbb"), Some(false));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_has_added_changes(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(has_added_changes(&repo, "bbbb", "aaaa"), None);
     }
 
     #[test]
@@ -673,17 +673,17 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(get_diff_stats(&repo, "aaaa", "bbbb"), None);
+        assert_eq!(diff_stats(&repo, "aaaa", "bbbb"), None);
 
         let value = LineDiff {
             added: 42,
             deleted: 7,
         };
         put_diff_stats(&repo, "aaaa", "bbbb", value);
-        assert_eq!(get_diff_stats(&repo, "aaaa", "bbbb"), Some(value));
+        assert_eq!(diff_stats(&repo, "aaaa", "bbbb"), Some(value));
 
         // Asymmetric: swapped args miss
-        assert_eq!(get_diff_stats(&repo, "bbbb", "aaaa"), None);
+        assert_eq!(diff_stats(&repo, "bbbb", "aaaa"), None);
     }
 
     // Cache consultation: is_ancestor, has_added_changes, branch_diff_stats
@@ -815,10 +815,10 @@ mod tests {
         assert_eq!(cleared, 5, "should clear one entry per kind");
 
         // All kinds should be empty
-        assert_eq!(get_merge_conflicts(&repo, "a", "b"), None);
-        assert_eq!(get_merge_add_probe(&repo, "a", "b"), None);
-        assert_eq!(get_is_ancestor(&repo, "a", "b"), None);
-        assert_eq!(get_has_added_changes(&repo, "a", "b"), None);
-        assert_eq!(get_diff_stats(&repo, "a", "b"), None);
+        assert_eq!(merge_conflicts(&repo, "a", "b"), None);
+        assert_eq!(merge_add_probe(&repo, "a", "b"), None);
+        assert_eq!(is_ancestor(&repo, "a", "b"), None);
+        assert_eq!(has_added_changes(&repo, "a", "b"), None);
+        assert_eq!(diff_stats(&repo, "a", "b"), None);
     }
 }

@@ -1650,7 +1650,7 @@ remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null
     ///
     /// Includes shell integration, hooks, and saved state.
     #[command(
-        after_long_help = concat!(r#"## Examples
+        after_long_help = r#"## Examples
 
 Install shell integration (required for directory switching):
 
@@ -2136,7 +2136,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 <!-- subdoc: show -->
-<!-- subdoc: state -->"#)
+<!-- subdoc: state -->"#
     )]
     Config {
         #[command(subcommand)]

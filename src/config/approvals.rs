@@ -116,15 +116,6 @@ impl Approvals {
         Ok(approvals)
     }
 
-    /// Load approvals from a specific path (no fallback, for testing).
-    #[cfg(test)]
-    pub fn load_from_path(path: &Path) -> Result<Self, ConfigError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        Self::load_from_file(path)
-    }
-
     /// Load approvals from an approvals file, falling back to config.toml.
     ///
     /// 1. If the approvals file exists → load from it (authoritative)
@@ -403,6 +394,14 @@ mod tests {
         (temp_dir, approvals_path)
     }
 
+    /// Load approvals from a specific path (no fallback).
+    fn load_from_path(path: &Path) -> Result<Approvals, ConfigError> {
+        if !path.exists() {
+            return Ok(Approvals::default());
+        }
+        Approvals::load_from_file(path)
+    }
+
     #[test]
     fn test_empty_approvals() {
         let approvals = Approvals::default();
@@ -538,7 +537,7 @@ mod tests {
             .unwrap();
 
         // Load from disk
-        let loaded = Approvals::load_from_path(&path).unwrap();
+        let loaded = load_from_path(&path).unwrap();
         assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
         assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
     }
@@ -693,7 +692,7 @@ approved-commands = ["npm install"]
     fn test_load_from_path_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("nonexistent.toml");
-        let approvals = Approvals::load_from_path(&path).unwrap();
+        let approvals = load_from_path(&path).unwrap();
         assert!(approvals.projects.is_empty());
     }
 

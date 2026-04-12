@@ -296,7 +296,7 @@ impl Repository {
         let use_cache = sparse_paths.is_empty();
 
         if use_cache
-            && let Some(cached) = super::sha_cache::get_diff_stats(self, &base_sha, &head_sha)
+            && let Some(cached) = super::sha_cache::diff_stats(self, &base_sha, &head_sha)
         {
             return Ok(cached);
         }
