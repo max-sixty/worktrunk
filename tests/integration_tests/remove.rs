@@ -1,5 +1,5 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, configure_directive_file, directive_file,
+    BareRepoTest, TestRepo, TestRepoBase, configure_directive_files, directive_files,
     make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
@@ -41,11 +41,11 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");
 
-    // Directive file guard must live through command execution
-    let (directive_path, _guard) = directive_file();
+    // Directive file guards must live through command execution
+    let (cd_path, exec_path, _guard) = directive_files();
     assert_cmd_snapshot!({
         let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd
     });
 }
@@ -1683,14 +1683,14 @@ approved-commands = ["exit 1"]
     // Create a worktree to remove
     let worktree_path = repo.add_worktree("feature-cd-test");
 
-    // Set up directive file
-    let (directive_path, _guard) = directive_file();
+    // Set up directive files
+    let (cd_path, exec_path, _guard) = directive_files();
 
     // Run remove from within the worktree (which would trigger cd to main if it worked)
     let mut cmd = repo.wt_command();
     cmd.args(["remove", "--foreground"]);
     cmd.current_dir(&worktree_path);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     let output = cmd.output().unwrap();
 
     // Command should have failed (hook failure)
@@ -1699,12 +1699,12 @@ approved-commands = ["exit 1"]
         "Remove should fail when pre-remove hook fails"
     );
 
-    // Directive file should be empty (no cd written)
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    // CD file should be empty (no path written when hook fails)
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        !directives.contains("cd "),
-        "Directive file should NOT contain cd when hook fails, got: {}",
-        directives
+        cd_content.trim().is_empty(),
+        "CD file should be empty when hook fails, got: {}",
+        cd_content
     );
 
     // Worktree should still exist
