@@ -346,29 +346,6 @@ squash-template = """
 ## Hooks
 
 See [`wt hook`](https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](https://worktrunk.dev/config/#project-configuration) apply only to that repository.
-
-Single command:
-
-```toml
-pre-start = "npm ci"
-```
-
-Multiple named commands — concurrent for post-*, sequential for pre-*:
-
-```toml
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-```
-
-Pipeline — list of maps, run in order (each map concurrent):
-
-```toml
-post-start = [
-    { install = "npm ci" },
-    { build = "npm run build", server = "npm run dev" }
-]
-```
 <!-- USER_CONFIG_END -->
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration

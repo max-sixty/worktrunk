@@ -26,12 +26,13 @@ user-lint = "pre-commit run --all-files"
 
     // Create project config with hooks
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 "#,
     );
     repo.commit("Add project config");
@@ -82,12 +83,13 @@ fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     .unwrap();
 
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 
 [post-merge]
 deploy = "scripts/deploy.sh"
@@ -208,9 +210,10 @@ approved-commands = ["cargo build"]
 
     // Create project config with approved and unapproved hooks
     repo.write_project_config(
-        r#"[pre-merge]
-build = "cargo build"
-test = "cargo test"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 "#,
     );
     repo.commit("Add project config");

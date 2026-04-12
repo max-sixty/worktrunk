@@ -1041,9 +1041,10 @@ mod unix_tests {
         fs::write(
             config_dir.join("wt.toml"),
             r#"# Blocking commands that run before worktree is ready
-[pre-start]
-install = "echo 'Installing dependencies...'"
-build = "echo 'Building project...'"
+pre-start = [
+    {install = "echo 'Installing dependencies...'"},
+    {build = "echo 'Building project...'"},
+]
 
 # Background commands that run in parallel
 [post-start]
@@ -1091,10 +1092,11 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-format = "echo '✓ Code formatting check passed'"
-lint = "echo '✓ Linting passed - no warnings'"
-test = "echo '✓ All 47 tests passed in 2.3s'"
+            r#"pre-merge = [
+    {format = "echo '✓ Code formatting check passed'"},
+    {lint = "echo '✓ Linting passed - no warnings'"},
+    {test = "echo '✓ All 47 tests passed in 2.3s'"},
+]
 "#,
         )
         .unwrap();
@@ -1144,9 +1146,10 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-format = "echo '✓ Code formatting check passed'"
-test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
+            r#"pre-merge = [
+    {format = "echo '✓ Code formatting check passed'"},
+    {test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"},
+]
 "#,
         )
         .unwrap();
@@ -1219,9 +1222,10 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-check1 = "./mixed-output.sh check1 3"
-check2 = "./mixed-output.sh check2 3"
+            r#"pre-merge = [
+    {check1 = "./mixed-output.sh check1 3"},
+    {check2 = "./mixed-output.sh check2 3"},
+]
 "#,
         )
         .unwrap();
@@ -2384,9 +2388,10 @@ fi
         }
 
         let config_content = r#"
-[pre-merge]
-"test" = "uv run pytest"
-"lint" = "uv run ruff check"
+pre-merge = [
+    {"test" = "uv run pytest"},
+    {"lint" = "uv run ruff check"},
+]
 "#;
 
         fs::write(config_dir.join("wt.toml"), config_content).unwrap();
@@ -2609,10 +2614,11 @@ fi
 
         // Create project config with named pre-start commands
         repo.write_project_config(
-            r#"[pre-start]
-install = "echo 'Installing dependencies...'"
-build = "echo 'Building project...'"
-test = "echo 'Running tests...'"
+            r#"pre-start = [
+    {install = "echo 'Installing dependencies...'"},
+    {build = "echo 'Building project...'"},
+    {test = "echo 'Running tests...'"},
+]
 "#,
         );
         repo.commit("Add config");

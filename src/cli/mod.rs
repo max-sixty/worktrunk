@@ -1068,9 +1068,10 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
-[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
+pre-merge = [
+    {test = "cargo test"},
+    {lint = "cargo clippy"},
+]
 ```
 
 ## See also
@@ -1257,19 +1258,34 @@ Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
 
 # Configuration
 
-Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format — a single command or multiple named commands:
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format. Hooks take one of three forms.
+
+A string is a single command:
 
 ```toml
-# Single command (string)
 pre-start = "npm install"
-
-# Multiple commands (table)
-[pre-merge]
-test = "cargo test"
-build = "cargo build --release"
 ```
 
-For pre-* hooks, commands in a table run sequentially. For post-* hooks, they run concurrently in the background. Post-* hooks that need ordering guarantees can use [pipeline ordering](#pipeline-ordering).
+A table is multiple commands that run concurrently:
+
+```toml
+[post-start]
+server = "npm run dev"
+watch = "npm run watch"
+```
+
+A pipeline is a list of steps run in order, where each step is an inline table of commands that run concurrently within the step:
+
+```toml
+post-start = [
+    {install = "npm ci"},
+    {build = "npm run build", server = "npm run dev"},
+]
+```
+
+Here `install` runs first, then `build` and `server` run together.
+
+For pre-* hooks, prefer pipeline form over table form. Table form for pre-* hooks currently runs serially rather than concurrently — this inconsistency is deprecated and will change in a future version. Using pipeline form avoids the upcoming behavior change.
 
 ## Project vs user hooks
 
@@ -1492,9 +1508,10 @@ copy = "wt step copy-ignored"
 Use `pre-start` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
 
 ```toml
-[pre-start]
-copy = "wt step copy-ignored"
-install = "pnpm install"
+pre-start = [
+    {copy = "wt step copy-ignored"},
+    {install = "pnpm install"},
+]
 ```
 
 ## Dev servers
@@ -1562,13 +1579,15 @@ $ DATABASE_URL=$(wt config state vars get db_url) npm start
 Quick checks before commit, thorough validation before merge:
 
 ```toml
-[pre-commit]
-lint = "npm run lint"
-typecheck = "npm run typecheck"
+pre-commit = [
+    {lint = "npm run lint"},
+    {typecheck = "npm run typecheck"},
+]
 
-[pre-merge]
-test = "npm test"
-build = "npm run build"
+pre-merge = [
+    {test = "npm test"},
+    {build = "npm run build"},
+]
 ```
 
 ## Target-specific behavior
@@ -1599,11 +1618,24 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 ## Hook type examples
 
 ```toml
-# Single command (string) — top-level, before any table headers
 post-merge = "cargo install --path ."
 
+pre-start = [
+    {install = "npm ci"},
+    {env = "echo 'PORT={{ branch | hash_port }}' > .env.local"},
+]
+
+pre-commit = [
+    {format = "cargo fmt -- --check"},
+    {lint = "cargo clippy -- -D warnings"},
+]
+
+pre-merge = [
+    {test = "cargo test"},
+    {build = "cargo build --release"},
+]
+
 [pre-switch]
-# Pull if last fetch was more than 6 hours ago
 pull = """
 FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
 if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
@@ -1614,24 +1646,12 @@ fi
 [post-switch]
 tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
 
-[pre-start]
-install = "npm ci"
-env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
-
 [post-start]
 copy = "wt step copy-ignored"
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
-[pre-commit]
-format = "cargo fmt -- --check"
-lint = "cargo clippy -- -D warnings"
-
 [post-commit]
 notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
-
-[pre-merge]
-test = "cargo test"
-build = "cargo build --release"
 
 [pre-remove]
 archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
@@ -2004,29 +2024,6 @@ squash-template = """
 ## Hooks
 
 See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](@/config.md#project-configuration) apply only to that repository.
-
-Single command:
-
-```toml
-pre-start = "npm ci"
-```
-
-Multiple named commands — concurrent for post-*, sequential for pre-*:
-
-```toml
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-```
-
-Pipeline — list of maps, run in order (each map concurrent):
-
-```toml
-post-start = [
-    { install = "npm ci" },
-    { build = "npm run build", server = "npm run dev" }
-]
-```
 <!-- USER_CONFIG_END -->
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration

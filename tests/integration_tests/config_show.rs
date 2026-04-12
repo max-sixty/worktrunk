@@ -2962,6 +2962,45 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
+/// `wt config show` displays deprecation details for pre-* hooks in table form.
+/// Uses project config with two multi-entry pre-* tables to cover the
+/// "Project config" label and the multi-hook list form of the warning.
+#[rstest]
+fn test_config_show_displays_pre_hook_table_form_deprecation(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+
+[pre-start]
+install = "npm ci"
+env = "cp .env.example .env"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// `wt config update --yes` applies commit-generation section rename
 #[rstest]
 fn test_config_update_applies_commit_generation_migration(repo: TestRepo) {

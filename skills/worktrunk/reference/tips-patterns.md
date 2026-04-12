@@ -123,9 +123,10 @@ All gitignored files are copied by default. To limit what gets copied, create `.
 `pre-merge` hooks run before merging. Failures abort the merge:
 
 ```toml
-[pre-merge]
-"lint" = "uv run ruff check"
-"test" = "uv run pytest"
+pre-merge = [
+    {"lint" = "uv run ruff check"},
+    {"test" = "uv run pytest"},
+]
 ```
 
 This catches issues locally before pushing — like running CI locally.
