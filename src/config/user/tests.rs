@@ -1773,6 +1773,60 @@ fn test_save_to_new_file_with_worktree_path() {
     );
 }
 
+#[test]
+fn test_save_to_preserves_project_section_configs() {
+    // Exercises sync_serialized_section through the surgical-update save path
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+
+    // Create initial file with a project
+    let initial = r#"
+[projects."github.com/user/repo"]
+worktree-path = ".wt/{{ branch | sanitize }}"
+"#;
+    std::fs::write(&config_path, initial).unwrap();
+
+    // Build config with project section overrides
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some(".wt/{{ branch | sanitize }}".to_string()),
+            merge: MergeConfig {
+                squash: Some(false),
+                ..Default::default()
+            },
+            list: ListConfig {
+                full: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("squash = false"),
+        "Should serialize merge config: {saved}"
+    );
+    assert!(
+        saved.contains("full = true"),
+        "Should serialize list config: {saved}"
+    );
+
+    // Default sections should not appear
+    assert!(
+        !saved.contains("[projects.\"github.com/user/repo\".commit]"),
+        "Default commit section should not appear: {saved}"
+    );
+    assert!(
+        !saved.contains("[projects.\"github.com/user/repo\".switch]"),
+        "Default switch section should not appear: {saved}"
+    );
+}
+
 // =========================================================================
 // Per-project hooks tests (append semantics)
 // =========================================================================
