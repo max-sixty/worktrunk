@@ -639,13 +639,9 @@ mod tests {
     /// `None`-variant semantics of gate outputs.
     fn is_empty(s: &StatusSymbols) -> bool {
         let main_empty = s.main_state.is_none_or(|s| s == MainState::None);
-        let op_empty = s
-            .operation_state
-            .is_none_or(|s| s == OperationState::None);
+        let op_empty = s.operation_state.is_none_or(|s| s == OperationState::None);
         let wt_state_empty = s.worktree_state.is_none_or(|s| s == WorktreeState::None);
-        let upstream_empty = s
-            .upstream_divergence
-            .is_none_or(|s| s == Divergence::None);
+        let upstream_empty = s.upstream_divergence.is_none_or(|s| s == Divergence::None);
         let working_tree_empty = s.working_tree.is_none_or(|wt| !wt.is_dirty());
         let user_marker_empty = s.user_marker.as_ref().is_none_or(|m| m.is_none());
         main_empty

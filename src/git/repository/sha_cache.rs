@@ -280,11 +280,7 @@ pub(super) fn put_has_added_changes(
 /// Look up cached `branch_diff_stats(base_sha, head_sha)` result.
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
-pub(super) fn diff_stats(
-    repo: &Repository,
-    base_sha: &str,
-    head_sha: &str,
-) -> Option<LineDiff> {
+pub(super) fn diff_stats(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<LineDiff> {
     let path = cache_dir(repo, KIND_DIFF_STATS).join(asymmetric_key(base_sha, head_sha));
     read::<LineDiff>(&path)
 }

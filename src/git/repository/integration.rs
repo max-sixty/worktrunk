@@ -101,9 +101,7 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) =
-            super::sha_cache::has_added_changes(self, &branch_sha, &target_sha)
-        {
+        if let Some(cached) = super::sha_cache::has_added_changes(self, &branch_sha, &target_sha) {
             return Ok(cached);
         }
 
@@ -362,8 +360,7 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) = super::sha_cache::merge_add_probe(self, &branch_sha, &target_sha)
-        {
+        if let Some(cached) = super::sha_cache::merge_add_probe(self, &branch_sha, &target_sha) {
             return Ok(cached);
         }
 
