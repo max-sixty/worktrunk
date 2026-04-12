@@ -42,16 +42,18 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         # cd file holds a raw path (no shell escaping needed)
         if [[ -s "$cd_file" ]]; then
             cd -- "$(<"$cd_file")"
+            local cd_exit=$?
             if [[ $exit_code -eq 0 ]]; then
-                exit_code=$?
+                exit_code=$cd_exit
             fi
         fi
 
         # exec file holds arbitrary shell (e.g. from --execute)
         if [[ -s "$exec_file" ]]; then
             source "$exec_file"
+            local src_exit=$?
             if [[ $exit_code -eq 0 ]]; then
-                exit_code=$?
+                exit_code=$src_exit
             fi
         fi
 

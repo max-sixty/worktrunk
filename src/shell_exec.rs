@@ -291,9 +291,20 @@ pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 /// Legacy pre-split directive file env var. Honored for one release so users
 /// who upgraded `wt` without restarting their shell still get shell integration
 /// from their current session's old wrapper. When only this is set (no new
-/// vars), wt writes shell-format directives to it and emits a one-shot
-/// deprecation warning. Remove in the next breaking release.
+/// vars), wt writes shell-format directives to it. Remove in the next breaking
+/// release.
 pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
+
+/// Scrub all directive file env vars from a `std::process::Command`.
+///
+/// Prevents child processes from writing to the parent shell's directive
+/// files. Called by every code path that spawns external commands (Cmd,
+/// help pager, picker pager, background hooks, git credential helpers).
+pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
+    cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
+    cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
+    cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+}
 
 // ============================================================================
 // Thread-Local Command Timeout
@@ -598,9 +609,7 @@ impl Cmd {
         // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` (and
         // the legacy var, in compat mode) for trusted contexts — but never
         // `WORKTRUNK_DIRECTIVE_EXEC_FILE`, which carries arbitrary shell.
-        cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
-        cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+        scrub_directive_env_vars(cmd);
     }
 
     fn log_run_start(&self, cmd_str: &str) {

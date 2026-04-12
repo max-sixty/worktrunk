@@ -707,37 +707,29 @@ mod tests {
         rx.recv().unwrap();
     }
 
-    // Shell escaping tests
+    // Shell escaping tests (escape_legacy_cd)
 
     #[test]
-    fn test_shell_script_format() {
-        // Test that POSIX quoting produces correct output
-        let path = PathBuf::from("/test/path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/path'");
+    fn test_escape_legacy_cd_simple_path() {
+        let result = escape_legacy_cd(Path::new("/test/path"));
+        assert_eq!(result, "cd '/test/path'");
     }
 
     #[test]
-    fn test_path_with_single_quotes() {
-        // Paths with single quotes need escaping: ' -> '\''
-        let path = PathBuf::from("/test/it's/path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/it'\\''s/path'");
+    fn test_escape_legacy_cd_single_quotes() {
+        let result = escape_legacy_cd(Path::new("/test/it's/path"));
+        assert_eq!(result, "cd '/test/it'\\''s/path'");
     }
 
     #[test]
-    fn test_path_with_spaces() {
-        // Paths with spaces are safely quoted
-        let path = PathBuf::from("/test/my path/here");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/my path/here'");
+    fn test_escape_legacy_cd_spaces() {
+        let result = escape_legacy_cd(Path::new("/test/my path/here"));
+        assert_eq!(result, "cd '/test/my path/here'");
     }
+
+    // PowerShell branch of escape_legacy_cd is exercised via integration
+    // test `test_switch_legacy_directive_file_powershell` which sets
+    // WORKTRUNK_SHELL=powershell on the subprocess.
 
     /// Test that anstyle formatting is preserved
     #[test]

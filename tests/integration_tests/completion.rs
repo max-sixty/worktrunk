@@ -1,4 +1,8 @@
-use crate::common::{TestRepo, repo, wt_command, wt_completion_command};
+use crate::common::{
+    TestRepo,
+    mock_commands::{MockConfig, MockResponse},
+    repo, wt_command, wt_completion_command,
+};
 use insta::Settings;
 use rstest::rstest;
 
@@ -1685,4 +1689,81 @@ deploy = "make deploy"
     );
     assert!(stdout.contains("--yes"), "Missing --yes flag: {stdout}");
     assert!(stdout.contains("--var"), "Missing --var flag: {stdout}");
+}
+
+/// Prepend a directory to PATH on a Command.
+fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
+    let (path_var, current) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<std::path::PathBuf> = current
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, dir.to_path_buf());
+    let new_path = std::env::join_paths(&paths).unwrap();
+    cmd.env(path_var, new_path);
+}
+
+/// External `wt-*` binaries on PATH appear as subcommand completion candidates.
+#[rstest]
+fn test_complete_external_subcommand_listed(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create a mock wt-testext binary on PATH
+    let ext_dir = tempfile::tempdir().unwrap();
+    MockConfig::new("wt-testext")
+        .command("_default", MockResponse::output("external ran\n"))
+        .write(ext_dir.path());
+
+    // Complete "wt " — should include "testext" from the external binary
+    let mut cmd = repo.completion_cmd(&["wt", ""]);
+    prepend_path(&mut cmd, ext_dir.path());
+    cmd.env("MOCK_CONFIG_DIR", ext_dir.path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("testext"),
+        "External subcommand 'testext' missing from completion output: {stdout}"
+    );
+    // Built-in subcommands should still be present
+    assert!(
+        stdout.contains("switch"),
+        "Built-in 'switch' missing from completion output: {stdout}"
+    );
+}
+
+/// Completion for an external subcommand's flags forwards to the external binary.
+#[cfg(unix)]
+#[rstest]
+fn test_complete_external_subcommand_forwards(repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    repo.commit("initial");
+
+    // Create a real shell script that outputs completions (not mock-stub,
+    // which needs MOCK_CONFIG_DIR and doesn't know about COMPLETE env var).
+    let ext_dir = tempfile::tempdir().unwrap();
+    let script = ext_dir.path().join("wt-testext");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n%s' '--custom-flag' '--another'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Complete "wt testext --" — should forward to wt-testext and show its output
+    let mut cmd = repo.completion_cmd(&["wt", "testext", "--"]);
+    prepend_path(&mut cmd, ext_dir.path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--custom-flag"),
+        "Forwarded completion output missing '--custom-flag': {stdout}"
+    );
 }

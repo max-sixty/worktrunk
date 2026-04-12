@@ -286,8 +286,8 @@ fn spawn_detached_unix(
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
     // Since our process is in a different group, it doesn't receive the signal.
-    let mut child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(&shell_cmd)
         .current_dir(worktree_path)
         .stdin(Stdio::null())
@@ -297,13 +297,10 @@ fn spawn_detached_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        // Prevent hooks from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .process_group(0) // New process group, not in PTY's foreground group
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .process_group(0); // New process group, not in PTY's foreground group
+    // Prevent hooks from writing to the directive file
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     // Wait for sh to exit (immediate, doesn't block on background command)
     child
@@ -372,13 +369,10 @@ fn spawn_detached_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        // Prevent hooks from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    // Prevent hooks from writing to the directive file
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    cmd.spawn().context("Failed to spawn detached process")?;
 
     // Windows: Process is fully detached via DETACHED_PROCESS flag,
     // no need to wait (unlike Unix which waits for the outer shell)
@@ -436,8 +430,8 @@ fn spawn_detached_exec_unix(
     use std::io::Write;
     use std::os::unix::process::CommandExt;
 
-    let mut child = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(
@@ -446,12 +440,9 @@ fn spawn_detached_exec_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .process_group(0)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .process_group(0);
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore BrokenPipe — child may exit before reading all input.
@@ -475,8 +466,8 @@ fn spawn_detached_exec_windows(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const DETACHED_PROCESS: u32 = 0x00000008;
 
-    let mut child = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(
@@ -485,12 +476,9 @@ fn spawn_detached_exec_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR)
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(stdin_bytes);
