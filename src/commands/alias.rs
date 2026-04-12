@@ -556,7 +556,11 @@ fn load_aliases_for_listing() -> BTreeMap<String, CommandConfig> {
 /// template spans multiple lines). Pipelines show the shared named-step
 /// summary used by the "Running alias" announcement.
 fn format_alias_summary(cfg: &CommandConfig) -> String {
-    if cfg.is_pipeline() {
+    // `is_pipeline()` is `steps.len() > 1`, but a single-step concurrent
+    // alias (one `HookStep::Concurrent` holding several commands) would
+    // fall into the else branch and hide all but the first command. Count
+    // actual commands instead.
+    if cfg.commands().count() > 1 {
         let step_names: Vec<Vec<Option<&str>>> = cfg
             .steps()
             .iter()
@@ -662,6 +666,21 @@ cmd = [
 "#,
         );
         assert_eq!(format_alias_summary(&cfg), "install; build, lint");
+    }
+
+    #[test]
+    fn test_format_alias_summary_concurrent_named() {
+        // Single-step concurrent form: `[aliases.check]\nbuild=…\ntest=…`
+        // — one step, multiple commands. Must use the pipeline formatter,
+        // not fall back to "show first command's template".
+        let cfg = cfg_from_toml(
+            r#"
+[cmd]
+build = "cargo build"
+test = "cargo test"
+"#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "build, test");
     }
 
     #[test]
