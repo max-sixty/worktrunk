@@ -1906,20 +1906,33 @@ fn test_var_flag_invalid_format_fails() {
     );
 }
 
-#[test]
-fn test_var_flag_unknown_variable_fails() {
-    // Test that unknown variable names are rejected
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
-        .args(["hook", "post-create", "--var", "custom_var=value"])
+#[rstest]
+fn test_var_flag_custom_variable(repo: TestRepo) {
+    // Custom variable names (not built-in template vars) are accepted and
+    // injected into the template context, matching alias behavior.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ custom_var }}' > custom_var_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--var", "custom_var=hello"])
         .output()
-        .expect("Failed to run wt");
+        .expect("Failed to run wt hook");
 
-    assert!(!output.status.success(), "Unknown variable should fail");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unknown variable"),
-        "Error should mention unknown variable, got: {stderr}"
+        output.status.success(),
+        "Custom variable should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_file = repo.root_path().join("custom_var_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("hello"),
+        "Custom variable should be expanded, got: {contents}"
     );
 }
 
@@ -1953,6 +1966,196 @@ test = "echo '{{ target }}' > target_output.txt"
     assert!(
         contents.contains("SECOND"),
         "Last --var value should win, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_shorthand_overrides_template_variable(repo: TestRepo) {
+    // `--KEY=VALUE` is equivalent to `--var KEY=VALUE` for template variables.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }}' > shorthand_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--branch=SHORTHAND_BRANCH"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_file = repo.root_path().join("shorthand_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("SHORTHAND_BRANCH"),
+        "Shorthand should override template variable, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_shorthand_mixed_with_long_form(repo: TestRepo) {
+    // Shorthand and `--var` forms coexist in the same invocation.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--branch=SHORT",
+            "--var",
+            "target=LONG",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let output_file = repo.root_path().join("mixed_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("SHORT") && contents.contains("LONG"),
+        "Both forms should coexist, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_shorthand_custom_variable(repo: TestRepo) {
+    // Custom variable names (not built-in template vars) are accepted and
+    // injected into the template context, matching alias behavior. Hyphens in
+    // variable names are canonicalized to underscores.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ my_env }}' > custom_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--my-env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Custom variable should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_file = repo.root_path().join("custom_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("staging"),
+        "Custom variable with hyphens should be canonicalized and expanded, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_unreferenced_warning(repo: TestRepo) {
+    // A --var whose key isn't referenced by any hook template should produce a
+    // warning — catches typos that would otherwise silently have no effect.
+    // The hook still runs.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }}' > unref_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--unused_var=value"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should still run despite the warning, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unused_var") && stderr.contains("not referenced"),
+        "Expected unreferenced-var warning, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_var_unreferenced_warning_respects_name_filter(repo: TestRepo) {
+    // When a name filter excludes the hook that uses the var, still warn —
+    // the filtered-out hook won't run, so the var has no effect.
+    repo.write_test_config(
+        r#"[post-create]
+alpha = "echo '{{ branch }}' > alpha.txt"
+beta = "echo '{{ my_env }}' > beta.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "alpha", "--my-env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("my_env") && stderr.contains("not referenced"),
+        "Expected warning for --my-env when only 'alpha' runs, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_var_referenced_no_warning(repo: TestRepo) {
+    // A --var that IS referenced by a template produces no warning.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ my_env }}' > ref_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--my-env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("not referenced"),
+        "Expected no warning, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_var_shorthand_does_not_leak_into_hook_show() {
+    // `wt hook show` doesn't accept `--var`, so shorthand preprocessing must
+    // leave its argv alone — an unknown flag should still produce clap's
+    // "unexpected argument" error, not a template-variable error.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["hook", "show", "--branch=feature"])
+        .output()
+        .expect("Failed to run wt");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("--branch"),
+        "Expected clap to reject --branch on `hook show`, got: {stderr}"
     );
 }
 

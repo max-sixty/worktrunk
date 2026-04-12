@@ -50,7 +50,7 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mUser config at [TEST_CONFIG] failed to parse, using defaults[39m
+[33m▲[39m [33mUser config at [TEST_CONFIG] failed to parse, skipping[39m
 [107m [0m TOML parse error at line 2, column 12
 [107m [0m   |
 [107m [0m 2 | branches = "not-a-bool"

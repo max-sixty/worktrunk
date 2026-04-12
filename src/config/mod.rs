@@ -7,8 +7,8 @@
 //! 2. **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
 //! 3. **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
 //!
-//! System and user configs share the same schema and are merged by the `config`
-//! crate's builder (user values override system values at the key level).
+//! System and user configs share the same schema and are merged via
+//! `deep_merge_table` (user values override system values at the key level).
 //! Project config is independent — different schema, different purpose.
 //!
 //! See `wt config --help` for complete documentation.

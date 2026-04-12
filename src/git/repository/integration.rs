@@ -62,7 +62,7 @@ impl Repository {
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::sha_cache::get_is_ancestor(self, &base_sha, &head_sha) {
+        if let Some(cached) = super::sha_cache::is_ancestor(self, &base_sha, &head_sha) {
             return Ok(cached);
         }
 
@@ -101,9 +101,7 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) =
-            super::sha_cache::get_has_added_changes(self, &branch_sha, &target_sha)
-        {
+        if let Some(cached) = super::sha_cache::has_added_changes(self, &branch_sha, &target_sha) {
             return Ok(cached);
         }
 
@@ -166,28 +164,75 @@ impl Repository {
         let base = self.resolve_preferring_branch(base);
         let head = self.resolve_preferring_branch(head);
 
-        // Resolve refs to commit SHAs for the persistent cache key.
-        // merge-tree conflict results are a pure function of the two
-        // committed trees, so SHA pairs are eternally valid cache keys.
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::sha_cache::get_merge_conflicts(self, &base_sha, &head_sha) {
+        if let Some(cached) = super::sha_cache::merge_conflicts(self, &base_sha, &head_sha) {
             return Ok(cached);
         }
 
+        self.run_merge_tree(&base_sha, &head_sha, &base_sha, &head_sha)
+    }
+
+    /// Check merge conflicts for a working tree represented by a tree SHA.
+    ///
+    /// Unlike [`Self::has_merge_conflicts`] which takes commit refs, this accepts a
+    /// raw tree SHA (from `git write-tree`) and the branch HEAD commit SHA.
+    /// On cache miss, creates an ephemeral commit via `git commit-tree` to
+    /// feed `merge-tree` (which requires commit objects for merge-base
+    /// resolution). On cache hit, no commit is created.
+    ///
+    /// The cache key is `(base_commit_sha, branch_head_sha+tree_sha)` — a
+    /// composite that captures all three inputs to the three-way merge:
+    /// the base tree, the merge-base (via branch HEAD ancestry), and the
+    /// working tree content.
+    pub fn has_merge_conflicts_by_tree(
+        &self,
+        base: &str,
+        branch_head_sha: &str,
+        tree_sha: &str,
+    ) -> anyhow::Result<bool> {
+        let base = self.resolve_preferring_branch(base);
+        let base_sha = self.rev_parse_commit(&base)?;
+
+        let cache_head = format!("{branch_head_sha}+{tree_sha}");
+        if let Some(cached) = super::sha_cache::merge_conflicts(self, &base_sha, &cache_head) {
+            return Ok(cached);
+        }
+
+        // Cache miss — create an ephemeral commit so merge-tree can resolve
+        // the merge-base. The commit is unreferenced and will be GC'd.
+        let head_commit =
+            self.run_command(&["commit-tree", tree_sha, "-p", branch_head_sha, "-m", ""])?;
+        let head_commit = head_commit.trim();
+
+        self.run_merge_tree(&base_sha, head_commit, &base_sha, &cache_head)
+    }
+
+    /// Run merge-tree and cache the result.
+    ///
+    /// `base_sha` and `head_sha` are passed to `git merge-tree` (must be
+    /// commit SHAs). `cache_base` and `cache_head` are used as the
+    /// sha_cache key pair.
+    fn run_merge_tree(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+        cache_base: &str,
+        cache_head: &str,
+    ) -> anyhow::Result<bool> {
         // Unrelated histories (no common ancestor) can't be merged — that's a conflict.
-        if self.merge_base(&base_sha, &head_sha)?.is_none() {
-            super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
+        if self.merge_base(base_sha, head_sha)?.is_none() {
+            super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, true);
             return Ok(true);
         }
 
         // Exit codes: 0 = clean merge, 1 = conflicts, 128+ = error (invalid ref, corrupt repo)
         let output =
-            self.run_command_output(&["merge-tree", "--write-tree", &base_sha, &head_sha])?;
+            self.run_command_output(&["merge-tree", "--write-tree", base_sha, head_sha])?;
 
         if output.status.code() == Some(1) {
-            super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, true);
+            super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, true);
             return Ok(true);
         }
         if !output.status.success() {
@@ -197,7 +242,7 @@ impl Repository {
                 stderr.trim()
             );
         }
-        super::sha_cache::put_merge_conflicts(self, &base_sha, &head_sha, false);
+        super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, false);
         Ok(false)
     }
 
@@ -315,8 +360,7 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) = super::sha_cache::get_merge_add_probe(self, &branch_sha, &target_sha)
-        {
+        if let Some(cached) = super::sha_cache::merge_add_probe(self, &branch_sha, &target_sha) {
             return Ok(cached);
         }
 

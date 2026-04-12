@@ -26,8 +26,6 @@ use crate::styling::{
 ///
 /// These are populated by `build_hook_context()` in `command_executor.rs`.
 /// Some variables are conditional (e.g., `upstream` only exists if tracking is configured).
-///
-/// This list is the single source of truth for `--var` validation in CLI.
 pub const TEMPLATE_VARS: &[&str] = &[
     "repo",
     "owner",

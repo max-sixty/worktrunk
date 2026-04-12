@@ -492,6 +492,43 @@ fn test_list_config_env_override_mixed_typed_and_string(repo: TestRepo) {
     });
 }
 
+/// Bad env var with valid file config: the file config must be preserved.
+/// Before the load_with_warnings refactor, any env var failure would drop
+/// the entire config (including file-based settings) to defaults.
+#[rstest]
+fn test_list_config_env_override_bad_value_preserves_file_config(repo: TestRepo) {
+    // File config enables branch listing
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Bad env var: "not-a-bool" for a bool field
+        cmd.env("WORKTRUNK__LIST__BRANCHES", "not-a-bool");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Env var that deserializes successfully but fails validation (empty
+/// worktree-path). Exercises the validation-after-env-overlay path.
+#[rstest]
+fn test_list_config_env_override_validation_failure(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Empty worktree-path deserializes as Some("") but fails validation
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars.
 #[rstest]

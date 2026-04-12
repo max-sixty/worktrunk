@@ -6,6 +6,7 @@
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
+use anyhow::Context;
 use worktrunk::git::{LineDiff, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
@@ -405,8 +406,8 @@ impl Task for WorkingTreeDiffTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
-        // `git stash create` which needs the index lock.
+        // Use --no-optional-locks to avoid index lock contention with
+        // WorkingTreeConflictsTask's `git write-tree`.
         let status_output = wt
             .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, &e))?;
@@ -467,9 +468,14 @@ impl Task for MergeTreeConflictsTask {
 
 /// Task 6b (worktree only): Working tree conflict check
 ///
-/// For dirty worktrees, uses `git stash create` to get a tree object that
-/// includes uncommitted changes, then runs merge-tree against that.
-/// Returns None if working tree is clean (caller should fall back to MergeTreeConflicts).
+/// For dirty worktrees, builds a tree SHA from the index (plus untracked
+/// files if present) via `git write-tree`, then checks for merge conflicts
+/// against the default branch. Much cheaper than `git stash create` (~15ms
+/// vs ~50-265ms) because it reads the index directly instead of creating a
+/// full stash commit with working-tree diffing.
+///
+/// Returns None if working tree is clean (caller should fall back to
+/// MergeTreeConflicts).
 pub struct WorkingTreeConflictsTask;
 
 impl Task for WorkingTreeConflictsTask {
@@ -490,7 +496,6 @@ impl Task for WorkingTreeConflictsTask {
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
         // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
-        // Both tasks run in parallel, and `git stash create` below needs the index lock.
         let status_output = wt
             .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, &e))?;
@@ -505,39 +510,38 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
-        // Dirty working tree - create a temporary tree object via stash create
-        // `git stash create` returns a commit SHA without modifying refs
-        //
-        // Note: stash create fails when there are unmerged files (merge conflict in progress).
-        // In that case, fall back to the commit-based check.
-        let stash_result = wt.run_command(&["stash", "create"]);
-
-        let stash_sha = match stash_result {
-            Ok(sha) => sha,
-            Err(_) => {
-                // Stash create failed (likely unmerged files during rebase/merge)
-                // Fall back to commit-based check
-                return Ok(TaskResult::WorkingTreeConflicts {
-                    item_idx: ctx.item_idx,
-                    has_working_tree_conflicts: None,
-                });
-            }
-        };
-
-        let stash_sha = stash_sha.trim();
-
-        // If stash create returns empty, working tree is clean (shouldn't happen but handle it)
-        if stash_sha.is_empty() {
+        // Unmerged entries (UU, AU, UA, DU, UD, DD, AA) mean a merge/rebase
+        // conflict is in progress. Fall back to the commit-based check to
+        // preserve prior behavior — write-tree on unmerged entries would
+        // produce a tree with conflict markers as content.
+        let has_unmerged = has_unmerged_entries(&status_output);
+        if has_unmerged {
             return Ok(TaskResult::WorkingTreeConflicts {
                 item_idx: ctx.item_idx,
                 has_working_tree_conflicts: None,
             });
         }
 
-        // Run merge-tree with the stash commit (repo-wide operation, doesn't need worktree)
+        // Porcelain format: XY where X=index, Y=working-tree.
+        // Fast path when all changes are staged (Y is space for every line):
+        // write-tree on the real index is sufficient.
+        // Slow path when there are unstaged modifications (Y != ' ') or
+        // untracked files ('??'): copy index, `git add -A`, write-tree.
+        let needs_working_tree = status_output
+            .lines()
+            .any(|l| l.starts_with("??") || l.as_bytes().get(1) != Some(&b' '));
+
+        let tree_sha = if needs_working_tree {
+            write_tree_with_working_tree(&wt).map_err(|e| ctx.error(Self::KIND, &e))?
+        } else {
+            wt.run_command(&["write-tree"])
+                .map(|s| s.trim().to_string())
+                .map_err(|e| ctx.error(Self::KIND, &e))?
+        };
+
         let has_conflicts = ctx
             .repo
-            .has_merge_conflicts(&base, stash_sha)
+            .has_merge_conflicts_by_tree(&base, &ctx.branch_ref.commit_sha, &tree_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::WorkingTreeConflicts {
@@ -545,6 +549,52 @@ impl Task for WorkingTreeConflictsTask {
             has_working_tree_conflicts: Some(has_conflicts),
         })
     }
+}
+
+/// Build a tree SHA representing the full working tree state (staged +
+/// unstaged + untracked) by staging everything into a temporary index.
+///
+/// Copies the real index (preserving git's stat cache for unchanged files),
+/// then `git add -A` to stage all modifications and untracked files, then
+/// `git write-tree` to produce the tree SHA. The real index is untouched.
+fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Result<String> {
+    use worktrunk::shell_exec::Cmd;
+
+    let git_dir = wt.git_dir()?;
+    let worktree_root = wt.root()?;
+    let real_index = git_dir.join("index");
+    let log_ctx = wt
+        .path()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(".")
+        .to_string();
+
+    let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
+    let temp_index_path = temp_index
+        .path()
+        .to_str()
+        .context("Temporary index path is not valid UTF-8")?;
+
+    // Stage all changes (unstaged modifications + untracked files)
+    Cmd::new("git")
+        .args(["add", "-A"])
+        .current_dir(&worktree_root)
+        .context(&log_ctx)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to stage working tree changes")?;
+
+    let output = Cmd::new("git")
+        .args(["write-tree"])
+        .current_dir(&worktree_root)
+        .context(&log_ctx)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to write tree from temporary index")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Task 7 (worktree only): Git operation state detection (rebase/merge)
@@ -841,6 +891,19 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
     (working_tree_status, is_dirty, has_conflicts)
 }
 
+/// Check if `git status --porcelain` output contains unmerged entries.
+///
+/// All seven unmerged status codes: UU, AU, UA, DU, UD, DD, AA.
+/// Five contain `U`; `DD` and `AA` do not and must be matched explicitly.
+fn has_unmerged_entries(status_output: &str) -> bool {
+    status_output.lines().any(|l| {
+        l.len() >= 2 && {
+            let xy = &l.as_bytes()[0..2];
+            xy.contains(&b'U') || xy == b"AA" || xy == b"DD"
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,5 +926,35 @@ mod tests {
     #[test]
     fn test_first_line_empty_string() {
         assert_eq!(first_line(""), "");
+    }
+
+    #[test]
+    fn unmerged_entries_detected_with_u() {
+        assert!(has_unmerged_entries("UU src/main.rs"));
+        assert!(has_unmerged_entries("AU src/main.rs"));
+        assert!(has_unmerged_entries("UA src/main.rs"));
+        assert!(has_unmerged_entries("DU src/main.rs"));
+        assert!(has_unmerged_entries("UD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_detected_aa_dd() {
+        assert!(has_unmerged_entries("AA src/main.rs"));
+        assert!(has_unmerged_entries("DD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_mixed_status() {
+        assert!(has_unmerged_entries("M  src/lib.rs\nAA src/main.rs"));
+        assert!(has_unmerged_entries("?? untracked.txt\nDD deleted.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_not_detected_for_normal_status() {
+        assert!(!has_unmerged_entries("M  src/main.rs"));
+        assert!(!has_unmerged_entries("A  src/new.rs"));
+        assert!(!has_unmerged_entries("D  src/old.rs"));
+        assert!(!has_unmerged_entries("?? untracked.txt"));
+        assert!(!has_unmerged_entries(""));
     }
 }

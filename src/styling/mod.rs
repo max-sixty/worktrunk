@@ -113,14 +113,14 @@ pub fn terminal_width() -> usize {
 /// (like "Approaching context limit").
 #[cfg(unix)]
 fn detect_parent_tty_width() -> Option<usize> {
-    use std::process::Command;
+    use crate::shell_exec::Cmd;
 
     let mut pid = std::process::id().to_string();
 
     for _ in 0..10 {
-        let output = Command::new("ps")
+        let output = Cmd::new("ps")
             .args(["-o", "ppid=,tty=", "-p", &pid])
-            .output()
+            .run()
             .ok()?;
 
         let info = String::from_utf8_lossy(&output.stdout);
@@ -131,9 +131,9 @@ fn detect_parent_tty_width() -> Option<usize> {
         // Valid TTY found (not "?" or "??")
         if !tty.is_empty() && tty != "?" && tty != "??" {
             // Query TTY size using stty
-            let size = Command::new("sh")
+            let size = Cmd::new("sh")
                 .args(["-c", &format!("stty size < /dev/{tty}")])
-                .output()
+                .run()
                 .ok()?;
 
             let cols = String::from_utf8_lossy(&size.stdout)

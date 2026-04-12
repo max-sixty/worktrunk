@@ -26,6 +26,7 @@ use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
+use super::hook_filter::{HookSource, ParsedFilter};
 use super::hooks::{
     HookCommandSpec, HookFailureStrategy, check_name_filter_matched, command_summary_name,
     count_sourced_commands, prepare_background_hooks, prepare_sourced_steps, run_hook_with_filter,
@@ -157,6 +158,86 @@ fn build_manual_hook_extra_vars<'a>(
     vars
 }
 
+/// Warn about user-provided `--var` flags that aren't referenced by any template
+/// in the hooks that will run. Catches typos in variable names that would
+/// otherwise silently have no effect.
+///
+/// Only checks top-level variable references (not `{{ vars.foo }}`). Name
+/// filters are respected — if the user runs `wt hook pre-merge test` and `test`
+/// doesn't use the var but `build` does, we still warn because `build` won't run.
+fn warn_unreferenced_custom_vars(
+    user_config: Option<&CommandConfig>,
+    project_config: Option<&CommandConfig>,
+    name_filters: &[String],
+    custom_vars: &[(String, String)],
+) {
+    if custom_vars.is_empty() {
+        return;
+    }
+
+    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+        .iter()
+        .map(|f| ParsedFilter::parse(f))
+        .collect();
+    let filter_names: Vec<&str> = parsed_filters
+        .iter()
+        .filter(|f| !f.name.is_empty())
+        .map(|f| f.name)
+        .collect();
+
+    // Empty environment: every variable reference in the template appears as
+    // "undeclared", giving us the full set of referenced top-level names.
+    let env = minijinja::Environment::new();
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (source, config) in [
+        (HookSource::User, user_config),
+        (HookSource::Project, project_config),
+    ] {
+        let Some(config) = config else { continue };
+
+        // Skip this source if no filter matches it
+        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
+            continue;
+        }
+
+        for step in config.steps() {
+            let commands: &[worktrunk::config::Command] = match step {
+                worktrunk::config::HookStep::Single(cmd) => std::slice::from_ref(cmd),
+                worktrunk::config::HookStep::Concurrent(cmds) => cmds.as_slice(),
+            };
+            for cmd in commands {
+                // If names are filtered, skip commands whose name doesn't match
+                if !filter_names.is_empty()
+                    && !cmd
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| filter_names.contains(&n))
+                {
+                    continue;
+                }
+                if let Ok(tmpl) = env.template_from_str(&cmd.template) {
+                    referenced.extend(tmpl.undeclared_variables(false));
+                }
+            }
+        }
+    }
+
+    // TODO: show the original (pre-canonicalized) key in the warning so
+    // `--my-env=staging` produces "my-env" not "my_env". Requires threading
+    // the raw input through parse_key_val.
+    for (key, _) in custom_vars {
+        if !referenced.contains(key) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "--var <bold>{key}</> is not referenced by any hook template — typo?"
+                ))
+            );
+        }
+    }
+}
+
 /// Handle `wt hook` command
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
@@ -221,6 +302,9 @@ pub fn run_hook(
         );
         return Ok(());
     }
+
+    // Warn about typos in --var flags — vars that no template references
+    warn_unreferenced_custom_vars(user_config, proj_config, name_filters, custom_vars);
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();

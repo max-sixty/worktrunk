@@ -492,32 +492,6 @@ impl StatusSymbols {
         result
     }
 
-    /// True iff every gate is either unresolved (`None`) or resolved to a
-    /// "nothing to display" variant. Used by the in-file tests as a
-    /// sanity check for the `Default` / `None`-variant semantics of the
-    /// gate outputs. Non-test code no longer needs this predicate — the
-    /// renderer emits per-position placeholders rather than branching
-    /// on a cell-level empty check.
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        let main_empty = self.main_state.is_none_or(|s| s == MainState::None);
-        let op_empty = self
-            .operation_state
-            .is_none_or(|s| s == OperationState::None);
-        let wt_state_empty = self.worktree_state.is_none_or(|s| s == WorktreeState::None);
-        let upstream_empty = self
-            .upstream_divergence
-            .is_none_or(|s| s == Divergence::None);
-        let working_tree_empty = self.working_tree.is_none_or(|wt| !wt.is_dirty());
-        let user_marker_empty = self.user_marker.as_ref().is_none_or(|m| m.is_none());
-        main_empty
-            && op_empty
-            && wt_state_empty
-            && upstream_empty
-            && working_tree_empty
-            && user_marker_empty
-    }
-
     /// Render status symbols in compact form for statusline (no grid alignment).
     ///
     /// Uses the same styled symbols as `render_with_mask()`, just without padding.
@@ -660,6 +634,24 @@ mod tests {
 
     use super::*;
 
+    /// True iff every gate is either unresolved (`None`) or resolved to a
+    /// "nothing to display" variant. Sanity check for `Default` /
+    /// `None`-variant semantics of gate outputs.
+    fn is_empty(s: &StatusSymbols) -> bool {
+        let main_empty = s.main_state.is_none_or(|s| s == MainState::None);
+        let op_empty = s.operation_state.is_none_or(|s| s == OperationState::None);
+        let wt_state_empty = s.worktree_state.is_none_or(|s| s == WorktreeState::None);
+        let upstream_empty = s.upstream_divergence.is_none_or(|s| s == Divergence::None);
+        let working_tree_empty = s.working_tree.is_none_or(|wt| !wt.is_dirty());
+        let user_marker_empty = s.user_marker.as_ref().is_none_or(|m| m.is_none());
+        main_empty
+            && op_empty
+            && wt_state_empty
+            && upstream_empty
+            && working_tree_empty
+            && user_marker_empty
+    }
+
     #[test]
     fn test_working_tree_status_is_dirty() {
         // Empty status is not dirty
@@ -721,43 +713,43 @@ mod tests {
     #[test]
     fn test_status_symbols_is_empty() {
         let symbols = StatusSymbols::default();
-        assert!(symbols.is_empty());
+        assert!(is_empty(&symbols));
 
         let symbols = StatusSymbols {
             main_state: Some(MainState::Ahead),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
             operation_state: Some(OperationState::Rebase),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
             worktree_state: Some(WorktreeState::Locked),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
             upstream_divergence: Some(Divergence::Ahead),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
             working_tree: Some(WorkingTreeStatus::new(true, false, false, false, false)),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         let symbols = StatusSymbols {
             user_marker: Some(Some("🔥".to_string())),
             ..Default::default()
         };
-        assert!(!symbols.is_empty());
+        assert!(!is_empty(&symbols));
 
         // Gates resolved to the "None" variant are still is_empty == true
         // (resolved, but nothing to show). This matches the pre-step-2
@@ -770,7 +762,7 @@ mod tests {
             working_tree: Some(WorkingTreeStatus::default()),
             user_marker: Some(None),
         };
-        assert!(symbols.is_empty());
+        assert!(is_empty(&symbols));
     }
 
     #[test]

@@ -32,8 +32,13 @@ pub use sections::{
     StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
 };
 
-/// Distinguishes *why* `UserConfig::load()` failed so callers can emit
-/// targeted diagnostics (file errors with line/col vs env-var attribution).
+/// Describes a problem encountered during config loading. Each variant
+/// identifies which layer failed so callers can emit targeted diagnostics
+/// (file errors with line/col vs env-var attribution).
+///
+/// Used as an error by [`UserConfig::load_with_cause()`] (first issue is
+/// fatal) and as warnings by [`UserConfig::load_with_warnings()`] (issues
+/// are collected, best-effort config returned).
 #[derive(Debug)]
 pub enum LoadError {
     /// A config file failed to parse. The `toml::de::Error` includes
@@ -44,8 +49,12 @@ pub enum LoadError {
         err: Box<toml::de::Error>,
     },
     /// Config files parsed cleanly; applying env-var overrides failed.
-    /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed.
-    Env { err: String, vars: Vec<String> },
+    /// `vars` lists the exact `WORKTRUNK_*` env vars that were parsed
+    /// as `(name, value)` pairs.
+    Env {
+        err: String,
+        vars: Vec<(String, String)>,
+    },
     /// Validation errors (e.g. empty worktree-path).
     Validation(String),
 }
@@ -348,9 +357,27 @@ impl UserConfig {
 
     /// Like [`load()`](Self::load), but returns a [`LoadError`] that
     /// distinguishes file-level parse failures (with line/col) from
-    /// env-var override failures. Used by `Repository::user_config()`
-    /// to emit targeted diagnostics.
+    /// env-var override failures.
     pub(crate) fn load_with_cause() -> Result<Self, LoadError> {
+        let (config, warnings) = Self::load_with_warnings();
+        if let Some(err) = warnings.into_iter().next() {
+            return Err(err);
+        }
+        Ok(config)
+    }
+
+    /// Load the best config achievable, collecting issues as warnings.
+    ///
+    /// Each config layer (system file, user file, env-var overlay) degrades
+    /// independently — a failure in one preserves data from earlier layers
+    /// instead of falling back to defaults. This means:
+    /// - Bad system config → skipped, user config + env vars still apply
+    /// - Bad user config → skipped, system config + env vars still apply
+    /// - Bad env vars → ignored, file-based config preserved
+    /// - Validation failure → warning emitted, defaults used (invalid config
+    ///   causes bad behavior if applied, e.g. empty worktree-path template)
+    pub(crate) fn load_with_warnings() -> (Self, Vec<LoadError>) {
+        let mut warnings = Vec::new();
         let mut merged_table = toml::Table::new();
 
         // 1. System config (lowest priority)
@@ -363,8 +390,10 @@ impl UserConfig {
                 "System config",
             );
             let migrated = super::deprecation::migrate_content(&content);
-            let table = load_config_file(&system_path, &migrated, "System config")?;
-            deep_merge_table(&mut merged_table, table);
+            match load_config_file(&system_path, &migrated, "System config") {
+                Ok(table) => deep_merge_table(&mut merged_table, table),
+                Err(e) => warnings.push(e),
+            }
         }
 
         // 2. User config (overrides system)
@@ -390,8 +419,10 @@ impl UserConfig {
                     "User config",
                 );
 
-                let table = load_config_file(config_path, &migrated, "User config")?;
-                deep_merge_table(&mut merged_table, table);
+                match load_config_file(config_path, &migrated, "User config") {
+                    Ok(table) => deep_merge_table(&mut merged_table, table),
+                    Err(e) => warnings.push(e),
+                }
             }
         } else if let Some(config_path) = config_path.as_ref()
             && path::is_config_path_explicit()
@@ -409,11 +440,7 @@ impl UserConfig {
         let env_vars = parse_worktrunk_env_vars();
 
         if env_vars.is_empty() {
-            let config: Self = toml::Value::Table(merged_table)
-                .try_into()
-                .map_err(|err: toml::de::Error| LoadError::Validation(err.to_string()))?;
-            config.validate().map_err(|e| LoadError::Validation(e.0))?;
-            return Ok(config);
+            return Self::finalize(merged_table, warnings);
         }
 
         // Resolve each env var's type independently: probe typed form against
@@ -424,17 +451,50 @@ impl UserConfig {
         let env_overlay = resolve_env_overlay(&file_table, &env_vars);
         deep_merge_table(&mut merged_table, env_overlay);
 
-        let config: Self =
-            toml::Value::Table(merged_table)
-                .try_into()
-                .map_err(|err: toml::de::Error| LoadError::Env {
+        match toml::Value::Table(merged_table).try_into::<Self>() {
+            Ok(config) => match config.validate() {
+                Ok(()) => (config, warnings),
+                Err(e) => {
+                    warnings.push(LoadError::Validation(e.0));
+                    (Self::default(), warnings)
+                }
+            },
+            Err(err) => {
+                warnings.push(LoadError::Env {
                     err: err.to_string(),
-                    vars: env_vars.iter().map(|v| v.name.clone()).collect(),
-                })?;
+                    vars: env_vars
+                        .iter()
+                        .map(|v| (v.name.clone(), v.raw_value.clone()))
+                        .collect(),
+                });
+                // Env overlay broke deserialization — fall back to file-only config.
+                // Each file was individually validated by load_config_file(), so the
+                // merged table should deserialize cleanly. If it doesn't, finalize()
+                // falls back to defaults.
+                Self::finalize(file_table, warnings)
+            }
+        }
+    }
 
-        config.validate().map_err(|e| LoadError::Validation(e.0))?;
-
-        Ok(config)
+    /// Deserialize a merged table into `UserConfig`, validate, and collect
+    /// any issues as warnings. Shared by the no-env and env-fallback paths.
+    fn finalize(table: toml::Table, mut warnings: Vec<LoadError>) -> (Self, Vec<LoadError>) {
+        match toml::Value::Table(table).try_into::<Self>() {
+            Ok(config) => match config.validate() {
+                Ok(()) => (config, warnings),
+                Err(e) => {
+                    // Validation means the config is semantically wrong (e.g.,
+                    // worktree-path=""). Using it causes bad behavior, so fall
+                    // back to defaults rather than applying the broken config.
+                    warnings.push(LoadError::Validation(e.0));
+                    (Self::default(), warnings)
+                }
+            },
+            Err(err) => {
+                warnings.push(LoadError::Validation(err.to_string()));
+                (Self::default(), warnings)
+            }
+        }
     }
 
     /// Load configuration from a TOML string for testing.

@@ -50,7 +50,7 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees, 1 with changes, 3 ahead
 
 ----- stderr -----
-[33m▲[39m [33mSystem config at [TEST_SYSTEM_CONFIG_FILE] failed to parse, using defaults[39m
+[33m▲[39m [33mSystem config at [TEST_SYSTEM_CONFIG_FILE] failed to parse, skipping[39m
 [107m [0m TOML parse error at line 1, column 33
 [107m [0m   |
 [107m [0m 1 | skip-shell-integration-prompt = "not-a-bool"
