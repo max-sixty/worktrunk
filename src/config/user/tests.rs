@@ -1827,6 +1827,33 @@ worktree-path = ".wt/{{ branch | sanitize }}"
     );
 }
 
+#[test]
+fn test_save_to_removes_default_project_section() {
+    // Exercises the is_default → remove branch in sync_serialized_section
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "[projects.\"github.com/u/r\".list]\nfull = true\n",
+    )
+    .unwrap();
+
+    let mut config =
+        UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    config
+        .projects
+        .get_mut("github.com/u/r")
+        .unwrap()
+        .list = ListConfig::default();
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        !saved.contains("[projects.\"github.com/u/r\".list]"),
+        "Default section should be removed: {saved}"
+    );
+}
+
 // =========================================================================
 // Per-project hooks tests (append semantics)
 // =========================================================================
