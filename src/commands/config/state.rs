@@ -887,13 +887,13 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear git commands cache (merge-tree, ancestry, diff results)
-    let probe_cleared = repo.clear_git_commands_cache();
-    if probe_cleared > 0 {
+    let sha_cleared = repo.clear_git_commands_cache();
+    if sha_cleared > 0 {
         eprintln!(
             "{}",
             success_message(cformat!(
-                "Cleared <bold>{probe_cleared}</> git commands cache entr{}",
-                if probe_cleared == 1 { "y" } else { "ies" }
+                "Cleared <bold>{sha_cleared}</> git commands cache entr{}",
+                if sha_cleared == 1 { "y" } else { "ies" }
             ))
         );
         cleared_any = true;

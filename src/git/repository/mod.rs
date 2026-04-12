@@ -92,8 +92,8 @@ mod branches;
 mod config;
 mod diff;
 mod integration;
-mod probe_cache;
 mod remotes;
+mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -248,7 +248,7 @@ pub(super) struct RepoCache {
 
     /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
     /// The commit SHA for a given ref doesn't change during a command.
-    /// Used by `rev_parse_commit()` to key the persistent `probe_cache` by SHA.
+    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
     // ========== Per-worktree values (keyed by path) ==========
@@ -568,7 +568,7 @@ impl Repository {
 
     /// Clear all cached git command results, returning the count removed.
     pub fn clear_git_commands_cache(&self) -> usize {
-        probe_cache::clear_all(self)
+        sha_cache::clear_all(self)
     }
 
     /// Get the directory where worktrunk background logs are stored.

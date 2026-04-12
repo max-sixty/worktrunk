@@ -100,18 +100,18 @@
 //!
 //! | Directory | Module | Key | Staleness |
 //! |-----------|--------|-----|-----------|
-//! | `merge-tree-conflicts/` | `git::repository::probe_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
-//! | `merge-add-probe/` | `git::repository::probe_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
-//! | `is-ancestor/` | `git::repository::probe_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
-//! | `has-added-changes/` | `git::repository::probe_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
-//! | `diff-stats/` | `git::repository::probe_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `merge-tree-conflicts/` | `git::repository::sha_cache` | `{sha1}-{sha2}.json` (sorted) | Never — content-addressed |
+//! | `merge-add-probe/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
+//! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
+//! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summaries/` | `summary` | `{branch}.json` | `diff_hash` mismatch |
 //!
 //! ### Key schemes
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
-//!   Used by all `probe_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
+//!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
 //!   checks, file-change probes, diff stats).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
@@ -122,11 +122,11 @@
 //!
 //! | Task | Cache |
 //! |------|-------|
-//! | `MergeTreeConflicts` | `probe_cache` (merge-tree-conflicts) |
-//! | `WouldMergeAdd` | `probe_cache` (merge-add-probe) |
-//! | `IsAncestor` | `probe_cache` (is-ancestor) |
-//! | `HasFileChanges` | `probe_cache` (has-added-changes) |
-//! | `BranchDiff` | `probe_cache` (diff-stats, skipped when sparse checkout is active) |
+//! | `MergeTreeConflicts` | `sha_cache` (merge-tree-conflicts) |
+//! | `WouldMergeAdd` | `sha_cache` (merge-add-probe) |
+//! | `IsAncestor` | `sha_cache` (is-ancestor) |
+//! | `HasFileChanges` | `sha_cache` (has-added-changes) |
+//! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -135,13 +135,13 @@
 //! ### Cacheable but uncached
 //!
 //! A few tasks take ref *names* and reduce to a SHA pair once the refs are resolved. Same
-//! SHA-pair pattern as `probe_cache`, just not wired up yet:
+//! SHA-pair pattern as `sha_cache`, just not wired up yet:
 //!
 //! - `AheadBehind` — counts against the default branch
 //! - `CommittedTreesMatch` — tree equality against the integration target
 //! - `Upstream` — ahead/behind counts against the tracking branch
 //!
-//! Reuse `probe_cache` for any of these rather than inventing a new scheme.
+//! Reuse `sha_cache` for any of these rather than inventing a new scheme.
 //!
 //! ### Fundamentally uncacheable
 //!

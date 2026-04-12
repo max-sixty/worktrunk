@@ -681,11 +681,10 @@ fail = "exit 1"
 }
 
 /// Pipeline-form aliases (list of steps) run sequentially. A later step
-/// referencing `{{ vars.X }}` must see vars set by an earlier step. Exercises
-/// the lazy re-expansion path in `AliasExecCtx::run` (which only triggers
-/// when `is_pipeline && template references vars.`).
+/// referencing `{{ vars.X }}` must see vars set by an earlier step —
+/// `expand_shell_template` reads `vars.*` fresh from git config on each call.
 #[rstest]
-fn test_alias_pipeline_lazy_vars(repo: TestRepo) {
+fn test_alias_pipeline_vars_across_steps(repo: TestRepo) {
     repo.write_test_config(
         r#"
 [aliases]
