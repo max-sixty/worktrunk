@@ -749,14 +749,14 @@ impl Repository {
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
-        let result = std::process::Command::new("git")
-            .args(["fsmonitor--daemon", "start"])
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["fsmonitor--daemon", "start"])
             .current_dir(path)
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let result = cmd.status();
         match result {
             Ok(status) if !status.success() => {
                 log::debug!("fsmonitor daemon start exited {status} (usually fine)");
@@ -919,13 +919,14 @@ impl Repository {
             delay_ms
         );
 
-        let mut child = std::process::Command::new("git")
-            .args(args)
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args)
             .current_dir(&self.discovery_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .stderr(Stdio::piped());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
 

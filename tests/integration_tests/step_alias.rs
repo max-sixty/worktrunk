@@ -1,7 +1,7 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo,
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd, repo,
     setup_snapshot_settings, wt_bin,
 };
 use insta_cmd::assert_cmd_snapshot;
@@ -530,9 +530,9 @@ deploy = "echo deploying"
 // Directive file passthrough
 // ============================================================================
 
-/// `wt step <alias>` passes the parent's `WORKTRUNK_DIRECTIVE_FILE` through to
-/// the alias subprocess so inner `wt switch --create` calls can land the user
-/// in the new worktree.
+/// `wt step <alias>` passes the parent's `WORKTRUNK_DIRECTIVE_CD_FILE` through
+/// to the alias subprocess so inner `wt switch --create` calls can land the
+/// user in the new worktree.
 ///
 /// Regression test for #2075: without the passthrough, an alias that wraps
 /// `wt switch --create` prints the "shell integration not installed" hint and
@@ -563,10 +563,10 @@ new-branch = "'{wt_toml}' switch --create alias-created"
 "#
     ));
 
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let mut cmd = repo.wt_command();
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["step", "new-branch"]);
     let output = cmd.output().unwrap();
 
@@ -577,15 +577,15 @@ new-branch = "'{wt_toml}' switch --create alias-created"
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        directives.contains("cd '"),
-        "alias wrapping `wt switch --create` should write a cd directive to the \
-         parent directive file, got: {directives:?}"
+        !cd_content.trim().is_empty(),
+        "alias wrapping `wt switch --create` should write a path to the \
+         CD directive file, got: {cd_content:?}"
     );
     assert!(
-        directives.contains("alias-created"),
-        "cd directive should target the new worktree (alias-created), got: {directives:?}"
+        cd_content.contains("alias-created"),
+        "cd directive should target the new worktree (alias-created), got: {cd_content:?}"
     );
 
     // Stderr should NOT contain the "shell integration not installed" hint

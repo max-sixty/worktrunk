@@ -104,7 +104,7 @@ session:
 
 2. `(Get-Command git-wt -CommandType Function).ScriptBlock | Select-String
    WORKTRUNK` — verifies the wrapper function body sets
-   `WORKTRUNK_DIRECTIVE_FILE`. If this doesn't appear, the function is
+   `WORKTRUNK_DIRECTIVE_CD_FILE`. If this doesn't appear, the function is
    incomplete or corrupted.
 
 3. `Get-Command git-wt -CommandType Application | Select-Object Source` — shows

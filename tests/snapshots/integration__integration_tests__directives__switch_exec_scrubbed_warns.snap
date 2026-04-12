@@ -1,10 +1,13 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
     - switch
-    - feature
+    - "--create"
+    - scrub-test
+    - "--execute"
+    - echo should-not-run
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -30,7 +33,6 @@ info:
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
-    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -41,10 +43,12 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot switch to [1mfeature[22m — there's a worktree at the expected path [1m_REPO_.feature[22m on branch [1mbugfix[22m[39m
-[2m↳[22m [2mTo switch the worktree at [4m_REPO_.feature[24m to [4mfeature[24m, run [4mcd _REPO_.feature && git switch feature[24m[22m
+[32m✓[39m [32mCreated branch [1mscrub-test[22m from [1mmain[22m and worktree @ [1m_REPO_.scrub-test[22m[39m
+[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
+[33m▲[39m [33m[1m--execute[22m disabled inside alias/hook bodies for safety; skipping [1mecho should-not-run[22m[39m
+[2m↳[22m [2mThis is extremely conservative; comment at [4mhttps://github.com/max-sixty/worktrunk/issues/2101[24m if this affects you[22m

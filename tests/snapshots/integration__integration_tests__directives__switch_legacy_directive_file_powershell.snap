@@ -1,5 +1,5 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
@@ -29,8 +29,8 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
-    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
+    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
+    WORKTRUNK_SHELL: powershell
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -41,10 +41,9 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot switch to [1mfeature[22m — there's a worktree at the expected path [1m_REPO_.feature[22m on branch [1mbugfix[22m[39m
-[2m↳[22m [2mTo switch the worktree at [4m_REPO_.feature[24m to [4mfeature[24m, run [4mcd _REPO_.feature && git switch feature[24m[22m
+[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m

@@ -40,17 +40,17 @@
 //!
 //! User-config aliases are trusted (skip approval). Project-config aliases
 //! require command approval. When both define the same alias, both run — user
-//! first, then project. The directive file is passed through to child processes
-//! (same trust profile as foreground hooks).
+//! first, then project. The CD directive file is passed through to child
+//! processes so inner `wt` invocations can redirect the parent shell's cwd;
+//! the EXEC directive file is scrubbed so alias bodies cannot inject
+//! arbitrary shell into the interactive session.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
 };
@@ -61,7 +61,7 @@ use crate::commands::command_executor::{
 };
 use crate::commands::force_serial_concurrent;
 use crate::commands::hooks::format_pipeline_summary_from_names;
-use crate::output::execute_shell_command;
+use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// shadowed by the built-in and will never run.
@@ -355,12 +355,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         progress_message(format_alias_announcement(&opts.name, cmd_config))
     );
 
-    // Pass the parent shell's directive file through so inner `wt` invocations
-    // (e.g. `wt switch --create`) can write shell directives that the parent
-    // shell wrapper will source after `wt` exits. The Cmd builder scrubs the
-    // env var by default; `.directive_file()` re-adds it for trusted contexts.
-    let parent_directive_file: Option<PathBuf> =
-        std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
+    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
+    let directives = DirectivePassthrough::inherit_from_env();
 
     let exec = AliasExecCtx {
         context_map: &context_map,
@@ -368,7 +364,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         alias_name: &opts.name,
         wt_path: &wt_path,
         context_json: &context_json,
-        directive_file: parent_directive_file.as_deref(),
+        directives: &directives,
     };
 
     for step in cmd_config.steps() {
@@ -405,7 +401,7 @@ struct AliasExecCtx<'a> {
     alias_name: &'a str,
     wt_path: &'a std::path::Path,
     context_json: &'a str,
-    directive_file: Option<&'a std::path::Path>,
+    directives: &'a DirectivePassthrough,
 }
 
 impl AliasExecCtx<'_> {
@@ -422,7 +418,7 @@ impl AliasExecCtx<'_> {
             &command,
             Some(self.context_json),
             None,
-            self.directive_file,
+            self.directives.clone(),
         ) {
             if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
                 err.downcast_ref::<WorktrunkError>()

@@ -32,7 +32,7 @@ use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
 use crate::commands::worktree_display_name;
-use crate::output::execute_shell_command;
+use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// Run a command in each worktree sequentially.
 ///
@@ -80,9 +80,15 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 
         // Execute command: stream both stdout and stderr in real-time.
         // Pipe context JSON to stdin for scripts that want structured data.
-        // Directive file is scrubbed — commands run in other worktrees should
+        // Directive files are scrubbed — commands run in other worktrees should
         // not influence the parent shell's working directory.
-        match execute_shell_command(&wt.path, &command, Some(&context_json), None, None) {
+        match execute_shell_command(
+            &wt.path,
+            &command,
+            Some(&context_json),
+            None,
+            DirectivePassthrough::none(),
+        ) {
             Ok(()) => {
                 if json_mode {
                     json_results.push(serde_json::json!({
