@@ -40,9 +40,7 @@ const KNOWN_HOOK_LONG_FLAGS: &[&str] = &[
 /// variable shorthand (see `AliasOptions::parse`).
 ///
 /// Only args after a `hook <type>` prefix are touched, and only when `<type>`
-/// is a hook that accepts `--var`. Unknown variable names are rejected
-/// downstream by `parse_key_val`, which validates against `TEMPLATE_VARS` —
-/// so users still get a helpful error for typos.
+/// is a hook that accepts `--var`.
 ///
 /// Use the long `--var KEY=VALUE` form when a variable name collides with a
 /// built-in flag like `--config` or `--yes`.
@@ -72,8 +70,15 @@ pub(crate) fn rewrite_var_shorthand(args: Vec<OsString>) -> Vec<OsString> {
     let rewrite_start = hook_idx + 2;
     let mut out: Vec<OsString> = Vec::with_capacity(args.len());
     out.extend(args[..rewrite_start].iter().cloned());
+    let mut past_double_dash = false;
     for token in &args[rewrite_start..] {
-        if let Some(s) = token.to_str()
+        if token == "--" {
+            past_double_dash = true;
+            out.push(token.clone());
+            continue;
+        }
+        if !past_double_dash
+            && let Some(s) = token.to_str()
             && let Some(rest) = s.strip_prefix("--")
             && let Some((key, value)) = rest.split_once('=')
             && !key.is_empty()
@@ -271,6 +276,12 @@ mod tests {
             rewrite(&["wt", "hook", "pre-start", "--=val"]),
             vec!["wt", "hook", "pre-start", "--=val"]
         );
+
+        // `--` stops rewriting — args after it are positional
+        assert_eq!(
+            rewrite(&["wt", "hook", "pre-start", "--", "--branch=x"]),
+            vec!["wt", "hook", "pre-start", "--", "--branch=x"]
+        );
     }
 }
 
@@ -313,7 +324,7 @@ pub enum HookCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -341,7 +352,7 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -366,7 +377,7 @@ pub enum HookCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -394,7 +405,7 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -416,7 +427,7 @@ pub enum HookCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -444,7 +455,7 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -466,7 +477,7 @@ pub enum HookCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -494,7 +505,7 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -516,7 +527,7 @@ pub enum HookCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },
@@ -544,7 +555,7 @@ pub enum HookCommand {
         #[arg(long)]
         foreground: bool,
 
-        /// Override built-in template variable (KEY=VALUE)
+        /// Set template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
     },

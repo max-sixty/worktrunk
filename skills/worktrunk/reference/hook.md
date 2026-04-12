@@ -206,15 +206,14 @@ $ wt hook pre-merge test build   # Run hooks named "test" and "build"
 $ wt hook pre-merge user:        # Run all user hooks
 $ wt hook pre-merge project:     # Run all project hooks
 $ wt hook pre-merge user:test    # Run only user's "test" hook
-$ wt hook pre-merge project:test # Run only project's "test" hook
 $ wt hook pre-merge --yes        # Skip approval prompts (for CI)
-$ wt hook pre-start --var branch=feature/test     # Override template variable
-$ wt hook pre-start --branch=feature/test         # Shorthand for the above
+$ wt hook pre-start --branch=feature/test    # Override a template variable
+$ wt hook pre-merge --target=release-2.1     # Set a template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-The `--var KEY=VALUE` flag overrides built-in template variables — useful for testing hooks with different contexts without switching to that context. As a shorthand, any unknown `--KEY=VALUE` flag is treated as a template variable assignment, so `--branch=feature` is equivalent to `--var branch=feature`. Use the long `--var` form when a variable name collides with a built-in flag (e.g. `config`, `yes`, `dry-run`, `foreground`, `verbose`).
+Any unknown `--KEY=VALUE` flag is treated as a template variable assignment — useful for testing hooks with different contexts without switching to that context. The long form `--var KEY=VALUE` is equivalent and remains the escape hatch when a variable name collides with a built-in flag (e.g. `config`, `yes`, `dry-run`, `foreground`, `verbose`).
 
 # Pipeline Ordering [experimental]
 
