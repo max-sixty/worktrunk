@@ -3,7 +3,7 @@
 //! Personal preferences and per-project approved commands, not checked into git.
 
 mod accessors;
-pub(crate) mod merge;
+mod merge;
 pub(crate) mod mutation;
 mod path;
 mod persistence;
