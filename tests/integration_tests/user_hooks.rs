@@ -2061,6 +2061,86 @@ test = "echo '{{ my_env }}' > custom_output.txt"
     );
 }
 
+#[rstest]
+fn test_var_unreferenced_warning(repo: TestRepo) {
+    // A --var whose key isn't referenced by any hook template should produce a
+    // warning — catches typos that would otherwise silently have no effect.
+    // The hook still runs.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }}' > unref_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--unused_var=value"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should still run despite the warning, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unused_var") && stderr.contains("not referenced"),
+        "Expected unreferenced-var warning, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_var_unreferenced_warning_respects_name_filter(repo: TestRepo) {
+    // When a name filter excludes the hook that uses the var, still warn —
+    // the filtered-out hook won't run, so the var has no effect.
+    repo.write_test_config(
+        r#"[post-create]
+alpha = "echo '{{ branch }}' > alpha.txt"
+beta = "echo '{{ my_env }}' > beta.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "alpha", "--my-env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("my_env") && stderr.contains("not referenced"),
+        "Expected warning for --my-env when only 'alpha' runs, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_var_referenced_no_warning(repo: TestRepo) {
+    // A --var that IS referenced by a template produces no warning.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ my_env }}' > ref_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--my-env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("not referenced"),
+        "Expected no warning, got: {stderr}"
+    );
+}
+
 #[test]
 fn test_var_shorthand_does_not_leak_into_hook_show() {
     // `wt hook show` doesn't accept `--var`, so shorthand preprocessing must
