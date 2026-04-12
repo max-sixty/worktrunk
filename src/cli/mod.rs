@@ -1402,7 +1402,6 @@ $ wt hook pre-merge project:     # Run all project hooks
 $ wt hook pre-merge user:test    # Run only user's "test" hook
 $ wt hook pre-merge --yes        # Skip approval prompts (for CI)
 $ wt hook pre-start --branch=feature/test    # Override a template variable
-$ wt hook pre-merge --target=release-2.1     # Set a template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
