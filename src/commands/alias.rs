@@ -362,13 +362,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         progress_message(format_alias_announcement(&opts.name, cmd_config))
     );
 
-    // Pass the CD directive file through so inner `wt` invocations (e.g.
-    // `wt switch --create`) can request a cd that the parent shell wrapper
-    // honors after `wt` exits. The EXEC file is deliberately scrubbed — an
-    // alias body is arbitrary shell, and letting it write to the EXEC file
-    // would amount to shell injection into the interactive session. Nested
-    // `wt` calls that try to emit `--execute` directives while the EXEC file
-    // is scrubbed will warn and drop the payload (see `output::global`).
+    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
     let directives = DirectivePassthrough::inherit_from_env();
 
     let exec = AliasExecCtx {

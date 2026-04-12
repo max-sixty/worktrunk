@@ -542,13 +542,7 @@ pub fn run_hook_with_filter(
         return Ok(());
     }
 
-    // Foreground hooks get CD directive pass-through so inner `wt` invocations
-    // (e.g. `wt switch --create` in a pre-start hook) can influence the parent
-    // shell's working directory. The EXEC directive file is scrubbed: a hook
-    // body is arbitrary shell, and letting it write EXEC directives would
-    // amount to shell injection into the interactive session. Nested `wt` calls
-    // that try to emit `--execute` payloads while running inside a hook body
-    // warn and drop (see `output::global`).
+    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
     let directives = DirectivePassthrough::inherit_from_env();
 
     for cmd in commands {
