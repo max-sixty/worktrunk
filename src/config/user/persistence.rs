@@ -45,27 +45,50 @@ impl UserConfig {
     /// Recursively merge desired state into existing document.
     ///
     /// - Keys in desired but not existing: inserted
-    /// - Keys in existing but not desired: removed
-    /// - Both tables: recurse (preserves existing table's formatting and comments)
+    /// - Keys in existing but not desired: removed (unless in `preserve`)
+    /// - Both standard tables: recurse (preserves existing formatting and comments)
+    /// - Existing inline table, desired standard table: compare contents, preserve
+    ///   inline format when semantically equal
     /// - Both exist, values differ: update existing to desired
     /// - Both exist, values equal: leave existing unchanged (preserves comments)
-    fn merge_tables(existing: &mut toml_edit::Table, desired: &toml_edit::Table) {
+    fn merge_tables(
+        existing: &mut toml_edit::Table,
+        desired: &toml_edit::Table,
+        preserve: &std::collections::HashSet<String>,
+    ) {
         let stale_keys: Vec<_> = existing
             .iter()
             .map(|(k, _)| k.to_string())
-            .filter(|k| !desired.contains_key(k))
+            .filter(|k| !desired.contains_key(k) && !preserve.contains(k))
             .collect();
         for key in &stale_keys {
             existing.remove(key);
         }
 
+        let empty = std::collections::HashSet::new();
         for (key, desired_item) in desired.iter() {
             match existing.get_mut(key) {
+                // Both standard tables: recurse
                 Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
                     Self::merge_tables(
                         existing_item.as_table_mut().unwrap(),
                         desired_item.as_table().unwrap(),
+                        &empty,
                     );
+                }
+                // Existing inline table, desired standard table: compare contents
+                // to preserve the user's inline formatting when nothing changed
+                Some(existing_item)
+                    if existing_item.is_inline_table() && desired_item.is_table() =>
+                {
+                    let as_table = existing_item
+                        .as_inline_table()
+                        .unwrap()
+                        .clone()
+                        .into_table();
+                    if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
+                        *existing_item = desired_item.clone();
+                    }
                 }
                 Some(existing_item) => {
                     if !Self::items_equal(existing_item, desired_item) {
@@ -140,7 +163,18 @@ impl UserConfig {
                 .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
             Self::expand_inline_tables(desired_doc.as_table_mut());
 
-            Self::merge_tables(existing_doc.as_table_mut(), desired_doc.as_table());
+            // Preserve unknown top-level keys (typos, future fields, deprecated
+            // keys not yet migrated) so they aren't silently deleted on save.
+            let unknown_keys: std::collections::HashSet<String> =
+                super::find_unknown_keys(&existing_content)
+                    .into_keys()
+                    .collect();
+
+            Self::merge_tables(
+                existing_doc.as_table_mut(),
+                desired_doc.as_table(),
+                &unknown_keys,
+            );
             Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 
             existing_doc.to_string()

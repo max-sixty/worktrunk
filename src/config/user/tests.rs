@@ -2977,6 +2977,69 @@ fn test_save_to_new_file_expands_nested_project_inline_tables() {
     );
 }
 
+#[test]
+fn test_save_to_existing_file_preserves_unknown_keys() {
+    // Unknown top-level keys (typos, future fields) must survive a save.
+    // The diff-based merge skips unknown keys in its stale-key sweep.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"# A user comment
+unknown-key = "keep me"
+skip-shell-integration-prompt = true
+"#,
+    )
+    .unwrap();
+
+    let config = UserConfig {
+        skip_shell_integration_prompt: true,
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("unknown-key = \"keep me\""),
+        "unknown key should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("# A user comment"),
+        "comment should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "known key should be preserved: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_inline_table_formatting() {
+    // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
+    // the diff-based merge must not rewrite it to a standard table if the value
+    // is semantically unchanged.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let original = "post-start = { build = \"cargo build\" }\n";
+    std::fs::write(&config_path, original).unwrap();
+
+    // Load the config (which parses hooks via flatten), then save it back
+    let config = UserConfig::load_from_str(original).unwrap();
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // The inline table syntax should be preserved (not expanded to [post-start])
+    assert!(
+        saved.contains("post-start = { build = \"cargo build\" }"),
+        "inline table should be preserved: {saved}"
+    );
+    assert!(
+        !saved.contains("[post-start]"),
+        "should not be expanded to standard table: {saved}"
+    );
+}
+
 // =========================================================================
 // mutation.rs — additional coverage
 // =========================================================================
