@@ -30,22 +30,48 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("failed to build copy thread pool")
 });
 
-/// Lower the current process's scheduling priority so copy I/O doesn't
-/// compete with interactive foreground work.
+/// Lower the current process's scheduling and I/O priority so copy work
+/// doesn't compete with interactive foreground work.
 ///
-/// Uses `renice` rather than a direct `nice(2)` syscall to stay within the
-/// `forbid(unsafe_code)` lint. Non-fatal: if `renice` is missing or fails,
-/// copies proceed at normal priority.
+/// Shells out rather than calling `setpriority(2)` / `setiopolicy_np(3)`
+/// directly to stay within the `forbid(unsafe_code)` lint. Non-fatal: if
+/// the helper binary is missing or fails, copies proceed at normal priority.
+///
+/// - **macOS**: `taskpolicy -b -p <pid>` — enters `PRIO_DARWIN_BG`, which lowers
+///   CPU scheduling and throttles disk + network I/O. `renice` alone only covers
+///   CPU on Darwin, which misses the dominant cost of a reflink-fallback copy on
+///   APFS.
+/// - **Linux/other Unix**: `renice -n 19 -p <pid>` plus a best-effort
+///   `ionice -c 3 -p <pid>` (idle class). `ionice` is optional — absence is
+///   silently ignored.
 pub fn lower_process_priority() {
     #[cfg(unix)]
     {
         use std::process::{Command, Stdio};
-        let _ = Command::new("renice")
-            .args(["-n", "19", "-p", &std::process::id().to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let pid = std::process::id().to_string();
+        let quiet = |mut cmd: Command| {
+            let _ = cmd
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        };
+
+        #[cfg(target_os = "macos")]
+        {
+            let mut cmd = Command::new("/usr/sbin/taskpolicy");
+            cmd.args(["-b", "-p", &pid]);
+            quiet(cmd);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut renice = Command::new("renice");
+            renice.args(["-n", "19", "-p", &pid]);
+            quiet(renice);
+            let mut ionice = Command::new("ionice");
+            ionice.args(["-c", "3", "-p", &pid]);
+            quiet(ionice);
+        }
     }
 }
 

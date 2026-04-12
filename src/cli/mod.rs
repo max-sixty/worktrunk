@@ -47,7 +47,7 @@ pub(super) fn parse_vars_assignment(s: &str) -> Result<(String, String), String>
 }
 
 /// Custom styles for help output - matches worktrunk's color scheme
-fn help_styles() -> Styles {
+pub(crate) fn help_styles() -> Styles {
     Styles::styled()
         .header(
             anstyle::Style::new()
@@ -1187,7 +1187,7 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
     )]
     Step {
         #[command(subcommand)]
-        action: StepCommand,
+        action: Option<StepCommand>,
     },
 
     /// Run configured hooks
