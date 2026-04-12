@@ -272,8 +272,10 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
 /// template resolution, and origin-aware error handling.
 ///
 /// When `concurrent` is true, `Concurrent` steps spawn threads via
-/// `thread::scope`. When false (foreground hooks), concurrent steps execute
-/// serially — matching the documented hook contract.
+/// `thread::scope`. When false (foreground hooks), `Concurrent` steps execute
+/// serially — a compat fallback for the **deprecated** pre-hook table form.
+/// The canonical pre-* hook shape is a list of `Single` steps; concurrent
+/// execution is reserved for aliases and the background pipeline runner.
 pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,

@@ -515,9 +515,10 @@ pub fn run_hook_with_filter(
         .collect();
 
     // Foreground hooks always execute serially, even when the prepared step is
-    // `Concurrent`. The documented contract is "for pre-* hooks, commands in a
-    // table run sequentially" (`src/cli/mod.rs`). Concurrent execution is
-    // reserved for the background pipeline runner (`run_pipeline.rs`).
+    // `Concurrent`. That input shape is the deprecated pre-hook table form — we
+    // still accept it but run it sequentially ("for pre-* hooks, commands in a
+    // table run sequentially", `src/cli/mod.rs`). Concurrent execution is
+    // reserved for aliases and the background pipeline runner (`run_pipeline.rs`).
     execute_pipeline_foreground(
         &foreground_steps,
         ctx.repo,
