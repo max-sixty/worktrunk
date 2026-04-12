@@ -437,10 +437,8 @@ fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
             aliases.extend(user_config.aliases(project_id.as_deref()));
         }
         // Project config appends
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(ref project_aliases) = project_config.aliases
-        {
-            append_aliases(&mut aliases, project_aliases);
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false) {
+            append_aliases(&mut aliases, &project_config.aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));

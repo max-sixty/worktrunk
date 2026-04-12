@@ -269,24 +269,24 @@ pub struct UserConfig {
     pub worktree_path: Option<String>,
 
     /// Configuration for the `wt list` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub list: Option<sections::ListConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub list: sections::ListConfig,
 
     /// Configuration for the `wt step commit` command (also used by merge)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<sections::CommitConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub commit: sections::CommitConfig,
 
     /// Configuration for the `wt merge` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merge: Option<sections::MergeConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub merge: sections::MergeConfig,
 
     /// Configuration for the `wt switch` command
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub switch: Option<sections::SwitchConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub switch: sections::SwitchConfig,
 
     /// Configuration for `wt step` subcommands
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<sections::StepConfig>,
+    #[serde(default, skip_serializing_if = "merge::is_default")]
+    pub step: sections::StepConfig,
 
     /// Command aliases for `wt step <name>`
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

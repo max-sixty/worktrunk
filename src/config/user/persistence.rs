@@ -190,16 +190,12 @@ impl UserConfig {
                 )));
             }
 
-            if let Some(ref commit) = project_config.commit
-                && let Some(ref cg) = commit.generation
-            {
+            if let Some(ref cg) = project_config.commit.generation {
                 Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
             }
         }
 
-        if let Some(ref commit) = self.commit
-            && let Some(ref cg) = commit.generation
-        {
+        if let Some(ref cg) = self.commit.generation {
             if cg.template.is_some() && cg.template_file.is_some() {
                 return Err(ConfigError(
                     "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),

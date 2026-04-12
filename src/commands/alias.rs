@@ -177,8 +177,7 @@ fn alias_needs_approval(
 ) -> Option<CommandConfig> {
     project_config
         .as_ref()
-        .and_then(|pc| pc.aliases.as_ref())
-        .and_then(|a| a.get(alias_name))
+        .and_then(|pc| pc.aliases.get(alias_name))
         .cloned()
 }
 
@@ -242,8 +241,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // Matches hook merge semantics — both sources run, project commands
     // need approval regardless of whether user also defines the alias.
     let mut aliases = user_config.aliases(project_id.as_deref());
-    if let Some(project_aliases) = project_config.as_ref().and_then(|pc| pc.aliases.as_ref()) {
-        append_aliases(&mut aliases, project_aliases);
+    if let Some(pc) = project_config.as_ref() {
+        append_aliases(&mut aliases, &pc.aliases);
     }
 
     // Warn about aliases that shadow built-in step commands

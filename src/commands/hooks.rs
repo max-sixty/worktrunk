@@ -201,6 +201,11 @@ pub struct SourcedStep {
 /// Shared by hook announcements (where unnamed commands collapse to
 /// `user ×N`) and alias announcements (which skip unnamed commands since
 /// aliases have no natural fallback label).
+///
+/// Note: unnamed commands within a `Concurrent` step aren't reachable from
+/// config today — TOML named tables always produce all-named commands, and
+/// anonymous strings only appear as `Single` steps. The unnamed-flush logic
+/// therefore only fires across step boundaries in practice.
 pub(crate) fn format_pipeline_summary_from_names(
     step_names: &[Vec<Option<&str>>],
     label_named: impl Fn(&str) -> String,
