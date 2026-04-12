@@ -51,8 +51,12 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
     // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
     if args.len() >= 3 {
         let subcommand = args[1].to_string_lossy();
+        // Only forward to external binary if no built-in subcommand has this name.
+        // Built-ins always take precedence at runtime, so completions must agree.
         let binary = format!("wt-{subcommand}");
-        if which::which(&binary).is_ok() {
+        if cli::build_command().find_subcommand(&*subcommand).is_none()
+            && which::which(&binary).is_ok()
+        {
             // Forward args[1..] to the external binary
             if let Some(forwarded) =
                 forward_completion_to_external(&binary, &args[1..], &shell_name)

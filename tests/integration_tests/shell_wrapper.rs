@@ -2960,6 +2960,22 @@ fi
         );
     }
 
+    /// Build a hermetic PATH for completion tests.
+    ///
+    /// Creates a temp dir with a symlink to the `wt` binary, then builds PATH
+    /// from that dir + system dirs (excluding cargo target directories). This
+    /// prevents co-built binaries like `wt-perf` from leaking into completion
+    /// output as external subcommands.
+    fn completion_test_path(wt_bin: &std::path::Path) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(wt_bin, dir.path().join("wt")).unwrap();
+        // Only include the symlink dir + essential system dirs. This prevents
+        // any user-installed `wt-*` binaries (e.g. ~/.cargo/bin/wt-sync) or
+        // co-compiled helpers (target/debug/wt-perf) from appearing.
+        let path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.path().display());
+        (dir, path)
+    }
+
     /// Black-box test: zsh completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
@@ -2986,17 +3002,14 @@ _wt_lazy_complete
 "#
         );
 
+        // Filter PATH to exclude cargo target directories so `wt-perf` (test
+        // helper) doesn't leak into completion output as an external subcommand.
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
+
         let output = std::process::Command::new("zsh")
             .arg("-c")
             .arg(&script)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    wt_bin.parent().unwrap().display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3024,17 +3037,12 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
 "#
         );
 
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
+
         let output = std::process::Command::new("bash")
             .arg("-c")
             .arg(&script)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    wt_bin.parent().unwrap().display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3047,11 +3055,13 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[test]
     fn test_fish_completion_subcommands() {
         let wt_bin = wt_bin();
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
 
         let output = std::process::Command::new(&wt_bin)
             .args(["--", "wt", ""])
             .env("COMPLETE", "fish")
             .env("_CLAP_COMPLETE_INDEX", "1")
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3071,10 +3081,12 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[test]
     fn test_nushell_completion_subcommands() {
         let wt_bin = wt_bin();
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
 
         let output = std::process::Command::new(&wt_bin)
             .args(["--", "wt", ""])
             .env("COMPLETE", "nu")
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
