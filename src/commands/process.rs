@@ -729,6 +729,29 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn test_low_priority_command() {
+        use std::ffi::OsStr;
+
+        let cmd = low_priority_command("sh", true);
+        assert_eq!(cmd.get_program(), "nice");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            &[
+                OsStr::new("-n"),
+                OsStr::new("19"),
+                OsStr::new("--"),
+                OsStr::new("sh"),
+            ]
+        );
+
+        let cmd = low_priority_command("sh", false);
+        assert_eq!(cmd.get_program(), "sh");
+        assert_eq!(cmd.get_args().count(), 0);
+    }
+
     #[test]
     fn test_sanitize_for_filename() {
         // Path separators, Windows-illegal characters, multiple special chars,
