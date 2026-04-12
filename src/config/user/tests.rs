@@ -2408,3 +2408,702 @@ fn test_try_parse_value() {
         toml::Value::String("hello".into())
     );
 }
+
+// =========================================================================
+// save_to() tests — existing-file branch
+// =========================================================================
+
+#[test]
+fn test_save_to_existing_file_writes_project_sections() {
+    // Covers sync_serialized_section and serialize_section_item for the "Some"
+    // branch: an existing file is updated with a project that has list, commit,
+    // merge, and switch sections populated.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+
+    // Start with a minimal file so save_to takes the "existing file" path
+    std::fs::write(&config_path, "# user config\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "github.com/user/repo".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some("../{{ branch | sanitize }}".to_string()),
+            list: Some(ListConfig {
+                full: Some(true),
+                ..Default::default()
+            }),
+            commit: Some(CommitConfig {
+                stage: Some(StageMode::Tracked),
+                generation: None,
+            }),
+            merge: Some(MergeConfig {
+                squash: Some(false),
+                ..Default::default()
+            }),
+            switch: Some(SwitchConfig {
+                cd: Some(false),
+                picker: None,
+            }),
+            ..Default::default()
+        },
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // Comment should be preserved
+    assert!(saved.contains("# user config"), "comment lost: {saved}");
+    // All four per-project sections should be present
+    assert!(
+        saved.contains("[projects.\"github.com/user/repo\".list]"),
+        "missing list section: {saved}"
+    );
+    assert!(saved.contains("full = true"), "missing list.full: {saved}");
+    assert!(
+        saved.contains("[projects.\"github.com/user/repo\".commit]"),
+        "missing commit section: {saved}"
+    );
+    assert!(
+        saved.contains("stage = \"tracked\""),
+        "missing commit.stage: {saved}"
+    );
+    assert!(
+        saved.contains("[projects.\"github.com/user/repo\".merge]"),
+        "missing merge section: {saved}"
+    );
+    assert!(
+        saved.contains("squash = false"),
+        "missing merge.squash: {saved}"
+    );
+    assert!(
+        saved.contains("[projects.\"github.com/user/repo\".switch]"),
+        "missing switch section: {saved}"
+    );
+    assert!(saved.contains("cd = false"), "missing switch.cd: {saved}");
+
+    // Round-trip: file parses back into an equivalent config
+    let reparsed = UserConfig::load_from_str(&saved).unwrap();
+    let reloaded = reparsed.projects.get("github.com/user/repo").unwrap();
+    assert_eq!(
+        reloaded.worktree_path.as_deref(),
+        Some("../{{ branch | sanitize }}")
+    );
+    assert_eq!(reloaded.list.as_ref().unwrap().full, Some(true));
+    assert_eq!(
+        reloaded.commit.as_ref().unwrap().stage,
+        Some(StageMode::Tracked)
+    );
+    assert_eq!(reloaded.merge.as_ref().unwrap().squash, Some(false));
+    assert_eq!(reloaded.switch.as_ref().unwrap().cd, Some(false));
+}
+
+#[test]
+fn test_save_to_existing_file_removes_stale_projects_and_sections() {
+    // Covers the "remove stale projects" branch in update_projects_section,
+    // plus the sync_serialized_section "None" branch (removing a section whose
+    // in-memory value is now None).
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+
+    // Existing file has two projects and a list section on the one we keep.
+    std::fs::write(
+        &config_path,
+        r#"# keep me
+[projects."keep"]
+worktree-path = "keep-path"
+
+[projects."keep".list]
+full = true
+
+[projects."drop"]
+worktree-path = "drop-path"
+"#,
+    )
+    .unwrap();
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "keep".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some("keep-path".to_string()),
+            list: None, // was Some on disk, now None — should be removed
+            ..Default::default()
+        },
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(saved.contains("# keep me"), "comment lost: {saved}");
+    assert!(
+        saved.contains("[projects.\"keep\"]") || saved.contains("\"keep\""),
+        "keep project lost: {saved}"
+    );
+    assert!(
+        !saved.contains("\"drop\""),
+        "stale project not removed: {saved}"
+    );
+    assert!(
+        !saved.contains("[projects.\"keep\".list]"),
+        "stale list section not removed: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_updates_commit_generation_command() {
+    // Covers update_commit_generation_section when the file already has a
+    // [commit.generation] table — we overwrite the command in place.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"# keep this comment
+[commit.generation]
+command = "old-llm"
+template = "stays: {{ diff }}"
+"#,
+    )
+    .unwrap();
+
+    let config = UserConfig {
+        commit: Some(CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("new-llm".to_string()),
+                template: Some("stays: {{ diff }}".to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("# keep this comment"),
+        "comment lost: {saved}"
+    );
+    assert!(
+        saved.contains("command = \"new-llm\""),
+        "command not updated: {saved}"
+    );
+    assert!(
+        !saved.contains("old-llm"),
+        "old command not removed: {saved}"
+    );
+    assert!(
+        saved.contains("template = \"stays: {{ diff }}\""),
+        "template not preserved: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_adds_commit_generation_to_plain_commit_table() {
+    // Existing file has a [commit] table (e.g., with `stage`) but no
+    // [commit.generation] subtable yet. update_commit_generation_section
+    // must create the subtable and populate it.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[commit]
+stage = "all"
+"#,
+    )
+    .unwrap();
+
+    let config = UserConfig {
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::All),
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm".to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("[commit.generation]"),
+        "generation subtable missing: {saved}"
+    );
+    assert!(
+        saved.contains("command = \"llm\""),
+        "command missing: {saved}"
+    );
+    assert!(saved.contains("stage = \"all\""), "stage lost: {saved}");
+}
+
+#[test]
+fn test_save_to_existing_file_skips_non_table_project_entry() {
+    // Covers the defensive `continue` branch in update_projects_section:
+    // if an existing file has a bogus non-table value at projects."<id>",
+    // the entry is skipped (not replaced) so the save doesn't clobber the
+    // user's hand-edited oddity. This state is only reachable via raw file
+    // edits — the serializer never produces it — but the code defends
+    // against it to avoid panicking on malformed input. We still expect
+    // the save to succeed and the other valid project to be updated.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[projects]
+bogus = "not-a-table"
+
+[projects."real"]
+worktree-path = "old"
+"#,
+    )
+    .unwrap();
+
+    let mut config = UserConfig::default();
+    // "bogus" is in self.projects but the file has it as a non-table value.
+    config
+        .projects
+        .insert("bogus".to_string(), UserProjectOverrides::default());
+    config.projects.insert(
+        "real".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some("new".to_string()),
+            ..Default::default()
+        },
+    );
+
+    // save_to should succeed even though one of the entries can't be updated
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // The "real" project should be updated normally
+    assert!(
+        saved.contains("worktree-path = \"new\""),
+        "real project not updated: {saved}"
+    );
+    // The bogus non-table entry should have been left alone (not replaced
+    // with a table), demonstrating the defensive continue.
+    assert!(
+        saved.contains("bogus = \"not-a-table\""),
+        "bogus entry should be preserved verbatim: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_where_commit_is_scalar() {
+    // Covers the else branch of `if let Some(commit_table) = doc["commit"].as_table_mut()`
+    // in update_commit_generation_section: the existing file has a top-level
+    // `commit` that's a scalar (user-edited mistake), not a table. The code
+    // must not panic — it silently skips the update. Only reachable via raw
+    // file edits.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "commit = \"hand-edited-mistake\"\n").unwrap();
+
+    let config = UserConfig {
+        commit: Some(CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm".to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // The malformed entry is preserved verbatim (defensive skip)
+    assert!(
+        saved.contains("\"hand-edited-mistake\""),
+        "malformed entry should be preserved: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_where_commit_generation_is_scalar() {
+    // Covers the else branch of `if let Some(gen_table) = commit_table["generation"].as_table_mut()`:
+    // `[commit]` is a valid table but `generation` within it is a scalar
+    // (another raw-edit mistake). The outer if let enters, the inner doesn't,
+    // and the update silently skips. Only reachable via raw file edits.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "[commit]\nstage = \"tracked\"\ngeneration = \"oops\"\n",
+    )
+    .unwrap();
+
+    let config = UserConfig {
+        commit: Some(CommitConfig {
+            stage: Some(StageMode::Tracked),
+            generation: Some(CommitGenerationConfig {
+                command: Some("llm".to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // The scalar generation is preserved verbatim
+    assert!(
+        saved.contains("generation = \"oops\""),
+        "malformed generation should be preserved: {saved}"
+    );
+    // The unrelated stage value is untouched
+    assert!(saved.contains("stage = \"tracked\""), "{saved}");
+}
+
+#[test]
+fn test_save_to_existing_file_where_projects_is_scalar() {
+    // Covers the else branch of `if let Some(projects) = doc["projects"].as_table_mut()`
+    // in update_projects_section: the existing file has a top-level
+    // `projects` as a scalar. Reachable only via raw file edits.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "projects = \"oops\"\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "repo".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some("../x".to_string()),
+            ..Default::default()
+        },
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // Defensive: the malformed projects entry is preserved, the update is skipped
+    assert!(
+        saved.contains("projects = \"oops\""),
+        "malformed projects should be preserved: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_with_invalid_toml_returns_parse_error() {
+    // Covers the `parse().map_err(...)` closure in save_to's existing-file
+    // branch: the file exists (so we take the "surgical update" path) but
+    // its contents don't parse as TOML.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "this is not [[[ valid toml").unwrap();
+
+    let config = UserConfig::default();
+    let err = config.save_to(&config_path).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to parse config file"),
+        "expected parse error, got: {msg}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_save_to_existing_file_with_unreadable_file_returns_read_error() {
+    // Covers the `read_to_string.map_err(...)` closure in save_to: the file
+    // exists but we can't read it. Matches the pattern of the mutation-side
+    // test_reload_projects_from_permission_error.
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# valid\n").unwrap();
+
+    let mut perms = std::fs::metadata(&config_path).unwrap().permissions();
+    perms.set_mode(0o000);
+    std::fs::set_permissions(&config_path, perms).unwrap();
+
+    struct RestorePerms<'a>(&'a std::path::Path);
+    impl Drop for RestorePerms<'_> {
+        fn drop(&mut self) {
+            let mut perms = std::fs::metadata(self.0).unwrap().permissions();
+            perms.set_mode(0o644);
+            let _ = std::fs::set_permissions(self.0, perms);
+        }
+    }
+    let _guard = RestorePerms(&config_path);
+
+    // Skip when running as root (common in CI containers)
+    if std::env::var("USER").as_deref() == Ok("root") {
+        return;
+    }
+
+    let config = UserConfig::default();
+    let err = config.save_to(&config_path).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to read config file"),
+        "expected read error, got: {msg}"
+    );
+}
+
+#[test]
+fn test_save_to_root_path_skips_parent_creation() {
+    // Covers the else branch of `if let Some(parent) = config_path.parent()`
+    // in save_to: when the config path is the filesystem root (`/`), parent()
+    // returns None and we skip create_dir_all. The downstream write will
+    // fail because `/` is a directory, but we should reach that point
+    // without panicking — proving the None branch executes cleanly.
+    let config = UserConfig::default();
+    let err = config.save_to(std::path::Path::new("/")).unwrap_err();
+    let msg = err.to_string();
+    // We expect to fail at the read/write step, not at create_dir_all.
+    // The specific error depends on the platform (read error since "/"
+    // exists, or write error). We just verify it wasn't the create_dir
+    // path (which would mean line 216's else branch wasn't taken).
+    assert!(
+        !msg.contains("Failed to create config directory"),
+        "should skip create_dir when parent is None, got: {msg}"
+    );
+}
+
+#[test]
+fn test_save_to_fails_when_parent_is_a_file() {
+    // Covers the create_dir_all error branch: if config_path's parent
+    // already exists as a regular file, create_dir_all fails and save_to
+    // returns a "Failed to create config directory" error.
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "i am a file").unwrap();
+
+    // config_path's parent is "blocker", which is a file
+    let config_path = blocker.join("config.toml");
+
+    let config = UserConfig::default();
+    let err = config.save_to(&config_path).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to create config directory"),
+        "expected create_dir error, got: {msg}"
+    );
+}
+
+#[test]
+fn test_save_to_new_file_expands_nested_project_inline_tables() {
+    // Covers expand_inline_tables recursion: a per-project config with nested
+    // sections forces to_document to emit inline tables that must be expanded
+    // into standard [projects."id".list] etc. subtables for readability.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "repo".to_string(),
+        UserProjectOverrides {
+            list: Some(ListConfig {
+                full: Some(true),
+                branches: Some(true),
+                ..Default::default()
+            }),
+            switch: Some(SwitchConfig {
+                cd: Some(false),
+                picker: None,
+            }),
+            ..Default::default()
+        },
+    );
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    // Should be expanded into standard subtables, not inline tables
+    assert!(
+        saved.contains("[projects.repo.list]"),
+        "list should be expanded to standard subtable: {saved}"
+    );
+    assert!(
+        saved.contains("[projects.repo.switch]"),
+        "switch should be expanded to standard subtable: {saved}"
+    );
+    // Inline syntax should not appear for these sections
+    assert!(
+        !saved.contains("list = {"),
+        "list should not be inline: {saved}"
+    );
+    assert!(
+        !saved.contains("switch = {"),
+        "switch should not be inline: {saved}"
+    );
+    // And it should round-trip cleanly
+    let reparsed = UserConfig::load_from_str(&saved).unwrap();
+    assert_eq!(
+        reparsed
+            .projects
+            .get("repo")
+            .unwrap()
+            .list
+            .as_ref()
+            .unwrap()
+            .branches,
+        Some(true)
+    );
+}
+
+// =========================================================================
+// mutation.rs — additional coverage
+// =========================================================================
+
+#[test]
+fn test_set_project_worktree_path_noop_when_unchanged() {
+    // Covers the `return false` early-exit in set_project_worktree_path's
+    // mutator: when the path already matches, no save happens. We verify
+    // this by checking that the file content is byte-identical across a
+    // redundant call.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# keep\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .unwrap();
+
+    let after_first = std::fs::read_to_string(&config_path).unwrap();
+    // Sanity: first call actually wrote the value
+    assert!(after_first.contains("../custom"), "{after_first}");
+
+    // Second call with identical value should be a no-op — reload_projects_from
+    // refreshes self.projects from disk, the mutator compares equal and
+    // returns false, so save is skipped.
+    let mut config2 = UserConfig::default();
+    config2
+        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .unwrap();
+
+    let after_second = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(
+        after_first, after_second,
+        "unchanged value should not rewrite the file"
+    );
+}
+
+#[test]
+fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
+    // Covers the `return false` early-exit in set_skip_shell_integration_prompt's
+    // mutator. reload_projects_from only refreshes `projects` — the in-memory
+    // flag is preserved across calls on the same config object — so a second
+    // call sees the flag already true and skips the save.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# empty\n").unwrap();
+
+    let mut config = UserConfig::default();
+    config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap();
+    let after_first = std::fs::read_to_string(&config_path).unwrap();
+    assert!(after_first.contains("skip-shell-integration-prompt = true"));
+
+    // Second call with the flag already true in-memory — mutator returns
+    // false, save is skipped, file is byte-identical.
+    config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap();
+    let after_second = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(after_first, after_second);
+}
+
+#[test]
+fn test_acquire_config_lock_handles_root_path() {
+    // Covers the else branch of `if let Some(parent) = lock_path.parent()`
+    // in acquire_config_lock: when config_path is `/`, `with_extension` is
+    // a no-op, and `"/".parent()` is None, so we skip create_dir_all. The
+    // subsequent OpenOptions.open fails (can't open a directory as a file),
+    // which surfaces as a "Failed to open lock file" error — proving the
+    // None branch executes cleanly.
+    let mut config = UserConfig::default();
+    let err = config
+        .set_skip_shell_integration_prompt(Some(std::path::Path::new("/")))
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("Failed to create config directory"),
+        "should skip create_dir when parent is None, got: {msg}"
+    );
+    assert!(
+        msg.contains("Failed to open lock file"),
+        "expected open lock error, got: {msg}"
+    );
+}
+
+#[test]
+fn test_acquire_config_lock_fails_when_parent_is_file() {
+    // Covers the create_dir_all error branch in acquire_config_lock:
+    // if the config path's parent is actually a regular file, we can't
+    // create the lock directory and the mutation fails fast.
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "i am a file").unwrap();
+
+    let config_path = blocker.join("config.toml");
+
+    let mut config = UserConfig::default();
+    let err = config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to create config directory"),
+        "expected create_dir error, got: {msg}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_with_locked_mutation_propagates_save_error() {
+    // Covers the `save_to(&path)?` error branch in with_locked_mutation:
+    // after a successful lock + reload, the mutator closure chmods the
+    // config file to 000. The subsequent save_to tries to read the
+    // existing file and fails with a permission
+    // error, which with_locked_mutation propagates back to the caller.
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(&config_path, "# valid\n").unwrap();
+
+    struct RestorePerms<'a>(&'a std::path::Path);
+    impl Drop for RestorePerms<'_> {
+        fn drop(&mut self) {
+            if let Ok(meta) = std::fs::metadata(self.0) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(self.0, perms);
+            }
+        }
+    }
+    let _guard = RestorePerms(&config_path);
+
+    if std::env::var("USER").as_deref() == Ok("root") {
+        return;
+    }
+
+    let cfg_path_for_closure = config_path.clone();
+    let mut config = UserConfig::default();
+    let err = config
+        .with_locked_mutation(Some(&config_path), move |_config| {
+            // Mid-mutation: strip read permissions from the config file.
+            // Reload already ran; save_to will try to read again and fail.
+            let mut perms = std::fs::metadata(&cfg_path_for_closure)
+                .unwrap()
+                .permissions();
+            perms.set_mode(0o000);
+            std::fs::set_permissions(&cfg_path_for_closure, perms).unwrap();
+            true
+        })
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to read config file"),
+        "expected save-side read error, got: {msg}"
+    );
+}

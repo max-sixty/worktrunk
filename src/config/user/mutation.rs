@@ -13,6 +13,8 @@ use super::UserConfig;
 use super::path;
 use super::sections::{CommitConfig, CommitGenerationConfig};
 
+const NO_CONFIG_DIR_MSG: &str = "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME";
+
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
 /// Uses a `.lock` file alongside the config file to coordinate between processes.
@@ -56,17 +58,13 @@ impl UserConfig {
     {
         let path = match config_path {
             Some(p) => p.to_path_buf(),
-            None => path::config_path().ok_or_else(|| {
-                ConfigError(
-                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
-                )
-            })?,
+            None => path::config_path().ok_or_else(|| ConfigError(NO_CONFIG_DIR_MSG.into()))?,
         };
         let _lock = acquire_config_lock(&path)?;
-        self.reload_projects_from(config_path)?;
+        self.reload_projects_from(&path)?;
 
         if mutate(self) {
-            self.save_impl(config_path)?;
+            self.save_to(&path)?;
         }
         Ok(())
     }
@@ -76,27 +74,15 @@ impl UserConfig {
     /// This replaces the in-memory projects with the authoritative disk state,
     /// while keeping other config values (worktree-path, commit-generation, etc.).
     /// Callers should reload before modifying and saving to avoid race conditions.
-    fn reload_projects_from(
-        &mut self,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        let path = match config_path {
-            Some(p) => Some(p.to_path_buf()),
-            None => path::config_path(),
-        };
-
-        let Some(path) = path else {
-            return Ok(()); // No config file to reload from
-        };
-
+    fn reload_projects_from(&mut self, path: &std::path::Path) -> Result<(), ConfigError> {
         if !path.exists() {
             return Ok(()); // Nothing to reload
         }
 
-        let content = std::fs::read_to_string(&path).map_err(|e| {
+        let content = std::fs::read_to_string(path).map_err(|e| {
             ConfigError(format!(
                 "Failed to read config file {}: {}",
-                format_path_for_display(&path),
+                format_path_for_display(path),
                 e
             ))
         })?;
@@ -105,7 +91,7 @@ impl UserConfig {
         let disk_config: UserConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError(format!(
                 "Failed to parse config file {}: {}",
-                format_path_for_display(&path),
+                format_path_for_display(path),
                 e
             ))
         })?;

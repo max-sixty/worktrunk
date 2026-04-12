@@ -8,7 +8,6 @@ use serde::Serialize;
 use crate::config::ConfigError;
 
 use super::UserConfig;
-use super::path;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
@@ -58,29 +57,6 @@ impl UserConfig {
             table[k] = v.clone();
         }
         Some(toml_edit::Item::Table(table))
-    }
-
-    /// Save the current configuration to the default config file location
-    pub fn save(&self) -> Result<(), ConfigError> {
-        self.save_impl(None)
-    }
-
-    /// Internal save implementation that handles both default and custom paths
-    pub(super) fn save_impl(
-        &self,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        match config_path {
-            Some(path) => self.save_to(path),
-            None => {
-                let path = path::config_path().ok_or_else(|| {
-                    ConfigError(
-                        "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
-                    )
-                })?;
-                self.save_to(&path)
-            }
-        }
     }
 
     /// Update the [commit.generation] section in the document.
@@ -182,8 +158,6 @@ impl UserConfig {
                 let mut new_table = inline.clone().into_table();
                 Self::expand_inline_tables(&mut new_table);
                 *item = toml_edit::Item::Table(new_table);
-            } else if let Some(t) = item.as_table_mut() {
-                Self::expand_inline_tables(t);
             }
         }
     }
