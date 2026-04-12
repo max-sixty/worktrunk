@@ -843,10 +843,11 @@ fn test_hook_command_completion_cross_shell_filtering_contract(repo: TestRepo) {
     // Set up a project config with named pre-merge commands
     repo.write_project_config(
         r#"
-[pre-merge]
-test = "cargo test"
-lint = "cargo clippy"
-build = "cargo build"
+pre-merge = [
+    {test = "cargo test"},
+    {lint = "cargo clippy"},
+    {build = "cargo build"},
+]
 "#,
     );
 

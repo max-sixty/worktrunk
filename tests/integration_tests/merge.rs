@@ -625,10 +625,11 @@ fn test_merge_pre_merge_command_named(mut repo: TestRepo) {
     fs::write(
         config_dir.join("wt.toml"),
         r#"
-[pre-merge]
-format = "exit 0"
-lint = "exit 0"
-test = "exit 0"
+pre-merge = [
+    {format = "exit 0"},
+    {lint = "exit 0"},
+    {test = "exit 0"},
+]
 "#,
     )
     .unwrap();
@@ -1104,9 +1105,10 @@ fn test_readme_example_complex(mut repo: TestRepo) {
     create_mock_llm_auth(&bin_dir);
 
     let config_content = r#"
-[pre-merge]
-"test" = "cargo test"
-"lint" = "cargo clippy"
+pre-merge = [
+    {"test" = "cargo test"},
+    {"lint" = "cargo clippy"},
+]
 
 [post-merge]
 "install" = "cargo install --path ."

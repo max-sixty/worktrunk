@@ -307,23 +307,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Single command:[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# pre-start = "npm ci"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Multiple named commands — concurrent for post-*, sequential for pre-*:[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# [pre-merge][0m
-[107m [0m [2m# test = "npm test"[0m
-[107m [0m [2m# build = "npm run build"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent):[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# post-start = [[0m
-[107m [0m [2m#     { install = "npm ci" },[0m
-[107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
-[107m [0m [2m# ][0m
 
 [1m[32mProject config[0m
 

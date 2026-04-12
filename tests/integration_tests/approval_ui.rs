@@ -385,10 +385,11 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
 fn test_step_hook_run_named_command(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'running test' > test.txt"
-lint = "echo 'running lint' > lint.txt"
-build = "echo 'running build' > build.txt"
+        r#"pre-merge = [
+    {test = "echo 'running test' > test.txt"},
+    {lint = "echo 'running lint' > lint.txt"},
+    {build = "echo 'running build' > build.txt"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -426,9 +427,10 @@ build = "echo 'running build' > build.txt"
 fn test_step_hook_unknown_name_error(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'test'"
-lint = "echo 'lint'"
+        r#"pre-merge = [
+    {test = "echo 'test'"},
+    {lint = "echo 'lint'"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -510,9 +512,10 @@ test = "echo 'Running project test'"
 #[rstest]
 fn test_project_prefix_all_requires_approval(repo: TestRepo) {
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'Running project test'"
-lint = "echo 'Running project lint'"
+        r#"pre-merge = [
+    {test = "echo 'Running project test'"},
+    {lint = "echo 'Running project lint'"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -546,10 +549,11 @@ test = "echo 'user test'"
 fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-first = "echo 'first' >> output.txt"
-second = "echo 'second' >> output.txt"
-third = "echo 'third' >> output.txt"
+        r#"pre-merge = [
+    {first = "echo 'first' >> output.txt"},
+    {second = "echo 'second' >> output.txt"},
+    {third = "echo 'third' >> output.txt"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
