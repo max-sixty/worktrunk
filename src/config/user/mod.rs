@@ -70,19 +70,18 @@ impl std::error::Error for LoadError {}
 
 // ---- Env-var overlay ----
 
-/// Parsed WORKTRUNK_* env-var overrides ready to merge into a TOML table.
-///
-/// Stores both typed and string versions because we can't know the target type
-/// at parse time. Typed values work for `Option<u64>`/`Option<bool>` fields;
-/// string values work for `Option<String>` fields with numeric-looking values
-/// (e.g., `WORKTRUNK_WORKTREE_PATH=42`). The load flow tries typed first, then
-/// falls back to strings. A mixed case (one var needing typed, another needing
-/// string) would fail both passes — unlikely in practice since String fields
-/// hold paths/commands, not numeric values.
-struct EnvOverrides {
-    typed_table: toml::Table,
-    string_table: toml::Table,
-    var_names: Vec<String>,
+/// A single parsed WORKTRUNK_* env var with both typed and string representations.
+struct EnvVar {
+    /// Original env var name (e.g., `WORKTRUNK__LIST__TIMEOUT_MS`)
+    name: String,
+    /// TOML path segments (e.g., `["list", "timeout-ms"]`)
+    segments: Vec<String>,
+    /// Typed TOML value (bool/int/float/string coercion via [`try_parse_value`])
+    typed_value: toml::Value,
+    /// Raw string value, kept for fallback when the typed form doesn't match
+    /// the target field's type (e.g., `WORKTRUNK_WORKTREE_PATH=42` needs
+    /// `String`, not `Integer`).
+    raw_value: String,
 }
 
 /// Read `WORKTRUNK_*` env vars and build a nested TOML table.
@@ -94,16 +93,12 @@ struct EnvOverrides {
 ///
 /// Infrastructure vars (`_CONFIG_PATH`, `_SYSTEM_CONFIG_PATH`,
 /// `_APPROVALS_PATH`) and test vars (`_TEST_*`) are excluded.
-fn parse_worktrunk_env_vars() -> EnvOverrides {
+fn parse_worktrunk_env_vars() -> Vec<EnvVar> {
     const INFRA_VARS: &[&str] = &[
         "WORKTRUNK_CONFIG_PATH",
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
         "WORKTRUNK_APPROVALS_PATH",
     ];
-
-    let mut typed_table = toml::Table::new();
-    let mut string_table = toml::Table::new();
-    let mut var_names = Vec::new();
 
     let mut env_vars: Vec<_> = std::env::vars()
         .filter(|(k, _)| k.starts_with("WORKTRUNK_"))
@@ -112,34 +107,64 @@ fn parse_worktrunk_env_vars() -> EnvOverrides {
         .collect();
     env_vars.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (key, value) in env_vars {
-        var_names.push(key.clone());
-        // Strip WORKTRUNK_ prefix, split by __ for nesting, convert to kebab-case
-        let stripped = &key["WORKTRUNK_".len()..];
-        let segments: Vec<String> = stripped
-            .split("__")
-            .map(|s| {
-                s.to_lowercase()
-                    .replace('_', "-")
-                    .trim_start_matches('-')
-                    .to_string()
+    env_vars
+        .into_iter()
+        .filter_map(|(key, value)| {
+            // Strip WORKTRUNK_ prefix, split by __ for nesting, convert to kebab-case
+            let stripped = &key["WORKTRUNK_".len()..];
+            let segments: Vec<String> = stripped
+                .split("__")
+                .map(|s| {
+                    s.to_lowercase()
+                        .replace('_', "-")
+                        .trim_start_matches('-')
+                        .to_string()
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            if segments.is_empty() {
+                return None;
+            }
+
+            Some(EnvVar {
+                name: key,
+                segments,
+                typed_value: try_parse_value(&value),
+                raw_value: value,
             })
-            .filter(|s| !s.is_empty())
-            .collect();
+        })
+        .collect()
+}
 
-        if segments.is_empty() {
-            continue;
+/// For each env var, probe whether its typed or string representation
+/// deserializes correctly against the file config, then build a single
+/// overlay table with the correct representation per var.
+///
+/// Each var is tested independently against the file table (not against other
+/// env vars). This lets serde itself decide the correct type — no schema
+/// walking or guessing needed. O(N) deserializations where N is the number
+/// of env vars (tiny in practice).
+fn resolve_env_overlay(file_table: &toml::Table, vars: &[EnvVar]) -> toml::Table {
+    let mut overlay = toml::Table::new();
+    for var in vars {
+        // Typed probe: merge just this var's typed value into the file table
+        let mut probe = file_table.clone();
+        set_nested_value(&mut probe, &var.segments, var.typed_value.clone());
+        if toml::Value::Table(probe).try_into::<UserConfig>().is_ok() {
+            set_nested_value(&mut overlay, &var.segments, var.typed_value.clone());
+        } else {
+            // Typed form doesn't fit the target field — use raw string.
+            // If this is also wrong (e.g., "not-a-bool" for a bool field),
+            // the final deserialize will catch it and surface LoadError::Env.
+            set_nested_value(
+                &mut overlay,
+                &var.segments,
+                toml::Value::String(var.raw_value.clone()),
+            );
         }
-
-        set_nested_value(&mut typed_table, &segments, try_parse_value(&value));
-        set_nested_value(&mut string_table, &segments, toml::Value::String(value));
     }
-
-    EnvOverrides {
-        typed_table,
-        string_table,
-        var_names,
-    }
+    overlay
 }
 
 /// Try to coerce a string into a typed TOML value (bool → i64 → f64 → string).
@@ -381,34 +406,31 @@ impl UserConfig {
         }
 
         // 3. Env-var overrides (highest priority)
-        let env = parse_worktrunk_env_vars();
-        let has_env_vars = !env.var_names.is_empty();
-        let file_table = merged_table.clone();
+        let env_vars = parse_worktrunk_env_vars();
 
-        if !env.typed_table.is_empty() {
-            deep_merge_table(&mut merged_table, env.typed_table);
+        if env_vars.is_empty() {
+            let config: Self = toml::Value::Table(merged_table)
+                .try_into()
+                .map_err(|err: toml::de::Error| LoadError::Validation(err.to_string()))?;
+            config.validate().map_err(|e| LoadError::Validation(e.0))?;
+            return Ok(config);
         }
 
-        // 4. Deserialize the merged table.
-        //
-        // Try typed env values first (handles Option<u64>, Option<bool>).
-        // If that fails and env vars are present, retry with string values
-        // (handles Option<String> fields with numeric-looking values like
-        // WORKTRUNK_WORKTREE_PATH=42).
-        let config: Self = match toml::Value::Table(merged_table).try_into() {
-            Ok(config) => config,
-            Err(typed_err) if has_env_vars => {
-                let mut string_merged = file_table;
-                deep_merge_table(&mut string_merged, env.string_table);
-                toml::Value::Table(string_merged)
-                    .try_into()
-                    .map_err(|_: toml::de::Error| LoadError::Env {
-                        err: typed_err.to_string(),
-                        vars: env.var_names,
-                    })?
-            }
-            Err(err) => return Err(LoadError::Validation(err.to_string())),
-        };
+        // Resolve each env var's type independently: probe typed form against
+        // the file table, fall back to string if typed doesn't fit the target
+        // field. This handles mixed cases (e.g., WORKTRUNK__LIST__TIMEOUT_MS=100
+        // needs Integer for u64, WORKTRUNK_WORKTREE_PATH=42 needs String).
+        let file_table = merged_table.clone();
+        let env_overlay = resolve_env_overlay(&file_table, &env_vars);
+        deep_merge_table(&mut merged_table, env_overlay);
+
+        let config: Self =
+            toml::Value::Table(merged_table)
+                .try_into()
+                .map_err(|err: toml::de::Error| LoadError::Env {
+                    err: err.to_string(),
+                    vars: env_vars.iter().map(|v| v.name.clone()).collect(),
+                })?;
 
         config.validate().map_err(|e| LoadError::Validation(e.0))?;
 
