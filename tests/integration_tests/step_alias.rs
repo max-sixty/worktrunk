@@ -1,6 +1,9 @@
 //! Integration tests for `wt step <alias>`
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo,
+    setup_snapshot_settings, wt_bin,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
@@ -136,6 +139,29 @@ greet = "echo Hello {{ name }} from {{ branch }}"
         &repo,
         "step",
         &["greet", "--dry-run", "--var", "name=World", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// --key=value shorthand for --var key=value
+#[rstest]
+fn test_step_alias_with_shorthand_var(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo Hello {{ name }} from {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["greet", "--dry-run", "--name=World", "--yes"],
         Some(&feature_path),
     ));
 }
@@ -497,6 +523,196 @@ deploy = "echo deploying"
     assert_cmd_snapshot!(
         "alias_approval_yes_second_run_prompts",
         make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path),)
+    );
+}
+
+// ============================================================================
+// Directive file passthrough
+// ============================================================================
+
+/// `wt step <alias>` passes the parent's `WORKTRUNK_DIRECTIVE_FILE` through to
+/// the alias subprocess so inner `wt switch --create` calls can land the user
+/// in the new worktree.
+///
+/// Regression test for #2075: without the passthrough, an alias that wraps
+/// `wt switch --create` prints the "shell integration not installed" hint and
+/// the parent shell never `cd`s into the new worktree.
+#[rstest]
+fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Escape the wt binary path for embedding in a sh -c command string.
+    // Test temp paths never contain single quotes.
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    // Double backslashes so the Windows path (e.g. `D:\a\worktrunk\...\wt.exe`)
+    // parses as literal characters inside a TOML basic string rather than
+    // being interpreted as escape sequences (`\a`, `\w`, ...).
+    let wt_toml = wt_str.replace('\\', "\\\\");
+
+    // Alias body invokes the test wt binary directly (PATH lookup in the
+    // subprocess shell wouldn't find it).
+    repo.write_test_config(&format!(
+        r#"
+[aliases]
+new-branch = "'{wt_toml}' switch --create alias-created"
+"#
+    ));
+
+    let (directive_path, _guard) = directive_file();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["step", "new-branch"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt step new-branch failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.contains("cd '"),
+        "alias wrapping `wt switch --create` should write a cd directive to the \
+         parent directive file, got: {directives:?}"
+    );
+    assert!(
+        directives.contains("alias-created"),
+        "cd directive should target the new worktree (alias-created), got: {directives:?}"
+    );
+
+    // Stderr should NOT contain the "shell integration not installed" hint
+    // — that hint is what appears when the inner wt can't find the directive
+    // file, which is exactly the bug this test guards against.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("shell integration"),
+        "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
+    );
+}
+
+/// Pipeline aliases announce their structure: named serial and concurrent
+/// steps appear in the "Running alias" line, joined by `;` and `,`.
+///
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` forces the concurrent step to run
+/// commands sequentially (in declaration order) so the snapshot captures a
+/// deterministic interleaving — analogous to how `RAYON_NUM_THREADS=1` is
+/// used in `step_prune` tests.
+#[rstest]
+fn test_alias_pipeline_announcement(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = [
+    { install = "echo INSTALL" },
+    { build = "echo BUILD", lint = "echo LINT" },
+]
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path));
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    assert_cmd_snapshot!(cmd);
+}
+
+/// Concurrent alias steps (named table) execute all commands
+#[rstest]
+fn test_alias_concurrent_steps(mut repo: TestRepo) {
+    // Named table form: commands run concurrently within the step
+    repo.write_test_config(
+        r#"
+[aliases.build]
+lint = "echo LINT"
+test = "echo TEST"
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "build"]).current_dir(&feature_path);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "concurrent alias failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Both commands should have run (order may vary due to concurrency)
+    assert!(stderr.contains("LINT"), "expected LINT in output: {stderr}");
+    assert!(stderr.contains("TEST"), "expected TEST in output: {stderr}");
+}
+
+/// A failing concurrent step causes the alias to fail. Covers the error
+/// propagation path in the `HookStep::Concurrent` join loop, complementing
+/// the happy-path `test_alias_concurrent_steps` above.
+#[rstest]
+fn test_alias_concurrent_step_failure(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases.check]
+ok = "true"
+fail = "exit 1"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "check"]);
+    let output = cmd.output().expect("wt step check failed to spawn");
+    assert!(
+        !output.status.success(),
+        "wt step check should fail when a concurrent step exits non-zero"
+    );
+}
+
+/// Pipeline-form aliases (list of steps) run sequentially. A later step
+/// referencing `{{ vars.X }}` must see vars set by an earlier step —
+/// `expand_shell_template` reads `vars.*` fresh from git config on each call.
+#[rstest]
+fn test_alias_pipeline_vars_across_steps(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = [
+    "git config worktrunk.state.main.vars.target 'staging'",
+    { publish = "echo target={{ vars.target }} > alias_lazy.txt" },
+]
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "deploy"]);
+    let output = cmd.output().expect("wt step deploy failed to spawn");
+    assert!(
+        output.status.success(),
+        "wt step deploy failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let marker = repo.root_path().join("alias_lazy.txt");
+    let content = std::fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("missing marker {marker:?}: {e}"));
+    assert_eq!(
+        content.trim(),
+        "target=staging",
+        "lazy step should see var set by prior serial step"
     );
 }
 

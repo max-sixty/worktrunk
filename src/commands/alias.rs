@@ -1,28 +1,67 @@
-//! Alias command implementation
+//! Alias command implementation.
 //!
-//! Runs user-defined command aliases configured in `[aliases]` sections
-//! of user config or project config. Aliases are command templates that
-//! support the same template variables as hooks.
+//! Aliases are user-defined commands configured in `[aliases]` sections of user
+//! or project config. They share execution infrastructure with hooks:
+//! `execute_shell_command` (signal forwarding, ANSI reset, `Cmd` tracing),
+//! `CommandConfig` (pipeline steps), template expansion, and the approval system.
 //!
-//! Project-config aliases require command approval (same as project hooks).
-//! User-config aliases are trusted and skip approval. When an alias exists
-//! in both configs, both run — user first, then project (with approval).
+//! ## Execution model
+//!
+//! Aliases iterate `CommandConfig::steps()`, preserving pipeline structure:
+//! - `HookStep::Single` — serial execution, fail-fast
+//! - `HookStep::Concurrent` — commands spawn via `thread::scope`, all run to
+//!   completion, first error propagated
+//!
+//! Template expansion happens at execution time (not at a separate prep step),
+//! so `vars.*` references naturally read fresh values from git config — prior
+//! steps that set vars via `wt config state vars set` are visible to later steps.
+//!
+//! ## Why concurrent execution isn't shared with `run_pipeline`
+//!
+//! Both alias and background pipeline runners need "spawn N commands, wait for
+//! all". They use different primitives because their leaf executors differ:
+//!
+//! - Aliases call `execute_shell_command` (the unified streaming executor),
+//!   which is *blocking* — it streams stdout/stderr to the terminal and only
+//!   returns once the child exits. Concurrency therefore needs OS threads
+//!   (`thread::scope`), one thread per command.
+//! - The background pipeline runner spawns shell processes directly with
+//!   stdout/stderr redirected to per-command log files. The `Child` handle is
+//!   the concurrency primitive — no threads needed.
+//!
+//! Bridging the two would require either making `execute_shell_command`
+//! return a non-blocking handle (invasive — entangles signal forwarding,
+//! ANSI reset, and `Cmd` streaming), or running background commands in
+//! threads they don't need. Neither pays for the abstraction. The pipeline
+//! summary formatter, on the other hand, is shared via
+//! `hooks::format_pipeline_summary_from_names`.
+//!
+//! ## Trust model
+//!
+//! User-config aliases are trusted (skip approval). Project-config aliases
+//! require command approval. When both define the same alias, both run — user
+//! first, then project. The directive file is passed through to child processes
+//! (same trust profile as foreground hooks).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{
-    CommandConfig, ProjectConfig, UserConfig, append_aliases, expand_template,
-};
+use worktrunk::config::{CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases};
 use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
 };
 
 use crate::commands::command_approval::approve_alias_commands;
-use crate::commands::command_executor::{CommandContext, build_hook_context};
-use crate::commands::for_each::{CommandError, run_command_streaming};
+use crate::commands::command_executor::{
+    CommandContext, build_hook_context, expand_shell_template, wait_first_error,
+};
+use crate::commands::force_serial_concurrent;
+use crate::commands::hooks::format_pipeline_summary_from_names;
+use crate::output::execute_shell_command;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// shadowed by the built-in and will never run.
@@ -53,7 +92,16 @@ impl AliasOptions {
     /// Parse alias options from the external subcommand args.
     ///
     /// First element is the alias name, remaining are flags:
-    /// `--dry-run`, `--yes`/`-y`, and `--var KEY=VALUE`.
+    /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`.
+    ///
+    /// Unknown `--key=value` flags are treated as template variable assignments,
+    /// so `--env=staging` is equivalent to `--var env=staging`. The `=` is
+    /// required — bare `--key` flags (without a value) are rejected. Use
+    /// `--var KEY=VALUE` if a variable name collides with a built-in flag.
+    ///
+    /// Hyphens in variable names are canonicalized to underscores so users can
+    /// write `--my-var=value` and reference `{{ my_var }}` in templates
+    /// (minijinja parses `{{ my-var }}` as subtraction).
     pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
@@ -72,12 +120,26 @@ impl AliasOptions {
                     if i >= args.len() {
                         bail!("--var requires a KEY=VALUE argument");
                     }
-                    let pair = parse_var(&args[i])?;
+                    let pair =
+                        crate::cli::parse_key_val(&args[i]).map_err(|e| anyhow::anyhow!(e))?;
                     vars.push(pair);
                 }
                 arg if arg.starts_with("--var=") => {
-                    let pair = parse_var(arg.strip_prefix("--var=").unwrap())?;
+                    let pair = crate::cli::parse_key_val(arg.strip_prefix("--var=").unwrap())
+                        .map_err(|e| anyhow::anyhow!(e))?;
                     vars.push(pair);
+                }
+                arg if arg.starts_with("--") => {
+                    let rest = &arg[2..];
+                    if rest.contains('=') {
+                        let pair =
+                            crate::cli::parse_key_val(rest).map_err(|e| anyhow::anyhow!(e))?;
+                        vars.push(pair);
+                    } else {
+                        bail!(
+                            "Unknown flag '{arg}' for alias '{name}' (use --{rest}=VALUE to pass a variable)"
+                        );
+                    }
                 }
                 other => {
                     bail!("Unexpected argument '{other}' for alias '{name}'");
@@ -95,14 +157,6 @@ impl AliasOptions {
     }
 }
 
-fn parse_var(s: &str) -> anyhow::Result<(String, String)> {
-    let (key, value) = s.split_once('=').context("--var value must be KEY=VALUE")?;
-    if key.is_empty() {
-        bail!("--var key must not be empty (got '={value}')");
-    }
-    Ok((key.to_string(), value.to_string()))
-}
-
 /// Determine whether an alias requires project-config approval.
 ///
 /// Returns the project-config commands for this alias, if any exist.
@@ -114,8 +168,7 @@ fn alias_needs_approval(
 ) -> Option<CommandConfig> {
     project_config
         .as_ref()
-        .and_then(|pc| pc.aliases.as_ref())
-        .and_then(|a| a.get(alias_name))
+        .and_then(|pc| pc.aliases.get(alias_name))
         .cloned()
 }
 
@@ -133,6 +186,37 @@ fn find_closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str
         .map(|(name, _)| name)
 }
 
+/// Format the "Running alias …" announcement.
+///
+/// For pipelines or concurrent groups with named commands, includes a summary
+/// of the structure (e.g., `Running alias deploy: install; build, lint`).
+/// When all commands are unnamed, falls back to the bare form
+/// (`Running alias deploy`) — aliases have no natural fallback label for
+/// unnamed steps the way hooks use `user`/`project`.
+///
+/// Sibling of `format_command_label` in `commands/mod.rs`, which builds the
+/// non-pipeline `Running {type} {name}` form for hooks. Both apply bold
+/// styling to the alias/command name — keep them in sync if styling evolves.
+fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> String {
+    let step_names: Vec<Vec<Option<&str>>> = cmd_config
+        .steps()
+        .iter()
+        .map(|step| match step {
+            HookStep::Single(cmd) => vec![cmd.name.as_deref()],
+            HookStep::Concurrent(cmds) => cmds.iter().map(|c| c.name.as_deref()).collect(),
+        })
+        .collect();
+
+    let summary =
+        format_pipeline_summary_from_names(&step_names, |n| cformat!("<bold>{n}</>"), |_| None);
+
+    if summary.is_empty() {
+        cformat!("Running alias <bold>{name}</>")
+    } else {
+        cformat!("Running alias <bold>{name}</>: {summary}")
+    }
+}
+
 /// Run a configured alias by name.
 ///
 /// Looks up the alias in merged config (project config + user config),
@@ -148,8 +232,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // Matches hook merge semantics — both sources run, project commands
     // need approval regardless of whether user also defines the alias.
     let mut aliases = user_config.aliases(project_id.as_deref());
-    if let Some(project_aliases) = project_config.as_ref().and_then(|pc| pc.aliases.as_ref()) {
-        append_aliases(&mut aliases, project_aliases);
+    if let Some(pc) = project_config.as_ref() {
+        append_aliases(&mut aliases, &pc.aliases);
     }
 
     // Warn about aliases that shadow built-in step commands
@@ -242,22 +326,14 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         .collect();
     let context_map = build_hook_context(&ctx, &extra_refs)?;
 
-    // Convert to &str references for expand_template
-    let vars: HashMap<&str, &str> = context_map
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
     // Build JSON context for stdin
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
 
-    let commands: Vec<_> = cmd_config.commands().collect();
-
     if opts.dry_run {
-        let expanded: Vec<_> = commands
-            .iter()
-            .map(|cmd| expand_template(&cmd.template, &vars, true, &repo, &opts.name))
+        let expanded: Vec<_> = cmd_config
+            .commands()
+            .map(|cmd| expand_shell_template(&cmd.template, &context_map, &repo, &opts.name))
             .collect::<Result<_, _>>()?;
         eprintln!(
             "{}",
@@ -276,21 +352,45 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
 
     eprintln!(
         "{}",
-        progress_message(cformat!("Running alias <bold>{}</>", opts.name))
+        progress_message(format_alias_announcement(&opts.name, cmd_config))
     );
 
-    for cmd in commands {
-        let command = expand_template(&cmd.template, &vars, true, &repo, &opts.name)?;
-        match run_command_streaming(&command, &wt_path, Some(&context_json)) {
-            Ok(()) => {}
-            Err(CommandError::SpawnFailed(err)) => {
-                bail!("Failed to run alias '{}': {}", opts.name, err);
-            }
-            Err(CommandError::ExitCode(exit_code)) => {
-                return Err(WorktrunkError::AlreadyDisplayed {
-                    exit_code: exit_code.unwrap_or(1),
+    // Pass the parent shell's directive file through so inner `wt` invocations
+    // (e.g. `wt switch --create`) can write shell directives that the parent
+    // shell wrapper will source after `wt` exits. The Cmd builder scrubs the
+    // env var by default; `.directive_file()` re-adds it for trusted contexts.
+    let parent_directive_file: Option<PathBuf> =
+        std::env::var_os(DIRECTIVE_FILE_ENV_VAR).map(PathBuf::from);
+
+    let exec = AliasExecCtx {
+        context_map: &context_map,
+        repo: &repo,
+        alias_name: &opts.name,
+        wt_path: &wt_path,
+        context_json: &context_json,
+        directive_file: parent_directive_file.as_deref(),
+    };
+
+    for step in cmd_config.steps() {
+        match step {
+            HookStep::Single(cmd) => exec.run(cmd)?,
+            HookStep::Concurrent(cmds) => {
+                if force_serial_concurrent() {
+                    // Test-only path: deterministic ordering for snapshots.
+                    for cmd in cmds {
+                        exec.run(cmd)?;
+                    }
+                } else {
+                    std::thread::scope(|s| {
+                        let handles: Vec<_> =
+                            cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
+                        wait_first_error(
+                            handles
+                                .into_iter()
+                                .map(|h| h.join().expect("alias command thread panicked")),
+                        )
+                    })?;
                 }
-                .into());
             }
         }
     }
@@ -298,12 +398,121 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Shared state for executing alias commands within a pipeline.
+struct AliasExecCtx<'a> {
+    context_map: &'a HashMap<String, String>,
+    repo: &'a Repository,
+    alias_name: &'a str,
+    wt_path: &'a std::path::Path,
+    context_json: &'a str,
+    directive_file: Option<&'a std::path::Path>,
+}
+
+impl AliasExecCtx<'_> {
+    /// Expand and execute a single alias command.
+    ///
+    /// `vars.*` references are resolved from git config at expansion time,
+    /// so prior pipeline steps that set vars via `wt config state vars set`
+    /// are visible to later steps without special lazy-expansion handling.
+    fn run(&self, cmd: &worktrunk::config::Command) -> anyhow::Result<()> {
+        let command =
+            expand_shell_template(&cmd.template, self.context_map, self.repo, self.alias_name)?;
+        if let Err(err) = execute_shell_command(
+            self.wt_path,
+            &command,
+            Some(self.context_json),
+            None,
+            self.directive_file,
+        ) {
+            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+                err.downcast_ref::<WorktrunkError>()
+            {
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+            }
+            bail!("Failed to run alias '{}': {}", self.alias_name, err);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ansi_str::AnsiStr;
 
     fn parse(args: &[&str]) -> anyhow::Result<AliasOptions> {
         AliasOptions::parse(args.iter().map(|s| s.to_string()).collect())
+    }
+
+    /// Parse a TOML snippet of the form `cmd = ...` into a CommandConfig.
+    /// CommandConfig has no public multi-step constructor, so round-tripping
+    /// through TOML is the simplest way to build pipeline fixtures.
+    fn cfg_from_toml(toml_str: &str) -> CommandConfig {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            cmd: CommandConfig,
+        }
+        toml::from_str::<Wrap>(toml_str).unwrap().cmd
+    }
+
+    #[test]
+    fn test_format_alias_announcement_single_unnamed() {
+        let cfg = cfg_from_toml(r#"cmd = "echo hi""#);
+        let msg = format_alias_announcement("deploy", &cfg);
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy");
+    }
+
+    #[test]
+    fn test_format_alias_announcement_pipeline_all_unnamed() {
+        // Pipeline of unnamed strings → no summary suffix.
+        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
+        let msg = format_alias_announcement("deploy", &cfg);
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy");
+    }
+
+    #[test]
+    fn test_format_alias_announcement_concurrent_named() {
+        // Single concurrent step (named table form).
+        let cfg = cfg_from_toml(
+            r#"
+[cmd]
+build = "cargo build"
+test = "cargo test"
+"#,
+        );
+        let msg = format_alias_announcement("check", &cfg);
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
+    }
+
+    #[test]
+    fn test_format_alias_announcement_pipeline_named() {
+        // Pipeline: serial named step then concurrent named step.
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" },
+]
+"#,
+        );
+        let msg = format_alias_announcement("deploy", &cfg);
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build, lint");
+    }
+
+    #[test]
+    fn test_format_alias_announcement_mixed_named_unnamed() {
+        // Pipeline mixing anonymous strings and named steps. Unnamed entries
+        // are skipped from the summary (aliases have no fallback label).
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    "echo first",
+    { build = "cargo build", test = "cargo test" },
+]
+"#,
+        );
+        let msg = format_alias_announcement("ci", &cfg);
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias ci: build, test");
     }
 
     #[test]
@@ -414,6 +623,150 @@ mod tests {
             ],
         }
         "#);
+        // --key=value shorthand
+        assert_debug_snapshot!(parse(&["deploy", "--env=staging"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "staging",
+                ),
+            ],
+        }
+        "#);
+        // --key=value with equals in value
+        assert_debug_snapshot!(parse(&["deploy", "--url=http://host?a=1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "url",
+                    "http://host?a=1",
+                ),
+            ],
+        }
+        "#);
+        // --key=value mixed with --var and flags
+        assert_debug_snapshot!(parse(&["deploy", "--env=prod", "--var", "region=us-east", "--dry-run"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: true,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "prod",
+                ),
+                (
+                    "region",
+                    "us-east",
+                ),
+            ],
+        }
+        "#);
+        // --key= (empty value)
+        assert_debug_snapshot!(parse(&["deploy", "--env="]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in shorthand key are canonicalized to underscores
+        assert_debug_snapshot!(parse(&["deploy", "--my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var KEY=VALUE are canonicalized too
+        assert_debug_snapshot!(parse(&["deploy", "--var", "my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in --var=KEY=VALUE form
+        assert_debug_snapshot!(parse(&["deploy", "--var=my-var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Already-underscored keys pass through unchanged
+        assert_debug_snapshot!(parse(&["deploy", "--my_var=value"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "my_var",
+                    "value",
+                ),
+            ],
+        }
+        "#);
+        // Multiple hyphens in a single key
+        assert_debug_snapshot!(parse(&["deploy", "--long-var-name=x"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "long_var_name",
+                    "x",
+                ),
+            ],
+        }
+        "#);
+        // Hyphens in value are preserved (only key is canonicalized)
+        assert_debug_snapshot!(parse(&["deploy", "--region=us-east-1"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "region",
+                    "us-east-1",
+                ),
+            ],
+        }
+        "#);
     }
 
     #[test]
@@ -421,10 +774,11 @@ mod tests {
         use insta::assert_snapshot;
         assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
         assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
-        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"--var value must be KEY=VALUE");
-        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unexpected argument '--verbose' for alias 'deploy'");
+        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"invalid KEY=VALUE: no `=` found in `noequals`");
+        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unknown flag '--verbose' for alias 'deploy' (use --verbose=VALUE to pass a variable)");
         assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
-        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"--var key must not be empty (got '=value')");
+        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
+        assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
     }
 
     #[test]

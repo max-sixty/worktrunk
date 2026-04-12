@@ -886,6 +886,19 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
+    // Clear git commands cache (merge-tree, ancestry, diff results)
+    let sha_cleared = repo.clear_git_commands_cache();
+    if sha_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{sha_cleared}</> git commands cache entr{}",
+                if sha_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        cleared_any = true;
+    }
+
     // Clear all vars data
     let vars_cleared = clear_all_vars(&repo)?;
     if vars_cleared > 0 {

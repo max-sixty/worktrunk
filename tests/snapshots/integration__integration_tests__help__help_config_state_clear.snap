@@ -58,7 +58,7 @@ Clears all stored state:
 - Previous branch
 - All branch markers
 - All variables
-- All CI status cache
+- All caches (CI status, git commands)
 - All hints
 - All log files
 - Stale trash from worktree removal ([2m.git/wt/trash/[0m)

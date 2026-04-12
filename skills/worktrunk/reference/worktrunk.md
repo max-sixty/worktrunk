@@ -184,6 +184,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
+- [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

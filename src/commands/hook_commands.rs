@@ -26,9 +26,11 @@ use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::context::CommandEnv;
+use super::hook_filter::{HookSource, ParsedFilter};
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, SourcedStep, check_name_filter_matched,
-    prepare_background_hooks, prepare_hook_commands, run_hook_with_filter, spawn_hook_pipeline,
+    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, command_summary_name,
+    count_sourced_commands, prepare_background_hooks, prepare_sourced_steps, run_hook_with_filter,
+    spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -67,9 +69,7 @@ fn run_post_hook(
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
         if !name_filters.is_empty() {
-            // Name filtering operates on individual commands — extract matching
-            // commands, convert to pipeline steps, and spawn via pipeline runner.
-            let commands = prepare_hook_commands(
+            let steps = prepare_sourced_steps(
                 ctx,
                 HookCommandSpec {
                     user_config,
@@ -80,16 +80,12 @@ fn run_post_hook(
                     display_path: None,
                 },
             )?;
-            check_name_filter_matched(name_filters, commands.len(), user_config, project_config)?;
-            let steps: Vec<SourcedStep> = commands
-                .into_iter()
-                .map(|cmd| SourcedStep {
-                    step: super::command_executor::PreparedStep::Single(cmd.prepared),
-                    source: cmd.source,
-                    hook_type: cmd.hook_type,
-                    display_path: cmd.display_path,
-                })
-                .collect();
+            check_name_filter_matched(
+                name_filters,
+                count_sourced_commands(&steps),
+                user_config,
+                project_config,
+            )?;
             return spawn_hook_pipeline(ctx, steps);
         }
 
@@ -162,6 +158,83 @@ fn build_manual_hook_extra_vars<'a>(
     vars
 }
 
+/// Warn about user-provided `--var` flags that aren't referenced by any template
+/// in the hooks that will run. Catches typos in variable names that would
+/// otherwise silently have no effect.
+///
+/// Only checks top-level variable references (not `{{ vars.foo }}`). Name
+/// filters are respected — if the user runs `wt hook pre-merge test` and `test`
+/// doesn't use the var but `build` does, we still warn because `build` won't run.
+fn warn_unreferenced_custom_vars(
+    user_config: Option<&CommandConfig>,
+    project_config: Option<&CommandConfig>,
+    name_filters: &[String],
+    custom_vars: &[(String, String)],
+) {
+    if custom_vars.is_empty() {
+        return;
+    }
+
+    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+        .iter()
+        .map(|f| ParsedFilter::parse(f))
+        .collect();
+    let filter_names: Vec<&str> = parsed_filters
+        .iter()
+        .filter(|f| !f.name.is_empty())
+        .map(|f| f.name)
+        .collect();
+
+    // Empty environment: every variable reference in the template appears as
+    // "undeclared", giving us the full set of referenced top-level names.
+    let env = minijinja::Environment::new();
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (source, config) in [
+        (HookSource::User, user_config),
+        (HookSource::Project, project_config),
+    ] {
+        let Some(config) = config else { continue };
+
+        // Skip this source if no filter matches it
+        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
+            continue;
+        }
+
+        for step in config.steps() {
+            let commands: &[worktrunk::config::Command] = match step {
+                worktrunk::config::HookStep::Single(cmd) => std::slice::from_ref(cmd),
+                worktrunk::config::HookStep::Concurrent(cmds) => cmds.as_slice(),
+            };
+            for cmd in commands {
+                // If names are filtered, skip commands whose name doesn't match
+                if !filter_names.is_empty()
+                    && !cmd
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| filter_names.contains(&n))
+                {
+                    continue;
+                }
+                if let Ok(tmpl) = env.template_from_str(&cmd.template) {
+                    referenced.extend(tmpl.undeclared_variables(false));
+                }
+            }
+        }
+    }
+
+    for (key, _) in custom_vars {
+        if !referenced.contains(key) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "--var <bold>{key}</> is not referenced by any hook template — typo?"
+                ))
+            );
+        }
+    }
+}
+
 /// Handle `wt hook` command
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
@@ -227,6 +300,9 @@ pub fn run_hook(
         return Ok(());
     }
 
+    // Warn about typos in --var flags — vars that no template references
+    warn_unreferenced_custom_vars(user_config, proj_config, name_filters, custom_vars);
+
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
     let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
@@ -239,7 +315,7 @@ pub fn run_hook(
     );
 
     if dry_run {
-        let commands = prepare_hook_commands(
+        let steps = prepare_sourced_steps(
             &ctx,
             HookCommandSpec {
                 user_config,
@@ -250,23 +326,29 @@ pub fn run_hook(
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(name_filters, commands.len(), user_config, proj_config)?;
+        check_name_filter_matched(
+            name_filters,
+            count_sourced_commands(&steps),
+            user_config,
+            proj_config,
+        )?;
 
-        for cmd in &commands {
-            let label = match &cmd.prepared.name {
-                Some(n) => {
-                    let display_name = format!("{}:{}", cmd.source, n);
-                    cformat!("{hook_type} <bold>{display_name}</> would run:")
-                }
-                None => cformat!("{hook_type} {} hook would run:", cmd.source),
-            };
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "{label}\n{}",
-                    format_bash_with_gutter(&cmd.prepared.expanded)
-                ))
-            );
+        for sourced in steps {
+            for cmd in sourced.step.into_commands() {
+                let summary = command_summary_name(cmd.name.as_deref(), sourced.source);
+                let label = if cmd.name.is_some() {
+                    cformat!("{hook_type} <bold>{summary}</> would run:")
+                } else {
+                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
+                };
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "{label}\n{}",
+                        format_bash_with_gutter(&cmd.expanded)
+                    ))
+                );
+            }
         }
         return Ok(());
     }
@@ -508,7 +590,7 @@ fn render_user_hooks(
     // Collect all user hooks (global hooks from the user config file)
     // Note: uses overrides.hooks for display, not the merged hooks() accessor.
     // get() handles the post-create → pre-start deprecation merge.
-    let user_hooks = &config.configs.hooks;
+    let user_hooks = &config.hooks;
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();

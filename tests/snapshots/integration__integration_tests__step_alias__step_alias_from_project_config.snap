@@ -46,4 +46,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mhello[22m[39m
-Hello from feature
+[0mHello from feature

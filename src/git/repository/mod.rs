@@ -93,6 +93,7 @@ mod config;
 mod diff;
 mod integration;
 mod remotes;
+mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -245,6 +246,11 @@ pub(super) struct RepoCache {
     /// The tree SHA for a given ref doesn't change during a command.
     pub(super) tree_shas: DashMap<String, String>,
 
+    /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
+    /// The commit SHA for a given ref doesn't change during a command.
+    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
+    pub(super) commit_shas: DashMap<String, String>,
+
     // ========== Per-worktree values (keyed by path) ==========
     /// Per-worktree git directory: worktree_path -> canonicalized git dir
     /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
@@ -384,18 +390,19 @@ impl Repository {
     /// for operations that require the full `UserConfig` (e.g., path template formatting,
     /// approval state, hook resolution).
     ///
-    /// Falls back to defaults on load errors so a single bad field does not break
-    /// unrelated commands, but surfaces the error on stderr — a silent `log::warn!`
-    /// would hide it from anyone not running with `RUST_LOG=warn`.
+    /// Each config layer (system file, user file, env vars) degrades
+    /// independently — a failure in one preserves data from earlier layers.
+    /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load_with_cause()
-                .inspect_err(|err| match err {
+            let (config, warnings) = UserConfig::load_with_warnings();
+            for warning in &warnings {
+                match warning {
                     LoadError::File { path, label, err } => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "{label} at {} failed to parse, using defaults",
+                                "{label} at {} failed to parse, skipping",
                                 crate::path::format_path_for_display(path),
                             ))
                         );
@@ -404,40 +411,34 @@ impl Repository {
                             crate::styling::format_with_gutter(&err.to_string(), None)
                         );
                     }
-                    LoadError::Env {
-                        err,
-                        override_vars,
-                    } => {
+                    LoadError::Env { err, vars } => {
+                        let var_list: Vec<_> = vars
+                            .iter()
+                            .map(|(name, value)| format!("{name}={value}"))
+                            .collect();
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "Failed to apply WORKTRUNK_* env var override, using defaults: {err}"
+                                "Ignoring env var overrides: {}",
+                                var_list.join(", ")
                             ))
                         );
-                        // TODO: With source-tracking in the config layer
-                        // (see collect_worktrunk_override_vars TODO) we could
-                        // pinpoint the exact var and show its value, rather
-                        // than dumping all override vars.
-                        if !override_vars.is_empty() {
-                            crate::styling::eprintln!(
-                                "{}",
-                                crate::styling::hint_message(format!(
-                                    "Currently set: {}",
-                                    override_vars.join(", ")
-                                ))
-                            );
-                        }
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(err.trim(), None)
+                        );
                     }
-                    LoadError::Other(err) => {
+                    LoadError::Validation(err) => {
                         crate::styling::eprintln!(
                             "{}",
                             crate::styling::warning_message(format!(
-                                "Failed to load user config, using defaults: {err}"
+                                "Config validation warning: {err}"
                             ))
                         );
                     }
-                })
-                .unwrap_or_default()
+                }
+            }
+            config
         })
     }
 
@@ -564,6 +565,11 @@ impl Repository {
     /// All worktrunk-managed state lives under this single directory.
     pub fn wt_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt")
+    }
+
+    /// Clear all cached git command results, returning the count removed.
+    pub fn clear_git_commands_cache(&self) -> usize {
+        sha_cache::clear_all(self)
     }
 
     /// Get the directory where worktrunk background logs are stored.

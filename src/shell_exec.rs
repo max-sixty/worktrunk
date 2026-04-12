@@ -463,6 +463,10 @@ pub struct Cmd {
     /// When set, log this command to the command log after execution.
     /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
     external_label: Option<String>,
+    /// When set, re-adds the directive file env var after the security scrub in
+    /// `apply_common_settings`. This is a privileged opt-in for contexts where
+    /// pass-through is safe (aliases, foreground hooks).
+    directive_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -505,6 +509,7 @@ impl Cmd {
             stdin_cfg: None,
             forward_signals: false,
             external_label: None,
+            directive_file: None,
         }
     }
 
@@ -685,6 +690,16 @@ impl Cmd {
         self
     }
 
+    /// Pass the directive file through to the child process.
+    ///
+    /// By default, `Cmd` scrubs `WORKTRUNK_DIRECTIVE_FILE` from all child
+    /// processes (security). This re-adds it for trusted contexts where the
+    /// child should be able to write shell directives (aliases, foreground hooks).
+    pub fn directive_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.directive_file = Some(path.into());
+        self
+    }
+
     /// Execute the command and return its output.
     ///
     /// Captures stdout/stderr and returns them in `Output`. For interactive
@@ -699,6 +714,10 @@ impl Cmd {
         assert!(
             !self.shell_wrap,
             "Cmd::shell() commands must use .stream(), not .run()"
+        );
+        debug_assert!(
+            self.directive_file.is_none(),
+            "directive_file is only applied by .stream(), not .run()"
         );
 
         let cmd_str = self.command_string();
@@ -842,6 +861,11 @@ impl Cmd {
         let external_log = ExternalCommandLog::new(self.external_label.take(), cmd_str.clone());
         self.log_stream_start(&cmd_str, &exec_mode);
         self.apply_common_settings(&mut cmd);
+
+        // Re-add directive file after security scrub if explicitly opted in.
+        if let Some(ref path) = self.directive_file {
+            cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
+        }
 
         #[cfg(not(unix))]
         let _ = self.forward_signals;

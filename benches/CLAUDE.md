@@ -209,6 +209,10 @@ This command walks the commit graph to compute divergence. On rust-lang/rust:
 - Only way to avoid it is to not enumerate branches at all
 
 **Branch enumeration costs** (rust-lang/rust with 50 branches):
-- No optimization: ~15-18s (expensive merge-base/merge-tree per branch)
-- With skip_expensive_for_stale: ~2-3s (skips expensive ops for stale branches)
+- First run (cold persistent cache): ~15-18s (expensive merge-base/merge-tree per branch)
+- Subsequent runs (warm persistent cache): ~2-3s (cache hits on merge-tree / integration probes / diff stats / ancestry)
 - Worktrees only: ~600ms (no branch enumeration)
+
+The persistent SHA-keyed cache (`.git/wt/cache/`) amortizes the first-run cost across
+subsequent invocations. Cache entries are eternally valid since they're keyed on commit
+SHAs.

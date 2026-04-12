@@ -49,13 +49,13 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-warning: untracked cache is disabled on this system or location
+[0mwarning: untracked cache is disabled on this system or location
 [36m◎[39m [36mRunning in [1mrepo.detached-test[22m (detached)...[39m
-[36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-warning: untracked cache is disabled on this system or location
+[0m[36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
+[0mwarning: untracked cache is disabled on this system or location
 [36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-warning: untracked cache is disabled on this system or location
+[0mwarning: untracked cache is disabled on this system or location
 [36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-warning: untracked cache is disabled on this system or location
+[0mwarning: untracked cache is disabled on this system or location
 
 [32m✓[39m [32mCompleted in 5 worktrees[39m

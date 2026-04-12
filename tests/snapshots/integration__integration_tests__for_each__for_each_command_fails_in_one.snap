@@ -49,27 +49,27 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
+[0mfatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mmain[22m[22m (exit code 128)[39m
 [36m◎[39m [36mRunning in [1mfeature[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
+[0mfatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mfeature[22m[22m (exit code 128)[39m
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
+[0mfatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mfeature-a[22m[22m (exit code 128)[39m
 [36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
+[0mfatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mfeature-b[22m[22m (exit code 128)[39m
 [36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-fatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
+[0mfatal: ambiguous argument 'nonexistent-ref': unknown revision or path not in the working tree.
 Use '--' to separate paths from revisions, like this:
 'git <command> [<revision>...] -- [<file>...]'
 [31m✗[39m [31mFailed in [1m[1mfeature-c[22m[22m (exit code 128)[39m

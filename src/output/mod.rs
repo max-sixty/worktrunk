@@ -43,7 +43,7 @@ pub(crate) use global::{
 };
 // Re-export output handlers
 pub(crate) use handlers::{
-    execute_command_in_worktree, execute_user_command, handle_remove_output, handle_switch_output,
+    execute_shell_command, execute_user_command, handle_remove_output, handle_switch_output,
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{

@@ -70,6 +70,29 @@ impl WorktrunkConfig for ProjectConfig {
     }
 }
 
+/// Configuration error type.
+///
+/// Replaces the `config` crate's `ConfigError` with a simple string wrapper.
+/// Every usage was `ConfigError::Message(String)` — no other variants were used.
+#[derive(Debug)]
+pub struct ConfigError(pub String);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+/// Returns true if the given value equals `T::default()`.
+///
+/// Used as `skip_serializing_if` so section types like `ListConfig` /
+/// `MergeConfig` are omitted from serialized TOML when no fields are set.
+pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
 // Re-export public types
 pub use approvals::{Approvals, approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
@@ -102,8 +125,8 @@ pub use project::{
 pub(crate) use user::LoadError;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
-    OverridableConfig, ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig,
-    UserConfig, UserProjectOverrides, config_path, default_config_path, default_system_config_path,
+    ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserConfig,
+    UserProjectOverrides, config_path, default_config_path, default_system_config_path,
     find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
     valid_user_config_keys,
 };
@@ -126,10 +149,7 @@ mod tests {
 
         // With worktree-path set
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some("custom/{{ branch }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some("custom/{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
@@ -143,7 +163,7 @@ mod tests {
     fn test_default_config() {
         let config = UserConfig::default();
         // worktree_path is None by default, but the getter returns the default
-        assert!(config.configs.worktree_path.is_none());
+        assert!(config.worktree_path.is_none());
         assert_eq!(
             config.worktree_path(),
             "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"
@@ -155,10 +175,7 @@ mod tests {
     fn test_format_worktree_path() {
         let test = test_repo();
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -173,10 +190,7 @@ mod tests {
     fn test_format_worktree_path_custom_template() {
         let test = test_repo();
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -191,10 +205,7 @@ mod tests {
     fn test_format_worktree_path_only_branch() {
         let test = test_repo();
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -210,10 +221,7 @@ mod tests {
         let test = test_repo();
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -228,12 +236,9 @@ mod tests {
     fn test_format_worktree_path_with_multiple_slashes() {
         let test = test_repo();
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some(
-                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-                ),
-                ..Default::default()
-            },
+            worktree_path: Some(
+                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            ),
             ..Default::default()
         };
         assert_eq!(
@@ -249,12 +254,9 @@ mod tests {
         let test = test_repo();
         // Windows-style path separators should also be sanitized
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some(
-                    ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
-                ),
-                ..Default::default()
-            },
+            worktree_path: Some(
+                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            ),
             ..Default::default()
         };
         assert_eq!(
@@ -270,10 +272,7 @@ mod tests {
         let test = test_repo();
         // {{ branch }} without filter gives raw branch name
         let config = UserConfig {
-            configs: OverridableConfig {
-                worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
-                ..Default::default()
-            },
+            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -545,11 +544,7 @@ template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config
-                .configs
-                .commit
-                .as_ref()
-                .and_then(|c| c.generation.as_ref());
+            let generation = config.commit.generation.as_ref();
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.template.is_some() && g.template_file.is_some())
@@ -579,11 +574,7 @@ squash-template-file = "~/file.txt"
         // The deserialization should succeed, but validation in load() would fail
         // Since we can't easily test load() without env vars, we verify the fields deserialize
         if let Ok(config) = config_result {
-            let generation = config
-                .configs
-                .commit
-                .as_ref()
-                .and_then(|c| c.generation.as_ref());
+            let generation = config.commit.generation.as_ref();
             // Verify validation logic: both fields should not be Some
             let has_both = generation
                 .map(|g| g.squash_template.is_some() && g.squash_template_file.is_some())
@@ -676,7 +667,6 @@ lint = "cargo clippy"
 
         // Check post-create
         let post_create = config
-            .configs
             .hooks
             .post_create
             .expect("post-create should be present");
@@ -685,11 +675,7 @@ lint = "cargo clippy"
         assert_eq!(commands[0].name.as_deref(), Some("log"));
 
         // Check pre-merge (multiple commands preserve order)
-        let pre_merge = config
-            .configs
-            .hooks
-            .pre_merge
-            .expect("pre-merge should be present");
+        let pre_merge = config.hooks.pre_merge.expect("pre-merge should be present");
         let commands: Vec<_> = pre_merge.commands().collect();
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].name.as_deref(), Some("test"));
@@ -705,7 +691,6 @@ post-create = "npm install"
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         let post_create = config
-            .configs
             .hooks
             .post_create
             .expect("post-create should be present");

@@ -27,6 +27,16 @@ pub enum PreparedStep {
     Concurrent(Vec<PreparedCommand>),
 }
 
+impl PreparedStep {
+    /// Flatten into a vec of commands (Single becomes a one-element vec).
+    pub fn into_commands(self) -> Vec<PreparedCommand> {
+        match self {
+            Self::Single(cmd) => vec![cmd],
+            Self::Concurrent(cmds) => cmds,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
     pub repo: &'a Repository,
@@ -169,6 +179,47 @@ pub fn build_hook_context(
     Ok(map)
 }
 
+/// Drain a sequence of command results, returning the first error.
+///
+/// All items are consumed before returning, so callers can be sure every
+/// spawned child or joined thread has completed even when one item already
+/// errored. Used by alias and pipeline concurrent groups, which both want
+/// "wait all, return first error" semantics around different concurrency
+/// primitives (in-process threads vs OS subprocesses).
+pub fn wait_first_error<E>(
+    results: impl IntoIterator<Item = std::result::Result<(), E>>,
+) -> std::result::Result<(), E> {
+    let mut first = None;
+    for r in results {
+        if let Err(e) = r
+            && first.is_none()
+        {
+            first = Some(e);
+        }
+    }
+    first.map_or(Ok(()), Err)
+}
+
+/// Expand a shell-command template against a context map.
+///
+/// Builds the `&str` vars map required by `expand_template` and fixes
+/// `shell_escape=true` since every caller interpolates the result into a
+/// shell string. Used by the three execution paths — foreground hooks,
+/// background pipelines, and aliases — that defer `vars.*` expansion until
+/// just before the command runs so prior steps can set vars via git config.
+pub fn expand_shell_template(
+    template: &str,
+    context: &HashMap<String, String>,
+    repo: &Repository,
+    label: &str,
+) -> Result<String> {
+    let vars: HashMap<&str, &str> = context
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    Ok(expand_template(template, &vars, true, repo, label)?)
+}
+
 /// Expand commands from a CommandConfig without approval.
 ///
 /// When `lazy_enabled` is true, commands referencing `vars.` are validated but not
@@ -217,12 +268,8 @@ fn expand_commands(
             let tpl = cmd.template.clone();
             (tpl.clone(), Some(tpl))
         } else {
-            let vars: HashMap<&str, &str> = cmd_context
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
             (
-                expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?,
+                expand_shell_template(&cmd.template, &cmd_context, ctx.repo, &template_name)?,
                 None,
             )
         };
@@ -240,47 +287,11 @@ fn expand_commands(
     Ok(result)
 }
 
-/// Prepare commands for execution.
-///
-/// Expands command templates with context variables and returns prepared
-/// commands ready for execution, each with JSON context for stdin.
-///
-/// Note: Approval logic (for project commands) is handled at the call site,
-/// not here. User commands don't require approval since users implicitly
-/// approve them by adding them to their config.
-pub fn prepare_commands(
-    command_config: &CommandConfig,
-    ctx: &CommandContext<'_>,
-    extra_vars: &[(&str, &str)],
-    hook_type: HookType,
-    source: HookSource,
-) -> anyhow::Result<Vec<PreparedCommand>> {
-    let commands: Vec<Command> = command_config.commands().cloned().collect();
-    if commands.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Lazy expansion for pipeline configs (sequential ordering guarantees vars are
-    // set by prior steps). Flat configs (concurrent table) expand eagerly.
-    let lazy = command_config.is_pipeline();
-    let expanded_with_json = expand_commands(&commands, ctx, extra_vars, hook_type, source, lazy)?;
-
-    Ok(expanded_with_json
-        .into_iter()
-        .map(|(cmd, context_json, lazy_template)| PreparedCommand {
-            name: cmd.name,
-            expanded: cmd.expanded,
-            context_json,
-            lazy_template,
-        })
-        .collect())
-}
-
 /// Prepare pipeline steps for execution, preserving serial/concurrent structure.
 ///
-/// Like `prepare_commands`, but returns `Vec<PreparedStep>` that preserves
-/// the pipeline structure from the config. Used by post-* hooks that need
-/// to distinguish serial steps from concurrent groups.
+/// Returns `Vec<PreparedStep>` that preserves the pipeline structure from
+/// the config — `Single` vs `Concurrent` grouping. All hook preparation
+/// goes through this function (both foreground and background paths).
 pub fn prepare_steps(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,

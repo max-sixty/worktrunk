@@ -279,7 +279,7 @@ impl ValueCompleter for HookCommandCompleter {
 
         // Load user config and add user hook names
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.configs.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks.get(hook_type)
         {
             add_named_commands(&mut candidates, config);
         }
@@ -460,10 +460,8 @@ fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
             aliases.extend(user_config.aliases(project_id.as_deref()));
         }
         // Project config appends
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(ref project_aliases) = project_config.aliases
-        {
-            append_aliases(&mut aliases, project_aliases);
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false) {
+            append_aliases(&mut aliases, &project_config.aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));

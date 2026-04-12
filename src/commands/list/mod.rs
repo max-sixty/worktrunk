@@ -165,9 +165,6 @@ pub fn handle_list(
         crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode
     );
 
-    // For testing: allow enabling skip_expensive_for_stale via env var
-    let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
-
     let list_data = collect::collect(
         &repo,
         collect::ShowConfig::DeferredToParallel {
@@ -177,7 +174,6 @@ pub fn handle_list(
         },
         show_progress,
         render_table,
-        skip_expensive_for_stale,
     )?;
 
     let Some(ListData { items, .. }) = list_data else {

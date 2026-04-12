@@ -92,6 +92,70 @@ fn test_for_each_spawn_fails(mut repo: TestRepo) {
     ));
 }
 
+/// Force the shell spawn itself to fail (rather than the command inside the
+/// shell exiting non-zero) by setting `PATH` to a directory that contains
+/// only `git` (so wt can still operate) but no `sh` (so the child shell
+/// spawn fails). This is the only branch in the failure handler that does
+/// NOT downcast to `WorktrunkError::ChildProcessExited`, and it appears in
+/// JSON mode as `exit_code: null`. Without this test the spawn-failed JSON
+/// path is unreachable from the integration suite (#2089 review).
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_json_spawn_failure(repo: TestRepo) {
+    use std::path::PathBuf;
+
+    // Locate a real `git` so we can symlink it into the minimal PATH dir.
+    // wt itself shells out to git constantly; clearing PATH entirely makes
+    // wt fail before it ever reaches the shell-spawn branch we want to test.
+    let git_path: PathBuf = std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .map(|p| p.join("git"))
+        .find(|p| p.is_file())
+        .expect("git must be in PATH for tests");
+
+    let tmp = tempfile::tempdir().expect("create tmpdir for minimal PATH");
+    std::os::unix::fs::symlink(&git_path, tmp.path().join("git"))
+        .expect("symlink git into minimal PATH");
+    // Deliberately do NOT symlink `sh` — that's what makes the shell spawn fail.
+
+    let mut cmd = repo.wt_command();
+    cmd.env("PATH", tmp.path());
+    cmd.args(["step", "for-each", "--format=json", "--", "true"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        !output.status.success(),
+        "for-each should fail when shell spawn fails: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "for-each --format=json should emit valid JSON on spawn failure: {e}\nstdout: {stdout}"
+        )
+    });
+    let items = json.as_array().expect("JSON output should be an array");
+    assert!(!items.is_empty(), "expected at least one worktree result");
+    for item in items {
+        assert_eq!(item["success"], false);
+        // Spawn failure ⇒ no exit code (vs. exit-code path which uses an integer)
+        assert!(
+            item["exit_code"].is_null(),
+            "spawn failure should report exit_code: null, got {item}"
+        );
+        let error = item["error"]
+            .as_str()
+            .expect("error field should be a string");
+        assert!(
+            !error.is_empty(),
+            "spawn failure error message should be non-empty"
+        );
+    }
+}
+
 #[rstest]
 fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");
@@ -167,7 +231,7 @@ fn test_for_each_json_with_failure(repo: TestRepo) {
     for item in items {
         assert_eq!(item["success"], false);
         assert_eq!(item["exit_code"], 1);
-        // error field is always present on failure (both ExitCode and SpawnFailed)
-        assert_eq!(item["error"], "exit code 1");
+        // error field contains the raw message from the child process
+        assert_eq!(item["error"], "exit status: 1");
     }
 }

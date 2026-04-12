@@ -532,7 +532,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Previous branch
 - All branch markers
 - All variables
-- All CI status cache
+- All caches (CI status, git commands)
 - All hints
 - All log files
 - Stale trash from worktree removal (`.git/wt/trash/`)

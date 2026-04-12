@@ -28,17 +28,6 @@ test = "cargo test --features {{ vars.features | default('default') }}"
 
 See [`wt step` aliases](https://worktrunk.dev/step/#aliases) for scoping, approval, and reference.
 
-## External subcommands `[experimental]`
-
-Drop a `wt-<name>` binary anywhere on `PATH` and `wt <name>` will run it — mirroring how `git foo` finds `git-foo`. Use this to ship third-party extensions without patching worktrunk itself.
-
-```bash
-$ wt sync origin          # runs: wt-sync origin
-$ wt -C /tmp/repo sync    # `-C` is forwarded as the child's cwd
-```
-
-Built-in commands always take precedence, so an external `wt-switch` cannot shadow `wt switch`. Arguments after the name are passed through verbatim (including `--help`), and the child's exit code is propagated unchanged. If nothing matches — no built-in, no nested subcommand, no `wt-<name>` — wt prints a git-style `'foo' is not a wt command` error with a typo suggestion drawn from the built-in command list.
-
 ## Per-branch variables
 
 `wt config state vars` holds state per branch, accessible from templates (`{{ vars.key }}`) and the CLI. Some uses:
@@ -255,7 +244,7 @@ Creates a worktree that builds on the current branch's changes.
 
 ## Agent handoffs
 
-Spawn a worktree with Claude running in the background:
+Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
 
 **tmux** (new detached session):
 ```bash
@@ -269,9 +258,9 @@ $ zellij run -- wt switch --create fix-auth-bug -x claude -- \
 $   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
 
-This lets one Claude session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
+This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
-The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to `CLAUDE.md`:
+The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
 ```markdown
 When I ask you to spawn parallel worktrees, use the agent handoff pattern

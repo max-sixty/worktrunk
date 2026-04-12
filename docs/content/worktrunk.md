@@ -202,6 +202,7 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
   picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
 - Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
+- [Extending Worktrunk](@/extending.md) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

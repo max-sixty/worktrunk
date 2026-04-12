@@ -77,6 +77,16 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
     }
 }
 
+/// Force concurrent steps to run serially. Test-only escape hatch — set via
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` to make output ordering deterministic
+/// for snapshot tests, mirroring how `RAYON_NUM_THREADS=1` is used elsewhere.
+///
+/// Honored by both alias `HookStep::Concurrent` execution and the background
+/// pipeline runner's concurrent groups.
+pub(crate) fn force_serial_concurrent() -> bool {
+    std::env::var_os("WORKTRUNK_TEST_SERIAL_CONCURRENT").is_some()
+}
+
 /// Show detailed diffstat for a given commit range.
 ///
 /// Displays the diff statistics (file changes, insertions, deletions) in a gutter format.

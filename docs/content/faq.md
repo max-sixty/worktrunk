@@ -113,8 +113,8 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
-| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
-| `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
+| `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
+| `.git/wt/cache/{kind}/*.json` | Cached CI status and git command results (merge-tree, integration probes, diff stats, ancestry checks) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/verbose.log` | Debug log for issue reporting | Running with `-vv` |
@@ -123,14 +123,14 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all worktrunk data — config keys, CI cache, markers, hints, variables, logs, and stale trash.
+**To remove:** `wt config state clear` removes all worktrunk data — config keys, caches, markers, hints, variables, logs, and stale trash.
 
 ### What Worktrunk does NOT create
 
 - No files outside `.git/`, config directories, or worktree directories
 - No global git hooks
 - No modifications to `~/.gitconfig`
-- No background processes or daemons
+- No long-running background processes or daemons
 
 ## What can Worktrunk delete?
 
@@ -142,7 +142,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
-{{ terminal(cmd="git worktree lock ../myproject.feature --reason \"Contains local database\"") }}
+{{ terminal(cmd="git worktree lock ../myproject.feature --reason __WT_QUOT__Contains local database__WT_QUOT__") }}
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
 
@@ -157,7 +157,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 ### Other cleanup
 
 - `wt remove` — in addition to the target worktree, sweeps `.git/wt/trash/` entries older than 24 hours in the background (eventual cleanup for directories orphaned when a previous background removal was interrupted)
-- `wt config state clear` — removes all worktrunk data from `.git/` (config keys, CI cache, markers, hints, variables, logs, stale trash)
+- `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.

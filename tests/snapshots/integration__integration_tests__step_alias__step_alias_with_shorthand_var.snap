@@ -5,6 +5,8 @@ info:
   args:
     - step
     - greet
+    - "--dry-run"
+    - "--name=World"
     - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -45,6 +47,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning alias [1mgreet[22m[39m
-[0mUSER
-[0mPROJECT
+[2m○[22m Alias [1mgreet[22m would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
