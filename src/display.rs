@@ -8,6 +8,7 @@
 
 use std::path::{Component, Path};
 
+use path_slash::PathExt as _;
 use unicode_width::UnicodeWidthChar;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::visual_width;
@@ -71,12 +72,14 @@ pub(crate) fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
 
     // Try to compute relative path
     if let Some(relative) = pathdiff::diff_paths(path, main_worktree_path) {
+        // Use forward slashes on all platforms (worktrunk's display convention).
+        let rendered = relative.to_slash_lossy();
         // If relative path starts with "..", it's a sibling/ancestor
-        // Otherwise prefix with "./" (or ".\" on Windows) for clarity
+        // Otherwise prefix with "./" for clarity
         if relative.components().next() == Some(Component::ParentDir) {
-            relative.display().to_string()
+            rendered.into_owned()
         } else {
-            format!(".{}{}", std::path::MAIN_SEPARATOR, relative.display())
+            format!("./{rendered}")
         }
     } else {
         // Can't compute relative path (e.g., different drives on Windows)
