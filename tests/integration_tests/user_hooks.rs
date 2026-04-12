@@ -1506,9 +1506,10 @@ fn test_hook_dry_run_does_not_execute(repo: TestRepo) {
 #[rstest]
 fn test_hook_dry_run_named_hooks(repo: TestRepo) {
     repo.write_project_config(
-        r#"[pre-merge]
-lint = "pre-commit run --all-files"
-test = "cargo test"
+        r#"pre-merge = [
+    {lint = "pre-commit run --all-files"},
+    {test = "cargo test"},
+]
 "#,
     );
 
@@ -1755,10 +1756,11 @@ first = "echo 'FIRST'"
 fn test_hook_multiple_name_filters(repo: TestRepo) {
     // Write project config with three named hooks
     repo.write_project_config(
-        r#"[pre-merge]
-first = "echo FIRST"
-second = "echo SECOND"
-third = "echo THIRD"
+        r#"pre-merge = [
+    {first = "echo FIRST"},
+    {second = "echo SECOND"},
+    {third = "echo THIRD"},
+]
 "#,
     );
 

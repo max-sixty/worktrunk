@@ -1558,10 +1558,11 @@ approved-commands = ["echo 'About to remove worktree'"]
 fn test_pre_remove_hook_template_variables(mut repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
-        r#"[pre-remove]
-branch = "echo 'Branch: {{ branch }}'"
-worktree = "echo 'Worktree: {{ worktree_path }}'"
-worktree_name = "echo 'Name: {{ worktree_name }}'"
+        r#"pre-remove = [
+    {branch = "echo 'Branch: {{ branch }}'"},
+    {worktree = "echo 'Worktree: {{ worktree_path }}'"},
+    {worktree_name = "echo 'Name: {{ worktree_name }}'"},
+]
 "#,
     );
     repo.commit("Add config with templates");
