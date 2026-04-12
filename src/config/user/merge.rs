@@ -26,7 +26,3 @@ pub fn merge_optional<T: Merge + Clone>(global: Option<&T>, project: Option<&T>)
         (None, None) => None,
     }
 }
-
-// Re-export from parent config module for backward compatibility with
-// existing `use super::merge::is_default` imports within the user submodules.
-pub(crate) use super::super::is_default;
