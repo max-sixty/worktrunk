@@ -514,9 +514,7 @@ impl Task for WorkingTreeConflictsTask {
         // conflict is in progress. Fall back to the commit-based check to
         // preserve prior behavior — write-tree on unmerged entries would
         // produce a tree with conflict markers as content.
-        let has_unmerged = status_output
-            .lines()
-            .any(|l| l.len() >= 2 && l.as_bytes()[0..2].contains(&b'U'));
+        let has_unmerged = has_unmerged_entries(&status_output);
         if has_unmerged {
             return Ok(TaskResult::WorkingTreeConflicts {
                 item_idx: ctx.item_idx,
@@ -893,6 +891,19 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
     (working_tree_status, is_dirty, has_conflicts)
 }
 
+/// Check if `git status --porcelain` output contains unmerged entries.
+///
+/// All seven unmerged status codes: UU, AU, UA, DU, UD, DD, AA.
+/// Five contain `U`; `DD` and `AA` do not and must be matched explicitly.
+fn has_unmerged_entries(status_output: &str) -> bool {
+    status_output.lines().any(|l| {
+        l.len() >= 2 && {
+            let xy = &l.as_bytes()[0..2];
+            xy.contains(&b'U') || xy == b"AA" || xy == b"DD"
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,5 +926,35 @@ mod tests {
     #[test]
     fn test_first_line_empty_string() {
         assert_eq!(first_line(""), "");
+    }
+
+    #[test]
+    fn unmerged_entries_detected_with_u() {
+        assert!(has_unmerged_entries("UU src/main.rs"));
+        assert!(has_unmerged_entries("AU src/main.rs"));
+        assert!(has_unmerged_entries("UA src/main.rs"));
+        assert!(has_unmerged_entries("DU src/main.rs"));
+        assert!(has_unmerged_entries("UD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_detected_aa_dd() {
+        assert!(has_unmerged_entries("AA src/main.rs"));
+        assert!(has_unmerged_entries("DD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_mixed_status() {
+        assert!(has_unmerged_entries("M  src/lib.rs\nAA src/main.rs"));
+        assert!(has_unmerged_entries("?? untracked.txt\nDD deleted.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_not_detected_for_normal_status() {
+        assert!(!has_unmerged_entries("M  src/main.rs"));
+        assert!(!has_unmerged_entries("A  src/new.rs"));
+        assert!(!has_unmerged_entries("D  src/old.rs"));
+        assert!(!has_unmerged_entries("?? untracked.txt"));
+        assert!(!has_unmerged_entries(""));
     }
 }
