@@ -253,8 +253,7 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by shell wrapper; wt writes a raw path, wrapper `cd`s to it |
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Set by shell wrapper; wt writes shell commands, wrapper sources the file |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
-| `WORKTRUNK_SHELL` | Set by the PowerShell and nushell wrappers to indicate shell type |
-| `WORKTRUNK_NU_WRAPPER_VERSION` | Set by the nushell wrapper so `wt` can warn when the installed wrapper file is outdated |
+| `WORKTRUNK_SHELL` | Set by PowerShell wrapper to indicate shell type |
 
 ## See Also
 

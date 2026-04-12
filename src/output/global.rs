@@ -53,8 +53,6 @@ use std::process::Stdio;
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
-use worktrunk::styling::{eprintln, hint_message, warning_message};
-
 #[cfg(not(unix))]
 use worktrunk::git::WorktrunkError;
 #[cfg(not(unix))]
@@ -64,6 +62,7 @@ use worktrunk::shell_exec::ShellConfig;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR,
 };
+use worktrunk::styling::{hint_message, warning_message};
 
 /// Issue tracking whether to relax the conservative EXEC scrub for alias/hook
 /// bodies. Emitted in the warning so users can report use cases.
@@ -269,6 +268,13 @@ fn compute_directive_mode() -> DirectiveMode {
             // and nushell is the only shell that needs a manual reinstall. A
             // global "your wrapper is old" warning would hit everyone else with
             // noise they can't avoid until their next terminal restart.
+            //
+            // TODO(2026-05): emit a deprecation warning here. By then the
+            // self-healing shells (bash/zsh/fish/PowerShell) have had a
+            // release to cycle, so anything still hitting this branch is
+            // almost certainly an outdated nushell wrapper whose user needs
+            // to rerun `wt config shell install nu` before the legacy
+            // fallback is removed in the following release.
             Some(file) => DirectiveMode::Legacy { file },
             None => DirectiveMode::Interactive,
         },
@@ -608,81 +614,6 @@ pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::pat
     }
 }
 
-/// Outcome of comparing the installed nushell wrapper against the version expected by
-/// this binary. Structural, not tied to any specific wrapper change — any bump of
-/// `NU_WRAPPER_VERSION` in the shell module produces `Outdated` for older installs.
-#[derive(Debug, PartialEq, Eq)]
-enum NuWrapperStatus {
-    /// Not running under the nushell wrapper — do nothing.
-    NotNushell,
-    /// Wrapper version matches the binary's expected version.
-    UpToDate,
-    /// Wrapper is missing a version env var (pre-versioning install) or reports an
-    /// older version than the binary expects.
-    Outdated,
-}
-
-/// Pure version-comparison logic, extracted for unit testing.
-///
-/// `shell` is the value of `WORKTRUNK_SHELL` (e.g. `Some("nu")` inside the nushell
-/// wrapper, `None` otherwise). `installed_version` is the value of
-/// `WORKTRUNK_NU_WRAPPER_VERSION` as exported by the wrapper file.
-fn nu_wrapper_status(
-    shell: Option<&str>,
-    installed_version: Option<&str>,
-    expected: u32,
-) -> NuWrapperStatus {
-    let Some(shell) = shell else {
-        return NuWrapperStatus::NotNushell;
-    };
-    if !shell.eq_ignore_ascii_case("nu") {
-        return NuWrapperStatus::NotNushell;
-    }
-    let parsed = installed_version.and_then(|s| s.trim().parse::<u32>().ok());
-    match parsed {
-        Some(v) if v >= expected => NuWrapperStatus::UpToDate,
-        _ => NuWrapperStatus::Outdated,
-    }
-}
-
-/// Emit a one-shot warning if we're running under an outdated nushell wrapper.
-///
-/// No-op when `WORKTRUNK_SHELL` is unset (no shell integration) or set to any value
-/// other than `nu`. Designed to be called early in `main` so the warning precedes any
-/// directive writes, but safe to call multiple times — `WARNED_OUTDATED_NU_WRAPPER`
-/// ensures the message is printed at most once per process.
-pub fn warn_outdated_nushell_wrapper_once() {
-    static WARNED_OUTDATED_NU_WRAPPER: OnceLock<()> = OnceLock::new();
-
-    let shell = std::env::var("WORKTRUNK_SHELL").ok();
-    let installed = std::env::var("WORKTRUNK_NU_WRAPPER_VERSION").ok();
-    let status = nu_wrapper_status(
-        shell.as_deref(),
-        installed.as_deref(),
-        worktrunk::shell::NU_WRAPPER_VERSION,
-    );
-    if !matches!(status, NuWrapperStatus::Outdated) {
-        return;
-    }
-    if WARNED_OUTDATED_NU_WRAPPER.set(()).is_err() {
-        return;
-    }
-
-    let cmd = crate::invocation::binary_name();
-    eprintln!(
-        "{}",
-        warning_message(cformat!(
-            "<bold>nu</>: Outdated shell extension; directory switching may misbehave"
-        ))
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "To update, run <underline>{cmd} config shell install nu</>"
-        ))
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1008,72 +939,6 @@ mod tests {
         assert_eq!(mapping.logical_prefix, PathBuf::from("/link"));
         assert_eq!(mapping.canonical_prefix, PathBuf::from("/real"));
         // path/project is the common suffix
-    }
-
-    #[test]
-    fn test_nu_wrapper_status_not_nushell() {
-        // No WORKTRUNK_SHELL → skip check entirely
-        assert_eq!(
-            nu_wrapper_status(None, Some("1"), 1),
-            NuWrapperStatus::NotNushell
-        );
-        // Different shell → skip check entirely
-        assert_eq!(
-            nu_wrapper_status(Some("powershell"), None, 1),
-            NuWrapperStatus::NotNushell
-        );
-    }
-
-    #[test]
-    fn test_nu_wrapper_status_up_to_date() {
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some("1"), 1),
-            NuWrapperStatus::UpToDate
-        );
-        // Case-insensitive on the shell name
-        assert_eq!(
-            nu_wrapper_status(Some("NU"), Some("1"), 1),
-            NuWrapperStatus::UpToDate
-        );
-        // Whitespace around the version is tolerated
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some(" 2 "), 2),
-            NuWrapperStatus::UpToDate
-        );
-    }
-
-    #[test]
-    fn test_nu_wrapper_status_outdated() {
-        // Missing version env var → pre-versioning wrapper, outdated
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), None, 1),
-            NuWrapperStatus::Outdated
-        );
-        // Older version → outdated
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some("1"), 2),
-            NuWrapperStatus::Outdated
-        );
-        // Unparsable version → treat as missing, outdated
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some("abc"), 1),
-            NuWrapperStatus::Outdated
-        );
-        // Empty string → unparsable, outdated
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some(""), 1),
-            NuWrapperStatus::Outdated
-        );
-    }
-
-    #[test]
-    fn test_nu_wrapper_status_newer_than_expected_is_fine() {
-        // Wrapper from a newer binary install: old binary shouldn't nag users to
-        // "downgrade" their wrapper.
-        assert_eq!(
-            nu_wrapper_status(Some("nu"), Some("5"), 1),
-            NuWrapperStatus::UpToDate
-        );
     }
 
     #[test]

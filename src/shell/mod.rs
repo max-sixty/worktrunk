@@ -21,20 +21,6 @@ pub use detection::{
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
 pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
 
-/// Version of the nushell wrapper file shipped in the binary.
-///
-/// The nushell wrapper is static — once installed via `wt config shell install nu`, its
-/// contents never change until the user reruns the command. bash/zsh/fish/PowerShell
-/// wrappers self-heal on shell restart because they re-source the binary's output, but
-/// nushell users can upgrade `wt` across many releases and keep running an old wrapper
-/// with zero signal. To catch this drift, the wrapper exports this integer as
-/// `WORKTRUNK_NU_WRAPPER_VERSION`; if the running binary's expected version doesn't
-/// match, it emits a one-shot warning pointing at the install command.
-///
-/// Bump this constant whenever `templates/nushell.nu` changes in a way users should
-/// pick up. This triggers the update warning for everyone running an older wrapper.
-pub const NU_WRAPPER_VERSION: u32 = 1;
-
 /// Supported shells
 ///
 /// Currently supported: bash, fish, nushell (experimental), zsh, powershell
@@ -204,10 +190,7 @@ impl ShellInit {
                 template.render()
             }
             Shell::Nushell => {
-                let template = NushellTemplate {
-                    cmd: &self.cmd,
-                    version: NU_WRAPPER_VERSION,
-                };
+                let template = NushellTemplate { cmd: &self.cmd };
                 template.render()
             }
             Shell::PowerShell => {
@@ -266,7 +249,6 @@ struct FishWrapperTemplate<'a> {
 #[template(path = "nushell.nu", escape = "none")]
 struct NushellTemplate<'a> {
     cmd: &'a str,
-    version: u32,
 }
 
 /// PowerShell template

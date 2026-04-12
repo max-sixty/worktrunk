@@ -1,17 +1,4 @@
 # worktrunk shell integration for nushell
-#
-# Wrapper version: {{ version }}. The binary reads WORKTRUNK_NU_WRAPPER_VERSION
-# at startup and warns if the installed wrapper is outdated. Bump this whenever
-# the file contents change materially, and update NU_WRAPPER_VERSION in
-# src/shell/mod.rs to match so users are prompted to rerun
-# `{{ cmd }} config shell install nu` after a binary upgrade.
-#
-# These env vars are set at file (session) scope so both the direct-passthrough
-# `list` branch and the directive-processing branch below inherit them without
-# duplicated `with-env` wrappers. PowerShell scopes its WORKTRUNK_SHELL per-call;
-# we accept the leak to child processes because both values are purely advisory.
-$env.WORKTRUNK_SHELL = "nu"
-$env.WORKTRUNK_NU_WRAPPER_VERSION = "{{ version }}"
 
 # Tab completions: calls binary with COMPLETE=nu to get candidates.
 # Note: nushell's completion engine bypasses custom completers when the current

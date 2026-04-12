@@ -1156,11 +1156,6 @@ fn main() {
     init_command_log(&command_line);
     init_logging(verbose);
 
-    // Warn once if the installed nushell wrapper is older than the binary expects.
-    // Must run before any directive writes so the warning reaches the user's terminal
-    // on commands like `wt switch` and `wt merge`.
-    output::warn_outdated_nushell_wrapper_once();
-
     let Some(command) = command else {
         print_help_to_stderr();
         return;
