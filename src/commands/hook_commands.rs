@@ -258,7 +258,7 @@ pub fn run_hook(
                 let label = if cmd.name.is_some() {
                     cformat!("{hook_type} <bold>{summary}</> would run:")
                 } else {
-                    cformat!("{hook_type} {summary} hook would run:")
+                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
                 };
                 eprintln!(
                     "{}",
