@@ -1,6 +1,7 @@
 use crate::common::{
-    TestRepo, mock_commands::{MockConfig, MockResponse}, repo, wt_command,
-    wt_completion_command,
+    TestRepo,
+    mock_commands::{MockConfig, MockResponse},
+    repo, wt_command, wt_completion_command,
 };
 use insta::Settings;
 use rstest::rstest;

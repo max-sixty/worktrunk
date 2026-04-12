@@ -816,8 +816,7 @@ mod tests {
 
     #[test]
     fn test_inject_external_skips_builtins() {
-        let cmd = Command::new("wt")
-            .subcommand(Command::new("switch").about("built-in switch"));
+        let cmd = Command::new("wt").subcommand(Command::new("switch").about("built-in switch"));
 
         let cmd = inject_external_subcommand_list(cmd, vec!["switch".into(), "sync".into()]);
 
@@ -861,11 +860,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("wt-fake");
-        std::fs::write(
-            &script,
-            "#!/bin/sh\nprintf '%s\\n%s' '--all' '--verbose'\n",
-        )
-        .unwrap();
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n%s' '--all' '--verbose'\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let result = forward_completion_to_external(
