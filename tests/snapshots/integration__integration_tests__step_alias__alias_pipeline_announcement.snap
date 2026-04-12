@@ -47,5 +47,5 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mdeploy[22m: [1minstall[22m; [1mbuild[22m, [1mlint[22m[39m
 [0mINSTALL
-[0mBUILD
-[0mLINT
+[1m[36mbuild[0m │ BUILD
+[1m[35mlint [0m │ LINT

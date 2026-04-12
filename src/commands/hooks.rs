@@ -569,6 +569,22 @@ pub fn run_hook_with_filter(
     Ok(())
 }
 
+/// Expand a hook command's template (lazy path falls back to `expanded`).
+fn hook_command_str(
+    ctx: &CommandContext,
+    cmd: &PreparedCommand,
+    summary: &str,
+) -> anyhow::Result<String> {
+    if let Some(template) = &cmd.lazy_template {
+        let context: std::collections::HashMap<String, String> =
+            serde_json::from_str(&cmd.context_json)
+                .context("failed to deserialize context_json")?;
+        expand_shell_template(template, &context, ctx.repo, summary)
+    } else {
+        Ok(cmd.expanded.clone())
+    }
+}
+
 /// Execute a single prepared hook command (caller has already announced it).
 fn execute_one_hook_command(
     ctx: &CommandContext,
@@ -579,23 +595,12 @@ fn execute_one_hook_command(
     failure_strategy: HookFailureStrategy,
 ) -> anyhow::Result<()> {
     let summary = command_summary_name(cmd.name.as_deref(), source);
-
-    let lazy_expanded;
-    let command_str = if let Some(template) = &cmd.lazy_template {
-        let context: std::collections::HashMap<String, String> =
-            serde_json::from_str(&cmd.context_json)
-                .context("failed to deserialize context_json")?;
-        lazy_expanded = expand_shell_template(template, &context, ctx.repo, &summary)?;
-        &lazy_expanded
-    } else {
-        &cmd.expanded
-    };
-
+    let command_str = hook_command_str(ctx, cmd, &summary)?;
     let log_label = format!("{hook_type} {summary}");
 
     let Err(err) = execute_shell_command(
         ctx.worktree_path,
-        command_str,
+        &command_str,
         Some(&cmd.context_json),
         Some(&log_label),
         directives.clone(),

@@ -9,8 +9,9 @@
 //!
 //! Aliases iterate `CommandConfig::steps()`, preserving pipeline structure:
 //! - `HookStep::Single` — serial execution, fail-fast
-//! - `HookStep::Concurrent` — commands spawn via `thread::scope`, all run to
-//!   completion, first error propagated
+//! - `HookStep::Concurrent` — dispatched to `output::concurrent`, which
+//!   spawns every child at once with piped stdout+stderr, prefixes each line
+//!   with its command's label, waits for all, and surfaces the first failure
 //!
 //! Template expansion happens at execution time (not at a separate prep step),
 //! so `vars.*` references naturally read fresh values from git config — prior
@@ -18,22 +19,19 @@
 //!
 //! ## Why concurrent execution isn't shared with `run_pipeline`
 //!
-//! Both alias and background pipeline runners need "spawn N commands, wait for
-//! all". They use different primitives because their leaf executors differ:
+//! Aliases and the background pipeline runner both need "spawn N commands,
+//! wait for all", but their output targets are fundamentally different:
 //!
-//! - Aliases call `execute_shell_command` (the unified streaming executor),
-//!   which is *blocking* — it streams stdout/stderr to the terminal and only
-//!   returns once the child exits. Concurrency therefore needs OS threads
-//!   (`thread::scope`), one thread per command.
-//! - The background pipeline runner spawns shell processes directly with
-//!   stdout/stderr redirected to per-command log files. The `Child` handle is
-//!   the concurrency primitive — no threads needed.
+//! - Aliases use `output::concurrent::run_concurrent_commands`, which streams
+//!   prefixed lines to the user's terminal with signal forwarding to every
+//!   child's process group.
+//! - The background runner spawns shell processes with stdout/stderr
+//!   redirected to per-command log files — no terminal streaming, different
+//!   signal semantics (detached process group), no prefixing.
 //!
-//! Bridging the two would require either making `execute_shell_command`
-//! return a non-blocking handle (invasive — entangles signal forwarding,
-//! ANSI reset, and `Cmd` streaming), or running background commands in
-//! threads they don't need. Neither pays for the abstraction. The pipeline
-//! summary formatter, on the other hand, is shared via
+//! The leaf primitive (`Child` with piped stdio) is shared philosophy, but
+//! wrapping would conflate terminal-streaming and file-logging concerns.
+//! Pipeline summary formatting, which is purely cosmetic, is shared via
 //! `hooks::format_pipeline_summary_from_names`.
 //!
 //! ## Trust model
@@ -57,10 +55,10 @@ use worktrunk::styling::{
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, build_hook_context, expand_shell_template, wait_first_error,
+    CommandContext, build_hook_context, expand_shell_template,
 };
-use crate::commands::force_serial_concurrent;
 use crate::commands::hooks::format_pipeline_summary_from_names;
+use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
 use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
@@ -370,24 +368,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     for step in cmd_config.steps() {
         match step {
             HookStep::Single(cmd) => exec.run(cmd)?,
-            HookStep::Concurrent(cmds) => {
-                if force_serial_concurrent() {
-                    // Test-only path: deterministic ordering for snapshots.
-                    for cmd in cmds {
-                        exec.run(cmd)?;
-                    }
-                } else {
-                    std::thread::scope(|s| {
-                        let handles: Vec<_> =
-                            cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
-                        wait_first_error(
-                            handles
-                                .into_iter()
-                                .map(|h| h.join().expect("alias command thread panicked")),
-                        )
-                    })?;
-                }
-            }
+            HookStep::Concurrent(cmds) => exec.run_concurrent(cmds)?,
         }
     }
 
@@ -420,6 +401,57 @@ impl AliasExecCtx<'_> {
             None,
             self.directives.clone(),
         ) {
+            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+                err.downcast_ref::<WorktrunkError>()
+            {
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
+            }
+            bail!("Failed to run alias '{}': {}", self.alias_name, err);
+        }
+        Ok(())
+    }
+
+    /// Run a concurrent group of alias commands with per-command prefixed output.
+    ///
+    /// Delegates to `run_concurrent_commands`: spawns every child at once,
+    /// prefixes each line with its command's label, waits for all, and
+    /// surfaces the first failure. Unnamed commands fall back to the alias
+    /// name as their prefix.
+    fn run_concurrent(&self, cmds: &[worktrunk::config::Command]) -> anyhow::Result<()> {
+        // Expand every template up front. Template expansion reads git config
+        // and must happen sequentially — spawning first would race on reads.
+        let expanded: Vec<String> = cmds
+            .iter()
+            .map(|cmd| {
+                expand_shell_template(&cmd.template, self.context_map, self.repo, self.alias_name)
+            })
+            .collect::<anyhow::Result<_>>()?;
+
+        let labels: Vec<&str> = cmds
+            .iter()
+            .map(|cmd| cmd.name.as_deref().unwrap_or(self.alias_name))
+            .collect();
+
+        let specs: Vec<ConcurrentCommand<'_>> = cmds
+            .iter()
+            .enumerate()
+            .map(|(i, _cmd)| ConcurrentCommand {
+                label: labels[i],
+                expanded: &expanded[i],
+                working_dir: self.wt_path,
+                context_json: Some(self.context_json),
+                log_label: None,
+                directives: self.directives,
+            })
+            .collect();
+
+        let outcomes = run_concurrent_commands(&specs)?;
+
+        // Fold to the first failure, preserving the single-child error format:
+        // child exit → AlreadyDisplayed with the exit code; other errors →
+        // wrapped with the alias-name preamble.
+        for result in outcomes {
+            let Err(err) = result else { continue };
             if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
                 err.downcast_ref::<WorktrunkError>()
             {
