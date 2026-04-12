@@ -59,7 +59,7 @@ exit_code: 0
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-[commit-generation][m
 [107m [0m [31m-command = "claude"[m
-[107m [0m / No newline at end of file[m
+[107m [0m \ No newline at end of file[m
 [107m [0m [32m+[m[32m[commit.generation][m
 [107m [0m [32m+[m[32mcommand = "claude"[m
 [33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config as [commit.generation][39m
