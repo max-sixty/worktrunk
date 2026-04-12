@@ -232,8 +232,8 @@ fn warn_unreferenced_custom_vars(
         if !referenced.contains(key) {
             eprintln!(
                 "{}",
-                warning_message(format!(
-                    "--var '{key}' is not referenced by any hook template — typo?"
+                warning_message(cformat!(
+                    "--var <bold>{key}</> is not referenced by any hook template — typo?"
                 ))
             );
         }

@@ -28,13 +28,8 @@ use crate::commands::Shell;
 ///
 /// Values are shell-escaped during template expansion (see `expand_template`).
 pub(crate) fn parse_key_val(s: &str) -> Result<(String, String), String> {
-    let (key, value) = s
-        .split_once('=')
-        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
-    if key.is_empty() {
-        return Err("invalid KEY=VALUE: key cannot be empty".to_string());
-    }
-    Ok((key.replace('-', "_"), value.to_string()))
+    let (key, value) = parse_vars_assignment(s)?;
+    Ok((key.replace('-', "_"), value))
 }
 
 /// Parse KEY=VALUE string for `wt config state vars set`.

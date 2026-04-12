@@ -329,6 +329,49 @@ mod tests {
             );
         }
     }
+
+    /// Verify KNOWN_HOOK_LONG_FLAGS stays in sync with actual clap flags on
+    /// hook subcommands. An unlisted flag would be silently rewritten to
+    /// `--var`, which clap then rejects — but the error message would be
+    /// confusing rather than helpful.
+    #[test]
+    fn test_known_hook_long_flags_matches_clap() {
+        use crate::cli::Cli;
+        use clap::CommandFactory;
+
+        let app = Cli::command();
+        let hook_cmd = app
+            .get_subcommands()
+            .find(|c| c.get_name() == "hook")
+            .expect("hook subcommand exists");
+
+        // Collect all long flags from hook subcommands that accept --var
+        let mut clap_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for sub in hook_cmd.get_subcommands() {
+            if !sub.get_arguments().any(|a| a.get_id() == "vars") {
+                continue;
+            }
+            for arg in sub.get_arguments() {
+                if let Some(long) = arg.get_long() {
+                    clap_flags.insert(format!("--{long}"));
+                }
+            }
+        }
+        // Also include global flags that appear after `hook <type>`
+        for arg in app.get_arguments() {
+            if let Some(long) = arg.get_long() {
+                clap_flags.insert(format!("--{long}"));
+            }
+        }
+
+        for flag in &clap_flags {
+            assert!(
+                KNOWN_HOOK_LONG_FLAGS.contains(&flag.as_str()),
+                "Hook subcommand flag '{flag}' is missing from KNOWN_HOOK_LONG_FLAGS. \
+                 Add it so --KEY=VALUE shorthand doesn't rewrite it."
+            );
+        }
+    }
 }
 
 // Ordering: worktree lifecycle phases (switch → start → commit → merge →
