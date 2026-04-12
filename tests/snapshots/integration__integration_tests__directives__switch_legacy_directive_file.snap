@@ -45,6 +45,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mshell wrapper is outdated; falling back to the deprecated single-file directive protocol[39m
-[2m↳[22m [2mRestart the shell or re-source the init output ([4mwt config shell init[24m) to load the new wrapper[22m
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m

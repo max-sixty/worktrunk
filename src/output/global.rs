@@ -37,8 +37,11 @@
 //! Users who upgrade wt without restarting their shell still run the previous
 //! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
 //! only that variable is set, wt falls back to the pre-split protocol (shell
-//! commands written to the single file) and emits a one-shot deprecation
-//! warning. Remove the legacy path in the next breaking release.
+//! commands written to the single file) silently. For bash, zsh, fish, and
+//! PowerShell a shell restart picks up the new wrapper automatically; nushell
+//! is the only shell where users have to rerun `wt config shell install`
+//! because its wrapper is a static file. Remove the legacy path in the next
+//! breaking release.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -261,34 +264,14 @@ fn compute_directive_mode() -> DirectiveMode {
             exec_file: exec,
         },
         None => match legacy {
-            Some(file) => {
-                warn_legacy_wrapper_once();
-                DirectiveMode::Legacy { file }
-            }
+            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
+            // and nushell is the only shell that needs a manual reinstall. A
+            // global "your wrapper is old" warning would hit everyone else with
+            // noise they can't avoid until their next terminal restart.
+            Some(file) => DirectiveMode::Legacy { file },
             None => DirectiveMode::Interactive,
         },
     }
-}
-
-/// Emit a one-shot deprecation warning when the old single-file wrapper is
-/// active. Fires at most once per process.
-fn warn_legacy_wrapper_once() {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.set(()).is_err() {
-        return;
-    }
-    eprintln!(
-        "{}",
-        warning_message(
-            "shell wrapper is outdated; falling back to the deprecated single-file directive protocol"
-        )
-    );
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "Restart the shell or re-source the init output (<underline>wt config shell init</>) to load the new wrapper"
-        ))
-    );
 }
 
 /// Warn that `--execute` was refused because we're running inside an alias or
