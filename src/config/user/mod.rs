@@ -84,7 +84,7 @@ struct EnvVar {
     raw_value: String,
 }
 
-/// Read `WORKTRUNK_*` env vars and build a nested TOML table.
+/// Read `WORKTRUNK_*` env vars and parse each into an [`EnvVar`].
 ///
 /// Env-var convention (matches the config crate's prior behavior):
 /// - `WORKTRUNK_WORKTREE_PATH=foo` → `worktree-path = "foo"`
