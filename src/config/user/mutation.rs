@@ -11,7 +11,7 @@ use crate::path::format_path_for_display;
 
 use super::UserConfig;
 use super::path;
-use super::sections::{CommitConfig, CommitGenerationConfig};
+use super::sections::CommitGenerationConfig;
 
 const NO_CONFIG_DIR_MSG: &str = "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME";
 
@@ -167,13 +167,11 @@ impl UserConfig {
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
-            // Ensure commit config exists
-            let commit_config = config.commit.get_or_insert_with(CommitConfig::default);
-            let gen_config = commit_config
+            let gen_config = config
+                .commit
                 .generation
                 .get_or_insert_with(CommitGenerationConfig::default);
 
-            // Set the command
             gen_config.command = Some(command.clone());
             true
         })

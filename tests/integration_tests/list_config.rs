@@ -457,6 +457,41 @@ fn test_list_config_env_override_numeric_string_field(repo: TestRepo) {
     });
 }
 
+/// Mixed typed+string env vars: one var needs typed (e.g., timeout-ms is u64,
+/// "100" → Integer) and another needs string (e.g., worktree-path is String,
+/// "42" → String). Both must resolve correctly without dropping the config.
+#[rstest]
+fn test_list_config_env_override_mixed_typed_and_string(repo: TestRepo) {
+    // Write a config file so we can verify it's preserved
+    fs::write(repo.test_config_path(), "[list]\nbranches = true\n").unwrap();
+    repo.run_git(&["branch", "feature"]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // timeout-ms needs Integer(100) for u64 field
+        cmd.env("WORKTRUNK__LIST__TIMEOUT_MS", "100");
+        // worktree-path needs String("42") for Option<String> field
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "42");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("Failed"),
+            "mixed typed+string env vars should not fail: {stderr}"
+        );
+        assert!(output.status.success(), "exit code should be 0: {stderr}");
+        // Verify file config is preserved (branches = true shows the branch)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("feature"),
+            "file config (branches=true) should be preserved: {stdout}"
+        );
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars.
 #[rstest]

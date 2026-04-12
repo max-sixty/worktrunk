@@ -248,33 +248,33 @@ grep -A 20 "## Warning Messages" reference/shell-integration.md
 
 ## Advanced: Agent Handoffs
 
-When the user requests spawning a worktree with Claude in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer:
+When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
 
 **tmux** (check `$TMUX` env var):
 ```bash
-tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x claude -- '<task description>'"
+tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x <agent-cli> -- '<task description>'"
 ```
 
 **Zellij** (check `$ZELLIJ` env var):
 ```bash
-zellij run -- wt switch --create <branch-name> -x claude -- '<task description>'
+zellij run -- wt switch --create <branch-name> -x <agent-cli> -- '<task description>'
 ```
 
 **Requirements** (all must be true):
 - User explicitly requests spawning/handoff
 - User is in a supported multiplexer (tmux or Zellij)
-- User's CLAUDE.md or explicit instruction authorizes this pattern
+- The user's project instructions (`CLAUDE.md` or `AGENTS.md`) or an explicit prompt authorize this pattern
 
 **Do not use this pattern** for normal worktree operations.
 
-Example (tmux):
+Example (tmux, Claude Code):
 ```bash
 tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
 ```
 
-Example (Zellij):
+Example (Zellij, OpenCode):
 ```bash
-zellij run -- wt switch --create fix-auth-bug -x claude -- \
+zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
