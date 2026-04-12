@@ -35,18 +35,6 @@ use super::tasks::{
 };
 use super::types::{TaskError, TaskKind, TaskResult};
 
-// Tasks that are expensive because they require merge-base computation or merge simulation.
-// These are skipped for branches that are far behind the default branch (in `wt switch` interactive picker).
-// AheadBehind is NOT here - we use batch data for it instead of skipping.
-// CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
-// WouldMergeAdd and MergeTreeConflicts are NOT here - they use the persistent SHA-keyed
-// probe cache, so they're instant on cache hits (only slow on the first invocation).
-const EXPENSIVE_TASKS: &[TaskKind] = &[
-    TaskKind::HasFileChanges, // git diff with three-dot range
-    TaskKind::IsAncestor,     // git merge-base --is-ancestor
-    TaskKind::BranchDiff,     // git diff with three-dot range
-];
-
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
 /// Without this, these tasks would fail on the null OID and show as errors in the table.
 const COMMIT_TASKS: &[TaskKind] = &[
@@ -372,12 +360,6 @@ pub fn work_items_for_worktree(
         llm_command: options.llm_command.clone(),
     };
 
-    // Check if this branch is stale and should skip expensive tasks.
-    let is_stale = wt
-        .branch
-        .as_deref()
-        .is_some_and(|b| options.stale_branches.contains(b));
-
     let has_commits = wt.has_commits();
 
     let mut items = Vec::with_capacity(15);
@@ -405,7 +387,6 @@ pub fn work_items_for_worktree(
         TaskKind::SummaryGenerate,
     ] {
         let will_skip = skip.contains(&kind)
-            || (is_stale && EXPENSIVE_TASKS.contains(&kind))
             || (!has_commits && COMMIT_TASKS.contains(&kind))
             || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
         if will_skip {
@@ -490,9 +471,6 @@ pub fn work_items_for_branch(
         llm_command: options.llm_command.clone(),
     };
 
-    // Check if this branch is stale and should skip expensive tasks.
-    let is_stale = options.stale_branches.contains(branch_name);
-
     let mut items = Vec::with_capacity(11);
 
     for kind in [
@@ -509,7 +487,6 @@ pub fn work_items_for_branch(
         TaskKind::SummaryGenerate,
     ] {
         let will_skip = skip.contains(&kind)
-            || (is_stale && EXPENSIVE_TASKS.contains(&kind))
             || (kind == TaskKind::SummaryGenerate && options.llm_command.is_none());
         if will_skip {
             seed_skipped_task_defaults(item, kind);
@@ -568,7 +545,6 @@ mod tests {
             skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
             llm_command: None,
-            stale_branches: HashSet::new(),
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -610,8 +586,7 @@ mod tests {
         let options = CollectOptions {
             skip_tasks: HashSet::new(),
             llm_command: None,
-            stale_branches: HashSet::new(),
-            ..Default::default()
+            url_template: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());

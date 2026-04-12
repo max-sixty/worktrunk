@@ -169,6 +169,47 @@ pub fn build_hook_context(
     Ok(map)
 }
 
+/// Drain a sequence of command results, returning the first error.
+///
+/// All items are consumed before returning, so callers can be sure every
+/// spawned child or joined thread has completed even when one item already
+/// errored. Used by alias and pipeline concurrent groups, which both want
+/// "wait all, return first error" semantics around different concurrency
+/// primitives (in-process threads vs OS subprocesses).
+pub fn wait_first_error<E>(
+    results: impl IntoIterator<Item = std::result::Result<(), E>>,
+) -> std::result::Result<(), E> {
+    let mut first = None;
+    for r in results {
+        if let Err(e) = r
+            && first.is_none()
+        {
+            first = Some(e);
+        }
+    }
+    first.map_or(Ok(()), Err)
+}
+
+/// Expand a shell-command template against a context map.
+///
+/// Builds the `&str` vars map required by `expand_template` and fixes
+/// `shell_escape=true` since every caller interpolates the result into a
+/// shell string. Used by the three execution paths — foreground hooks,
+/// background pipelines, and aliases — that defer `vars.*` expansion until
+/// just before the command runs so prior steps can set vars via git config.
+pub fn expand_shell_template(
+    template: &str,
+    context: &HashMap<String, String>,
+    repo: &Repository,
+    label: &str,
+) -> Result<String> {
+    let vars: HashMap<&str, &str> = context
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    Ok(expand_template(template, &vars, true, repo, label)?)
+}
+
 /// Expand commands from a CommandConfig without approval.
 ///
 /// When `lazy_enabled` is true, commands referencing `vars.` are validated but not
@@ -217,12 +258,8 @@ fn expand_commands(
             let tpl = cmd.template.clone();
             (tpl.clone(), Some(tpl))
         } else {
-            let vars: HashMap<&str, &str> = cmd_context
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
             (
-                expand_template(&cmd.template, &vars, true, ctx.repo, &template_name)?,
+                expand_shell_template(&cmd.template, &cmd_context, ctx.repo, &template_name)?,
                 None,
             )
         };

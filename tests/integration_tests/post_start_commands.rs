@@ -1354,3 +1354,84 @@ approved-commands = ["echo PROJECT > project_marker.txt"]
     let project = fs::read_to_string(worktree_path.join("project_marker.txt")).unwrap();
     assert!(project.contains("PROJECT"));
 }
+
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` makes the background pipeline runner's
+/// concurrent group run commands one at a time in declaration order. The two
+/// commands append to the same file, so a deterministic ordering proves they
+/// ran serially (a true concurrent run could interleave the appends). The
+/// failing-first-command variant additionally exercises the bail-on-failure
+/// path inside the serial branch — second never gets to run.
+#[rstest]
+fn test_post_start_concurrent_serial_force(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo FIRST >> serial_order.txt"
+second = "echo SECOND >> serial_order.txt"
+"#,
+    );
+    repo.commit("Add concurrent post-start");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST >> serial_order.txt",
+    "echo SECOND >> serial_order.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let order_file = worktree_path.join("serial_order.txt");
+    wait_for_file_lines(&order_file, 2);
+
+    let content = fs::read_to_string(&order_file).unwrap();
+    assert_eq!(
+        content, "FIRST\nSECOND\n",
+        "serial run should append in declaration order"
+    );
+}
+
+#[rstest]
+fn test_post_start_concurrent_serial_bails_on_failure(repo: TestRepo) {
+    // First command writes a marker then fails; second writes a marker that
+    // would always exist if it ran. Serial mode bails after the first failure,
+    // so the second marker should be absent.
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo FIRST > first_marker.txt && false"
+second = "echo SECOND > second_marker.txt"
+"#,
+    );
+    repo.commit("Add failing post-start");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST > first_marker.txt && false",
+    "echo SECOND > second_marker.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    wait_for_file_content(&worktree_path.join("first_marker.txt"));
+
+    // Wait for any trailing background work, then assert the second never ran.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !worktree_path.join("second_marker.txt").exists(),
+        "serial mode should bail on first failure — second command must not run"
+    );
+}
