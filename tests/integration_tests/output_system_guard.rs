@@ -1,8 +1,8 @@
 //! Guard test to prevent stdout leaks in command code
 //!
 //! stdout is reserved for data output (e.g., JSON). User-visible messages go to stderr.
-//! When shell integration is active (`WORKTRUNK_DIRECTIVE_FILE` is set), directives are written
-//! to the file, not stdout.
+//! When shell integration is active (directive env vars set), directives are written
+//! to files, not stdout.
 //!
 //! This test enforces: **No accidental stdout writes in command code**
 //!

@@ -212,11 +212,31 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Build a [`Command`] that runs `program` at nice 19 when `low_priority` is set.
+///
+/// Used by the detached-spawn paths so internal cleanup ops (`wt remove`'s background
+/// `rm -rf`, trash sweep) don't compete with foreground work. The nice value is
+/// inherited across `fork`/`exec`, so wrapping the outer shell or the target binary
+/// is enough — any children inherit it too.
+#[cfg(unix)]
+fn low_priority_command(program: impl AsRef<std::ffi::OsStr>, low_priority: bool) -> Command {
+    if low_priority {
+        let mut cmd = Command::new("nice");
+        cmd.arg("-n").arg("19").arg("--").arg(program);
+        cmd
+    } else {
+        Command::new(program)
+    }
+}
+
 /// Spawn a detached background process with output redirected to a log file.
 ///
 /// The process will be fully detached from the parent:
 /// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
 /// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
+///
+/// Internal ops (`HookLog::Internal`) are run at nice 19 so their I/O and CPU don't
+/// compete with user-visible work; user hooks run at normal priority.
 ///
 /// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
@@ -237,7 +257,8 @@ pub fn spawn_detached(
 
     #[cfg(unix)]
     {
-        spawn_detached_unix(worktree_path, command, log_file, context_json)?;
+        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        spawn_detached_unix(worktree_path, command, log_file, context_json, low_priority)?;
     }
 
     #[cfg(windows)]
@@ -254,6 +275,7 @@ fn spawn_detached_unix(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
+    low_priority: bool,
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
 
@@ -286,8 +308,13 @@ fn spawn_detached_unix(
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
     // Since our process is in a different group, it doesn't receive the signal.
-    let mut child = Command::new("sh")
-        .arg("-c")
+    //
+    // For low-priority ops (internal cleanup), wrap the shell in `nice -n 19` so the
+    // backgrounded command inherits nice 19. `nice` is POSIX and shipped in base
+    // macOS/Linux; a missing binary would fail the spawn (tolerable — these are the
+    // same environments where `renice` is already assumed present elsewhere).
+    let mut cmd = low_priority_command("sh", low_priority);
+    cmd.arg("-c")
         .arg(&shell_cmd)
         .current_dir(worktree_path)
         .stdin(Stdio::null())
@@ -297,11 +324,10 @@ fn spawn_detached_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        // Prevent hooks from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .process_group(0) // New process group, not in PTY's foreground group
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .process_group(0); // New process group, not in PTY's foreground group
+    // Prevent hooks from writing to the directive file
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     // Wait for sh to exit (immediate, doesn't block on background command)
     child
@@ -370,11 +396,10 @@ fn spawn_detached_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        // Prevent hooks from writing to the directive file
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    // Prevent hooks from writing to the directive file
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    cmd.spawn().context("Failed to spawn detached process")?;
 
     // Windows: Process is fully detached via DETACHED_PROCESS flag,
     // no need to wait (unlike Unix which waits for the outer shell)
@@ -410,7 +435,15 @@ pub fn spawn_detached_exec(
 
     #[cfg(unix)]
     {
-        spawn_detached_exec_unix(worktree_path, program, args, log_file, stdin_bytes)?;
+        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        spawn_detached_exec_unix(
+            worktree_path,
+            program,
+            args,
+            log_file,
+            stdin_bytes,
+            low_priority,
+        )?;
     }
 
     #[cfg(windows)]
@@ -428,12 +461,14 @@ fn spawn_detached_exec_unix(
     args: &[&str],
     log_file: fs::File,
     stdin_bytes: &[u8],
+    low_priority: bool,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::process::CommandExt;
 
-    let mut child = Command::new(program)
-        .args(args)
+    // See `spawn_detached_unix` for rationale on the `nice -n 19` wrapper.
+    let mut cmd = low_priority_command(program, low_priority);
+    cmd.args(args)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(
@@ -442,10 +477,9 @@ fn spawn_detached_exec_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .process_group(0)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .process_group(0);
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         // Ignore BrokenPipe — child may exit before reading all input.
@@ -469,8 +503,8 @@ fn spawn_detached_exec_windows(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const DETACHED_PROCESS: u32 = 0x00000008;
 
-    let mut child = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(
@@ -479,10 +513,9 @@ fn spawn_detached_exec_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
-        .spawn()
-        .context("Failed to spawn detached process")?;
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(stdin_bytes);

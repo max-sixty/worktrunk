@@ -3,15 +3,9 @@
 # This is the full function definition, output by `{{ cmd }} config shell init fish`.
 # It's sourced at runtime by the wrapper in ~/.config/fish/functions/{{ cmd }}.fish.
 
-# Override {{ cmd }} command with file-based directive passing.
-# Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, evals it after.
+# Override {{ cmd }} command with split directive passing.
+# Creates two temp files: one for cd (raw path) and one for exec (shell).
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
-#
-# Note: We use `eval (string collect < file)` instead of `source` because
-# fish's `source` doesn't propagate exit codes to the parent function.
-# We read the directive with `string collect` (builtin) instead of `cat`
-# (external) to avoid spawning a subprocess whose CWD may have been renamed
-# by worktree removal.
 function {{ cmd }}
     set -l use_source false
     set -l args
@@ -25,27 +19,41 @@ function {{ cmd }}
         echo "{{ cmd }}: command not found" >&2
         return 127
     end
-    set -l directive_file (mktemp)
+    set -l cd_file (mktemp)
+    set -l exec_file (mktemp)
 
     # --source: use cargo run (builds from source)
     if test $use_source = true
-        env WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
+            cargo run --bin {{ cmd }} --quiet -- $args
     else
-        env WORKTRUNK_DIRECTIVE_FILE=$directive_file $WORKTRUNK_BIN $args
+        env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
+            $WORKTRUNK_BIN $args
     end
     set -l exit_code $status
 
-    if test -s "$directive_file"
-        # Use fish builtin instead of cat to avoid spawning a subprocess
-        # whose CWD may have been renamed by worktree removal.
-        set -l directive (string collect < "$directive_file")
-        eval $directive
+    # cd file holds a raw path — read with fish builtin (no cat subprocess,
+    # safe even if CWD was removed by worktree removal).
+    if test -s "$cd_file"
+        set -l target (string trim < "$cd_file")
+        cd -- "$target"
+        set -l cd_exit $status
         if test $exit_code -eq 0
-            set exit_code $status
+            set exit_code $cd_exit
         end
     end
 
-    command rm -f "$directive_file"
+    # exec file holds arbitrary shell (e.g. from --execute)
+    if test -s "$exec_file"
+        set -l directive (string collect < "$exec_file")
+        eval $directive
+        set -l src_exit $status
+        if test $exit_code -eq 0
+            set exit_code $src_exit
+        end
+    end
+
+    command rm -f "$cd_file" "$exec_file"
     return $exit_code
 end
 

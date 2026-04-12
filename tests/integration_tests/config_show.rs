@@ -2047,7 +2047,7 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
         // Set WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
 
         assert_cmd_snapshot!(cmd);
     });
@@ -2083,7 +2083,7 @@ fn test_config_show_shell_active_but_not_in_config_file(mut repo: TestRepo, temp
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         // Set SHELL to zsh so current_shell() returns Some(Zsh)
         cmd.env("SHELL", "/bin/zsh");
 

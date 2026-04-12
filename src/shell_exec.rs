@@ -270,9 +270,41 @@ fn find_git_bash() -> Option<PathBuf> {
     None
 }
 
-/// Environment variable removed from spawned subprocesses for security.
-/// Hooks and other child processes should not be able to write to the directive file.
+/// Environment variable naming the directive file for `cd` path changes.
+///
+/// Shell wrappers set this to a temp file; wt writes a raw absolute path to
+/// it (one line, no shell escaping). The wrapper `cd`s to that path after wt
+/// exits. Because the file contents are a literal path, there is no shell
+/// injection surface — this is safe to pass through to alias/hook shell bodies.
+pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
+
+/// Environment variable naming the directive file for arbitrary exec commands.
+///
+/// Shell wrappers set this to a temp file; wt writes shell commands (e.g. the
+/// body of `wt switch --execute`) to it and the wrapper sources the file after
+/// wt exits, so the command runs in the user's interactive shell. Because the
+/// file contents are arbitrary shell, wt scrubs this from alias/hook child
+/// environments — a hook body writing to this file could inject shell into
+/// the parent shell. Only trusted wt-internal callers write to it.
+pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
+
+/// Legacy pre-split directive file env var. Honored for one release so users
+/// who upgraded `wt` without restarting their shell still get shell integration
+/// from their current session's old wrapper. When only this is set (no new
+/// vars), wt writes shell-format directives to it. Remove in the next breaking
+/// release.
 pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
+
+/// Scrub all directive file env vars from a `std::process::Command`.
+///
+/// Prevents child processes from writing to the parent shell's directive
+/// files. Called by every code path that spawns external commands (Cmd,
+/// help pager, picker pager, background hooks, git credential helpers).
+pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
+    cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
+    cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
+    cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+}
 
 // ============================================================================
 // Thread-Local Command Timeout
@@ -463,10 +495,16 @@ pub struct Cmd {
     /// When set, log this command to the command log after execution.
     /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
     external_label: Option<String>,
-    /// When set, re-adds the directive file env var after the security scrub in
-    /// `apply_common_settings`. This is a privileged opt-in for contexts where
-    /// pass-through is safe (aliases, foreground hooks).
-    directive_file: Option<std::path::PathBuf>,
+    /// When set, re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` after the security scrub
+    /// in `apply_common_settings`. Used by aliases and foreground hooks — their
+    /// shell bodies may emit cd directives (the file holds a raw path, no shell
+    /// injection surface). `WORKTRUNK_DIRECTIVE_EXEC_FILE` is NEVER re-added,
+    /// so alias/hook bodies cannot inject arbitrary shell into the parent.
+    directive_cd_file: Option<std::path::PathBuf>,
+    /// When set, re-adds the legacy `WORKTRUNK_DIRECTIVE_FILE` env var. Used in
+    /// legacy-wrapper compat mode to preserve pre-split behavior for alias/hook
+    /// bodies running under an old shell wrapper.
+    directive_legacy_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -509,7 +547,8 @@ impl Cmd {
             stdin_cfg: None,
             forward_signals: false,
             external_label: None,
-            directive_file: None,
+            directive_cd_file: None,
+            directive_legacy_file: None,
         }
     }
 
@@ -566,8 +605,11 @@ impl Cmd {
         }
 
         // Prevent subprocesses from writing shell directives (security).
-        // Applied last to ensure it can't be re-added by user-provided envs.
-        cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
+        // Applied last so it can't be re-added by user-provided envs.
+        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` (and
+        // the legacy var, in compat mode) for trusted contexts — but never
+        // `WORKTRUNK_DIRECTIVE_EXEC_FILE`, which carries arbitrary shell.
+        scrub_directive_env_vars(cmd);
     }
 
     fn log_run_start(&self, cmd_str: &str) {
@@ -690,13 +732,30 @@ impl Cmd {
         self
     }
 
-    /// Pass the directive file through to the child process.
+    /// Pass the CD directive file through to the child process.
     ///
-    /// By default, `Cmd` scrubs `WORKTRUNK_DIRECTIVE_FILE` from all child
-    /// processes (security). This re-adds it for trusted contexts where the
-    /// child should be able to write shell directives (aliases, foreground hooks).
-    pub fn directive_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.directive_file = Some(path.into());
+    /// By default, `Cmd` scrubs all directive file env vars from child
+    /// processes. This re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for trusted
+    /// contexts (aliases, foreground hooks) where the child should be able
+    /// to request a directory change. It is always safe to pass through: the
+    /// file holds a raw path, not shell, so there is no injection surface.
+    ///
+    /// `WORKTRUNK_DIRECTIVE_EXEC_FILE` is intentionally *not* exposed by any
+    /// `Cmd` method — only wt-internal Rust code writes arbitrary shell
+    /// directives, so no child process ever needs the env var.
+    pub fn directive_cd_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.directive_cd_file = Some(path.into());
+        self
+    }
+
+    /// Pass the legacy (pre-split) directive file through to the child process.
+    ///
+    /// Used only in legacy-wrapper compat mode. Preserves pre-split behavior
+    /// for alias/hook bodies running under an old shell wrapper that still
+    /// sets `WORKTRUNK_DIRECTIVE_FILE`. Remove together with the legacy env
+    /// var in the next breaking release.
+    pub fn directive_legacy_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.directive_legacy_file = Some(path.into());
         self
     }
 
@@ -716,8 +775,8 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_file.is_none(),
-            "directive_file is only applied by .stream(), not .run()"
+            self.directive_cd_file.is_none() && self.directive_legacy_file.is_none(),
+            "directive_*_file is only applied by .stream(), not .run()"
         );
 
         let cmd_str = self.command_string();
@@ -862,8 +921,13 @@ impl Cmd {
         self.log_stream_start(&cmd_str, &exec_mode);
         self.apply_common_settings(&mut cmd);
 
-        // Re-add directive file after security scrub if explicitly opted in.
-        if let Some(ref path) = self.directive_file {
+        // Re-add directive files after security scrub for trusted contexts.
+        // CD file is always safe to pass through (raw path, no shell). EXEC
+        // file is never re-added — alias/hook bodies must not inject shell.
+        if let Some(ref path) = self.directive_cd_file {
+            cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+        }
+        if let Some(ref path) = self.directive_legacy_file {
             cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
         }
 

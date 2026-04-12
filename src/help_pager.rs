@@ -126,8 +126,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
     };
     log::debug!("$ {} (pager)", pager_cmd);
     let mut cmd = shell.command(&final_cmd);
-    // Prevent subprocesses from writing to the directive file
-    cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     let mut child = match cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn() {
         Ok(child) => child,
         Err(e) => {

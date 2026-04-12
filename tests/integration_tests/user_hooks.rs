@@ -2995,11 +2995,11 @@ cleanup = "echo done"
 }
 
 /// Foreground hooks pass the directive file through to child processes,
-/// so inner `wt switch --create` can write shell directives back to the
-/// parent shell.
+/// so inner `wt switch --create` can write cd directives back to the
+/// parent shell via the CD directive file.
 #[rstest]
 fn test_foreground_hook_passes_directive_file(repo: TestRepo) {
-    use crate::common::{configure_directive_file, directive_file, wt_bin};
+    use crate::common::{configure_directive_files, directive_files, wt_bin};
 
     repo.commit("initial");
 
@@ -3012,8 +3012,8 @@ fn test_foreground_hook_passes_directive_file(repo: TestRepo) {
     let wt_toml = wt_str.replace('\\', "\\\\");
 
     // Pre-start hook that creates a new worktree via `wt switch --create`.
-    // If the directive file is passed through, the inner wt will write a
-    // `cd` directive. If scrubbed, it prints the "shell integration not
+    // If the CD directive file is passed through, the inner wt will write a
+    // path to it. If scrubbed, it prints the "shell integration not
     // installed" hint instead.
     repo.write_test_config(&format!(
         r#"
@@ -3022,10 +3022,10 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
 "#,
     ));
 
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
 
     let mut cmd = repo.wt_command();
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     // Run the pre-start hook manually in foreground
     cmd.args(["hook", "pre-start", "setup"]);
     let output = cmd.output().unwrap();
@@ -3037,11 +3037,11 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        directives.contains("cd '"),
-        "foreground hook running `wt switch --create` should write a cd directive \
-         to the parent directive file, got: {directives:?}"
+        !cd_content.trim().is_empty(),
+        "foreground hook running `wt switch --create` should write a path to \
+         the CD directive file, got: {cd_content:?}"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);

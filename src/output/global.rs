@@ -1,21 +1,47 @@
 //! Global output context with file-based directive passing
 //!
-//! This module handles shell integration directives (cd, exec) that need to be
-//! communicated to the parent shell. For regular output, use `eprintln!`/`println!`
-//! directly (from `worktrunk::styling` for color support).
+//! Shell integration directives (cd, exec) travel from wt to the parent shell
+//! through files named by environment variables. This module chooses the right
+//! file for each directive and escalates a warning when a trusted directive is
+//! refused. Regular output still uses `eprintln!`/`println!` directly (from
+//! `worktrunk::styling` for color support).
 //!
-//! # Implementation
+//! # Protocol
 //!
-//! Uses a simple global approach:
-//! - `OnceLock<Mutex<OutputState>>` stores the directive file path and accumulated state
-//! - If `WORKTRUNK_DIRECTIVE_FILE` env var is set, directives are written to that file
-//! - Otherwise, commands execute directly
+//! Shell integration uses two separate files with different trust levels:
 //!
-//! # Shell Integration
+//! - `WORKTRUNK_DIRECTIVE_CD_FILE` holds a single raw path. The wrapper runs
+//!   `cd -- "$(< file)"` after wt exits. There is no shell parsing, no
+//!   escaping, and no injection surface, so the env var is safe to pass
+//!   through to alias/hook shell bodies — a body that appends to it can at
+//!   worst redirect `cd`.
 //!
-//! When `WORKTRUNK_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
-//! (like `cd '/path'`) to that file. The shell wrapper sources the file after wt exits.
-//! This allows the parent shell to change directory.
+//! - `WORKTRUNK_DIRECTIVE_EXEC_FILE` holds arbitrary shell that the wrapper
+//!   sources after the `cd`. This is how `wt switch --execute <cmd>` runs its
+//!   payload in the user's interactive shell, inheriting functions and env.
+//!   Because the contents are sourced verbatim, wt scrubs this env var from
+//!   alias and foreground-hook child processes so a hook body cannot inject
+//!   shell into the parent session.
+//!
+//! # Conservative scrub
+//!
+//! Because the EXEC env var is scrubbed from alias/hook child environments, a
+//! nested `wt` invocation inside an alias body (e.g. `wt step my-alias` where
+//! the alias runs `wt switch main --execute claude`) sees no EXEC file and
+//! refuses to run the `--execute` payload, emitting a warning and a link to
+//! <https://github.com/max-sixty/worktrunk/issues/2101> so users can report
+//! whether to relax the restriction.
+//!
+//! # Legacy compat
+//!
+//! Users who upgrade wt without restarting their shell still run the previous
+//! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
+//! only that variable is set, wt falls back to the pre-split protocol (shell
+//! commands written to the single file) silently. For bash, zsh, fish, and
+//! PowerShell a shell restart picks up the new wrapper automatically; nushell
+//! is the only shell where users have to rerun `wt config shell install`
+//! because its wrapper is a static file. Remove the legacy path in the next
+//! breaking release.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -24,7 +50,6 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-#[cfg(unix)]
 use color_print::cformat;
 use std::sync::{Mutex, OnceLock};
 
@@ -32,9 +57,16 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::git::WorktrunkError;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::Cmd;
-use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{
+    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR,
+};
+use worktrunk::styling::{hint_message, warning_message};
+
+/// Issue tracking whether to relax the conservative EXEC scrub for alias/hook
+/// bodies. Emitted in the warning so users can report use cases.
+pub const EXEC_SCRUB_ISSUE_URL: &str = "https://github.com/max-sixty/worktrunk/issues/2101";
 
 // Re-export set_verbosity from the library's styling module.
 // This ensures the binary and library share the same global state.
@@ -52,11 +84,34 @@ pub use worktrunk::styling::set_verbosity;
 /// unreachable - the lock is only held for trivial Option assignments that cannot panic.
 static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
 
+/// Selects which directive files wt writes to based on environment.
+///
+/// Computed once during `state()` initialization from the process environment.
+/// Legacy mode only activates when no new-protocol vars are set — a fresh
+/// wrapper always wins over any leftover legacy var.
+#[derive(Debug, Clone, Default)]
+enum DirectiveMode {
+    /// Shell integration not active. `execute()` runs commands directly;
+    /// `change_directory()` is a no-op beyond updating the buffered target
+    /// dir used by `execute()`.
+    #[default]
+    Interactive,
+    /// New split protocol. `cd_file` is always a real path; `exec_file` is
+    /// `None` when the EXEC var was scrubbed from this process (we're
+    /// running inside an alias/hook shell body). `--execute` in the scrubbed
+    /// case warns and drops the command.
+    NewProtocol {
+        cd_file: PathBuf,
+        exec_file: Option<PathBuf>,
+    },
+    /// Legacy single-file protocol. Pre-split wrapper is still active.
+    Legacy { file: PathBuf },
+}
+
 #[derive(Default)]
 struct OutputState {
-    /// Path to the directive file (from WORKTRUNK_DIRECTIVE_FILE env var)
-    /// If None, we're in interactive mode (no shell wrapper)
-    directive_file: Option<PathBuf>,
+    /// Which directive files wt writes to.
+    mode: DirectiveMode,
     /// Buffered target directory for execute() in interactive mode
     target_dir: Option<PathBuf>,
     /// Mapping from canonical path prefix to logical (symlink) prefix.
@@ -174,19 +229,16 @@ pub fn to_logical_path(path: &Path) -> PathBuf {
 
 /// Get or lazily initialize the global output state.
 ///
-/// Reads `WORKTRUNK_DIRECTIVE_FILE` from environment on first access.
-/// Empty or whitespace-only strings are treated as "not set" to handle edge cases.
+/// Reads directive file env vars from environment on first access and picks
+/// a `DirectiveMode`. Empty or whitespace-only strings are treated as "not
+/// set" to handle edge cases.
 fn state() -> &'static Mutex<OutputState> {
     OUTPUT_STATE.get_or_init(|| {
-        let directive_file = std::env::var(DIRECTIVE_FILE_ENV_VAR)
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from);
-
+        let mode = compute_directive_mode();
         let symlink_mapping = SymlinkMapping::compute();
 
         Mutex::new(OutputState {
-            directive_file,
+            mode,
             target_dir: None,
             symlink_mapping,
             cwd_removed: false,
@@ -194,65 +246,125 @@ fn state() -> &'static Mutex<OutputState> {
     })
 }
 
-/// Check if shell integration is active (directive file is set)
-fn has_directive_file() -> bool {
-    state()
-        .lock()
-        .expect("OUTPUT_STATE lock poisoned")
-        .directive_file
-        .is_some()
+fn read_env_path(var: &str) -> Option<PathBuf> {
+    std::env::var(var)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
 }
 
-/// Write a directive to the directive file (if set)
-fn write_directive(directive: &str) -> io::Result<()> {
-    // Copy path out of lock to avoid holding mutex during I/O
-    let path = {
-        let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
-        guard.directive_file.clone()
-    };
+fn compute_directive_mode() -> DirectiveMode {
+    let cd = read_env_path(DIRECTIVE_CD_FILE_ENV_VAR);
+    let exec = read_env_path(DIRECTIVE_EXEC_FILE_ENV_VAR);
+    let legacy = read_env_path(DIRECTIVE_FILE_ENV_VAR);
 
-    let Some(path) = path else {
-        return Ok(());
-    };
+    match cd {
+        Some(cd_file) => DirectiveMode::NewProtocol {
+            cd_file,
+            exec_file: exec,
+        },
+        None => match legacy {
+            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
+            // and nushell is the only shell that needs a manual reinstall. A
+            // global "your wrapper is old" warning would hit everyone else with
+            // noise they can't avoid until their next terminal restart.
+            Some(file) => DirectiveMode::Legacy { file },
+            None => DirectiveMode::Interactive,
+        },
+    }
+}
 
-    let mut file = OpenOptions::new().append(true).open(&path)?;
-    writeln!(file, "{}", directive)?;
+/// Warn that `--execute` was refused because we're running inside an alias or
+/// hook body with the EXEC file scrubbed. Fires at most once per process so
+/// repeated refusals don't spam the terminal.
+fn warn_exec_scrubbed_once(command: &str) {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.set(()).is_err() {
+        return;
+    }
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "<bold>--execute</> disabled inside alias/hook bodies for safety; skipping <bold>{command}</>"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "This is extremely conservative; comment at <underline>{EXEC_SCRUB_ISSUE_URL}</> if this affects you"
+        ))
+    );
+}
+
+/// Append a line to a directive file.
+fn append_line(path: &Path, line: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new().append(true).open(path)?;
+    writeln!(file, "{}", line)?;
     file.flush()
 }
 
-/// Request directory change (for shell integration)
+/// Truncate-write the given path to the CD directive file. The file holds one
+/// line: the absolute path the shell wrapper should `cd` to. Truncate-then-
+/// write semantics mean the last writer wins, which matches how overlapping
+/// `change_directory()` calls should resolve (hook emits a cd after switch
+/// emits its own → hook wins).
+fn write_cd_path(file: &Path, path: &Path) -> io::Result<()> {
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(file)?;
+    // Lossy for non-UTF-8 paths (extremely rare in practice; worktrunk-
+    // managed paths are always valid UTF-8).
+    f.write_all(path.as_os_str().to_string_lossy().as_bytes())?;
+    f.write_all(b"\n")?;
+    f.flush()
+}
+
+/// Escape a path as a POSIX-shell (or PowerShell) single-quoted string. Only
+/// used in legacy mode where we still emit shell commands.
+fn escape_legacy_cd(path: &Path) -> String {
+    let path_str = path.to_string_lossy();
+    // POSIX and PowerShell both single-quote, but escape embedded quotes
+    // differently:
+    //   POSIX: 'it'\''s'
+    //   PSH:   'it''s'
+    let is_powershell = std::env::var("WORKTRUNK_SHELL")
+        .map(|v| v.eq_ignore_ascii_case("powershell"))
+        .unwrap_or(false);
+    let escaped = if is_powershell {
+        path_str.replace('\'', "''")
+    } else {
+        path_str.replace('\'', "'\\''")
+    };
+    format!("cd '{}'", escaped)
+}
+
+/// Request directory change (for shell integration).
 ///
-/// If shell integration is active (WORKTRUNK_DIRECTIVE_FILE set), writes `cd` command to the file.
-/// Also stores path for execute() to use as working directory.
+/// Writes the target path to the CD directive file (new protocol) or emits
+/// a shell `cd '...'` command to the legacy file (legacy compat). In
+/// interactive mode (no wrapper), just buffers the target so that a later
+/// `execute()` can use it as the child's working directory.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
-    let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
+    let mode = {
+        let mut guard = state().lock().expect("OUTPUT_STATE lock poisoned");
+        guard.target_dir = Some(path.to_path_buf());
+        guard.mode.clone()
+    };
 
-    // Store for execute() to use as process cwd
-    guard.target_dir = Some(path.to_path_buf());
-
-    // Write to directive file if set
-    if guard.directive_file.is_some() {
-        drop(guard); // Release lock before I/O
-
-        let directive_path = to_logical_path(path);
-        let path_str = directive_path.to_string_lossy();
-        // Escape based on shell type. Both shell families use single-quoted strings
-        // where contents are literal, but they escape embedded quotes differently:
-        // - PowerShell: double the quote ('it''s')
-        // - POSIX (bash/zsh/fish): end quote, escaped quote, start quote ('it'\''s')
-        let is_powershell = std::env::var("WORKTRUNK_SHELL")
-            .map(|v| v.eq_ignore_ascii_case("powershell"))
-            .unwrap_or(false);
-        let escaped = if is_powershell {
-            path_str.replace('\'', "''")
-        } else {
-            path_str.replace('\'', "'\\''")
-        };
-        write_directive(&format!("cd '{}'", escaped))?;
+    match mode {
+        DirectiveMode::Interactive => Ok(()),
+        DirectiveMode::NewProtocol { cd_file, .. } => {
+            let directive_path = to_logical_path(path);
+            write_cd_path(&cd_file, &directive_path)
+        }
+        DirectiveMode::Legacy { file } => {
+            let directive_path = to_logical_path(path);
+            append_line(&file, &escape_legacy_cd(&directive_path))
+        }
     }
-
-    Ok(())
 }
 
 /// Mark that the current working directory's worktree has been removed.
@@ -275,26 +387,59 @@ pub fn was_cwd_removed() -> bool {
         .cwd_removed
 }
 
-/// Request command execution
+/// Request command execution.
 ///
-/// In interactive mode (no directive file), executes the command directly (replacing process on Unix).
-/// In shell integration mode, writes the command to the directive file.
+/// Dispatches by directive mode:
+/// - Interactive: runs the command directly (replacing this process on Unix).
+/// - New protocol with EXEC file: appends the command to the EXEC file; the
+///   wrapper sources it after wt exits, so it runs in the user's interactive
+///   shell.
+/// - New protocol without EXEC file: refuses the command with a warning. We
+///   land here when running inside an alias or hook body, where `Cmd` scrubbed
+///   the EXEC var to keep arbitrary shell from reaching the parent session.
+/// - Legacy: appends the command to the single legacy directive file.
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
 
-    let (has_directive, target_dir) = {
+    let (mode, target_dir) = {
         let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
-        (guard.directive_file.is_some(), guard.target_dir.clone())
+        (guard.mode.clone(), guard.target_dir.clone())
     };
 
-    if has_directive {
-        // Write to directive file
-        write_directive(&command)?;
-        Ok(())
-    } else {
-        // Execute directly
-        execute_command(command, target_dir.as_deref())
+    match mode {
+        DirectiveMode::Interactive => execute_command(command, target_dir.as_deref()),
+        DirectiveMode::NewProtocol {
+            exec_file: Some(file),
+            ..
+        } => {
+            append_line(&file, &command)?;
+            Ok(())
+        }
+        DirectiveMode::NewProtocol {
+            exec_file: None, ..
+        } => {
+            warn_exec_scrubbed_once(&command);
+            Ok(())
+        }
+        DirectiveMode::Legacy { file } => {
+            append_line(&file, &command)?;
+            Ok(())
+        }
     }
+}
+
+/// Whether a call to `execute()` with a non-empty command would be refused
+/// by the conservative scrub. Callers can use this to suppress pre-exec
+/// output (e.g. "Executing (--execute):" headers) so the warning stands alone.
+pub fn exec_would_be_refused() -> bool {
+    let guard = state().lock().expect("OUTPUT_STATE lock poisoned");
+    matches!(
+        guard.mode,
+        DirectiveMode::NewProtocol {
+            exec_file: None,
+            ..
+        }
+    )
 }
 
 /// Execute a command in the given directory (Unix: exec, non-Unix: spawn)
@@ -351,7 +496,7 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
 /// In interactive mode (no shell wrapper), message formatting functions
 /// already reset their own styles, so no global reset is needed.
 pub fn terminate_output() -> io::Result<()> {
-    if !has_directive_file() {
+    if !is_shell_integration_active() {
         return Ok(());
     }
 
@@ -362,11 +507,15 @@ pub fn terminate_output() -> io::Result<()> {
     stderr.flush()
 }
 
-/// Check if we're in shell integration mode (directive file is set)
+/// Check if we're in shell integration mode (any directive-file protocol active).
 ///
-/// This is useful for handlers that need to know whether shell integration is active.
+/// Useful for handlers that need to know whether shell integration is in effect,
+/// regardless of which protocol (new or legacy) is being used.
 pub fn is_shell_integration_active() -> bool {
-    has_directive_file()
+    !matches!(
+        state().lock().expect("OUTPUT_STATE lock poisoned").mode,
+        DirectiveMode::Interactive
+    )
 }
 
 /// Compute whether to show "@ path" in hook announcements.
@@ -528,7 +677,7 @@ mod tests {
     fn test_lazy_init_does_not_panic() {
         // Verify lazy initialization doesn't panic.
         // State is lazily initialized on first access.
-        let _ = has_directive_file();
+        let _ = is_shell_integration_active();
     }
 
     #[test]
@@ -558,37 +707,29 @@ mod tests {
         rx.recv().unwrap();
     }
 
-    // Shell escaping tests
+    // Shell escaping tests (escape_legacy_cd)
 
     #[test]
-    fn test_shell_script_format() {
-        // Test that POSIX quoting produces correct output
-        let path = PathBuf::from("/test/path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/path'");
+    fn test_escape_legacy_cd_simple_path() {
+        let result = escape_legacy_cd(Path::new("/test/path"));
+        assert_eq!(result, "cd '/test/path'");
     }
 
     #[test]
-    fn test_path_with_single_quotes() {
-        // Paths with single quotes need escaping: ' -> '\''
-        let path = PathBuf::from("/test/it's/path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/it'\\''s/path'");
+    fn test_escape_legacy_cd_single_quotes() {
+        let result = escape_legacy_cd(Path::new("/test/it's/path"));
+        assert_eq!(result, "cd '/test/it'\\''s/path'");
     }
 
     #[test]
-    fn test_path_with_spaces() {
-        // Paths with spaces are safely quoted
-        let path = PathBuf::from("/test/my path/here");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "'\\''");
-        let cd_cmd = format!("cd '{}'", escaped);
-        assert_eq!(cd_cmd, "cd '/test/my path/here'");
+    fn test_escape_legacy_cd_spaces() {
+        let result = escape_legacy_cd(Path::new("/test/my path/here"));
+        assert_eq!(result, "cd '/test/my path/here'");
     }
+
+    // PowerShell branch of escape_legacy_cd is exercised via integration
+    // test `test_switch_legacy_directive_file_powershell` which sets
+    // WORKTRUNK_SHELL=powershell on the subprocess.
 
     /// Test that anstyle formatting is preserved
     #[test]

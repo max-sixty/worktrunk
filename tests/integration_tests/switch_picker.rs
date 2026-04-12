@@ -1062,13 +1062,18 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Helper to create a temporary directive file for PTY tests.
-/// Returns (path, guard) — the guard keeps the temp file alive until dropped.
-fn directive_file_for_pty() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    let guard = file.into_temp_path();
-    (path, guard)
+/// Helper to create temporary directive files for PTY tests.
+/// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
+fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
+    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
+    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
+    let cd_path = cd.path().to_path_buf();
+    let exec_path = exec.path().to_path_buf();
+    (
+        cd_path,
+        exec_path,
+        (cd.into_temp_path(), exec.into_temp_path()),
+    )
 }
 
 #[rstest]
@@ -1079,12 +1084,16 @@ fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
@@ -1104,12 +1113,12 @@ fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
         "Expected exit code 0 for successful switch"
     );
 
-    // Verify directive file does NOT contain cd command
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    // Verify CD file is empty (no path written with --no-cd)
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        !directives.contains("cd '"),
-        "Directive file should NOT contain cd command with --no-cd via picker, got: {}",
-        directives
+        cd_content.trim().is_empty(),
+        "CD file should be empty with --no-cd via picker, got: {}",
+        cd_content
     );
 }
 
@@ -1121,12 +1130,16 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch` (without --no-cd), select "target-branch" via picker
@@ -1146,12 +1159,12 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         "Expected exit code 0 for successful switch"
     );
 
-    // Verify directive file DOES contain cd command (default behavior)
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    // Verify CD file DOES contain a path (default behavior)
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        directives.contains("cd '"),
-        "Directive file should contain cd command without --no-cd, got: {}",
-        directives
+        !cd_content.trim().is_empty(),
+        "CD file should contain a path without --no-cd, got: {}",
+        cd_content
     );
 }
 
@@ -1163,12 +1176,16 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
     // Create a worktree to select
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch --no-cd`, filter to "target", press Enter to select
@@ -1198,10 +1215,10 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
     );
 
     // --no-cd should NOT emit a cd directive (read-only operation)
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        !directives.contains("cd '"),
-        "Directive file should NOT contain cd command with --no-cd, got: {}",
-        directives
+        cd_content.trim().is_empty(),
+        "CD file should be empty with --no-cd, got: {}",
+        cd_content
     );
 }
