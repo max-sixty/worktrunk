@@ -9,9 +9,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::merge::{Merge, merge_optional};
-use crate::config::is_default;
 use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
+use crate::config::is_default;
 
 /// What to stage before committing
 #[derive(
