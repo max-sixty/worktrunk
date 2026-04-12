@@ -1,10 +1,12 @@
 //! Persistent cache for SHA-keyed git command results.
 //!
-//! Caches the results of expensive git operations keyed on pairs of commit
-//! SHAs. Because commit SHAs are content-addressed and immutable, cached
-//! entries never go stale — the result of diffing commit A against commit B
-//! is the same today as it was last week. No TTL, no invalidation logic,
-//! only a size bound to prevent unbounded growth.
+//! Caches the results of expensive git operations keyed on pairs of
+//! content-addressed SHAs. Most entries use commit SHA pairs — the result
+//! of diffing commit A against commit B is the same today as last week.
+//! One variant (working-tree conflict checks) uses a composite key that
+//! includes a tree SHA; see [`Repository::has_merge_conflicts_by_tree`].
+//! No TTL, no invalidation logic, only a size bound to prevent unbounded
+//! growth.
 //!
 //! # Layout
 //!
@@ -489,6 +491,116 @@ mod tests {
         // will resolve identically to the first run).
         let repo2 = Repository::at(test.root_path()).unwrap();
         assert!(repo2.has_merge_conflicts("main", "feature").unwrap());
+    }
+
+    #[test]
+    fn test_has_merge_conflicts_by_tree_uses_composite_cache_key() {
+        let test = TestRepo::with_initial_commit();
+
+        // Create a feature branch with a staged change
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("dirty.txt"), "uncommitted\n").unwrap();
+        test.run_git(&["add", "dirty.txt"]);
+
+        let branch_head = test.git_output(&["rev-parse", "HEAD"]);
+        let tree_sha = test.git_output(&["write-tree"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Call with composite keying — computes and caches
+        let result = repo
+            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .unwrap();
+
+        // Verify the cache entry uses the composite key
+        let dir = cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS);
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+            .collect();
+        assert_eq!(entries.len(), 1, "exactly one cache entry expected");
+
+        let filename = entries[0].file_name().to_string_lossy().into_owned();
+        assert!(
+            filename.contains(&tree_sha),
+            "cache filename should contain tree SHA ({tree_sha}), got: {filename}"
+        );
+
+        // Tamper with the cache and verify a fresh repo reads the tampered value
+        let tampered = !result;
+        fs::write(entries[0].path(), serde_json::to_string(&tampered).unwrap()).unwrap();
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let cached = repo2
+            .has_merge_conflicts_by_tree("main", &branch_head, &tree_sha)
+            .unwrap();
+        assert_eq!(cached, tampered, "should read tampered value from cache");
+    }
+
+    #[test]
+    fn test_has_merge_conflicts_by_tree_invalidates_on_branch_head_change() {
+        let test = TestRepo::with_initial_commit();
+
+        // Set up a common ancestor with shared.txt
+        fs::write(test.root_path().join("shared.txt"), "initial\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "base: add shared.txt"]);
+
+        // Create feature branch from this point, then diverge both branches
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("shared.txt"), "feature content\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "feature: modify shared.txt"]);
+
+        test.run_git(&["checkout", "main"]);
+        fs::write(test.root_path().join("shared.txt"), "main content\n").unwrap();
+        test.run_git(&["add", "shared.txt"]);
+        test.run_git(&["commit", "-m", "main: modify shared.txt"]);
+
+        // Back to feature, stage an extra file
+        test.run_git(&["checkout", "feature"]);
+        fs::write(test.root_path().join("extra.txt"), "extra\n").unwrap();
+        test.run_git(&["add", "extra.txt"]);
+
+        let head_before = test.git_output(&["rev-parse", "HEAD"]);
+        let tree1 = test.git_output(&["write-tree"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Before rebase: feature conflicts with main (both modified shared.txt)
+        let result_before = repo
+            .has_merge_conflicts_by_tree("main", &head_before, &tree1)
+            .unwrap();
+        assert!(result_before, "should conflict before rebase");
+
+        // Unstage, rebase, then re-stage (rebase requires a clean index)
+        test.run_git(&["reset", "HEAD", "extra.txt"]);
+        fs::remove_file(test.root_path().join("extra.txt")).unwrap();
+        test.run_git(&["rebase", "main", "--strategy-option=theirs"]);
+
+        // Re-stage the same extra file
+        fs::write(test.root_path().join("extra.txt"), "extra\n").unwrap();
+        test.run_git(&["add", "extra.txt"]);
+
+        let head_after = test.git_output(&["rev-parse", "HEAD"]);
+        let tree2 = test.git_output(&["write-tree"]);
+
+        assert_ne!(
+            head_before, head_after,
+            "branch HEAD should change after rebase"
+        );
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let result_after = repo2
+            .has_merge_conflicts_by_tree("main", &head_after, &tree2)
+            .unwrap();
+
+        // After rebase onto main, feature is based on main — no conflicts
+        assert!(
+            !result_after,
+            "should not conflict after rebase (different branch HEAD = different cache key)"
+        );
     }
 
     #[test]
