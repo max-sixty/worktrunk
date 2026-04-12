@@ -584,8 +584,10 @@ fn add_repo_and_worktree_path_filters(
     let root_canonical = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
     let root_str_normalized = root_str.replace('\\', "/");
+    // Raw backslash form (Windows) + forward-slash form (all platforms) + Git Bash POSIX form.
+    // The forward-slash form also handles Unix since `root_str_normalized == root_str` there.
+    settings.add_filter(&regex::escape(root_str), "_REPO_");
     settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
-    // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
@@ -611,6 +613,8 @@ fn add_repo_and_worktree_path_filters(
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
         let path_str_normalized = path_str.replace('\\', "/");
+        // Raw backslash form (Windows), forward-slash form, and Git Bash POSIX form.
+        settings.add_filter(&regex::escape(path_str), &replacement);
         settings.add_filter(&regex::escape(&path_str_normalized), &replacement);
         settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
 
