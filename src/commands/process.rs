@@ -212,11 +212,31 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Build a [`Command`] that runs `program` at nice 19 when `low_priority` is set.
+///
+/// Used by the detached-spawn paths so internal cleanup ops (`wt remove`'s background
+/// `rm -rf`, trash sweep) don't compete with foreground work. The nice value is
+/// inherited across `fork`/`exec`, so wrapping the outer shell or the target binary
+/// is enough — any children inherit it too.
+#[cfg(unix)]
+fn low_priority_command(program: impl AsRef<std::ffi::OsStr>, low_priority: bool) -> Command {
+    if low_priority {
+        let mut cmd = Command::new("nice");
+        cmd.arg("-n").arg("19").arg("--").arg(program);
+        cmd
+    } else {
+        Command::new(program)
+    }
+}
+
 /// Spawn a detached background process with output redirected to a log file.
 ///
 /// The process will be fully detached from the parent:
 /// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
 /// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
+///
+/// Internal ops (`HookLog::Internal`) are run at nice 19 so their I/O and CPU don't
+/// compete with user-visible work; user hooks run at normal priority.
 ///
 /// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
@@ -237,7 +257,8 @@ pub fn spawn_detached(
 
     #[cfg(unix)]
     {
-        spawn_detached_unix(worktree_path, command, log_file, context_json)?;
+        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        spawn_detached_unix(worktree_path, command, log_file, context_json, low_priority)?;
     }
 
     #[cfg(windows)]
@@ -254,6 +275,7 @@ fn spawn_detached_unix(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
+    low_priority: bool,
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
 
@@ -286,7 +308,12 @@ fn spawn_detached_unix(
     // Detachment via process_group(0): puts the spawned shell in its own process group.
     // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
     // Since our process is in a different group, it doesn't receive the signal.
-    let mut cmd = Command::new("sh");
+    //
+    // For low-priority ops (internal cleanup), wrap the shell in `nice -n 19` so the
+    // backgrounded command inherits nice 19. `nice` is POSIX and shipped in base
+    // macOS/Linux; a missing binary would fail the spawn (tolerable — these are the
+    // same environments where `renice` is already assumed present elsewhere).
+    let mut cmd = low_priority_command("sh", low_priority);
     cmd.arg("-c")
         .arg(&shell_cmd)
         .current_dir(worktree_path)
@@ -408,7 +435,15 @@ pub fn spawn_detached_exec(
 
     #[cfg(unix)]
     {
-        spawn_detached_exec_unix(worktree_path, program, args, log_file, stdin_bytes)?;
+        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        spawn_detached_exec_unix(
+            worktree_path,
+            program,
+            args,
+            log_file,
+            stdin_bytes,
+            low_priority,
+        )?;
     }
 
     #[cfg(windows)]
@@ -426,11 +461,13 @@ fn spawn_detached_exec_unix(
     args: &[&str],
     log_file: fs::File,
     stdin_bytes: &[u8],
+    low_priority: bool,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::process::CommandExt;
 
-    let mut cmd = Command::new(program);
+    // See `spawn_detached_unix` for rationale on the `nice -n 19` wrapper.
+    let mut cmd = low_priority_command(program, low_priority);
     cmd.args(args)
         .current_dir(worktree_path)
         .stdin(Stdio::piped())
@@ -691,6 +728,29 @@ mod tests {
     use path_slash::PathExt as _;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_low_priority_command() {
+        use std::ffi::OsStr;
+
+        let cmd = low_priority_command("sh", true);
+        assert_eq!(cmd.get_program(), "nice");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            &[
+                OsStr::new("-n"),
+                OsStr::new("19"),
+                OsStr::new("--"),
+                OsStr::new("sh"),
+            ]
+        );
+
+        let cmd = low_priority_command("sh", false);
+        assert_eq!(cmd.get_program(), "sh");
+        assert_eq!(cmd.get_args().count(), 0);
+    }
 
     #[test]
     fn test_sanitize_for_filename() {
