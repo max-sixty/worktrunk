@@ -3,7 +3,7 @@
 //! Methods for determining if a branch has been integrated into the target
 //! (same commit, ancestor, trees match, etc.).
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use dashmap::mapref::entry::Entry;
 use serde::{Deserialize, Serialize};
 
@@ -304,38 +304,54 @@ impl Repository {
         };
 
         // Compute the squashed patch-id (combined diff of all branch changes).
-        let branch_diff = self.run_command(&["diff-tree", "-p", &merge_base, branch])?;
-        let branch_output = self.compute_patch_ids(&branch_diff)?;
-        let Some(branch_pid) = branch_output.split_whitespace().next() else {
+        let branch_pids = self.patch_ids_from(&["diff-tree", "-p", &merge_base, branch])?;
+        let Some(branch_pid) = branch_pids.split_whitespace().next() else {
             return Ok(false);
         };
 
         // Get all target commits' patch-ids in one pass.
-        // `git log -p` pipes all patches through `git patch-id --verbatim`.
-        let target_log =
-            self.run_command(&["log", "-p", "--reverse", &format!("{merge_base}..{target}")])?;
-
-        let target_pids = self.compute_patch_ids(&target_log)?;
+        let target_pids =
+            self.patch_ids_from(&["log", "-p", "--reverse", &format!("{merge_base}..{target}")])?;
 
         Ok(target_pids
             .lines()
             .any(|line| line.split_whitespace().next() == Some(branch_pid)))
     }
 
-    /// Pipe diff content through `git patch-id --verbatim` and return the output.
+    /// Pipe the output of `git <args>` directly into `git patch-id --verbatim`
+    /// and return the patch-id output.
     ///
-    /// Uses `--verbatim` (not `--stable`) to avoid false positives from whitespace
-    /// normalization — `--stable` strips whitespace, so tabs-vs-spaces would produce
-    /// matching patch-ids even though the content differs.
-    fn compute_patch_ids(&self, diff: &str) -> anyhow::Result<String> {
-        let output = Cmd::new("git")
+    /// The intermediate diff never passes through this process — it flows from
+    /// one git child to the other via an OS pipe. Keeps raw diffs out of our
+    /// `-vv` debug stream (where `log_output` would otherwise dump every line
+    /// of `git diff-tree -p` / `git log -p`).
+    ///
+    /// Uses `--verbatim` (not `--stable`) to avoid false positives from
+    /// whitespace normalization — `--stable` strips whitespace, so
+    /// tabs-vs-spaces would produce matching patch-ids even though the content
+    /// differs.
+    fn patch_ids_from(&self, args: &[&str]) -> anyhow::Result<String> {
+        let source = Cmd::new("git")
+            .args(args.iter().copied())
+            .current_dir(&self.discovery_path)
+            .context(self.logging_context());
+        let sink = Cmd::new("git")
             .args(["patch-id", "--verbatim"])
             .current_dir(&self.discovery_path)
-            .context(self.logging_context())
-            .stdin_bytes(diff.to_owned())
-            .run()
+            .context(self.logging_context());
+        let (source_output, sink_output) = source
+            .pipe_into(sink)
             .context("Failed to compute patch-id")?;
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        // A failed source (bad ref, I/O error) truncates the stream fed to
+        // patch-id, which would then emit a bogus non-empty patch-id.
+        if !source_output.status.success() {
+            bail!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&source_output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&sink_output.stdout).into_owned())
     }
 
     /// Combined merge-tree + patch-id integration probe.
