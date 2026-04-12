@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ConfigError;
 use super::commands::CommandConfig;
-use super::user::merge::is_default;
+use super::is_default;
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
