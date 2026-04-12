@@ -717,6 +717,11 @@ deploy = [
 }
 
 /// `wt step` with no subcommand lists built-in steps plus configured aliases.
+///
+/// Skipped on Windows: clap renders `[experimental]` subcommand tags
+/// differently (markdown escaping), same reason `tests/integration_tests/help.rs`
+/// is Windows-gated.
+#[cfg(not(windows))]
 #[rstest]
 fn test_step_list_with_aliases(mut repo: TestRepo) {
     repo.write_project_config(
@@ -737,6 +742,7 @@ squash = "this shadows the built-in"
 }
 
 /// `wt step` without configured aliases still works — just prints help.
+#[cfg(not(windows))]
 #[rstest]
 fn test_step_list_no_aliases(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
