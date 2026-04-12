@@ -513,6 +513,22 @@ fn test_list_config_env_override_bad_value_preserves_file_config(repo: TestRepo)
     });
 }
 
+/// Env var that deserializes successfully but fails validation (empty
+/// worktree-path). Exercises the validation-after-env-overlay path.
+#[rstest]
+fn test_list_config_env_override_validation_failure(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        // Empty worktree-path deserializes as Some("") but fails validation
+        cmd.env("WORKTRUNK_WORKTREE_PATH", "");
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Bad values in non-section fields (projects, skip-*-prompt) must still be
 /// attributed to the file, not to env vars.
 #[rstest]
