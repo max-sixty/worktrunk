@@ -241,7 +241,8 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 |----------|---------|
 | `WORKTRUNK_DIRECTIVE_FILE` | Set by shell wrapper; path to temp file for directives |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
-| `WORKTRUNK_SHELL` | Set by PowerShell wrapper to indicate shell type |
+| `WORKTRUNK_SHELL` | Set by the PowerShell and nushell wrappers to indicate shell type |
+| `WORKTRUNK_NU_WRAPPER_VERSION` | Set by the nushell wrapper so `wt` can warn when the installed wrapper file is outdated |
 
 ## See Also
 

@@ -480,7 +480,8 @@ Override the LLM command in CI to use a mock:
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
-| `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
+| `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`, `nu`) |
+| `WORKTRUNK_NU_WRAPPER_VERSION` | Internal: set by the nushell wrapper so `wt` can warn when the installed wrapper file is outdated |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
