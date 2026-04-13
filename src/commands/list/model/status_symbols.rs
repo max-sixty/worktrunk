@@ -126,11 +126,6 @@
 //! defaults. Stale branches can render a less-specific main-state symbol
 //! than fresh ones (e.g., `↕` instead of `⊂`).
 //!
-//! TODO: review whether the conservative-seed strategy for stale branches is
-//! the right trade-off. An alternative is to leave skipped-task fields as
-//! `None` so stale-branch rows show `·` in the affected positions — more
-//! honest, but noisier in the picker.
-//!
 //! # Gate 4: Upstream divergence (position 5)
 //!
 //! **Renders:** at most one of `| ⇅ ⇡ ⇣`.
@@ -226,27 +221,6 @@
 //! `compute_status_symbols`) is called after every drain tick: it tries each
 //! gate independently and sets any fields whose inputs are now ready. It is
 //! idempotent — a gate, once resolved, is never un-resolved.
-//!
-//! TODO: replace `Option<T>` on status-feeding fields with a `TaskInput<T>`
-//! enum that distinguishes `Pending` / `Skipped` / `Ready(T)`. Currently the
-//! "task won't run" state is encoded by seeding a conservative `Some(value)`
-//! via `seed_skipped_task_defaults`, which conflates "measured and got this
-//! answer" with "fabricated a safe default." A typed enum would:
-//!
-//! - Eliminate the fabricated-value class of bugs (e.g., seeding a clean
-//!   `WorkingTreeDiff` for a dirty worktree).
-//! - Make JSON output trivially correct (`Ready(v)` emits, others don't).
-//! - Let each gate explicitly decide what `Skipped` means for its tier
-//!   logic, instead of relying on a convention about which sentinel value
-//!   is "safe."
-//! - Collapse the `Option<Option<T>>` hacks on `has_working_tree_conflicts`
-//!   and `user_marker` into `TaskInput<Option<T>>`.
-//! - Subsume the `SkipReason` concept — the field itself carries the state.
-//!
-//! Natural inflection point: when caching lands, cached values become a
-//! fourth source (`Cached(T)`) that needs the same "real vs fabricated"
-//! distinction. The enum refactor would pay for itself at that point.
-//! Estimated scope: ~15 fields × all read sites, ~300–500 lines mechanical.
 //!
 //! # Non-goals
 //!
