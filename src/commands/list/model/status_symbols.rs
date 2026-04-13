@@ -44,7 +44,10 @@
 //! **Rule:**
 //! - `Some(_)` → render the flags it contains. A clean tree leaves all three
 //!   positions blank.
-//! - `None` → all three positions render the position-level `·` placeholder.
+//! - `None` → the lead position (`STAGED`) renders the `·` placeholder; the
+//!   other two positions render blank. The gate is one logical decision, so
+//!   one `·` represents it — matching the visual weight of the
+//!   single-position gates 2–5.
 //!
 //! Branches and prunable worktrees seed `working_tree_status` to a "no
 //! working tree" sentinel at spawn time, so their positions render blank,
@@ -164,7 +167,7 @@
 //!
 //! ```text
 //! +!  · ↕ | ·     ← staged + modified known; worktree state + user marker still loading
-//! ··· · ^ | ·    ← main worktree known from metadata; other gates still loading
+//! ·   · ^ | ·     ← main worktree known from metadata; other gates still loading
 //!     ^ | 💬      ← everything resolved: main worktree, in sync, user marker
 //! ```
 //!
@@ -523,7 +526,10 @@ impl StatusSymbols {
     pub(crate) fn styled_symbols(&self) -> [(usize, SlotState); 7] {
         use color_print::cformat;
 
-        // Gate 1 — working tree flags (positions 0-2). Loading together.
+        // Gate 1 — working tree flags (positions 0-2). One logical decision,
+        // so while loading we emit a single `·` at the lead position and
+        // blank-pad the other two — keeps the gate's visual weight equal to
+        // the single-position gates 2-5.
         let (staged, modified, untracked) = match self.working_tree {
             Some(wt) => {
                 let flag = |has: bool, sym: char| -> SlotState {
@@ -539,7 +545,7 @@ impl StatusSymbols {
                     flag(wt.untracked, '?'),
                 )
             }
-            None => (SlotState::Loading, SlotState::Loading, SlotState::Loading),
+            None => (SlotState::Loading, SlotState::Empty, SlotState::Empty),
         };
 
         // Gate 3 — main state (position 4).
@@ -791,7 +797,7 @@ mod tests {
             ..Default::default()
         };
         let rendered = symbols.render_with_mask(&PositionMask::FULL, "·");
-        assert_snapshot!(rendered, @"[2m·[0m[2m·[0m[2m·[0m[2m·[0m[2m↑[22m[2m·[0m[2m·[0m");
+        assert_snapshot!(rendered, @"[2m·[0m  [2m·[0m[2m↑[22m[2m·[0m[2m·[0m");
     }
 
     #[test]
