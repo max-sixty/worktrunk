@@ -41,13 +41,6 @@ struct OpenFile {
 }
 
 impl LogSink {
-    const fn new(filename: &'static str) -> Self {
-        Self {
-            file: OnceLock::new(),
-            filename,
-        }
-    }
-
     fn init(&self) {
         if let Some((path, file)) = try_create(self.filename) {
             let _ = self.file.set(Mutex::new(OpenFile { path, file }));
@@ -82,8 +75,14 @@ impl LogSink {
     }
 }
 
-pub(crate) static TRACE: LogSink = LogSink::new("trace.log");
-pub(crate) static OUTPUT: LogSink = LogSink::new("output.log");
+pub(crate) static TRACE: LogSink = LogSink {
+    file: OnceLock::new(),
+    filename: "trace.log",
+};
+pub(crate) static OUTPUT: LogSink = LogSink {
+    file: OnceLock::new(),
+    filename: "output.log",
+};
 
 /// Initialize both log sinks.
 ///
