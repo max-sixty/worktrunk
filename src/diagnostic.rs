@@ -163,9 +163,11 @@ impl DiagnosticReport {
             .and_then(|path| std::fs::read_to_string(&path).ok())
             .map(|content| truncate_log(content.trim()))
             .filter(|s| !s.is_empty());
+        // Forward slashes on both platforms so the rendered markdown reads the
+        // same in bug reports regardless of where it was produced.
         let output_log_path = crate::log_files::OUTPUT
             .path()
-            .and_then(|p| p.to_str().map(String::from));
+            .map(|p| path_slash::PathExt::to_slash_lossy(p.as_path()).into_owned());
 
         // Render template
         let env = Environment::new();
