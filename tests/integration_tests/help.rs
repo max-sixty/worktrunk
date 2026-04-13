@@ -135,6 +135,25 @@ fn test_help_goes_to_stdout() {
     }
 }
 
+/// When stdout is piped, help must be plain text — no ANSI escapes leaking into
+/// `wt --help > file.txt` or `wt --help | less`. Uses the raw binary so
+/// `CLICOLOR_FORCE` (set by `wt_command`) doesn't override color detection.
+#[test]
+fn test_help_strips_ansi_when_piped() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .arg("--help")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run wt --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains('\x1b'),
+        "wt --help piped to a file must not contain ANSI escapes; got: {stdout:?}"
+    );
+}
+
 /// `--version` must write to stdout, not stderr. This is the POSIX convention
 /// and what scripts expect — e.g., `version=$(wt --version)` or test harnesses
 /// that grep for a version string from stdout. See #2072.

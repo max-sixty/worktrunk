@@ -24,6 +24,7 @@
 use std::io::{IsTerminal, Write};
 use std::process::Stdio;
 use worktrunk::shell_exec::ShellConfig;
+use worktrunk::styling::print;
 
 use crate::pager::{git_config_pager, parse_pager_value};
 
