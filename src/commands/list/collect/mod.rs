@@ -927,9 +927,7 @@ pub fn collect(
                     s.table.update_row(idx, rendered);
                 }
             }
-            if let Err(e) = s.table.flush() {
-                log::debug!("Progressive table reveal flush failed: {}", e);
-            }
+            let _ = s.table.flush();
         });
         (placeholder_reveal_at, f)
     });
@@ -978,9 +976,7 @@ pub fn collect(
                 s.table.update_row(item_idx, rendered);
             }
 
-            if let Err(e) = s.table.flush() {
-                log::debug!("Progressive table flush failed: {}", e);
-            }
+            let _ = s.table.flush();
         },
         tick_entry,
     );
