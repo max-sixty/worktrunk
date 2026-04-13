@@ -2115,11 +2115,13 @@ fn test_format_rejected_on_write_actions(
         "expected failure for {key} {args:?}"
     );
     assert_eq!(output.status.code(), Some(2));
+    // Tolerate the ANSI `invalid` styling clap wraps around `--format <FORMAT>`
+    // and the action name by checking the fixed substrings between/around them.
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!(
-            "the argument '--format <FORMAT>' cannot be used with '{action}'"
-        )),
-        "stderr did not contain expected conflict message: {stderr}"
-    );
+    for needle in ["--format <FORMAT>", "cannot be used with", action] {
+        assert!(
+            stderr.contains(needle),
+            "stderr missing {needle:?}: {stderr}"
+        );
+    }
 }
