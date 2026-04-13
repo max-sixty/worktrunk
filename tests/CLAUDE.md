@@ -86,7 +86,7 @@ Use the helpers in `tests/common/mod.rs`:
 ```rust
 use crate::common::{wait_for_file, wait_for_file_count, wait_for_file_content};
 
-// ✅ Poll for file existence (15-second default timeout)
+// ✅ Poll for file existence (30-second default timeout)
 wait_for_file(&log_file);
 
 // ✅ Poll for multiple files
@@ -96,7 +96,7 @@ wait_for_file_count(&log_dir, "log", 3);
 wait_for_file_content(&marker_file);
 ```
 
-These use exponential backoff (10ms → 500ms cap) for fast initial checks that back off on slow CI. The 15-second default timeout is generous enough to avoid flakiness under CI load.
+These use exponential backoff (10ms → 500ms cap) for fast initial checks that back off on slow CI. The 30-second default timeout is generous enough to avoid flakiness under CI load.
 
 **Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
 
