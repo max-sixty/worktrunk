@@ -243,10 +243,7 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: Option<StepCommand>) -> anyhow::Result<()> {
-    let Some(action) = action else {
-        return commands::step_list();
-    };
+fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);

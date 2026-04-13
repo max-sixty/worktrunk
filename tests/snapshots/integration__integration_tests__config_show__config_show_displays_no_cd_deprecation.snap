@@ -45,26 +45,21 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[2m↳[22m [2mNot found; to create one, run [4mwt config create[24m[22m
-
-[36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
-[33m▲[39m [33mProject config: table form for [1mpre-start[22m, [1mpre-merge[22m is deprecated in favor of the pipeline form[39m
+[33m▲[39m [33mUser config: [1mswitch.no-cd[22m is deprecated in favor of [1mswitch.cd[22m (inverted)[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
-[107m [0m [1mindex 3a61835..0ab06b7 100644[m
-[107m [0m [1m--- a_REPO_/.config/wt.toml[m
-[107m [0m [1m+++ b_REPO_/.config/wt.toml.new[m
-[107m [0m [36m@@ -1,7 +1,2 @@[m
-[107m [0m [31m-[pre-merge][m
-[107m [0m [31m-test = "cargo test"[m
-[107m [0m [31m-lint = "cargo clippy"[m
-[107m [0m [31m-[m
-[107m [0m [31m-[pre-start][m
-[107m [0m [31m-install = "npm ci"[m
-[107m [0m [31m-env = "cp .env.example .env"[m
-[107m [0m [32m+[m[32mpre-start = [{ install = "npm ci" }, { env = "cp .env.example .env" }][m
-[107m [0m [32m+[m[32mpre-merge = [{ test = "cargo test" }, { lint = "cargo clippy" }][m
+[107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[107m [0m [1mindex ec5c19e..2c6162a 100644[m
+[107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
+[107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[107m [0m [36m@@ -1,2 +1,2 @@[m
+[107m [0m  [switch][m
+[107m [0m [31m-no-cd = true[m
+[107m [0m [32m+[m[32mcd = false[m
+[2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
+
+[36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
+[2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m

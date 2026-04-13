@@ -128,7 +128,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
     let mut cmd = cli::build_command();
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
-    match cmd.try_get_matches_from_mut(args) {
+    match cmd.try_get_matches_from_mut(&args) {
         Ok(_) => false, // Normal args, not help
         Err(err) => {
             match err.kind() {
@@ -136,6 +136,15 @@ pub fn maybe_handle_help_with_pager() -> bool {
                     // err.render() returns a StyledStr containing ANSI codes.
                     // Use .ansi() to preserve them; .to_string() strips ANSI codes.
                     let clap_output = err.render().ansi().to_string();
+
+                    // Splice configured aliases into `wt step --help` / `-h`
+                    // so the help here matches bare `wt step`. Scoped to the
+                    // step subcommand only — other help passes through.
+                    let clap_output = if is_help_for_step(&args) {
+                        crate::commands::augment_step_help(&clap_output)
+                    } else {
+                        clap_output
+                    };
 
                     // Render markdown sections (tables, code blocks, prose) with proper wrapping.
                     // Since we disabled clap's wrapping above, our renderer controls all line breaks.
@@ -168,6 +177,34 @@ pub fn maybe_handle_help_with_pager() -> bool {
             }
         }
     }
+}
+
+/// True when the help being rendered is for `wt step` (no subcommand past
+/// `step`). Used to splice the configured-aliases listing into the help
+/// output, matching the bare `wt step` behavior.
+///
+/// Scans positional args rather than re-parsing with clap because clap's
+/// `DisplayHelp` error doesn't expose the command path at which help was
+/// requested. Handles the two global flags that take values (`-C <path>`,
+/// `--config <path>`) so `wt -C some/path step --help` still classifies.
+/// The `--config=path` attached form needs no special handling — the value
+/// is part of the same arg, which already gets skipped as a flag.
+fn is_help_for_step(args: &[String]) -> bool {
+    const VALUE_FLAGS: &[&str] = &["-C", "--config"];
+    let mut positionals = Vec::new();
+    let mut i = 1; // skip binary name
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if VALUE_FLAGS.contains(&arg) {
+            i += 2; // skip flag and its value
+            continue;
+        }
+        if !arg.starts_with('-') {
+            positionals.push(arg);
+        }
+        i += 1;
+    }
+    positionals == ["step"]
 }
 
 /// Get the help reference block with configurable color output.

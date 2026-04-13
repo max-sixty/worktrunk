@@ -45,7 +45,7 @@ exit_code: 0
 ----- stderr -----
 wt step - Run individual operations
 
-Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m[COMMAND]
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
   [1m[36mcommit[0m        Stage and commit with LLM-generated message
@@ -60,10 +60,10 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m[COMMAND]
   [1m[36mprune[0m         [experimental] Remove worktrees merged into the default branch
   [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
 
-[32m[1mAliases:[39m[22m
-  [36m[1mdeploy[39m[22m  make deploy BRANCH={{ branch }}
-  [36m[1mport[39m[22m    echo http://localhost:{{ branch | hash_port }}
-  [36m[1msquash[39m[22m  this shadows the built-in [33m(shadowed by built-in)[39m
+[32m[1mAliases:[22m
+  [36m[1mdeploy[22m  make deploy BRANCH={{ branch }}
+  [36m[1mport[22m    echo http://localhost:{{ branch | hash_port }}
+  [36m[1msquash[22m  this shadows the built-in [33m(shadowed by built-in)
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')
