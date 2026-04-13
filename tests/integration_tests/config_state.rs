@@ -533,7 +533,16 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
     });
 }
 
@@ -593,7 +602,16 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
     });
 }
 
@@ -881,7 +899,34 @@ fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mDEFAULT BRANCH[39m
+        [107m [0m main
+
+        [36mPREVIOUS BRANCH[39m
+        [107m [0m (none)
+
+        [36mBRANCH MARKERS[39m
+        [107m [0m (none)
+
+        [36mVARS[39m
+        [107m [0m (none)
+
+        [36mCI STATUS CACHE[39m
+        [107m [0m (none)
+
+        [36mHINTS[39m
+        [107m [0m (none)
+
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
     });
 }
 
