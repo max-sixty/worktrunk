@@ -549,6 +549,11 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
         cmd.env(key, value);
     }
 
+    // Bypass the 200ms placeholder reveal delay so tests that observe the `·`
+    // loading indicator see it on every render — otherwise fast runs finish
+    // before the deferred tick fires and dots never appear.
+    cmd.env("WORKTRUNK_PLACEHOLDER_REVEAL_MS", "0");
+
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
     // their coverage data.
