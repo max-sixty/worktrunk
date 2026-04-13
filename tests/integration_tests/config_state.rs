@@ -579,10 +579,10 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
          commands.jsonl <SIZE>  <AGE>
 
         [36mHOOK OUTPUT[39m @ <PATH>
-                          File                   Size  Age   
-         ─────────────────────────────────────── ──── ────── 
-         bugfix-zgc/internal/remove.log          <SIZE>  <AGE>
-         feature-axb/user/post-start/npm-iox.log <SIZE>  <AGE>
+                      File               Size  Age   
+         ─────────────────────────────── ──── ────── 
+         bugfix/internal/remove.log      <SIZE>  <AGE>
+         feature/user/post-start/npm.log <SIZE>  <AGE>
 
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
@@ -1170,12 +1170,12 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "hints": [],
           "hook_output": [
             {
-              "file": "bugfix-zgc/internal/remove.log",
+              "file": "bugfix/internal/remove.log",
               "modified_at": "<MTIME>",
               "size": "<SIZE>"
             },
             {
-              "file": "feature-axb/user/post-start/npm-iox.log",
+              "file": "feature/user/post-start/npm.log",
               "modified_at": "<MTIME>",
               "size": "<SIZE>"
             }
