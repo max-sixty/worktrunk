@@ -26,7 +26,7 @@ pub use path::{
     system_config_path,
 };
 pub use resolved::ResolvedConfig;
-pub use schema::{find_unknown_keys, valid_user_config_keys};
+pub use schema::valid_user_config_keys;
 pub use sections::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StageMode,
     StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
@@ -385,8 +385,8 @@ impl UserConfig {
             && let Ok(content) = std::fs::read_to_string(&system_path)
         {
             super::deprecation::warn_unknown_fields::<UserConfig>(
+                &content,
                 &system_path,
-                &find_unknown_keys(&content),
                 "System config",
             );
             let migrated = super::deprecation::migrate_content(&content);
@@ -414,8 +414,8 @@ impl UserConfig {
                 .unwrap_or_else(|_| super::deprecation::migrate_content(&content));
 
                 super::deprecation::warn_unknown_fields::<UserConfig>(
+                    &content,
                     config_path,
-                    &find_unknown_keys(&content),
                     "User config",
                 );
 

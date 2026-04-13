@@ -1,6 +1,8 @@
 //! Schema helpers for config validation.
 //!
-//! Uses JsonSchema to derive valid keys for unknown key detection.
+//! Uses JsonSchema to derive valid top-level keys, feeding
+//! `WorktrunkConfig::is_valid_key` so unknown-key classification can tell
+//! "belongs in the other config" from "truly unknown."
 
 use schemars::SchemaGenerator;
 
@@ -21,23 +23,4 @@ pub fn valid_user_config_keys() -> Vec<String> {
         .and_then(|p| p.as_object())
         .map(|props| props.keys().cloned().collect())
         .unwrap_or_default()
-}
-
-/// Find unknown keys in user config TOML content.
-///
-/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
-/// Compares against the known valid keys derived from the JsonSchema rather than using
-/// serde flatten catchall (which doesn't work reliably with nested flattens).
-/// The values are included to allow checking if keys belong in the other config type.
-pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
-    let Ok(table) = contents.parse::<toml::Table>() else {
-        return std::collections::HashMap::new();
-    };
-
-    let valid_keys = valid_user_config_keys();
-
-    table
-        .into_iter()
-        .filter(|(key, _)| !valid_keys.contains(key))
-        .collect()
 }

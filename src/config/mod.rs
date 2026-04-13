@@ -21,23 +21,32 @@ mod hooks;
 mod project;
 #[cfg(test)]
 mod test;
+mod unknown_tree;
 mod user;
 
 /// Trait for worktrunk config types (user and project config).
 ///
-/// Both config types use JsonSchema to derive valid keys, allowing validation
-/// to detect misplaced or misspelled keys. The `Other` associated type enables
-/// checking whether a key belongs in the other config.
-pub trait WorktrunkConfig: for<'de> serde::Deserialize<'de> + Sized {
+/// Both config types expose JsonSchema-derived top-level keys. The list drives
+/// `is_valid_key` (for misplaced-key classification) and seeds the round-trip
+/// comparison in `unknown_tree::compute_unknown_tree` so sections that
+/// serialize away when default (e.g., `MergeConfig` under
+/// `skip_serializing_if`) aren't mistaken for schema-unknown paths.
+pub trait WorktrunkConfig:
+    for<'de> serde::Deserialize<'de> + serde::Serialize + Default + Sized
+{
     /// The other config type (UserConfig ↔ ProjectConfig).
     type Other: WorktrunkConfig;
 
     /// Human-readable description of where this config lives.
     fn description() -> &'static str;
 
+    /// All valid top-level keys for this config type, derived from JsonSchema.
+    fn valid_top_level_keys() -> &'static [String];
+
     /// Check if a key would be valid in this config type.
-    /// Uses JsonSchema-derived keys for validation.
-    fn is_valid_key(key: &str) -> bool;
+    fn is_valid_key(key: &str) -> bool {
+        Self::valid_top_level_keys().iter().any(|k| k == key)
+    }
 }
 
 impl WorktrunkConfig for UserConfig {
@@ -47,11 +56,10 @@ impl WorktrunkConfig for UserConfig {
         "user config"
     }
 
-    fn is_valid_key(key: &str) -> bool {
+    fn valid_top_level_keys() -> &'static [String] {
         use std::sync::OnceLock;
         static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-        let valid_keys = VALID_KEYS.get_or_init(user::valid_user_config_keys);
-        valid_keys.iter().any(|k| k == key)
+        VALID_KEYS.get_or_init(user::valid_user_config_keys)
     }
 }
 
@@ -62,11 +70,10 @@ impl WorktrunkConfig for ProjectConfig {
         "project config"
     }
 
-    fn is_valid_key(key: &str) -> bool {
+    fn valid_top_level_keys() -> &'static [String] {
         use std::sync::OnceLock;
         static VALID_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-        let valid_keys = VALID_KEYS.get_or_init(project::valid_project_config_keys);
-        valid_keys.iter().any(|k| k == key)
+        VALID_KEYS.get_or_init(project::valid_project_config_keys)
     }
 }
 
@@ -118,17 +125,16 @@ pub use expansion::{
     validate_template, validate_template_syntax,
 };
 pub use hooks::HooksConfig;
-pub use project::{
-    ProjectCiConfig, ProjectConfig, ProjectListConfig,
-    find_unknown_keys as find_unknown_project_keys, valid_project_config_keys,
+pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};
+pub use unknown_tree::{
+    UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
 pub(crate) use user::LoadError;
 pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig,
     ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserConfig,
     UserProjectOverrides, config_path, default_config_path, default_system_config_path,
-    find_unknown_keys as find_unknown_user_keys, set_config_path, system_config_path,
-    valid_user_config_keys,
+    set_config_path, system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]
@@ -602,53 +608,73 @@ squash-template-file = "~/file.txt"
         "#);
     }
 
-    #[test]
-    fn test_find_unknown_project_keys_with_typo() {
-        let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"";
-        let unknown = find_unknown_project_keys(toml_str);
-        assert!(unknown.contains_key("post-merge-command"));
-        assert_eq!(unknown.len(), 1);
+    fn project_warn_tree(contents: &str) -> UnknownTree {
+        compute_unknown_tree::<ProjectConfig>(contents)
+            .warn_tree()
+            .cloned()
+            .unwrap()
+    }
+
+    fn user_warn_tree(contents: &str) -> UnknownTree {
+        compute_unknown_tree::<UserConfig>(contents)
+            .warn_tree()
+            .cloned()
+            .unwrap()
     }
 
     #[test]
-    fn test_find_unknown_project_keys_valid() {
+    fn test_unknown_tree_project_with_typo() {
+        let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"";
+        let tree = project_warn_tree(toml_str);
+        assert!(tree.keys.contains("post-merge-command"));
+        assert_eq!(tree.keys.len(), 1);
+    }
+
+    #[test]
+    fn test_unknown_tree_project_valid() {
         let toml_str =
             "[post-merge]\ndeploy = \"task deploy\"\n\n[pre-merge]\ntest = \"cargo test\"";
-        let unknown = find_unknown_project_keys(toml_str);
-        assert!(unknown.is_empty());
+        let tree = project_warn_tree(toml_str);
+        assert!(tree.is_empty());
     }
 
     #[test]
-    fn test_find_unknown_project_keys_multiple() {
+    fn test_unknown_tree_project_multiple() {
         let toml_str = "[post-merge-command]\ndeploy = \"task deploy\"\n\n[after-create]\nsetup = \"npm install\"";
-        let unknown = find_unknown_project_keys(toml_str);
-        assert_eq!(unknown.len(), 2);
-        assert!(unknown.contains_key("post-merge-command"));
-        assert!(unknown.contains_key("after-create"));
+        let tree = project_warn_tree(toml_str);
+        assert_eq!(tree.keys.len(), 2);
+        assert!(tree.keys.contains("post-merge-command"));
+        assert!(tree.keys.contains("after-create"));
     }
 
     #[test]
-    fn test_find_unknown_user_keys_with_typo() {
+    fn test_unknown_tree_user_with_typo() {
         let toml_str = "worktree-path = \"../test\"\n\n[commit-gen]\ncommand = \"llm\"";
-        let unknown = find_unknown_user_keys(toml_str);
-        assert!(unknown.contains_key("commit-gen"));
-        assert_eq!(unknown.len(), 1);
+        let tree = user_warn_tree(toml_str);
+        assert!(tree.keys.contains("commit-gen"));
+        assert_eq!(tree.keys.len(), 1);
     }
 
     #[test]
-    fn test_find_unknown_user_keys_valid() {
+    fn test_unknown_tree_user_valid() {
         let toml_str = "worktree-path = \"../test\"\n\n[commit.generation]\ncommand = \"llm\"\n\n[list]\nfull = true";
-        let unknown = find_unknown_user_keys(toml_str);
-        assert!(unknown.is_empty());
+        let tree = user_warn_tree(toml_str);
+        assert!(tree.is_empty());
     }
 
     #[test]
-    fn test_find_unknown_keys_invalid_toml() {
+    fn test_unknown_tree_invalid_toml() {
         let toml = "this is not valid toml {{{";
-        let unknown_project = find_unknown_project_keys(toml);
-        let unknown_user = find_unknown_user_keys(toml);
-        assert!(unknown_project.is_empty());
-        assert!(unknown_user.is_empty());
+        assert!(
+            compute_unknown_tree::<ProjectConfig>(toml)
+                .warn_tree()
+                .is_none()
+        );
+        assert!(
+            compute_unknown_tree::<UserConfig>(toml)
+                .warn_tree()
+                .is_none()
+        );
     }
 
     #[test]
@@ -709,11 +735,10 @@ post-create = "npm install"
 [pre-merge]
 test = "cargo test"
 "#;
-        let unknown = find_unknown_user_keys(toml_str);
+        let tree = user_warn_tree(toml_str);
         assert!(
-            unknown.is_empty(),
-            "hook fields should not be reported as unknown: {:?}",
-            unknown
+            tree.is_empty(),
+            "hook fields should not be reported as unknown: {tree:?}"
         );
     }
 
@@ -721,16 +746,15 @@ test = "cargo test"
     fn test_user_config_key_in_project_config_is_detected() {
         // skip-shell-integration-prompt is a user-config-only key
         let toml_str = "skip-shell-integration-prompt = true\n";
-        let unknown = find_unknown_project_keys(toml_str);
+        let tree = project_warn_tree(toml_str);
         assert!(
-            unknown.contains_key("skip-shell-integration-prompt"),
+            tree.keys.contains("skip-shell-integration-prompt"),
             "skip-shell-integration-prompt should be unknown in project config"
         );
 
         // Verify it's valid in user config
-        let unknown_in_user = find_unknown_user_keys(toml_str);
         assert!(
-            unknown_in_user.is_empty(),
+            user_warn_tree(toml_str).is_empty(),
             "skip-shell-integration-prompt should be valid in user config"
         );
     }
@@ -742,16 +766,15 @@ test = "cargo test"
 [ci]
 platform = "github"
 "#;
-        let unknown = find_unknown_user_keys(toml_str);
+        let tree = user_warn_tree(toml_str);
         assert!(
-            unknown.contains_key("ci"),
+            tree.keys.contains("ci"),
             "ci should be unknown in user config"
         );
 
         // Verify it's valid in project config
-        let unknown_in_project = find_unknown_project_keys(toml_str);
         assert!(
-            unknown_in_project.is_empty(),
+            project_warn_tree(toml_str).is_empty(),
             "ci should be valid in project config"
         );
     }

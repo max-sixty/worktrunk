@@ -27,8 +27,6 @@ pub use update::handle_config_update;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use insta::assert_snapshot;
     use worktrunk::config::{ProjectConfig, UserConfig};
 
@@ -117,101 +115,61 @@ mod tests {
 
     #[test]
     fn test_warn_unknown_keys_empty() {
-        let out = warn_unknown_keys::<UserConfig>(&HashMap::new());
+        let out = warn_unknown_keys::<UserConfig>("");
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_warn_unknown_keys() {
         // Single unknown key
-        let mut unknown = HashMap::new();
-        unknown.insert(
-            "unknown-key".to_string(),
-            toml::Value::String("value".to_string()),
-        );
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mUnknown key [1munknown-key[22m will be ignored[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("unknown-key = \"value\"\n"), @"[33m▲[39m [33mUnknown key [1munknown-key[22m will be ignored[39m");
 
         // Multiple unknown keys (output is sorted deterministically)
-        let mut unknown = HashMap::new();
-        unknown.insert(
-            "key1".to_string(),
-            toml::Value::String("value1".to_string()),
-        );
-        unknown.insert(
-            "key2".to_string(),
-            toml::Value::String("value2".to_string()),
-        );
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("key1 = \"v1\"\nkey2 = \"v2\"\n"), @"
         [33m▲[39m [33mUnknown key [1mkey1[22m will be ignored[39m
         [33m▲[39m [33mUnknown key [1mkey2[22m will be ignored[39m
         ");
     }
 
     #[test]
+    fn test_warn_unknown_keys_nested() {
+        // Nested typos surface as dotted paths — a UX win from round-trip analysis.
+        insta::assert_snapshot!(warn_unknown_keys::<UserConfig>("[merge]\nsquas = true\n"));
+    }
+
+    #[test]
     fn test_warn_unknown_keys_suggests_other_config() {
         // skip-shell-integration-prompt in project config should suggest user config
-        let mut unknown = HashMap::new();
-        unknown.insert(
-            "skip-shell-integration-prompt".to_string(),
-            toml::Value::Boolean(true),
-        );
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown), @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
+        assert_snapshot!(
+            warn_unknown_keys::<ProjectConfig>("skip-shell-integration-prompt = true\n"),
+            @"[33m▲[39m [33mKey [1mskip-shell-integration-prompt[22m belongs in user config (will be ignored)[39m");
 
         // forge in user config should suggest project config
-        let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "platform".to_string(),
-            toml::Value::String("github".to_string()),
-        );
-        unknown.insert("forge".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
+        assert_snapshot!(warn_unknown_keys::<UserConfig>("[forge]\nplatform = \"github\"\n"), @"[33m▲[39m [33mKey [1mforge[22m belongs in project config (will be ignored)[39m");
     }
 
     #[test]
     fn test_warn_unknown_keys_deprecated_in_wrong_config() {
         // commit-generation in project config should suggest user config with canonical form
-        let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "command".to_string(),
-            toml::Value::String("llm".to_string()),
-        );
-        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(&unknown));
+        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(
+            "[commit-generation]\ncommand = \"llm\"\n"
+        ));
 
         // ci in user config should suggest project config with canonical form
-        let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "platform".to_string(),
-            toml::Value::String("github".to_string()),
-        );
-        unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(&unknown));
+        assert_snapshot!(warn_unknown_keys::<UserConfig>(
+            "[ci]\nplatform = \"github\"\n"
+        ));
     }
 
     #[test]
     fn test_warn_unknown_keys_deprecated_in_right_config_is_skipped() {
         // commit-generation in user config should be skipped (deprecation system handles it)
-        let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "command".to_string(),
-            toml::Value::String("llm".to_string()),
+        assert!(
+            warn_unknown_keys::<UserConfig>("[commit-generation]\ncommand = \"llm\"\n").is_empty()
         );
-        unknown.insert("commit-generation".to_string(), toml::Value::Table(inner));
-        assert!(warn_unknown_keys::<UserConfig>(&unknown).is_empty());
 
         // ci in project config should be skipped (deprecation system handles it)
-        let mut unknown = HashMap::new();
-        let mut inner = toml::map::Map::new();
-        inner.insert(
-            "platform".to_string(),
-            toml::Value::String("github".to_string()),
-        );
-        unknown.insert("ci".to_string(), toml::Value::Table(inner));
-        assert!(warn_unknown_keys::<ProjectConfig>(&unknown).is_empty());
+        assert!(warn_unknown_keys::<ProjectConfig>("[ci]\nplatform = \"github\"\n").is_empty());
     }
 
     // ==================== render_ci_tool_status tests ====================

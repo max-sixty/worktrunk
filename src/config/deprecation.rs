@@ -16,7 +16,7 @@
 //! writes the migration file since there's no persistent hint tracking.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -1603,21 +1603,21 @@ pub fn classify_unknown_key<C: WorktrunkConfig>(key: &str) -> UnknownKeyKind {
     }
 }
 
-/// Warn about unknown fields in config file
+/// Warn about unknown fields in a config file.
 ///
-/// Generic over `C`, the config type being loaded. Emits a warning for each
-/// unknown field, deduplicated per path per process.
+/// Generic over `C`, the config type being loaded. Classification is shared
+/// with `config show` via [`collect_unknown_warnings`](crate::config::collect_unknown_warnings);
+/// this wrapper adds per-path deduplication and stderr emission.
 ///
-/// When an unknown key belongs in the other config type (`C::Other`),
-/// the warning includes a hint about where to move it.
-///
-/// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields<C: WorktrunkConfig>(
-    path: &Path,
-    unknown_keys: &HashMap<String, toml::Value>,
-    label: &str,
-) {
-    if unknown_keys.is_empty() || warnings_suppressed() {
+/// The `label` is used in the warning message (e.g., "User config" or
+/// "Project config").
+pub fn warn_unknown_fields<C: WorktrunkConfig>(raw_contents: &str, path: &Path, label: &str) {
+    if warnings_suppressed() {
+        return;
+    }
+
+    let warnings = crate::config::collect_unknown_warnings::<C>(raw_contents);
+    if warnings.is_empty() {
         return;
     }
 
@@ -1631,30 +1631,37 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
         guard.insert(canonical_path);
     }
 
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
-    keys.sort();
-
-    for key in keys {
-        let msg = match classify_unknown_key::<C>(key) {
-            UnknownKeyKind::DeprecatedHandled => continue,
-            UnknownKeyKind::DeprecatedWrongConfig {
-                other_description,
-                canonical_display,
-            } => cformat!(
-                "{label} has key <bold>{key}</> which belongs in {other_description} as {canonical_display}"
-            ),
-            UnknownKeyKind::WrongConfig { other_description } => cformat!(
-                "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
-            ),
-            UnknownKeyKind::Unknown => {
-                cformat!("{label} has unknown field <bold>{key}</> (will be ignored)")
-            }
-        };
-        eprintln!("{}", warning_message(msg));
+    for warning in warnings {
+        eprintln!("{}", warning_message(format_load_warning(label, &warning)));
     }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();
+}
+
+fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> String {
+    use crate::config::UnknownWarning;
+    match warning {
+        UnknownWarning::TopLevelUnknown { key } => {
+            cformat!("{label} has unknown field <bold>{key}</> (will be ignored)")
+        }
+        UnknownWarning::TopLevelWrongConfig {
+            key,
+            other_description,
+        } => cformat!(
+            "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+        ),
+        UnknownWarning::TopLevelDeprecatedWrongConfig {
+            key,
+            other_description,
+            canonical_display,
+        } => cformat!(
+            "{label} has key <bold>{key}</> which belongs in {other_description} as {canonical_display}"
+        ),
+        UnknownWarning::NestedUnknown { path } => {
+            cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3543,19 +3550,16 @@ ff = true
         use crate::config::{ProjectConfig, UserConfig};
 
         // commit-generation in project config → should warn "belongs in user config"
-        let mut unknown = HashMap::new();
-        unknown.insert(
-            "commit-generation".to_string(),
-            toml::Value::Table(toml::map::Map::new()),
-        );
         let path = std::env::temp_dir().join("test-deprecated-wrong-config-project.toml");
-        warn_unknown_fields::<ProjectConfig>(&path, &unknown, "Project config");
+        warn_unknown_fields::<ProjectConfig>(
+            "[commit-generation]\ncommand = \"llm\"\n",
+            &path,
+            "Project config",
+        );
 
         // ci in user config → should warn "belongs in project config"
-        let mut unknown = HashMap::new();
-        unknown.insert("ci".to_string(), toml::Value::Table(toml::map::Map::new()));
         let path = std::env::temp_dir().join("test-deprecated-wrong-config-user.toml");
-        warn_unknown_fields::<UserConfig>(&path, &unknown, "User config");
+        warn_unknown_fields::<UserConfig>("[ci]\nplatform = \"github\"\n", &path, "User config");
     }
 
     // ==================== pre-hook table form tests ====================

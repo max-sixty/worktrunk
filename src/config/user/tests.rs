@@ -34,34 +34,36 @@ fn test_config_path_falls_through_to_default() {
 }
 
 #[test]
-fn test_find_unknown_keys_empty() {
+fn test_compute_unknown_tree_empty() {
     // Valid config with no unknown keys
     let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#;
-    let keys = find_unknown_keys(content);
-    assert!(
-        keys.is_empty(),
-        "Expected no unknown keys, found: {:?}",
-        keys
-    );
+    let tree = crate::config::compute_unknown_tree::<UserConfig>(content)
+        .warn_tree()
+        .cloned()
+        .unwrap();
+    assert!(tree.is_empty(), "expected no unknowns, got {tree:?}");
 }
 
 #[test]
-fn test_find_unknown_keys_with_unknown() {
+fn test_compute_unknown_tree_with_unknown() {
     // Config with unknown top-level keys
     let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 unknown-key = "value"
 another-unknown = 42
 "#;
-    let keys = find_unknown_keys(content);
-    assert!(keys.contains_key("unknown-key"));
-    assert!(keys.contains_key("another-unknown"));
+    let tree = crate::config::compute_unknown_tree::<UserConfig>(content)
+        .warn_tree()
+        .cloned()
+        .unwrap();
+    assert!(tree.keys.contains("unknown-key"));
+    assert!(tree.keys.contains("another-unknown"));
 }
 
 #[test]
-fn test_find_unknown_keys_known_sections() {
+fn test_compute_unknown_tree_known_sections() {
     // All known sections should not be reported
     let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -90,8 +92,11 @@ run = "npm run build"
 [post-switch]
 rename-tab = "echo 'switched'"
 "#;
-    let keys = find_unknown_keys(content);
-    assert!(keys.is_empty());
+    let tree = crate::config::compute_unknown_tree::<UserConfig>(content)
+        .warn_tree()
+        .cloned()
+        .unwrap();
+    assert!(tree.is_empty());
 }
 
 #[test]

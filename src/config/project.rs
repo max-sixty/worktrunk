@@ -222,11 +222,11 @@ impl ProjectConfig {
             true, // emit_inline_warnings
         );
 
-        // Warn about unknown fields (only in main worktree where it's actionable)
+        // Warn about unknown fields (only in main worktree where it's actionable).
         if is_main_worktree {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
+                &contents,
                 &config_path,
-                &find_unknown_keys(&contents),
                 "Project config",
             );
         }
@@ -257,24 +257,6 @@ pub fn valid_project_config_keys() -> Vec<String> {
         .and_then(|p| p.as_object())
         .map(|props| props.keys().cloned().collect())
         .unwrap_or_default()
-}
-
-/// Find unknown keys in project config TOML content
-///
-/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
-/// Compares against the known valid keys derived from the JsonSchema.
-/// The values are included to allow checking if keys belong in the other config type.
-pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
-    let Ok(table) = contents.parse::<toml::Table>() else {
-        return std::collections::HashMap::new();
-    };
-
-    let valid_keys = valid_project_config_keys();
-
-    table
-        .into_iter()
-        .filter(|(key, _)| !valid_keys.contains(key))
-        .collect()
 }
 
 #[cfg(test)]
@@ -441,54 +423,6 @@ platform = "github"
         let config = ProjectForgeConfig::default();
         assert!(config.platform.is_none());
         assert!(config.hostname.is_none());
-    }
-
-    // ============================================================================
-    // find_unknown_keys Tests
-    // ============================================================================
-
-    #[test]
-    fn test_find_unknown_keys_empty() {
-        let contents = "";
-        let keys = find_unknown_keys(contents);
-        assert!(keys.is_empty());
-    }
-
-    #[test]
-    fn test_find_unknown_keys_all_known() {
-        let contents = r#"
-post-create = "npm install"
-pre-merge = "cargo test"
-
-[step.copy-ignored]
-exclude = [".conductor/"]
-"#;
-        let keys = find_unknown_keys(contents);
-        assert!(keys.is_empty());
-    }
-
-    #[test]
-    fn test_find_unknown_keys_unknown_key() {
-        let contents = r#"
-post-create = "npm install"
-unknown-key = "value"
-"#;
-        let keys = find_unknown_keys(contents);
-        assert_eq!(keys.len(), 1);
-        assert!(keys.contains_key("unknown-key"));
-    }
-
-    #[test]
-    fn test_find_unknown_keys_multiple_unknown() {
-        let contents = r#"
-foo = "bar"
-baz = "qux"
-post-create = "npm install"
-"#;
-        let keys = find_unknown_keys(contents);
-        assert_eq!(keys.len(), 2);
-        assert!(keys.contains_key("foo"));
-        assert!(keys.contains_key("baz"));
     }
 
     // ============================================================================

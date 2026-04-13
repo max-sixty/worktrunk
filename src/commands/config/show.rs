@@ -3,15 +3,14 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
-    find_unknown_user_keys, system_config_path,
+    ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -466,9 +465,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
     }
 
     // Display TOML with syntax highlighting
@@ -535,12 +532,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid.
-        // Filter deprecated section keys to avoid duplicate warnings
-        // (deprecation system already warns about these).
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0).
@@ -570,37 +562,41 @@ fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Format warnings for any unknown config keys.
+/// Format warnings for unknown config keys in `raw_contents`.
 ///
-/// Generic over `C`, the config type where the keys were found. When an unknown
-/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+/// Generic over `C`, the config type. Classification is shared with the
+/// load-time warning path via
+/// [`collect_unknown_warnings`](worktrunk::config::collect_unknown_warnings);
+/// only the message wording differs.
 pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
-    unknown_keys: &HashMap<String, toml::Value>,
+    raw_contents: &str,
 ) -> String {
     let mut out = String::new();
-
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
-    keys.sort();
-
-    for key in keys {
-        let msg = match worktrunk::config::classify_unknown_key::<C>(key) {
-            worktrunk::config::UnknownKeyKind::DeprecatedHandled => continue,
-            worktrunk::config::UnknownKeyKind::DeprecatedWrongConfig {
-                other_description,
-                canonical_display,
-            } => {
-                cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}")
-            }
-            worktrunk::config::UnknownKeyKind::WrongConfig { other_description } => {
-                cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)")
-            }
-            worktrunk::config::UnknownKeyKind::Unknown => {
-                cformat!("Unknown key <bold>{key}</> will be ignored")
-            }
-        };
-        let _ = writeln!(out, "{}", warning_message(msg));
+    for warning in worktrunk::config::collect_unknown_warnings::<C>(raw_contents) {
+        let _ = writeln!(out, "{}", warning_message(format_show_warning(&warning)));
     }
     out
+}
+
+fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
+    use worktrunk::config::UnknownWarning;
+    match warning {
+        UnknownWarning::TopLevelUnknown { key } => {
+            cformat!("Unknown key <bold>{key}</> will be ignored")
+        }
+        UnknownWarning::TopLevelWrongConfig {
+            key,
+            other_description,
+        } => cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+        UnknownWarning::TopLevelDeprecatedWrongConfig {
+            key,
+            other_description,
+            canonical_display,
+        } => cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}"),
+        UnknownWarning::NestedUnknown { path } => {
+            cformat!("Unknown key <bold>{path}</> will be ignored")
+        }
+    }
 }
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
@@ -684,10 +680,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<ProjectConfig>(
-            &find_unknown_project_keys(&contents),
-        ));
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents));
     }
 
     // Display TOML with syntax highlighting (gutter at column 0).

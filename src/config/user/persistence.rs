@@ -8,85 +8,10 @@
 //! handles any new fields without manual wiring — if a struct field is
 //! serializable, save_to persists it.
 
-use crate::config::ConfigError;
+use crate::config::{ConfigError, UnknownTree, compute_unknown_tree};
 
 use super::UserConfig;
 use super::sections::CommitGenerationConfig;
-
-/// Keys to preserve during a diff-based merge, organized by nesting level.
-///
-/// Populated from schema-unknown paths in the existing TOML (keys that serde
-/// would silently drop during deserialization). These survive the save so
-/// hand-edited settings and fields from newer wt versions aren't lost.
-#[derive(Default, Debug)]
-struct PreserveTree {
-    /// Keys at this level to keep even when absent from the serialized desired state.
-    keys: std::collections::HashSet<String>,
-    /// Sub-trees for nested tables, mirroring the TOML structure.
-    nested: std::collections::HashMap<String, PreserveTree>,
-}
-
-impl PreserveTree {
-    fn is_empty(&self) -> bool {
-        self.keys.is_empty() && self.nested.is_empty()
-    }
-}
-
-/// Build a [`PreserveTree`] from the on-disk content by round-tripping through
-/// [`UserConfig`]. Any path present in the raw TOML but absent from the
-/// reserialized form is schema-unknown and flagged for preservation.
-///
-/// `existing_content` is already-validated TOML (parsed as
-/// `toml_edit::DocumentMut` earlier in `save_to`), so the parses here are
-/// invariants. `try_into::<UserConfig>` can fail on type mismatches (e.g.,
-/// `commit = "scalar"` from a hand edit) — the `unwrap_or_default()` fallback
-/// marks every key as unknown so the merge preserves the file contents rather
-/// than silently discarding data.
-fn compute_preserve_tree(existing_content: &str) -> PreserveTree {
-    let raw: toml::Table = existing_content
-        .parse()
-        .expect("existing content already validated by toml_edit");
-    let config: UserConfig = toml::Value::Table(raw.clone())
-        .try_into()
-        .unwrap_or_default();
-    let reserialized: toml::Table = toml::to_string(&config)
-        .expect("UserConfig is serializable")
-        .parse()
-        .expect("UserConfig serializes to valid TOML");
-    diff_tables(&raw, &reserialized)
-}
-
-/// Walk `raw` against `known` (the schema-projected view) and record keys
-/// that exist only in `raw`. Recurses into nested tables so deeply-nested
-/// unknown keys are captured at the right level.
-fn diff_tables(raw: &toml::Table, known: &toml::Table) -> PreserveTree {
-    let mut tree = PreserveTree::default();
-    for (key, raw_val) in raw {
-        match (known.get(key), raw_val) {
-            (Some(toml::Value::Table(known_t)), toml::Value::Table(raw_t)) => {
-                let nested = diff_tables(raw_t, known_t);
-                if !nested.is_empty() {
-                    tree.nested.insert(key.clone(), nested);
-                }
-            }
-            (Some(_), _) => {}
-            (None, toml::Value::Table(raw_t)) => {
-                // Whole subtree is schema-unknown. Mark the key at this level
-                // and recurse so the preserve set is populated if a later
-                // mutation causes `desired` to introduce this table.
-                tree.keys.insert(key.clone());
-                let nested = diff_tables(raw_t, &toml::Table::new());
-                if !nested.is_empty() {
-                    tree.nested.insert(key.clone(), nested);
-                }
-            }
-            (None, _) => {
-                tree.keys.insert(key.clone());
-            }
-        }
-    }
-    tree
-}
 
 impl UserConfig {
     /// Recursively convert inline tables to standard tables for readability.
@@ -129,7 +54,7 @@ impl UserConfig {
     fn merge_tables(
         existing: &mut toml_edit::Table,
         desired: &toml_edit::Table,
-        preserve: &PreserveTree,
+        preserve: &UnknownTree,
     ) {
         let stale_keys: Vec<_> = existing
             .iter()
@@ -140,7 +65,7 @@ impl UserConfig {
             existing.remove(key);
         }
 
-        let empty_tree = PreserveTree::default();
+        let empty_tree = UnknownTree::default();
         for (key, desired_item) in desired.iter() {
             match existing.get_mut(key) {
                 // Both standard tables: recurse
@@ -236,13 +161,16 @@ impl UserConfig {
 
             // Preserve unknown keys at every nesting level (typos, future
             // fields, deprecated keys not yet migrated) so they aren't
-            // silently deleted on save.
-            let preserve = compute_preserve_tree(&existing_content);
+            // silently deleted on save. On type-mismatch we still preserve
+            // every on-disk key — it's safer to round-trip the whole file
+            // than to drop fields we can't interpret.
+            let analysis = compute_unknown_tree::<UserConfig>(&existing_content);
+            let preserve = analysis.preserve_tree();
 
             Self::merge_tables(
                 existing_doc.as_table_mut(),
                 desired_doc.as_table(),
-                &preserve,
+                preserve,
             );
             Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 
