@@ -788,20 +788,84 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     }
 }
 
-/// Non-UTF-8 bytes in child output must not stall the executor. If the reader
-/// bailed on the first invalid byte, the child's pipe would fill and
-/// `child.wait()` would hang forever. Mix a `\xff` byte into early output,
-/// then flood ~400 KB more to prove the reader keeps draining.
+/// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every
+/// child immediately — otherwise a child that traps SIGINT keeps the group
+/// alive for up to N × 400ms of per-pgid escalation, with subsequent
+/// presses silently discarded.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_concurrent_second_sigint_kills(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    // Both children trap SIGINT and sleep; first SIGINT does nothing
+    // (graceful escalation to SIGTERM is also trapped), a second SIGINT
+    // must SIGKILL the pgids and exit wt promptly.
+    repo.write_test_config(
+        r#"
+[aliases.stubborn]
+one = "sh -c 'trap \"\" INT TERM; echo start-one >> stubborn_one.log; sleep 30'"
+two = "sh -c 'trap \"\" INT TERM; echo start-two >> stubborn_two.log; sleep 30'"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "stubborn"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step stubborn");
+
+    wait_for_file_content(&repo.root_path().join("stubborn_one.log"));
+    wait_for_file_content(&repo.root_path().join("stubborn_two.log"));
+
+    let wt_pgid = Pid::from_raw(child.id() as i32);
+    // First SIGINT — trapped by children; graceful path chews through
+    // escalation serially.
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+        .expect("failed to send first SIGINT");
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Second SIGINT — impatient path should SIGKILL the whole tree now.
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+        .expect("failed to send second SIGINT");
+
+    let start = std::time::Instant::now();
+    let _status = child.wait().expect("failed to wait for wt");
+    let elapsed = start.elapsed();
+
+    // With only graceful escalation (200ms × 2 grace windows × 2 pgids),
+    // worst case would be ~800ms. The impatient SIGKILL should be faster
+    // still. Give 3s headroom for slow CI without being so loose that a
+    // regression (no SIGKILL on 2nd press) would slip through — that
+    // regression would leave wt waiting ~60s for the sleeps to finish.
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "wt took too long to die after 2nd SIGINT; impatient path may not be firing: {elapsed:?}"
+    );
+}
+
+/// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
+/// executor. Earlier code using `BufRead::lines()` returned `InvalidData` on
+/// the first invalid byte and terminated the iterator, leaving the child's
+/// pipe un-drained and `child.wait()` hanging forever. Also exercises the
+/// `\r\n` strip path so trailing carriage returns don't render visibly.
 #[rstest]
 fn test_alias_concurrent_handles_non_utf8(repo: TestRepo) {
-    // `printf` emits a raw 0xff byte (invalid as a lone UTF-8 sequence),
-    // then `yes` produces 50_000 more lines of valid UTF-8. If the reader
-    // stopped at the bad byte, the pipe would fill and the child would
-    // block — we'd time out.
+    // `printf` emits a raw 0xff byte (invalid as a lone UTF-8 sequence), a
+    // CRLF-terminated line, then `yes` floods 50_000 more valid UTF-8 lines.
+    // If the reader stopped at the bad byte, the pipe would fill and the
+    // child would block — we'd time out.
     repo.write_test_config(
         r#"
 [aliases.noisy]
-mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nAFTER\\n\"; yes PAYLOAD | head -n 50000'"
+mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nCRLF-LINE\\r\\nAFTER\\n\"; yes PAYLOAD | head -n 50000'"
 "#,
     );
     repo.commit("initial");
@@ -818,12 +882,23 @@ mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nAFTER\\n\"; yes PAYLOAD | head -n 5000
         tail = &stderr[stderr.len().saturating_sub(500)..],
     );
 
-    // All three clean lines plus all 50_000 flood lines must land — proves
-    // the reader kept going past the invalid byte.
+    // All clean lines plus all 50_000 flood lines must land — proves the
+    // reader kept going past the invalid byte.
     assert!(stderr.contains("BEFORE"), "expected BEFORE in stderr");
     assert!(
         stderr.contains("AFTER"),
         "expected AFTER in stderr (reader stopped at the invalid byte)"
+    );
+    // CRLF line ending: the reader strips the trailing \r, so the visible
+    // line is `CRLF-LINE` not `CRLF-LINE\r`. Any `\r` in the output would
+    // indicate the strip didn't fire.
+    assert!(
+        stderr.contains("CRLF-LINE"),
+        "expected CRLF-LINE (with the \\r stripped) in stderr"
+    );
+    assert!(
+        !stderr.contains("CRLF-LINE\r"),
+        "trailing \\r should have been stripped before printing"
     );
     assert_eq!(
         stderr.matches("PAYLOAD").count(),
