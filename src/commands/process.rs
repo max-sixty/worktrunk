@@ -1,12 +1,9 @@
 use anyhow::Context;
-use color_print::cformat;
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::Command;
 use std::process::Stdio;
-use std::str::FromStr;
-use strum::IntoEnumIterator;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 use worktrunk::utils::epoch_now;
@@ -30,7 +27,7 @@ pub enum InternalOp {
 /// Specification for a hook log file.
 ///
 /// This is the single source of truth for hook log file paths.
-/// Used by both log creation (in `spawn_detached`) and log lookup (in `handle_logs_get`).
+/// Used by log creation in `spawn_detached` to place background hook output.
 ///
 /// # Log file layout
 ///
@@ -43,13 +40,6 @@ pub enum InternalOp {
 /// Branch and hook names are sanitized for filesystem safety via
 /// `sanitize_for_filename`, which replaces invalid characters and appends a
 /// short collision-avoidance hash.
-///
-/// # CLI format for lookup
-///
-/// The first segment determines the log type:
-/// - `user:hook-type:name` → User hook (e.g., `user:post-start:server`)
-/// - `project:hook-type:name` → Project hook (e.g., `project:post-create:build`)
-/// - `internal:op` → Internal operation (e.g., `internal:remove`)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookLog {
     /// Hook command log: `{branch}/{source}/{hook-type}/{name}.log`
@@ -93,77 +83,6 @@ impl HookLog {
                 .join(hook_type.to_string())
                 .join(format!("{}.log", sanitize_for_filename(name))),
             HookLog::Internal(op) => branch_dir.join("internal").join(format!("{op}.log")),
-        }
-    }
-
-    /// Convert to CLI spec format (for error messages and roundtrip).
-    ///
-    /// Returns the format used by `parse()`: `source:hook-type:name` or `internal:op`.
-    pub fn to_spec(&self) -> String {
-        match self {
-            HookLog::Hook {
-                source,
-                hook_type,
-                name,
-            } => format!("{}:{}:{}", source, hook_type, name),
-            HookLog::Internal(op) => format!("internal:{}", op),
-        }
-    }
-
-    /// Parse from CLI argument.
-    ///
-    /// # Formats
-    ///
-    /// The first segment determines the type:
-    /// - `user:hook-type:name` → User hook log
-    /// - `project:hook-type:name` → Project hook log
-    /// - `internal:op` → Internal operation log
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the format is invalid or unrecognized.
-    pub fn parse(s: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = s.split(':').collect();
-
-        match parts.as_slice() {
-            // internal:op
-            ["internal", op_str] => {
-                let op = InternalOp::from_str(op_str).map_err(|_| {
-                    let valid: Vec<_> = InternalOp::iter().map(|o| o.to_string()).collect();
-                    cformat!(
-                        "Unknown internal operation: <bold>{}</>. Valid: {}",
-                        op_str,
-                        valid.join(", ")
-                    )
-                })?;
-                Ok(Self::Internal(op))
-            }
-            // source:hook-type:name
-            [source_str, hook_type_str, name] if !name.is_empty() => {
-                let source = HookSource::from_str(source_str).map_err(|_| {
-                    cformat!(
-                        "Unknown source: <bold>{}</>. Valid: user, project",
-                        source_str
-                    )
-                })?;
-                let hook_type = HookType::from_str(hook_type_str).map_err(|_| {
-                    let valid: Vec<_> = HookType::iter().map(|h| h.to_string()).collect();
-                    cformat!(
-                        "Unknown hook type: <bold>{}</>. Valid: {}",
-                        hook_type_str,
-                        valid.join(", ")
-                    )
-                })?;
-                Ok(Self::Hook {
-                    source,
-                    hook_type,
-                    name: (*name).to_string(),
-                })
-            }
-            _ => Err(cformat!(
-                "Invalid log spec: <bold>{}</>. Format: source:hook-type:name or internal:op",
-                s
-            )),
         }
     }
 }
@@ -878,14 +797,6 @@ mod tests {
             @"/repo/.git/wt/logs/main-vfz/project/pre-start/build-seq.log"
         );
 
-        // Constructor and parse produce identical paths
-        assert_eq!(
-            HookLog::hook(HookSource::User, HookType::PostStart, "server").path(log_dir, "main"),
-            HookLog::parse("user:post-start:server")
-                .unwrap()
-                .path(log_dir, "main"),
-        );
-
         // Internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
         assert_snapshot!(
             HookLog::internal(InternalOp::Remove).path(log_dir, "main").to_slash_lossy(),
@@ -898,86 +809,6 @@ mod tests {
             HookLog::internal(InternalOp::TrashSweep).path(log_dir, "wt").to_slash_lossy(),
             @"/repo/.git/wt/logs/wt-boj/internal/trash-sweep.log"
         );
-    }
-
-    #[test]
-    fn test_hook_log_parse_internal() {
-        let log = HookLog::parse("internal:remove").unwrap();
-        assert_eq!(log, HookLog::Internal(InternalOp::Remove));
-    }
-
-    #[test]
-    fn test_hook_log_parse_errors() {
-        // Unknown source
-        assert_snapshot!(HookLog::parse("invalid:post-start:server").unwrap_err(), @"Unknown source: [1minvalid[22m. Valid: user, project");
-
-        // Unknown hook type
-        assert_snapshot!(HookLog::parse("user:invalid-hook:server").unwrap_err(), @"Unknown hook type: [1minvalid-hook[22m. Valid: pre-switch, post-switch, pre-start, post-start, pre-commit, post-commit, pre-merge, post-merge, pre-remove, post-remove");
-
-        // Unknown internal operation
-        assert_snapshot!(HookLog::parse("internal:unknown").unwrap_err(), @"Unknown internal operation: [1munknown[22m. Valid: remove, trash-sweep");
-
-        // Invalid formats: single word, two non-internal parts, missing segment
-        assert_snapshot!(HookLog::parse("remove").unwrap_err(), @"Invalid log spec: [1mremove[22m. Format: source:hook-type:name or internal:op");
-        assert_snapshot!(HookLog::parse("foo:bar").unwrap_err(), @"Invalid log spec: [1mfoo:bar[22m. Format: source:hook-type:name or internal:op");
-        assert_snapshot!(HookLog::parse("user:").unwrap_err(), @"Invalid log spec: [1muser:[22m. Format: source:hook-type:name or internal:op");
-
-        // Colons in hook names (ambiguous parsing)
-        assert_snapshot!(HookLog::parse("user:post-start:my:server").unwrap_err(), @"Invalid log spec: [1muser:post-start:my:server[22m. Format: source:hook-type:name or internal:op");
-
-        // Empty hook name
-        assert_snapshot!(HookLog::parse("user:post-start:").unwrap_err(), @"Invalid log spec: [1muser:post-start:[22m. Format: source:hook-type:name or internal:op");
-    }
-
-    #[test]
-    fn test_hook_log_roundtrip() {
-        // What gets created should match what gets looked up
-        use worktrunk::git::HookType;
-
-        let log_dir = Path::new("/repo/.git/wt/logs");
-
-        // Hook: create the same way hooks.rs does, parse the same way state.rs does
-        let created = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let parsed = HookLog::parse("user:post-start:server").unwrap();
-        assert_eq!(created.path(log_dir, "main"), parsed.path(log_dir, "main"));
-
-        // Internal: create the same way handlers.rs does, parse from CLI
-        let created = HookLog::internal(InternalOp::Remove);
-        let parsed = HookLog::parse("internal:remove").unwrap();
-        assert_eq!(created.path(log_dir, "main"), parsed.path(log_dir, "main"));
-    }
-
-    #[test]
-    fn test_hook_log_to_spec_roundtrip() {
-        use worktrunk::git::HookType;
-
-        // Hook roundtrip: to_spec -> parse -> equals original
-        let original = HookLog::hook(HookSource::User, HookType::PostStart, "server");
-        let spec = original.to_spec();
-        assert_eq!(spec, "user:post-start:server");
-        let parsed = HookLog::parse(&spec).unwrap();
-        assert_eq!(original, parsed);
-
-        // Project hook
-        let original = HookLog::hook(HookSource::Project, HookType::PreMerge, "lint");
-        let spec = original.to_spec();
-        assert_eq!(spec, "project:pre-merge:lint");
-        let parsed = HookLog::parse(&spec).unwrap();
-        assert_eq!(original, parsed);
-
-        // Internal roundtrip
-        let original = HookLog::internal(InternalOp::Remove);
-        let spec = original.to_spec();
-        assert_eq!(spec, "internal:remove");
-        let parsed = HookLog::parse(&spec).unwrap();
-        assert_eq!(original, parsed);
-
-        // Trash sweep roundtrip
-        let original = HookLog::internal(InternalOp::TrashSweep);
-        let spec = original.to_spec();
-        assert_eq!(spec, "internal:trash-sweep");
-        let parsed = HookLog::parse(&spec).unwrap();
-        assert_eq!(original, parsed);
     }
 
     #[test]

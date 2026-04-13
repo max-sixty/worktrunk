@@ -751,11 +751,15 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
 
+### Structured output
+
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+
 ### Examples
 
 List all log files:
 ```bash
-$ wt config state logs get
+$ wt config state logs
 ```
 
 Query the command log:
@@ -763,9 +767,14 @@ Query the command log:
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
-View a specific hook log:
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```bash
-$ cat "$(git rev-parse --git-dir)/wt/logs/feature/project/post-start/build.log"
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and .name | startswith("server")) | .path'
+```
+
+Logs for a specific branch:
+```bash
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
 ```
 
 Clear all logs:
@@ -781,7 +790,7 @@ wt config state logs - Operation and debug logs
 Usage: wt config state logs [OPTIONS] [COMMAND]
 
 Commands:
-  get    Get log file paths
+  get    List all log file paths
   clear  Clear all log files
 
 Options:

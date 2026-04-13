@@ -50,7 +50,7 @@ use commands::{
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
     handle_config_update, handle_configure_shell, handle_external_command, handle_hints_clear,
-    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_get, handle_merge,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
@@ -372,8 +372,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
         },
         StateCommand::Logs { action, format } => match action {
-            Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch, format),
-            None => handle_logs_get(None, None, format),
+            Some(LogsAction::Get) | None => handle_logs_list(format),
             Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
         },
         StateCommand::Hints { action, format } => match action {

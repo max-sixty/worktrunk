@@ -637,11 +637,15 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
 
+## Structured output
+
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+
 ## Examples
 
 List all log files:
 ```console
-$ wt config state logs get
+$ wt config state logs
 ```
 
 Query the command log:
@@ -649,9 +653,14 @@ Query the command log:
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
-View a specific hook log:
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```console
-$ cat "$(git rev-parse --git-dir)/wt/logs/feature/project/post-start/build.log"
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and .name | startswith("server")) | .path'
+```
+
+Logs for a specific branch:
+```console
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
 ```
 
 Clear all logs:
@@ -1048,9 +1057,9 @@ $ wt config state marker clear --all
 // Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum LogsAction {
-    /// Get log file paths
+    /// List all log file paths
     #[command(
-        after_long_help = r#"Lists log files, or gets the path to a specific log.
+        after_long_help = r#"Lists every log file — command log, hook output, and diagnostics. Compose with `jq` to pick out a specific entry.
 
 ## Examples
 
@@ -1059,39 +1068,27 @@ List all log files:
 $ wt config state logs
 ```
 
-Get path to a specific hook log:
+Get the absolute path of one post-start hook log for the current branch (use `jq` to filter):
 ```console
-$ wt config state logs get --hook=user:post-start:server
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and .name | startswith("server")) | .path'
 ```
 
-Stream a hook's log output:
+Stream that log with `tail -f`:
 ```console
-$ tail -f "$(wt config state logs get --hook=user:post-start:server)"
+$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and .name | startswith("server")) | .path' | head -1)"
 ```
 
-Get log for background worktree removal:
+Logs for a background worktree removal (internal op):
 ```console
-$ wt config state logs get --hook=internal:remove
+$ wt config state logs --format=json | jq '.hook_output[] | select(.source == "internal" and .name == "remove")'
 ```
 
-Get log for a different branch:
+Logs for a specific branch:
 ```console
-$ wt config state logs get --hook=user:post-start:server --branch=feature
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
 ```"#
     )]
-    Get {
-        /// Get path for a specific log file
-        ///
-        /// Format: source:hook-type:name (e.g., user:post-start:server) for
-        /// hook commands, or internal:op (e.g., internal:remove) for internal
-        /// operations.
-        #[arg(long)]
-        hook: Option<String>,
-
-        /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
-        branch: Option<String>,
-    },
+    Get,
 
     /// Clear all log files
     Clear,

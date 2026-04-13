@@ -730,16 +730,23 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
 
+### Structured output
+
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+
 ### Examples
 
 List all log files:
-{{ terminal(cmd="wt config state logs get") }}
+{{ terminal(cmd="wt config state logs") }}
 
 Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
-View a specific hook log:
-{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature/project/post-start/build.log__WT_QUOT__") }}
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
+{{ terminal(cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and .name | startswith(__WT_QUOT__server__WT_QUOT__)) | .path'") }}
+
+Logs for a specific branch:
+{{ terminal(cmd="wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith(__WT_QUOT__feature__WT_QUOT__))'") }}
 
 Clear all logs:
 {{ terminal(cmd="wt config state logs clear") }}
@@ -752,7 +759,7 @@ wt config state logs - Operation and debug logs
 Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get log file paths
+  <b><span class=c>get</span></b>    List all log file paths
   <b><span class=c>clear</span></b>  Clear all log files
 
 <b><span class=g>Options:</span></b>
