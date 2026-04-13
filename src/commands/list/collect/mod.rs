@@ -1035,7 +1035,7 @@ pub fn collect(
         );
 
         if !items_with_missing.is_empty() {
-            diag.push_str("\nBlocked tasks:");
+            diag.push_str("; blocked tasks:");
             let missing_lines: Vec<String> = items_with_missing
                 .iter()
                 .take(5)

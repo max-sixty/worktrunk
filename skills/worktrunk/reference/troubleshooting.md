@@ -81,8 +81,7 @@ post-start = "npm run build"
 The timeout warning names the tasks that didn't finish:
 
 ```
-wt list timed out after 120s (170 results received)
-Blocked tasks:
+wt list timed out after 120s (170 results received); blocked tasks:
   <branch>: working-tree-diff, working-tree-conflicts
 ```
 
