@@ -984,12 +984,13 @@ pub fn collect(
                 }
                 results::DrainEvent::Stall { pending } => {
                     // No task has completed for at least `STALL_TIMINGS.threshold`.
-                    // Append what we're still waiting on so the user can see
-                    // where the hang is without reaching for `wt list -v`.
+                    // Name the signal (silence) rather than claiming "stalled":
+                    // the event fires on any 5s lull and points at the first
+                    // pending hint, not a root cause.
                     let completed = s.completed_results;
                     let kind_str: &'static str = pending.kind.into();
-                    let footer_msg = format!(
-                        "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total_results} loaded, waiting for {kind_str} on {name}){dim:#}",
+                    let footer_msg = cformat!(
+                        "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total_results} loaded, no recent progress; waiting on <underline>{kind_str}</> for <underline>{name}</>){dim:#}",
                         name = pending.name
                     );
                     if s.table.update_footer(footer_msg)

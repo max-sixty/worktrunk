@@ -68,14 +68,6 @@ pub(super) enum DrainEvent<'a> {
     Stall { pending: PendingHint<'a> },
 }
 
-/// Short display name for an item — the branch, or a truncated HEAD SHA as
-/// a fallback for detached/unborn items that carry no branch name.
-fn display_name(item: &ListItem) -> &str {
-    item.branch
-        .as_deref()
-        .unwrap_or_else(|| &item.head[..8.min(item.head.len())])
-}
-
 /// Return the first pending `(item_idx, kind)` pair — an expected result
 /// that has not yet been received. Iteration order mirrors how work items
 /// were registered, giving a deterministic pick when multiple are pending.
@@ -89,7 +81,7 @@ fn pick_pending_hint<'a>(
             if !received.contains(&kind) {
                 return Some(PendingHint {
                     kind,
-                    name: display_name(item),
+                    name: item.display_name(),
                 });
             }
         }
@@ -203,7 +195,7 @@ pub(super) fn drain_results_with_timings(
                 if !missing_kinds.is_empty() {
                     items_with_missing.push(MissingResult {
                         item_idx,
-                        name: display_name(item).to_string(),
+                        name: item.display_name().to_string(),
                         missing_kinds,
                     });
                 }
