@@ -351,47 +351,60 @@ const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 /// subprocess bodies (diffs, prompts) don't flood the verbose stream.
 fn log_output(output: &std::process::Output) {
     if log::log_enabled!(log::Level::Trace) {
-        log_stream_full(&output.stdout, "  ");
-        log_stream_full(&output.stderr, "  ! ");
+        for line in format_stream_full(&output.stdout, "  ") {
+            log::trace!("{}", line);
+        }
+        for line in format_stream_full(&output.stderr, "  ! ") {
+            log::trace!("{}", line);
+        }
     } else if log::log_enabled!(log::Level::Debug) {
-        log_stream_bounded(&output.stdout, "  ");
-        log_stream_bounded(&output.stderr, "  ! ");
+        for line in format_stream_bounded(&output.stdout, "  ") {
+            log::debug!("{}", line);
+        }
+        for line in format_stream_bounded(&output.stderr, "  ! ") {
+            log::debug!("{}", line);
+        }
     }
 }
 
-fn log_stream_full(bytes: &[u8], prefix: &str) {
+/// Split captured bytes into prefixed lines — full output, no cap.
+fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
-        return;
+        return Vec::new();
     }
-    for line in String::from_utf8_lossy(bytes).lines() {
-        log::trace!("{}{}", prefix, line);
-    }
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(|line| format!("{}{}", prefix, line))
+        .collect()
 }
 
-fn log_stream_bounded(bytes: &[u8], prefix: &str) {
+/// Split captured bytes into prefixed lines with at most [`LOG_OUTPUT_MAX_LINES`]
+/// and [`LOG_OUTPUT_MAX_BYTES`] emitted; remainder replaced by a single
+/// `… (N more lines, M bytes elided — use -vvv for full output)` marker.
+fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
-        return;
+        return Vec::new();
     }
     let text = String::from_utf8_lossy(bytes);
     let total_bytes = bytes.len();
 
+    let mut out = Vec::new();
     let mut bytes_emitted = 0;
     let mut lines = text.lines().enumerate();
     for (lines_emitted, line) in &mut lines {
         if lines_emitted >= LOG_OUTPUT_MAX_LINES || bytes_emitted >= LOG_OUTPUT_MAX_BYTES {
             let remaining_lines = 1 + lines.count();
             let remaining_bytes = total_bytes.saturating_sub(bytes_emitted);
-            log::debug!(
+            out.push(format!(
                 "{}… ({} more lines, {} bytes elided — use -vvv for full output)",
-                prefix,
-                remaining_lines,
-                remaining_bytes
-            );
-            return;
+                prefix, remaining_lines, remaining_bytes
+            ));
+            return out;
         }
-        log::debug!("{}{}", prefix, line);
+        out.push(format!("{}{}", prefix, line));
         bytes_emitted += line.len() + 1;
     }
+    out
 }
 
 /// Emit a `[wt-trace]` line plus stdout/stderr for a finished command.
@@ -1682,5 +1695,68 @@ mod tests {
         // Use a signal number that's not SIGINT or SIGTERM
         super::forward_signal_with_escalation(1, 999);
         // No panic = success (function returns early for unknown signals)
+    }
+
+    #[test]
+    fn test_format_stream_full_empty() {
+        assert!(format_stream_full(b"", "  ").is_empty());
+    }
+
+    #[test]
+    fn test_format_stream_full_prefixes_each_line() {
+        let lines = format_stream_full(b"alpha\nbeta\ngamma\n", "  ");
+        assert_eq!(lines, vec!["  alpha", "  beta", "  gamma"]);
+    }
+
+    #[test]
+    fn test_format_stream_full_stderr_prefix() {
+        let lines = format_stream_full(b"err1\nerr2\n", "  ! ");
+        assert_eq!(lines, vec!["  ! err1", "  ! err2"]);
+    }
+
+    #[test]
+    fn test_format_stream_bounded_empty() {
+        assert!(format_stream_bounded(b"", "  ").is_empty());
+    }
+
+    #[test]
+    fn test_format_stream_bounded_below_caps_emits_all() {
+        let lines = format_stream_bounded(b"one\ntwo\nthree\n", "  ");
+        assert_eq!(lines, vec!["  one", "  two", "  three"]);
+    }
+
+    #[test]
+    fn test_format_stream_bounded_line_cap_triggers_elision() {
+        // Build LOG_OUTPUT_MAX_LINES + 5 short lines so the line cap trips first.
+        let input: String = (0..LOG_OUTPUT_MAX_LINES + 5)
+            .map(|i| format!("line{i}\n"))
+            .collect();
+        let lines = format_stream_bounded(input.as_bytes(), "  ");
+
+        assert_eq!(lines.len(), LOG_OUTPUT_MAX_LINES + 1, "cap + 1 marker");
+        let marker = lines.last().unwrap();
+        assert!(
+            marker.starts_with("  … (5 more lines, "),
+            "marker should count the 5 lines past the cap: {marker}"
+        );
+        assert!(marker.contains("use -vvv for full output"));
+    }
+
+    #[test]
+    fn test_format_stream_bounded_byte_cap_triggers_elision() {
+        // One long line past the byte cap, then extra lines.
+        let long = "x".repeat(LOG_OUTPUT_MAX_BYTES + 100);
+        let input = format!("{long}\nafter1\nafter2\n");
+        let lines = format_stream_bounded(input.as_bytes(), "  ");
+
+        // The long first line gets emitted (bytes_emitted==0 at entry); the
+        // byte cap trips on the next iteration and the remaining 2 lines are elided.
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), 2 + long.len());
+        let marker = &lines[1];
+        assert!(
+            marker.starts_with("  … (2 more lines, "),
+            "marker should count after1 + after2: {marker}"
+        );
     }
 }
