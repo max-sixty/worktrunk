@@ -4,6 +4,7 @@ info:
   program: wt
   args:
     - step
+    - "-h"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -62,8 +63,6 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [32m[1mAliases:[22m
   [36m[1mdeploy[22m  make deploy BRANCH={{ branch }}
-  [36m[1mport[22m    echo http://localhost:{{ branch | hash_port }}
-  [36m[1msquash[22m  this shadows the built-in [33m(shadowed by built-in)
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help[0m  Print help (see more with '--help')

@@ -41,7 +41,7 @@ wt step - Run individual operations
 
 The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 
-Usage: wt step [OPTIONS] [COMMAND]
+Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:
   commit        Stage and commit with LLM-generated message
@@ -895,6 +895,23 @@ git fetch --all --prune && wt step for-each -- '
 ```bash
 $ wt step up
 ```
+
+Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
+
+```toml
+# .config/wt.toml
+[[aliases.release]]
+test = "cargo test"
+
+[[aliases.release]]
+build = "cargo build --release"
+package = "cargo package --no-verify"
+
+[[aliases.release]]
+publish = "cargo publish"
+```
+
+Here `test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
 
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 

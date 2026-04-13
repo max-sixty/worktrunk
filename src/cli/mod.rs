@@ -1093,6 +1093,7 @@ lint = "cargo clippy"
     /// The building blocks of `wt merge` — commit, squash, rebase, push — plus standalone utilities.
     #[command(
         name = "step",
+        arg_required_else_help = true,
         after_long_help = r#"## Examples
 
 Commit with LLM-generated message:
@@ -1179,6 +1180,23 @@ git fetch --all --prune && wt step for-each -- '
 $ wt step up
 ```
 
+Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
+
+```toml
+# .config/wt.toml
+[[aliases.release]]
+test = "cargo test"
+
+[[aliases.release]]
+build = "cargo build --release"
+package = "cargo package --no-verify"
+
+[[aliases.release]]
+publish = "cargo publish"
+```
+
+Here `test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
+
 When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
 
 Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
@@ -1187,7 +1205,7 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
     )]
     Step {
         #[command(subcommand)]
-        action: Option<StepCommand>,
+        action: StepCommand,
     },
 
     /// Run configured hooks
