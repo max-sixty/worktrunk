@@ -30,7 +30,7 @@ pub(super) type DrainTickFn<'a> = Box<dyn FnMut(&mut [ListItem]) + 'a>;
 
 /// One-shot tick scheduled against [`drain_results`]. When `Instant` elapses,
 /// the boxed closure fires once with the full item slice — used by `wt list`
-/// to reveal the `·` loading indicator at T+100ms.
+/// to reveal the `·` loading indicator at T+200ms.
 pub(super) type DrainTick<'a> = (Instant, DrainTickFn<'a>);
 
 /// Drain task results from the channel and apply them to items.

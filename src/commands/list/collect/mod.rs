@@ -670,7 +670,7 @@ pub fn collect(
     // Create progressive table if showing progress.
     //
     // Skeleton renders with `PLACEHOLDER_BLANK` (space) so commands that finish
-    // under ~100ms never flash the `·` loading indicator. After
+    // under ~200ms never flash the `·` loading indicator. After
     // `PLACEHOLDER_REVEAL_DELAY` the placeholder is promoted to `·` via the
     // drain tick below.
     let mut progressive_table = if show_progress {
@@ -881,7 +881,7 @@ pub fn collect(
     // Drain task results with conditional progressive rendering.
     //
     // Progressive mutable state (table, row cache, counters) is owned by a
-    // `RefCell` so the `on_result` callback and the one-shot 100ms tick can
+    // `RefCell` so the `on_result` callback and the one-shot 200ms tick can
     // both mutate it. They never run concurrently — the tick fires between
     // channel recvs — so the runtime borrow checks are an invariant formalism,
     // never a source of panics.
@@ -907,7 +907,7 @@ pub fn collect(
     let drain_deadline =
         collect_deadline.unwrap_or_else(|| std::time::Instant::now() + results::DRAIN_TIMEOUT);
 
-    // Tick closure: at T+100ms, promote placeholder from blank to `·` and
+    // Tick closure: at T+200ms, promote placeholder from blank to `·` and
     // re-render every row so still-pending cells pick up the dot. Rows that
     // have already received a result use `format_list_item_line`; untouched
     // rows use `render_skeleton_row` (which avoids surfacing seeded defaults
