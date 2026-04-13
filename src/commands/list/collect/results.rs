@@ -779,9 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn test_drain_results_stall_resets_on_result() {
-        // A result arrives mid-stall; the clock resets and further stall
-        // events should only fire if the threshold elapses again.
+    fn test_drain_results_survives_mid_stall_result() {
+        // Smoke test: a result arriving mid-stall doesn't crash the loop or
+        // double-fire. Does NOT prove `last_result_time` resets — that's
+        // visible in the drain source directly. Verifying reset timing in
+        // a test would need an upper-bound stall count, and `threshold/tick`
+        // is too small a window to distinguish reset-works from reset-broken
+        // without flakiness.
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
         let mut errors = Vec::new();
@@ -822,9 +826,9 @@ mod tests {
             None,
         );
 
-        // We expect at least one stall (before the result) and possibly more
-        // after the reset if the deadline is far enough away. The key
-        // invariant tested elsewhere: the reset itself does not double-fire.
-        assert!(stall_events >= 1, "expected at least one stall event");
+        assert!(
+            stall_events >= 1,
+            "drain should still emit stalls even when a result arrives mid-stall"
+        );
     }
 }
