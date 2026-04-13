@@ -47,10 +47,10 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mUser config: [1m[commit-generation][22m is deprecated in favor of [1m[commit.generation][22m[39m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
+[107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
 [107m [0m [1mindex 40d0385..bc7273c 100644[m
-[107m [0m [1m--- a[TEST_CONFIG][m
-[107m [0m [1m+++ b[TEST_CONFIG_NEW][m
+[107m [0m [1m--- a/test-config.toml/current[m
+[107m [0m [1m+++ b/test-config.toml/migrated[m
 [107m [0m [36m@@ -1,5 +1,4 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m  [m

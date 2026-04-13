@@ -1553,9 +1553,8 @@ alias wt="git worktree"
 }
 
 /// When a config uses deprecated variables (repo_root, worktree, main_worktree),
-/// the CLI should:
-/// 1. Show a warning pointing to `wt config show` and `wt config update`
-/// 2. Create a .new migration file with replacements
+/// the CLI should warn and `wt config update` should apply the variable
+/// renames in place.
 #[rstest]
 fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: TempDir) {
     // Write config with deprecated variables to the test config path
@@ -1583,27 +1582,23 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify migration file was created (config.toml -> config.toml.new)
-    let migration_file = config_path.with_extension("toml.new");
-    assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
-    );
+    // `wt list` emits warnings but never writes a .new file — that's
+    // `wt config update`'s job. Drive an update explicitly and verify the
+    // in-place migration applies all three variable renames.
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    assert!(cmd.output().unwrap().status.success());
 
-    // Verify migration file has replacements
-    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    let migrated = fs::read_to_string(config_path).unwrap();
+    assert!(migrated.contains("{{ repo }}"));
+    assert!(migrated.contains("{{ repo_path }}"));
+    assert!(migrated.contains("{{ worktree_path }}"));
     assert!(
-        migrated_content.contains("{{ repo }}"),
-        "Migration should replace main_worktree with repo"
-    );
-    assert!(
-        migrated_content.contains("{{ repo_path }}"),
-        "Migration should replace repo_root with repo_path"
-    );
-    assert!(
-        migrated_content.contains("{{ worktree_path }}"),
-        "Migration should replace worktree with worktree_path"
+        !config_path.with_extension("toml.new").exists(),
+        "config update must not leave a .new file"
     );
 }
 
@@ -1639,222 +1634,72 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 ///
 /// The file remains available for the user. If they want a fresh one, `wt config show` regenerates.
 #[rstest]
-fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_home: TempDir) {
+fn test_wt_list_never_writes_migration_file(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
     let project_config_path = project_config_dir.join("wt.toml");
-    fs::write(
-        &project_config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
+    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+    fs::write(&project_config_path, original).unwrap();
 
-    // First run - should create migration file and set hint
-    {
+    // `wt list` should emit a deprecation warning but never write a .new file
+    // or modify the config. Materializing migrations is `wt config update`'s job.
+    for _ in 0..2 {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         let output = cmd.output().unwrap();
         assert!(
             output.status.success(),
-            "First run should succeed: {:?}",
+            "wt list should succeed: {:?}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    let migration_file = project_config_path.with_extension("toml.new");
     assert!(
-        migration_file.exists(),
-        "First run should create migration file"
+        !project_config_path.with_extension("toml.new").exists(),
+        "wt list must not write a .new migration file"
     );
-
-    let original_content = fs::read_to_string(&migration_file).unwrap();
-
-    // Second run - hint is set, so wt list shows brief warning and skips writing
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "Second run should succeed: {:?}",
-            stderr
-        );
-        assert!(
-            stderr.contains("is deprecated"),
-            "Second run should show deprecation warning, got: {stderr}"
-        );
-        assert!(
-            !stderr.contains("Wrote migrated"),
-            "Second run should NOT write migration file (hint is set), got: {stderr}"
-        );
-    }
-
-    // Content should be unchanged (wt list didn't touch it)
-    let current_content = fs::read_to_string(&migration_file).unwrap();
     assert_eq!(
-        original_content, current_content,
-        "Migration file should be unchanged by second wt list run"
+        fs::read_to_string(&project_config_path).unwrap(),
+        original,
+        "wt list must not modify the config"
     );
 }
 
-/// This tests the skip-write path for project config with non-config-show commands.
-///
-/// Migration file write is deduplicated based on file existence:
-/// - First run: file doesn't exist → write it
-/// - Second run: file exists → skip write, show brief warning only
-/// Users can run `wt config show` to force regeneration.
+/// Fixing a deprecated config and later introducing a new one still shows a
+/// warning on the new deprecation — no stale state persists across process
+/// runs now that `.new` files are gone, so this just exercises the plain
+/// per-process warning path.
 #[rstest]
-fn test_wt_list_skips_migration_file_after_first_write(repo: TestRepo, temp_home: TempDir) {
-    // Write project config with deprecated variables
-    // Use deprecated variable main_worktree (should be repo) in a valid project config field
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
-    fs::write(
-        &project_config_path,
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
-"#,
-    )
-    .unwrap();
-
-    // First run - creates migration file
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "First run should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists());
-
-    // Second run - file exists → skip write, show brief warning only
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Migration file still exists (not deleted or overwritten)
-    assert!(
-        migration_file.exists(),
-        "Migration file should still exist after second run"
-    );
-}
-
-/// Migration file is regenerated when deleted (file-existence based deduplication).
-#[rstest]
-fn test_deleted_migration_file_regenerated(repo: TestRepo, temp_home: TempDir) {
-    // Write project config with deprecated variables
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
-    fs::write(
-        &project_config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    // First run - creates migration file
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "First run should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists());
-
-    // Delete the migration file to simulate user having applied and removed it
-    fs::remove_file(&migration_file).unwrap();
-
-    // Second run - should recreate migration file since it doesn't exist
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "Second run should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // Migration file should exist again
-    assert!(
-        migration_file.exists(),
-        "Migration file should be regenerated after deletion"
-    );
-}
-
-/// When a user fixes their deprecated config, the hint should be cleared automatically.
-/// This ensures that future deprecations (introduced months later) get full treatment.
-#[rstest]
-fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
+fn test_fixing_deprecated_config_then_reintroducing_still_warns(
     repo: TestRepo,
     temp_home: TempDir,
 ) {
-    // Write project config with deprecated variable
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
     let project_config_path = project_config_dir.join("wt.toml");
+
     fs::write(
         &project_config_path,
         r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();
-
-    // First run - creates migration file and sets hint
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(output.status.success());
+        assert!(cmd.output().unwrap().status.success());
     }
-    assert!(
-        project_config_path.with_extension("toml.new").exists(),
-        "First run should create migration file"
-    );
 
-    // User fixes the config (removes deprecation)
     fs::write(
         &project_config_path,
         r#"pre-start = "ln -sf {{ repo }}/node_modules"
 "#,
     )
     .unwrap();
-
-    // Clean up migration file
-    let migration_file = project_config_path.with_extension("toml.new");
-    if migration_file.exists() {
-        fs::remove_file(&migration_file).unwrap();
-    }
-
-    // Second run with fixed config - hint should be cleared
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -1864,20 +1709,16 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.contains("deprecated"),
-            "No deprecation warning for fixed config"
+            "No deprecation warning for clean config"
         );
     }
 
-    // Months later, a NEW deprecation is introduced - user adds a different deprecated variable
     fs::write(
         &project_config_path,
         r#"post-create = "cd {{ worktree }} && npm install"
 "#,
     )
     .unwrap();
-
-    // Third run with new deprecation - should get full treatment
-    // because hint was cleared when config was clean
     {
         let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
@@ -1891,10 +1732,9 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
         );
     }
 
-    // Migration file should exist for the new deprecation
     assert!(
-        migration_file.exists(),
-        "Migration file should be created for new deprecation"
+        !project_config_path.with_extension("toml.new").exists(),
+        "wt list must never write a .new file"
     );
 }
 
@@ -1957,66 +1797,39 @@ fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, tem
     }
 }
 
-/// User config migration file write is deduplicated based on file existence.
-/// First run creates the migration file. Subsequent runs skip the write
-/// if the file already exists (brief warning only).
+/// `wt list` emits a user-config deprecation warning but never writes a
+/// `.new` file. Materializing migrations is `wt config update`'s job; passive
+/// commands stay side-effect-free on disk.
 #[rstest]
-fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home: TempDir) {
-    // Write user config with deprecated variables using the test config path
-    // (WORKTRUNK_CONFIG_PATH is set by repo.wt_command(), not .config/worktrunk/config.toml)
+fn test_user_config_deprecation_warns_without_writing(repo: TestRepo, temp_home: TempDir) {
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#,
     );
     let user_config_path = repo.test_config_path().to_path_buf();
+    let original = fs::read_to_string(&user_config_path).unwrap();
 
-    // First run - should create migration file
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "First run should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let migration_file = user_config_path.with_extension("toml.new");
+    assert!(output.status.success(), "wt list should succeed: {stderr}");
     assert!(
-        migration_file.exists(),
-        "First run should create migration file"
+        stderr.contains("User config:") && stderr.contains("is deprecated"),
+        "Should emit user-config deprecation warning, got: {stderr}"
     );
-
-    // Second run - hint is already marked shown, skip file write
-    // Should show brief warning only, NOT regenerate the file
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config_path);
-        let output = cmd.output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "Second run should succeed: {:?}",
-            stderr
-        );
-        // Should still show deprecation warning but NOT write file
-        assert!(
-            stderr.contains("User config:") && stderr.contains("is deprecated"),
-            "Second run should show deprecation warning, got: {stderr}"
-        );
-        assert!(
-            !stderr.contains("Wrote migrated"),
-            "Second run should NOT regenerate migration file (hint already shown), got: {stderr}"
-        );
-    }
-
-    // Verify migration file still exists (from first run)
-    assert!(migration_file.exists());
+    assert!(
+        !user_config_path.with_extension("toml.new").exists(),
+        "wt list must not write a .new migration file"
+    );
+    assert_eq!(
+        fs::read_to_string(&user_config_path).unwrap(),
+        original,
+        "wt list must not modify user config"
+    );
 }
 
 #[rstest]
@@ -2571,32 +2384,25 @@ args = ["-m", "haiku"]
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify migration file was created (config.toml -> config.toml.new)
-    let migration_file = config_path.with_extension("toml.new");
-    assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
-    );
+    // Drive the migration explicitly via `wt config update`; `wt list` only warns.
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    assert!(cmd.output().unwrap().status.success());
 
-    // Verify migration file has correct transformations
-    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    let migrated = fs::read_to_string(config_path).unwrap();
     assert!(
-        migrated_content.contains("[commit.generation]"),
-        "Migration should rename [commit-generation] to [commit.generation]"
+        migrated.contains("[commit.generation]"),
+        "Should rename [commit-generation] to [commit.generation]"
     );
     assert!(
-        migrated_content.contains("command = \"llm -m haiku\""),
-        "Migration should merge args into command"
+        migrated.contains("command = \"llm -m haiku\""),
+        "Should merge args into command"
     );
-    assert!(
-        !migrated_content.contains("[commit-generation]"),
-        "Migration should remove old section name"
-    );
-    assert!(
-        !migrated_content.contains("args ="),
-        "Migration should remove args field"
-    );
+    assert!(!migrated.contains("[commit-generation]"));
+    assert!(!migrated.contains("args ="));
 }
 
 /// Test that deprecated project-level [projects."...".commit-generation] shows warning
@@ -2629,18 +2435,18 @@ command = "llm -m gpt-4"
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify migration file was created and has correct transformations
-    let migration_file = config_path.with_extension("toml.new");
-    assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
-    );
+    // Drive the migration explicitly via `wt config update`; `wt list` only warns.
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    assert!(cmd.output().unwrap().status.success());
 
-    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    let migrated = fs::read_to_string(config_path).unwrap();
     assert!(
-        migrated_content.contains("[projects.\"github.com/example/repo\".commit.generation]"),
-        "Migration should rename project-level section"
+        migrated.contains("[projects.\"github.com/example/repo\".commit.generation]"),
+        "Should rename project-level section"
     );
 }
 
@@ -2673,78 +2479,10 @@ post-create = "ln -sf {{ repo_root }}/node_modules"
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify migration file was created
-    let migration_file = config_path.with_extension("toml.new");
+    // `wt config show` renders the diff in memory — nothing persists on disk.
     assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
-    );
-}
-
-/// Test that `wt config show` always regenerates migration file
-///
-/// Even if the user deleted the migration file previously, `wt config show`
-/// should always regenerate it (unlike other commands which skip after first write).
-#[rstest]
-fn test_config_show_always_regenerates_migration_file(mut repo: TestRepo, temp_home: TempDir) {
-    // Setup mock gh/glab/claude for deterministic output
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    // Write project config with deprecated variables
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    let project_config_path = project_config_dir.join("wt.toml");
-    fs::write(
-        &project_config_path,
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
-"#,
-    )
-    .unwrap();
-
-    // First run with wt list - creates migration file and sets hint
-    {
-        let mut cmd = repo.wt_command();
-        cmd.arg("list").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        assert!(
-            output.status.success(),
-            "First run should succeed: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists(), "Migration file should be created");
-
-    // Delete the migration file (simulating user applied it or doesn't want it)
-    fs::remove_file(&migration_file).unwrap();
-
-    // Run wt config show - should regenerate migration file
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Migration file SHOULD be regenerated by wt config show
-    assert!(
-        migration_file.exists(),
-        "Migration file should be regenerated by wt config show"
-    );
-
-    // Verify the regenerated file has the correct content
-    let migrated_content = fs::read_to_string(&migration_file).unwrap();
-    assert!(
-        migrated_content.contains("{{ repo }}"),
-        "Migration should replace main_worktree with repo"
+        !config_path.with_extension("toml.new").exists(),
+        "wt config show must not leave a .new file behind"
     );
 }
 
@@ -2829,19 +2567,19 @@ command = "llm -m gpt-4"
         assert_cmd_snapshot!(cmd);
     });
 
-    // Verify migration file was created
-    let migration_file = config_path.with_extension("toml.new");
+    // `wt config show` renders the diff in memory — nothing persists on disk.
     assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
+        !config_path.with_extension("toml.new").exists(),
+        "wt config show must not leave a .new file behind"
     );
 }
 
 /// Test that deprecated approved-commands in [projects] sections are copied to approvals.toml
 #[rstest]
-fn test_deprecated_approved_commands_copies_to_approvals_file(repo: TestRepo, temp_home: TempDir) {
-    // Write user config with approved-commands in [projects] section
+fn test_config_update_copies_approved_commands_to_approvals_file(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
     let config_path = repo.test_config_path();
     fs::write(
         config_path,
@@ -2853,52 +2591,239 @@ approved-commands = ["npm install", "npm test"]
     )
     .unwrap();
 
-    // Use `wt list` which loads config and triggers deprecation check
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
+    // Passive load must NOT copy approvals or modify the config.
+    {
+        let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
-
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Verify migration file removes approved-commands
-    let migration_file = config_path.with_extension("toml.new");
+        assert!(cmd.output().unwrap().status.success());
+    }
     assert!(
-        migration_file.exists(),
-        "Migration file should be created at {:?}",
-        migration_file
+        !config_path.with_file_name("approvals.toml").exists(),
+        "wt list must not copy approvals"
     );
-    let migrated_content = fs::read_to_string(&migration_file).unwrap();
     assert!(
-        !migrated_content.contains("approved-commands"),
-        "Migration should remove approved-commands"
+        !config_path.with_extension("toml.new").exists(),
+        "wt list must not write .new file"
     );
 
-    // Verify approvals were copied to approvals.toml (sibling of config file)
+    // `wt config update --yes` migrates in place: config.toml is rewritten
+    // without approved-commands, and approvals.toml is created alongside it.
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "update", "--yes"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "config update should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let migrated = fs::read_to_string(config_path).unwrap();
+    assert!(
+        !migrated.contains("approved-commands"),
+        "config.toml should no longer contain approved-commands: {migrated}"
+    );
+    assert!(
+        !config_path.with_extension("toml.new").exists(),
+        "config update must not leave a .new file behind"
+    );
+
     let approvals_file = config_path.with_file_name("approvals.toml");
+    assert!(approvals_file.exists(), "approvals.toml should be created");
+    let approvals = fs::read_to_string(&approvals_file).unwrap();
     assert!(
-        approvals_file.exists(),
-        "Approvals should be copied to {:?}",
-        approvals_file
-    );
-    let approvals_content = fs::read_to_string(&approvals_file).unwrap();
-    assert!(
-        approvals_content.contains("npm install"),
-        "Approvals file should contain npm install: {}",
-        approvals_content
-    );
-    assert!(
-        approvals_content.contains("npm test"),
-        "Approvals file should contain npm test: {}",
-        approvals_content
+        approvals.contains("npm install") && approvals.contains("npm test"),
+        "approvals.toml should carry both commands: {approvals}"
     );
 }
 
 // ==================== config update tests ====================
+
+/// `wt config update` migrates project config in place (from the main
+/// worktree). Covers the project-config path in `check_project_config`.
+#[rstest]
+fn test_config_update_applies_project_config_migration(repo: TestRepo) {
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "config update should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let updated = fs::read_to_string(&project_config_path).unwrap();
+    assert!(updated.contains("pre-start"));
+    assert!(updated.contains("{{ repo }}"));
+    assert!(!updated.contains("post-create"));
+}
+
+/// `wt config update` with a clean project config (no deprecations) treats
+/// the repo as nothing-to-do — covers the project-config path through
+/// `check_and_migrate` when it returns `info == None`.
+#[rstest]
+fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-start = "echo ready"
+"#,
+    );
+    repo.commit("Add clean project config");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No deprecated settings found"),
+        "Expected no-op message, got: {stderr}"
+    );
+}
+
+/// `wt config update` from a linked worktree declines to mutate project
+/// config and instead points at the main worktree. Covers the `is_linked`
+/// branch in `check_project_config`.
+#[rstest]
+fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestRepo) {
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let before = fs::read_to_string(&project_config_path).unwrap();
+
+    let feature_path = repo.root_path().parent().unwrap().join("feature-test");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature-test",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("To update project config:"),
+        "Should hint at main worktree, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&project_config_path).unwrap(),
+        before,
+        "Project config must not change when run from linked worktree"
+    );
+}
+
+/// `wt config update --print` with both user- and project-config deprecations
+/// emits both, separated by labeled headers on stdout.
+#[rstest]
+fn test_config_update_print_emits_both_configs(repo: TestRepo) {
+    let user_config_path = repo.test_config_path();
+    fs::write(
+        user_config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("# User config"));
+    assert!(stdout.contains("# Project config"));
+    assert!(stdout.contains("{{ repo }}"));
+    assert!(stdout.contains("pre-start"));
+}
+
+/// `wt config update --print` on a clean config exits silently with empty
+/// stdout — no "nothing to do" noise to corrupt a pipe.
+#[rstest]
+fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must be empty on clean config"
+    );
+}
+
+/// `wt config update --print` emits the migrated TOML to stdout without
+/// touching the config file. Warnings still go to stderr.
+#[rstest]
+fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
+    let config_path = repo.test_config_path();
+    let original = r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+    fs::write(config_path, original).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "config update --print should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("{{ repo }}") && !stdout.contains("{{ main_worktree }}"),
+        "stdout should contain migrated content, got: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(config_path).unwrap(),
+        original,
+        "--print must not modify the config file"
+    );
+    assert!(
+        !config_path.with_extension("toml.new").exists(),
+        "--print must not write a .new file"
+    );
+}
 
 /// `wt config update` with no deprecated settings reports nothing to do
 #[rstest]

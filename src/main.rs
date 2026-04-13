@@ -500,7 +500,7 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
         ConfigCommand::Shell { action } => handle_config_shell_command(action),
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
-        ConfigCommand::Update { yes } => handle_config_update(yes),
+        ConfigCommand::Update { yes, print } => handle_config_update(yes, print),
         ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
     }

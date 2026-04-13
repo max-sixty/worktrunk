@@ -46,6 +46,8 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "handle_switch.rs",
     // JSON output for wt config show --format=json
     "config/show.rs",
+    // Migrated TOML output for wt config update --print (pipeable)
+    "config/update.rs",
     // JSON output for wt step for-each --format=json
     "for_each.rs",
     // JSON output for wt merge --format=json

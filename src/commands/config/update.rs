@@ -1,13 +1,16 @@
 //! Config update command.
 //!
-//! Updates deprecated settings in user and project config files.
+//! Updates deprecated settings in user and project config files by
+//! re-migrating in memory and overwriting the file. The previous `.new` file
+//! flow was removed — nothing writes to disk outside this command.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use worktrunk::config::{
-    DeprecationInfo, config_path, format_deprecation_warnings, format_migration_diff,
+    DeprecationInfo, compute_migrated_content, config_path,
+    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -19,42 +22,64 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 /// A config file that needs updating.
 struct UpdateCandidate {
-    /// Path to the original config file
+    /// Path to the config file
     config_path: PathBuf,
-    /// Path to the generated .new file
-    new_path: PathBuf,
-    /// Deprecation info for display
+    /// Current on-disk content
+    original: String,
+    /// Migrated content to write
+    migrated: String,
+    /// Detected deprecations for display
     info: DeprecationInfo,
 }
 
 /// Handle the `wt config update` command.
-pub fn handle_config_update(yes: bool) -> anyhow::Result<()> {
+pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
     let mut candidates = Vec::new();
 
-    // Check user config
     if let Some(candidate) = check_user_config()? {
         candidates.push(candidate);
     }
-
-    // Check project config (if in a git repo)
     if let Some(candidate) = check_project_config()? {
         candidates.push(candidate);
     }
 
     if candidates.is_empty() {
+        if print {
+            // --print on a clean config is a no-op; stay quiet on stdout.
+            return Ok(());
+        }
         eprintln!("{}", info_message("No deprecated settings found"));
         return Ok(());
     }
 
-    // Show what will be updated (warnings + diffs)
-    for candidate in &candidates {
-        eprint!("{}", format_update_preview(&candidate.info));
+    if print {
+        // Emit migrated content to stdout. Multiple configs → separate with a
+        // labeled header so the output is still parseable. Warnings still go
+        // to stderr so stdout stays clean for piping.
+        let multi = candidates.len() > 1;
+        for (idx, candidate) in candidates.iter().enumerate() {
+            eprint!("{}", format_deprecation_warnings(&candidate.info));
+            if multi {
+                if idx > 0 {
+                    println!();
+                }
+                println!(
+                    "# {} ({})",
+                    candidate.info.label,
+                    candidate.config_path.display()
+                );
+            }
+            print!("{}", candidate.migrated);
+        }
+        return Ok(());
     }
 
-    // Confirm unless --yes
+    for candidate in &candidates {
+        eprint!("{}", format_update_preview(candidate));
+    }
+
     if !yes {
-        let prompt_text = "Apply updates?".to_string();
-        match prompt_yes_no_preview(&prompt_text, || {})? {
+        match prompt_yes_no_preview("Apply updates?", || {})? {
             PromptResponse::Accepted => {}
             PromptResponse::Declined => {
                 eprintln!("{}", info_message("Update cancelled"));
@@ -63,9 +88,24 @@ pub fn handle_config_update(yes: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Apply updates
     for candidate in &candidates {
-        std::fs::rename(&candidate.new_path, &candidate.config_path)
+        // Preserve approved-commands before rewriting config (migrated content
+        // drops them; approvals.toml becomes the authoritative source).
+        if candidate.info.deprecations.approved_commands
+            && let Some(approvals_path) =
+                copy_approved_commands_to_approvals_file(&candidate.config_path)
+        {
+            let filename = approvals_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            eprintln!(
+                "{}",
+                info_message(format!("Copied approved commands to {filename}"))
+            );
+        }
+
+        std::fs::write(&candidate.config_path, &candidate.migrated)
             .with_context(|| format!("Failed to update {}", candidate.info.label))?;
         eprintln!(
             "{}",
@@ -73,33 +113,28 @@ pub fn handle_config_update(yes: bool) -> anyhow::Result<()> {
         );
     }
 
-    // Clear deprecation hint if we're in a repo
-    if let Ok(repo) = Repository::current() {
-        let _ = repo.clear_hint("deprecated-config");
-    }
-
     Ok(())
 }
 
 /// Format update preview for display.
 ///
-/// Shows deprecation warnings and diff, but omits the "mv" apply hint
+/// Shows deprecation warnings and diff, but omits the "To apply" hint
 /// since `config update` will apply automatically.
-fn format_update_preview(info: &DeprecationInfo) -> String {
-    let mut out = format_deprecation_warnings(info);
+fn format_update_preview(candidate: &UpdateCandidate) -> String {
+    let mut out = format_deprecation_warnings(&candidate.info);
 
-    // Show diff (without the "To apply" hint that format_deprecation_details adds)
-    if let Some(new_path) = &info.migration_path
-        && let Some(diff) = format_migration_diff(&info.config_path, new_path)
-    {
+    let label = candidate
+        .config_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+    if let Some(diff) = format_migration_diff(&candidate.original, &candidate.migrated, &label) {
         let _ = writeln!(out, "{}", info_message("Proposed diff:"));
         let _ = writeln!(out, "{diff}");
     }
-
     out
 }
 
-/// Check user config for deprecations and generate .new file if needed.
 fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
     let config_path = match config_path() {
         Some(path) => path,
@@ -109,44 +144,30 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     }
 
-    let content = std::fs::read_to_string(&config_path).context("Failed to read user config")?;
+    let original = std::fs::read_to_string(&config_path).context("Failed to read user config")?;
 
-    // Use check_and_migrate in silent mode (emit_inline_warnings=false) which:
-    // - Detects deprecations
-    // - Copies approved-commands to approvals.toml
-    // - Writes the .new migration file
-    let info = match worktrunk::config::check_and_migrate(
+    let result = worktrunk::config::check_and_migrate(
         &config_path,
-        &content,
-        true, // warn_and_migrate (write .new file)
+        &original,
+        true, // warn_and_migrate — user config always actionable
         "User config",
         None,  // no repo context for user config
-        false, // silent mode
-    )? {
-        result
-            if result
-                .info
-                .as_ref()
-                .is_some_and(DeprecationInfo::has_deprecations) =>
-        {
-            result.info.unwrap()
-        }
-        _ => return Ok(None),
+        false, // emit_inline_warnings — we render the diff ourselves
+    )?;
+
+    let Some(info) = result.info.filter(DeprecationInfo::has_deprecations) else {
+        return Ok(None);
     };
 
-    let new_path = match &info.migration_path {
-        Some(path) => path.clone(),
-        None => anyhow::bail!("Failed to write migration file for user config"),
-    };
-
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
-        new_path,
+        original,
+        migrated,
         info,
     }))
 }
 
-/// Check project config for deprecations and generate .new file if needed.
 fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
     let repo = match Repository::current() {
         Ok(repo) => repo,
@@ -163,28 +184,22 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
 
     let is_linked = repo.current_worktree().is_linked().unwrap_or(true);
 
-    let content = std::fs::read_to_string(&config_path).context("Failed to read project config")?;
+    let original =
+        std::fs::read_to_string(&config_path).context("Failed to read project config")?;
 
-    let info = match worktrunk::config::check_and_migrate(
+    let result = worktrunk::config::check_and_migrate(
         &config_path,
-        &content,
-        !is_linked, // only write .new file from main worktree
+        &original,
+        !is_linked, // only actionable from main worktree
         "Project config",
         Some(&repo),
-        false, // silent mode
-    )? {
-        result
-            if result
-                .info
-                .as_ref()
-                .is_some_and(DeprecationInfo::has_deprecations) =>
-        {
-            result.info.unwrap()
-        }
-        _ => return Ok(None),
+        false,
+    )?;
+
+    let Some(info) = result.info.filter(DeprecationInfo::has_deprecations) else {
+        return Ok(None);
     };
 
-    // Linked worktrees can't apply the update — suggest -C to main worktree
     if is_linked {
         let cmd = suggest_command_in_dir(repo.repo_path()?, "config", &["update"], &[]);
         eprintln!("{}", hint_message("To update project config:"));
@@ -192,14 +207,11 @@ fn check_project_config() -> anyhow::Result<Option<UpdateCandidate>> {
         return Ok(None);
     }
 
-    let new_path = match &info.migration_path {
-        Some(path) => path.clone(),
-        None => anyhow::bail!("Failed to write migration file for project config"),
-    };
-
+    let migrated = compute_migrated_content(&original);
     Ok(Some(UpdateCandidate {
         config_path,
-        new_path,
+        original,
+        migrated,
         info,
     }))
 }
