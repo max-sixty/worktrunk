@@ -1968,8 +1968,8 @@ fn transform_docs_for_skill(content: &str) -> String {
             None => strip_html(body),
         }
     });
-    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
+    let content =
+        ZOLA_TERMINAL_SELF_CLOSING_PATTERN.replace_all(&content, |caps: &regex::Captures| {
             cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         });
 
