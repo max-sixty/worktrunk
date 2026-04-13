@@ -88,10 +88,32 @@ pub fn run_concurrent_commands(
         return Ok(run_serial_with_prefix(shell, cmds, prefix_width));
     }
 
-    // Spawn each child and record its start time for commands.jsonl.
+    // Install the SIGINT/SIGTERM latch BEFORE spawning any children so a
+    // signal that arrives mid-spawn is captured rather than default-killing
+    // wt (which would orphan already-spawned children, since each runs in
+    // its own process group and wouldn't see the tty's Ctrl-C broadcast).
+    #[cfg(unix)]
+    let signals = {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?
+    };
+
+    // Spawn each child and record its start time for commands.jsonl. If any
+    // spawn fails partway, kill and reap every child we already spawned —
+    // otherwise they'd outlive wt as unreaped orphans with nobody draining
+    // their pipes (and `Child::drop` does not kill the process on Unix).
     let mut children: Vec<SpawnedChild> = Vec::with_capacity(cmds.len());
     for (i, cmd) in cmds.iter().enumerate() {
-        children.push(spawn_child(shell, i, cmd)?);
+        match spawn_child(shell, i, cmd) {
+            Ok(spawned) => children.push(spawned),
+            Err(e) => {
+                for mut prior in children {
+                    let _ = prior.child.kill();
+                    let _ = prior.child.wait();
+                }
+                return Err(e);
+            }
+        }
     }
 
     // Print one prefixed line at a time from a single writer. Each reader
@@ -111,14 +133,18 @@ pub fn run_concurrent_commands(
     // Drop the original sender so the channel closes once every reader exits.
     drop(line_tx);
 
-    // Forward SIGINT/SIGTERM to every live child's process group.
+    // Start the forwarder thread now that we have the pgid list. The
+    // `signals` latch was installed up-front, so any signal received during
+    // the spawn loop was queued and will be delivered on the thread's first
+    // poll.
     #[cfg(unix)]
     let signal_thread = spawn_signal_forwarder(
+        signals,
         children
             .iter()
             .map(|c| c.child.id() as i32)
             .collect::<Vec<_>>(),
-    )?;
+    );
 
     // Consume labeled lines until every reader drops its sender.
     {
@@ -272,17 +298,41 @@ fn spawn_reader<R: Read + Send + 'static>(
     tx: Sender<LabeledLine>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let reader = BufReader::new(stream);
-        for line in reader.lines().map_while(Result::ok) {
-            if tx
-                .send(LabeledLine {
-                    index,
-                    label: label.clone(),
-                    line,
-                })
-                .is_err()
-            {
-                return; // consumer dropped
+        // Read by bytes, not by `BufRead::lines()` — `lines()` returns
+        // `InvalidData` on non-UTF-8 bytes and terminates the iterator, which
+        // would leave the child's pipe un-drained and eventually hang
+        // `child.wait()` once the pipe buffer fills. Real-world triggers
+        // include `git diff` of binary files, tools that honor non-UTF-8
+        // locales, and any raw-byte output. Lossy-decoding preserves the
+        // stream and keeps the child unblocked.
+        let mut reader = BufReader::new(stream);
+        let mut buf = Vec::with_capacity(256);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => return,
+                Ok(_) => {
+                    // Strip the trailing newline (and optional \r) before
+                    // forwarding — the writer re-adds a newline per line.
+                    if buf.last() == Some(&b'\n') {
+                        buf.pop();
+                        if buf.last() == Some(&b'\r') {
+                            buf.pop();
+                        }
+                    }
+                    let line = String::from_utf8_lossy(&buf).into_owned();
+                    if tx
+                        .send(LabeledLine {
+                            index,
+                            label: label.clone(),
+                            line,
+                        })
+                        .is_err()
+                    {
+                        return; // consumer dropped
+                    }
+                }
+                Err(_) => return, // IO error on the pipe — give up on this stream
             }
         }
     })
@@ -371,23 +421,34 @@ impl SignalForwarder {
 }
 
 #[cfg(unix)]
-fn spawn_signal_forwarder(pgids: Vec<i32>) -> anyhow::Result<SignalForwarder> {
-    use signal_hook::consts::{SIGINT, SIGTERM};
-    use signal_hook::iterator::Signals;
+fn spawn_signal_forwarder(
+    mut signals: signal_hook::iterator::Signals,
+    pgids: Vec<i32>,
+) -> SignalForwarder {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let stop = std::sync::Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
-    let mut signals = Signals::new([SIGINT, SIGTERM])?;
 
     let handle = thread::spawn(move || {
-        let mut seen: Option<i32> = None;
+        let mut seen_once = false;
         while !stop_clone.load(Ordering::Relaxed) {
             for sig in signals.pending() {
-                if seen.is_none() {
-                    seen = Some(sig);
+                if !seen_once {
+                    // First signal: graceful escalation per child
+                    // (SIGINT → SIGTERM → SIGKILL with grace windows).
+                    seen_once = true;
                     for &pgid in &pgids {
                         worktrunk::shell_exec::forward_signal_with_escalation(pgid, sig);
+                    }
+                } else {
+                    // Subsequent signals: user is impatient — SIGKILL every
+                    // still-live process group without waiting.
+                    for &pgid in &pgids {
+                        let _ = nix::sys::signal::killpg(
+                            nix::unistd::Pid::from_raw(pgid),
+                            nix::sys::signal::Signal::SIGKILL,
+                        );
                     }
                 }
             }
@@ -395,5 +456,5 @@ fn spawn_signal_forwarder(pgids: Vec<i32>) -> anyhow::Result<SignalForwarder> {
         }
     });
 
-    Ok(SignalForwarder { stop, handle })
+    SignalForwarder { stop, handle }
 }
