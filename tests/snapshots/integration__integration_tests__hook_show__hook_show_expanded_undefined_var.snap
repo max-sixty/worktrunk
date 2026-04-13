@@ -44,8 +44,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER HOOKS[39m @ [TEST_CONFIG]
 [2m↳[22m [2m(none configured)[22m
 
@@ -53,3 +51,5 @@ exit_code: 0
 [36m❯[39m pre-commit [1moptional-var[22m: [2m(requires approval)[22m
 [107m [0m [2m# Failed to expand hook preview: undefined value @ line 1[0m[2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m{{[0m[2m base [0m[2m[32m}}[0m[2m
+
+----- stderr -----

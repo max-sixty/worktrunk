@@ -248,16 +248,16 @@ my-lint = "my-lint-tool"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Both hooks should be present (deep merge preserves differently-named keys)
     assert!(
-        stderr.contains("company-lint-tool"),
-        "System hook should be preserved with different name, got:\n{stderr}"
+        stdout.contains("company-lint-tool"),
+        "System hook should be preserved with different name, got:\n{stdout}"
     );
     assert!(
-        stderr.contains("my-lint-tool"),
-        "User hook should be present, got:\n{stderr}"
+        stdout.contains("my-lint-tool"),
+        "User hook should be present, got:\n{stdout}"
     );
 }
 
@@ -300,16 +300,16 @@ lint = "my-lint-tool"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // User's command should replace system's for the same name
     assert!(
-        stderr.contains("my-lint-tool"),
-        "User's hook command should be present, got:\n{stderr}"
+        stdout.contains("my-lint-tool"),
+        "User's hook command should be present, got:\n{stdout}"
     );
     assert!(
-        !stderr.contains("company-lint-tool"),
-        "System's hook command should be replaced by user's same-named hook, got:\n{stderr}"
+        !stdout.contains("company-lint-tool"),
+        "System's hook command should be replaced by user's same-named hook, got:\n{stdout}"
     );
 }
 
@@ -355,10 +355,10 @@ my-lint = "my-lint-tool"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("company-format-tool"),
-        "System's pre-commit hook should be preserved when user doesn't override it, got:\n{stderr}"
+        stdout.contains("company-format-tool"),
+        "System's pre-commit hook should be preserved when user doesn't override it, got:\n{stdout}"
     );
 }
 
@@ -382,18 +382,18 @@ fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_ho
     cmd.arg("config").arg("show").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should NOT show a full SYSTEM CONFIG heading
     assert!(
-        !stderr.contains("SYSTEM CONFIG"),
-        "Should not show SYSTEM CONFIG section when absent, got:\n{stderr}"
+        !stdout.contains("SYSTEM CONFIG"),
+        "Should not show SYSTEM CONFIG section when absent, got:\n{stdout}"
     );
     // Should show a system config hint under USER CONFIG
     assert!(
-        stderr.contains("Optional system config not found")
-            && stderr.contains("worktrunk/config.toml"),
-        "Expected system config hint in output, got:\n{stderr}"
+        stdout.contains("Optional system config not found")
+            && stdout.contains("worktrunk/config.toml"),
+        "Expected system config hint in output, got:\n{stdout}"
     );
 }
 
@@ -891,10 +891,10 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
         let output = cmd.output().unwrap();
         assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stderr.contains("Completions won't work; add to"),
-            "Expected compinit warning, got:\n{stderr}"
+            stdout.contains("Completions won't work; add to"),
+            "Expected compinit warning, got:\n{stdout}"
         );
     });
 }
@@ -940,10 +940,10 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
         let output = cmd.output().unwrap();
         assert!(output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            !stderr.contains("Completions won't work; add to"),
-            "Expected no compinit warning, got:\n{stderr}"
+            !stdout.contains("Completions won't work; add to"),
+            "Expected no compinit warning, got:\n{stdout}"
         );
     });
 }

@@ -42,8 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mSYSTEM CONFIG[39m @ [PROJECT_ID]
 [107m [0m [2m[36m[merge]
 [107m [0m [2msquash = [0m[2m[33mtrue
@@ -71,3 +69,5 @@ exit_code: 0
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
+
+----- stderr -----

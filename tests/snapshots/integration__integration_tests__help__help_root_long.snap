@@ -29,8 +29,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt - Git worktree management for parallel AI agent workflows
 
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -73,3 +71,5 @@ Run [2mwt config create[0m to customize worktree locations.
 
 Docs: https://worktrunk.dev
 GitHub: https://github.com/max-sixty/worktrunk
+
+----- stderr -----

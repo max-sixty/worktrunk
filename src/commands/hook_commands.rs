@@ -559,9 +559,9 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         ctx.as_ref(),
     )?;
 
-    // Display through pager (fall back to stderr if pager unavailable)
+    // Display through pager; fall back to direct stdout if pager unavailable
     if show_help_in_pager(&output, true).is_err() {
-        worktrunk::styling::eprintln!("{}", output);
+        worktrunk::styling::println!("{}", output);
     }
 
     Ok(())

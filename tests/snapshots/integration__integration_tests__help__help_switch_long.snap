@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt switch - Switch to a worktree; create if needed
 
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
@@ -221,3 +219,5 @@ To change which branch a worktree is on, use [2mgit switch[0m inside that work
 - [2mwt list[0m — View all worktrees
 - [2mwt remove[0m — Delete worktrees when done
 - [2mwt merge[0m — Integrate changes back to the default branch
+
+----- stderr -----

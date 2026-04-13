@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt list - List worktrees and their status
 
 Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
@@ -52,3 +50,5 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
+
+----- stderr -----

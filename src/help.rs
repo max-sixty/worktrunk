@@ -51,7 +51,7 @@ use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::convert_dollar_console_to_terminal;
-use worktrunk::styling::eprintln;
+use worktrunk::styling::{eprintln, println};
 
 use crate::cli;
 
@@ -159,7 +159,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
                     // use_pager=false for -h (short help), true for --help (long help)
                     if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
                         log::debug!("Pager invocation failed: {}", e);
-                        eprintln!("{}", help);
+                        println!("{}", help);
                     }
                     process::exit(0);
                 }

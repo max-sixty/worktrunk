@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt hook approvals clear - Clear approved commands from approvals.toml
 
 Usage: [1m[36mwt hook approvals clear[0m [36m[OPTIONS][0m
@@ -59,3 +57,5 @@ Removes saved approvals, requiring re-approval on next command run.
 
 By default, clears approvals for the current project. Use [2m--global[0m to clear
 all approvals across all projects.
+
+----- stderr -----

@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt merge - Merge current branch into the target branch[0m
 
 Squash & rebase, fast-forward the target branch, remove the worktree.[0m
@@ -161,3 +159,5 @@ The full workflow: start an agent (one of many) on a task, work elsewhere, retur
 - [2mwt step[0m — Run individual operations (commit, squash, rebase, push)
 - [2mwt remove[0m — Remove worktrees without merging
 - [2mwt switch[0m — Navigate to other worktrees
+
+----- stderr -----
