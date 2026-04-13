@@ -291,10 +291,19 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
 pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
-    // Log prompt for debugging (Cmd logs the command itself)
-    log::debug!("  Prompt (stdin):");
+    // TODO(diff-pipe): Consider splitting the prompt template around
+    // `{{ git_diff }}` and piping `git diff` directly into the LLM via
+    // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
+    // MB-scale diffs in our process memory and removes them from our logs
+    // entirely. See conversation around PR #2136 for sketch.
+
+    // Log prompt for debugging (Cmd logs the command itself).
+    // One record per line so each is prefixed by env_logger's `[TS LEVEL mod]`
+    // header and stays greppable — matches the `  stdout` continuation style
+    // used in shell_exec::log_output.
+    log::trace!("  Prompt (stdin):");
     for line in prompt.lines() {
-        log::debug!("    {}", line);
+        log::trace!("    {}", line);
     }
 
     let shell = ShellConfig::get()?;
