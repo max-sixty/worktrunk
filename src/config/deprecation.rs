@@ -884,43 +884,37 @@ fn migrate_negated_bool_doc(
     modified
 }
 
-/// Convert a multi-entry pre-* table section into a pipeline array within a table.
+/// Convert a multi-entry pre-* table section into an array-of-tables pipeline.
 ///
-/// Removes `[key]` as a table section and inserts `key = [{name = "cmd"}, ...]`
-/// as an array of single-entry inline tables, preserving insertion order.
+/// Removes `[key]` as a table section and inserts `[[key]]` blocks —
+/// one block per named step, preserving insertion order.
+///
+/// Iterates pre-* keys in document order (not [`PRE_HOOK_KEYS`] order) so
+/// migrated sections land in the same relative position they had in the
+/// source file.
 fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) {
-    for &key in PRE_HOOK_KEYS {
-        let is_multi_entry_table = table
-            .get(key)
-            .and_then(|item| item.as_table())
-            .is_some_and(|t| t.len() >= 2);
+    let keys_to_migrate: Vec<String> = table
+        .iter()
+        .filter(|(k, v)| {
+            PRE_HOOK_KEYS.contains(k)
+                && v.as_table()
+                    .is_some_and(|t| t.len() >= 2 && t.iter().all(|(_, v)| v.as_str().is_some()))
+        })
+        .map(|(k, _)| k.to_string())
+        .collect();
 
-        if !is_multi_entry_table {
-            continue;
-        }
+    for key in keys_to_migrate {
+        let item = table.get_mut(&key).unwrap();
+        let entries = item.as_table().unwrap();
 
-        // Skip if any entry is non-string (malformed config — don't risk data loss)
-        let all_strings = table
-            .get(key)
-            .and_then(|item| item.as_table())
-            .is_some_and(|t| t.iter().all(|(_, v)| v.as_str().is_some()));
-
-        if !all_strings {
-            continue;
-        }
-
-        // Remove the table section and build a pipeline array
-        let old_table = table.remove(key).unwrap();
-        let entries = old_table.as_table().unwrap();
-
-        let mut arr = toml_edit::Array::new();
+        let mut arr = toml_edit::ArrayOfTables::new();
         for (name, value) in entries.iter() {
-            let mut inline = toml_edit::InlineTable::new();
-            inline.insert(name, value.as_str().unwrap().into());
-            arr.push(toml_edit::Value::InlineTable(inline));
+            let mut block = toml_edit::Table::new();
+            block.insert(name, toml_edit::value(value.as_str().unwrap()));
+            arr.push(block);
         }
 
-        table.insert(key, toml_edit::Item::Value(toml_edit::Value::Array(arr)));
+        *item = toml_edit::Item::ArrayOfTables(arr);
         *modified = true;
     }
 }
@@ -3649,22 +3643,20 @@ test = "cargo test"
 lint = "cargo clippy"
 "#;
         let result = migrate_pre_hook_table_form(content);
-        // Should produce an array of inline tables
+        // Should produce `[[pre-merge]]` array-of-tables blocks
         assert!(
-            !result.contains("[pre-merge]"),
-            "Table section should be removed: {result}"
-        );
-        assert!(
-            result.contains("pre-merge"),
-            "Key should still exist: {result}"
+            result.contains("[[pre-merge]]"),
+            "Should emit [[pre-merge]] blocks: {result}"
         );
         // Verify it parses back as valid TOML with the right structure
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"].as_array().expect("should be array");
+        let arr = doc["pre-merge"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
-        let first = arr.get(0).unwrap().as_inline_table().unwrap();
+        let first = arr.get(0).unwrap();
         assert_eq!(first.get("test").unwrap().as_str().unwrap(), "cargo test");
-        let second = arr.get(1).unwrap().as_inline_table().unwrap();
+        let second = arr.get(1).unwrap();
         assert_eq!(
             second.get("lint").unwrap().as_str().unwrap(),
             "cargo clippy"
@@ -3681,11 +3673,8 @@ third = "3"
 "#;
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"].as_array().unwrap();
-        let names: Vec<&str> = arr
-            .iter()
-            .map(|v| v.as_inline_table().unwrap().iter().next().unwrap().0)
-            .collect();
+        let arr = doc["pre-merge"].as_array_of_tables().unwrap();
+        let names: Vec<&str> = arr.iter().map(|t| t.iter().next().unwrap().0).collect();
         assert_eq!(names, vec!["first", "second", "third"]);
     }
 
@@ -3706,7 +3695,9 @@ build = "npm run build"
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let project = doc["projects"]["web"].as_table().unwrap();
-        let arr = project["pre-start"].as_array().expect("should be array");
+        let arr = project["pre-start"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
     }
 
@@ -3726,8 +3717,8 @@ build = "npm run build"
         );
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let arr = doc["pre-start"]
-            .as_array()
-            .expect("should be pipeline array");
+            .as_array_of_tables()
+            .expect("should be pipeline array of tables");
         assert_eq!(arr.len(), 2);
     }
 
@@ -3743,8 +3734,8 @@ no-ff = true
 "#;
         let result = migrate_content(content);
         assert!(
-            !result.contains("[pre-merge]"),
-            "Table section should be migrated: {result}"
+            result.contains("[[pre-merge]]"),
+            "Table section should become [[pre-merge]] blocks: {result}"
         );
         assert!(
             result.contains("ff = false"),
