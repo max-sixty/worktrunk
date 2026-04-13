@@ -1133,7 +1133,10 @@ pub fn check_and_migrate(
     repo: Option<&crate::git::Repository>,
     emit_inline_warnings: bool,
 ) -> anyhow::Result<CheckAndMigrateResult> {
-    // Parse once — shared by detection and migration
+    // Parse once — shared by detection and migration.
+    // Contract: unparsable content collapses to empty deprecations so downstream
+    // `compute_migrated_content` (invoked by `config show`/`config update` only when
+    // `info` is `Some`) can assume the content parses.
     let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => {
             let template_strings = extract_template_strings_from_doc(&doc);
@@ -1219,9 +1222,11 @@ pub fn check_and_migrate(
 /// or display it via `wt config show`.
 pub fn compute_migrated_content(content: &str) -> String {
     // Parse once to extract template strings and detect what needs migrating.
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
+    // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
+    // all run content through `check_and_migrate` first, so it is known to parse.
+    let doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
     let template_strings = extract_template_strings_from_doc(&doc);
     let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
 
@@ -1232,10 +1237,14 @@ pub fn compute_migrated_content(content: &str) -> String {
         content.to_string()
     };
 
-    // Re-parse for structural migrations (which operate on toml_edit::DocumentMut)
-    let Ok(mut doc) = after_vars.parse::<toml_edit::DocumentMut>() else {
-        return after_vars;
-    };
+    // Re-parse for structural migrations (which operate on toml_edit::DocumentMut).
+    // `replace_deprecated_vars_from_strings` substitutes one identifier for another
+    // inside `template_strings`, which are values extracted from string literals —
+    // they cannot collide with TOML syntactic tokens, so the replacement preserves
+    // validity.
+    let mut doc = after_vars
+        .parse::<toml_edit::DocumentMut>()
+        .expect("template-var replacement preserves TOML structure");
     let mut modified = migrate_content_doc(&mut doc);
     // Additionally remove approved-commands (not part of migrate_content because
     // approved-commands is still a valid serde field at runtime).
@@ -1257,13 +1266,13 @@ pub fn compute_migrated_content(content: &str) -> String {
 /// tempdir so the diff header shows clean relative paths. The tempdir is
 /// dropped on return. Returns `None` when the contents match.
 pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Option<String> {
-    let dir = tempfile::tempdir().ok()?;
+    let dir = tempfile::tempdir().expect("failed to create tempdir for migration diff");
     let subdir = dir.path().join(label);
-    std::fs::create_dir(&subdir).ok()?;
+    std::fs::create_dir(&subdir).expect("failed to create subdir in fresh tempdir");
     let current = subdir.join("current");
     let migrated_path = subdir.join("migrated");
-    std::fs::write(&current, original).ok()?;
-    std::fs::write(&migrated_path, migrated).ok()?;
+    std::fs::write(&current, original).expect("failed to write current config to tempfile");
+    std::fs::write(&migrated_path, migrated).expect("failed to write migrated config to tempfile");
 
     let output = Cmd::new("git")
         .args(["diff", "--no-index", "--color=always", "-U3", "--"])
@@ -1271,7 +1280,7 @@ pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Opt
         .arg(format!("{label}/migrated"))
         .current_dir(dir.path())
         .run()
-        .ok()?;
+        .expect("git diff --no-index failed");
 
     // git diff --no-index exits 1 when files differ, which is expected.
     let diff_output = String::from_utf8_lossy(&output.stdout);
