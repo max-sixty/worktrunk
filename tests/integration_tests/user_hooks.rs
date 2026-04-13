@@ -443,6 +443,54 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     );
 }
 
+/// A signal-derived exit in one hook step must abort the rest of the pipeline
+/// rather than treating the signal like an ordinary per-step failure. Drives
+/// the `handle_command_error` interrupt branch end-to-end through the hook
+/// path (the for-each test in `for_each.rs` covers the worktree-loop branch).
+///
+/// Implementation mirrors `test_for_each_aborts_on_signal_exit`: the first
+/// hook step self-signals via SIGTERM after touching a marker. SIGINT against
+/// the parent wt would kill the test harness, so we drive the same
+/// `ChildProcessExited { signal: Some(_), .. }` path with an in-child signal.
+#[rstest]
+#[cfg(unix)]
+fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
+    repo.commit("Initial commit");
+
+    // Two pre-merge hooks: the first writes a marker then self-signals with
+    // SIGTERM; the second (which must NOT run) would write its own marker.
+    repo.write_project_config(
+        r#"[pre-merge]
+abort = "sh -c 'echo first >> hook.log; kill -TERM $$'"
+after = "sh -c 'echo second >> hook.log'"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    let output = crate::common::wt_command()
+        .current_dir(repo.root_path())
+        .args(["hook", "pre-merge", "--yes"])
+        .output()
+        .expect("run wt hook pre-merge");
+
+    // 128 + SIGTERM (15) = 143
+    assert_eq!(
+        output.status.code(),
+        Some(143),
+        "expected exit 143 (SIGTERM); got {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let hook_log = repo.root_path().join("hook.log");
+    let contents = std::fs::read_to_string(&hook_log).unwrap_or_default();
+    assert_eq!(
+        contents.trim(),
+        "first",
+        "second hook step ran after the first was killed by signal; got: {contents:?}",
+    );
+}
+
 // ============================================================================
 // User Post-Merge Hook Tests
 // ============================================================================

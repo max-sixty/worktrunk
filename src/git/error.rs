@@ -1014,6 +1014,28 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
     })
 }
 
+/// If `err` is a signal-derived child exit, return the equivalent shell exit
+/// code (`128 + signal`).
+///
+/// Implements the Ctrl-C cancellation policy: command loops call this on every
+/// per-iteration failure and, when it returns `Some`, abort the loop rather
+/// than continuing to the next iteration. The returned code is what wt itself
+/// should exit with, preserving the standard `128 + sig` shell convention
+/// (130 for SIGINT, 143 for SIGTERM).
+///
+/// See the "Signal Handling" section of the project `CLAUDE.md` for the
+/// rationale and the full list of loops that apply this policy.
+pub fn interrupt_exit_code(err: &anyhow::Error) -> Option<i32> {
+    if let Some(WorktrunkError::ChildProcessExited {
+        signal: Some(sig), ..
+    }) = err.downcast_ref::<WorktrunkError>()
+    {
+        Some(128 + sig)
+    } else {
+        None
+    }
+}
+
 /// If the error is a HookCommandFailed, wrap it to add a hint about using --no-hooks.
 ///
 /// ## When to use
@@ -1185,6 +1207,51 @@ mod tests {
         }
         .into();
         assert_eq!(exit_code(&add_hook_skip_hint(inner)), Some(7));
+    }
+
+    #[test]
+    fn test_interrupt_exit_code() {
+        // Signal-derived child exit → 128 + sig
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 130,
+            message: "terminated by signal 2".into(),
+            signal: Some(2),
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), Some(130));
+
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated by signal 15".into(),
+            signal: Some(15),
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), Some(143));
+
+        // Ordinary non-zero exit → not an interrupt
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit status: 1".into(),
+            signal: None,
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), None);
+
+        // Other WorktrunkError variants → not an interrupt
+        assert_eq!(
+            interrupt_exit_code(&WorktrunkError::AlreadyDisplayed { exit_code: 130 }.into()),
+            None,
+        );
+        assert_eq!(
+            interrupt_exit_code(&WorktrunkError::CommandNotApproved.into()),
+            None,
+        );
+
+        // Plain anyhow error → not an interrupt
+        assert_eq!(
+            interrupt_exit_code(&anyhow::anyhow!("some unrelated failure")),
+            None,
+        );
     }
 
     #[test]

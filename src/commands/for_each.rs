@@ -23,7 +23,7 @@
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
@@ -104,15 +104,12 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let (signal, exit_info, exit_code, error_msg, show_detail) =
-                    if let Some(WorktrunkError::ChildProcessExited {
-                        code,
-                        message,
-                        signal,
-                    }) = err.downcast_ref::<WorktrunkError>()
+                let signal_exit = interrupt_exit_code(&err);
+                let (exit_info, exit_code, error_msg, show_detail) =
+                    if let Some(WorktrunkError::ChildProcessExited { code, message, .. }) =
+                        err.downcast_ref::<WorktrunkError>()
                     {
                         (
-                            *signal,
                             format!(" (exit code {code})"),
                             serde_json::json!(code),
                             message.clone(),
@@ -121,7 +118,6 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                     } else {
                         let msg = err.to_string();
                         (
-                            None,
                             " (spawn failed)".to_string(),
                             serde_json::json!(null),
                             msg,
@@ -145,8 +141,8 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                         "error": error_msg,
                     }));
                 }
-                if let Some(sig) = signal {
-                    interrupted = Some(128 + sig);
+                if let Some(code) = signal_exit {
+                    interrupted = Some(code);
                     break;
                 }
             }
