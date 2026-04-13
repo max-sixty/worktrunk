@@ -72,8 +72,8 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = match branch {
-        Some(ref b) => CommandEnv::for_branch("commit", config, b)?,
-        None => CommandEnv::for_action("commit", config)?,
+        Some(ref b) => CommandEnv::for_branch(config, b)?,
+        None => CommandEnv::for_action(config)?,
     };
     let ctx = env.context(yes);
 
@@ -136,7 +136,7 @@ pub fn handle_squash(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action("squash", config)?;
+    let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();

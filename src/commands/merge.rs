@@ -107,7 +107,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
 
-    let env = CommandEnv::for_action("merge", config)?;
+    let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
