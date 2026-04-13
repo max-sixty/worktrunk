@@ -48,6 +48,8 @@
 
 - **Detect `AA` and `DD` unmerged status codes**: The working-tree conflict check caught 5 of 7 unmerged states but missed `AA` (both added) and `DD` (both deleted). Worktrees with these conflict types now fall back to the commit-based check as intended. ([#2124](https://github.com/max-sixty/worktrunk/pull/2124))
 
+- **Squash detection no longer silently misses branches when `git diff-tree` fails**: The patch-id pipeline used for squash-merge detection didn't check whether `git diff-tree` exited cleanly — a failed source command fed `git patch-id` a truncated stream, producing a bogus patch-id and reporting "not squashed" when the branch may have been. Pipeline now bails on source-exit non-zero, and streams directly between commands via an OS pipe rather than buffering in-process. ([#2136](https://github.com/max-sixty/worktrunk/pull/2136))
+
 - **Nushell multi-line `--execute` payloads**: The nushell wrapper was executing the exec directive file line-by-line, so multi-line payloads ran as separate shell sessions — `cd` and variable assignments didn't persist across lines. Now matches bash/zsh/fish `source` semantics. ([#2134](https://github.com/max-sixty/worktrunk/pull/2134))
 
 - **Redundant "To configure" hint for outdated shell wrappers**: When a shell's integration file exists but is stale, `wt config show` no longer prints both a specific `wt config shell install <shell>` hint and the generic "To configure" summary. The summary now appears only when a shell is genuinely not configured. ([#2152](https://github.com/max-sixty/worktrunk/pull/2152))
