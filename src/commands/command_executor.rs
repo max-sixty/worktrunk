@@ -355,17 +355,20 @@ fn run_concurrent_group(
         announce_command(cmd, origin);
     }
 
+    // The concurrent path requires `lazy_template` so expansion sees the
+    // fresh git-config state at execution time (prior pipeline steps may
+    // have set `vars.*`). Alias prep sets this unconditionally; hook prep
+    // will when concurrent hooks ship.
     let mut expanded: Vec<String> = Vec::with_capacity(cmds.len());
     for cmd in cmds {
-        let s = if let Some(template) = &cmd.lazy_template {
-            let label = expansion_label(cmd, origin);
-            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-                .context("failed to deserialize context_json")?;
-            expand_shell_template(template, &context, repo, &label)?
-        } else {
-            cmd.expanded.clone()
-        };
-        expanded.push(s);
+        let template = cmd
+            .lazy_template
+            .as_ref()
+            .expect("concurrent group commands must carry a lazy_template");
+        let label = expansion_label(cmd, origin);
+        let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+            .context("failed to deserialize context_json")?;
+        expanded.push(expand_shell_template(template, &context, repo, &label)?);
     }
 
     let log_labels: Vec<Option<String>> = cmds

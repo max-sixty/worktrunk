@@ -499,7 +499,12 @@ mod tests {
     /// `DirectivePassthrough` with both `cd_file` and `legacy_file` set must
     /// propagate both env vars to the child. The child script echoes each env
     /// var; we assert both values are delivered.
+    ///
+    /// Unix-only: the script uses POSIX `sh` redirect syntax and relies on
+    /// native temp paths that don't need escaping. Git Bash on Windows would
+    /// need the paths converted to `/c/...` form first.
     #[test]
+    #[cfg(unix)]
     fn test_directive_env_vars_passed_through() {
         let cd = NamedTempFile::new().unwrap();
         let legacy = NamedTempFile::new().unwrap();
