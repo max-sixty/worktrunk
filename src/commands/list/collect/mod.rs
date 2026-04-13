@@ -876,50 +876,72 @@ pub fn collect(
         &expected_results,
         drain_deadline,
         integration_target.as_deref(),
-        |item_idx, item| {
-            // Trace first result arrival
-            if !first_result_traced {
-                first_result_traced = true;
-                worktrunk::shell_exec::trace_instant("First result received");
+        |event| match event {
+            results::DrainEvent::Result { item_idx, item } => {
+                // Trace first result arrival
+                if !first_result_traced {
+                    first_result_traced = true;
+                    worktrunk::shell_exec::trace_instant("First result received");
+                }
+
+                // Progressive mode only: update UI. `status_symbols` is set by
+                // `drain_results` itself (once all status-feeding tasks for this
+                // item have arrived successfully); here we only re-render.
+                if let Some(ref mut table) = progressive_table {
+                    let dim = Style::new().dimmed();
+
+                    completed_results += 1;
+                    let total_results = expected_results.count();
+
+                    // Catch counting bugs: completed should never exceed expected
+                    debug_assert!(
+                        completed_results <= total_results,
+                        "completed ({completed_results}) > expected ({total_results}): \
+                         task result sent without registering expectation"
+                    );
+                    if completed_results > total_results {
+                        progress_overflow = true;
+                    }
+
+                    // Update footer progress
+                    let footer_msg = format!(
+                        "{INFO_SYMBOL} {dim}{footer_base} ({completed_results}/{total_results} loaded){dim:#}"
+                    );
+                    table.update_footer(footer_msg);
+
+                    // Re-render the row with caching (now includes status if computed)
+                    let rendered = layout.format_list_item_line(item);
+
+                    // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
+                    if rendered != last_rendered_lines[item_idx] {
+                        last_rendered_lines[item_idx] = rendered.clone();
+                        table.update_row(item_idx, rendered);
+                    }
+
+                    // Flush updates to terminal
+                    if let Err(e) = table.flush() {
+                        log::debug!("Progressive table flush failed: {}", e);
+                    }
+                }
             }
-
-            // Progressive mode only: update UI. `status_symbols` is set by
-            // `drain_results` itself (once all status-feeding tasks for this
-            // item have arrived successfully); here we only re-render.
-            if let Some(ref mut table) = progressive_table {
-                let dim = Style::new().dimmed();
-
-                completed_results += 1;
-                let total_results = expected_results.count();
-
-                // Catch counting bugs: completed should never exceed expected
-                debug_assert!(
-                    completed_results <= total_results,
-                    "completed ({completed_results}) > expected ({total_results}): \
-                     task result sent without registering expectation"
-                );
-                if completed_results > total_results {
-                    progress_overflow = true;
-                }
-
-                // Update footer progress
-                let footer_msg = format!(
-                    "{INFO_SYMBOL} {dim}{footer_base} ({completed_results}/{total_results} loaded){dim:#}"
-                );
-                table.update_footer(footer_msg);
-
-                // Re-render the row with caching (now includes status if computed)
-                let rendered = layout.format_list_item_line(item);
-
-                // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
-                if rendered != last_rendered_lines[item_idx] {
-                    last_rendered_lines[item_idx] = rendered.clone();
-                    table.update_row(item_idx, rendered);
-                }
-
-                // Flush updates to terminal
-                if let Err(e) = table.flush() {
-                    log::debug!("Progressive table flush failed: {}", e);
+            results::DrainEvent::Stall { pending } => {
+                // Collection has been silent for `STALL_THRESHOLD`; surface
+                // one task we're still waiting on so the user can see where
+                // the hang is. Progressive mode only — there's no live footer
+                // to update otherwise.
+                if let Some(ref mut table) = progressive_table {
+                    let dim = Style::new().dimmed();
+                    let total_results = expected_results.count();
+                    let kind_str: &'static str = pending.kind.into();
+                    let footer_msg = format!(
+                        "{INFO_SYMBOL} {dim}{footer_base} ({completed_results}/{total_results} loaded, waiting for {kind_str} on {name}){dim:#}",
+                        name = pending.name
+                    );
+                    if table.update_footer(footer_msg)
+                        && let Err(e) = table.flush()
+                    {
+                        log::debug!("Progressive table flush failed: {}", e);
+                    }
                 }
             }
         },
@@ -1243,7 +1265,7 @@ pub fn populate_item(
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
         target.as_deref(),
-        |_item_idx, _item| {},
+        |_event| {},
     );
 
     // Handle timeout (silent for statusline - just log it)
