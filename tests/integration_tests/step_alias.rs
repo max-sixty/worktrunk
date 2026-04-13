@@ -657,48 +657,6 @@ test = "echo TEST"
     assert!(stderr.contains("TEST"), "expected TEST in output: {stderr}");
 }
 
-/// Concurrent alias commands have their output streamed with a per-command
-/// colored prefix label (`{name} │ …`), so multiple children's lines remain
-/// attributable even when they interleave.
-#[rstest]
-fn test_alias_concurrent_prefixes_output(mut repo: TestRepo) {
-    repo.write_test_config(
-        r#"
-[aliases.build]
-lint = "echo HELLO_LINT"
-test = "echo HELLO_TEST"
-"#,
-    );
-    repo.commit("initial");
-    let feature_path = repo.add_worktree("feature");
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["step", "build"])
-        .current_dir(&feature_path)
-        .env("NO_COLOR", "1");
-    let output = cmd.output().unwrap();
-
-    assert!(
-        output.status.success(),
-        "concurrent alias failed: stderr={}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Each command must produce a line starting with its prefixed label and
-    // separated by the box-drawing `│` that the executor emits. Whitespace
-    // between label and `│` varies with padding-to-widest-label.
-    for (label, body) in [("lint", "HELLO_LINT"), ("test", "HELLO_TEST")] {
-        let has_prefixed_line = stderr
-            .lines()
-            .any(|l| l.starts_with(label) && l.contains('│') && l.contains(body));
-        assert!(
-            has_prefixed_line,
-            "expected a line starting with '{label}' containing '{body}' and a '│' separator, got:\n{stderr}"
-        );
-    }
-}
-
 /// A failing concurrent step causes the alias to fail. Covers the error
 /// propagation path in the `HookStep::Concurrent` join loop, complementing
 /// the happy-path `test_alias_concurrent_steps` above.

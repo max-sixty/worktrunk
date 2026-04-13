@@ -13,8 +13,9 @@ use worktrunk::styling::{eprintln, info_message};
 use crate::cli::SwitchFormat;
 
 use super::command_approval::approve_hooks;
+use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::hooks::{HookFailureStrategy, execute_hook};
+use super::hooks::execute_hook;
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
     path_mismatch, plan_switch,
@@ -147,7 +148,7 @@ pub(crate) fn run_pre_switch_hooks(
             &pre_ctx,
             HookType::PreSwitch,
             &extra_vars,
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
             &[],
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
