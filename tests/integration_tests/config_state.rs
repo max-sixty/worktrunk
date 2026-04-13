@@ -1896,8 +1896,9 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
-    // Redact dynamic timestamps and sizes; sanitized names for "main"/"server"
-    // pass through unchanged (no hash suffix on filesystem-safe names).
+    // Redact dynamic timestamps and sizes. "main" and "server" are already
+    // filename-safe, so sanitize_for_filename passes them through unchanged —
+    // no hash suffixes appear and no redaction is needed.
     let mut settings = insta::Settings::clone_current();
     settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
     settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);

@@ -132,6 +132,19 @@ When both user and project config define the same alias name, both run — user 
 
 Alias names that collide with built-in step commands (`commit`, `squash`, `rebase`, etc.) are shadowed by the built-in.
 
+### Recipe: tail a specific hook log
+
+`wt config state logs --format=json` emits structured entries — `branch`, `source`, `hook_type`, `name`, `path`. Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
+
+```toml
+[aliases]
+# Tail the current worktree's post-start hook named {{ name }}:
+#   wt step hook-log --name=server
+hook-log = '''tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name }}" '.hook_output[] | select(.branch == "{{ branch }}" and .hook_type == "post-start" and (.name == $name or (.name | startswith($name + "-")))) | .path' | head -1)"'''
+```
+
+The `startswith($name + "-")` branch matches the sanitized-with-hash form (`server-abc`) so the same alias works for hook names that required sanitization.
+
 ### Recipe: move or copy in-progress changes to a new worktree
 
 Aliases compose existing commands into richer workflows. These three aliases wrap `wt switch --create` with git's stash and diff plumbing so staged, unstaged, and untracked changes can follow you into a new worktree:
