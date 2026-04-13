@@ -1092,6 +1092,7 @@ pre-merge = [
     /// The building blocks of `wt merge` — commit, squash, rebase, push — plus standalone utilities.
     #[command(
         name = "step",
+        arg_required_else_help = true,
         after_long_help = r#"## Examples
 
 Commit with LLM-generated message:
@@ -1186,7 +1187,7 @@ Alias names that match a built-in step command (`commit`, `squash`, etc.) are sh
     )]
     Step {
         #[command(subcommand)]
-        action: Option<StepCommand>,
+        action: StepCommand,
     },
 
     /// Run configured hooks

@@ -431,36 +431,27 @@ impl AliasExecCtx<'_> {
     }
 }
 
-/// Render `wt step` help and list any configured aliases.
-///
-/// Invoked when `wt step` is run with no subcommand — gives users one place
-/// to discover both built-in steps and aliases. Unlike `step_alias`, this
-/// tolerates running outside a repository: user-config aliases still list,
-/// project-config aliases just get skipped.
-pub(crate) fn step_list() -> anyhow::Result<()> {
-    // Route through clap's own `-h` error path so styles, display_name, and
-    // global settings (`disable_help_subcommand`, etc.) are propagated from
-    // the root Cli. Rendering the subcommand's help directly via
-    // `find_subcommand_mut(...).render_help()` skips that propagation.
-    let mut cmd = crate::cli::build_command();
-    let help = match cmd.try_get_matches_from_mut(["wt", "step", "-h"]) {
-        Ok(_) => bail!("Expected clap to emit help, got a successful parse"),
-        Err(e)
-            if matches!(
-                e.kind(),
-                clap::error::ErrorKind::DisplayHelp
-                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
-            ) =>
-        {
-            e.render().ansi().to_string()
-        }
-        Err(e) => return Err(anyhow::anyhow!("Failed to render step help: {e}")),
-    };
+/// Where an alias came from. When the same name is defined in both configs,
+/// the listing shows both entries in runtime order (user first, then project)
+/// rather than merging them, so users see the real commands from each source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AliasSource {
+    User,
+    Project,
+}
 
+/// Splice the Aliases section into clap-rendered `wt step` help, if any
+/// aliases are configured.
+///
+/// Called from the help path in `help.rs` — which covers `wt step`
+/// (via `arg_required_else_help`), `wt step -h`, and `wt step --help`,
+/// all of which flow through clap's `DisplayHelp` error. Tolerates
+/// running outside a repository: user-config aliases still list,
+/// project-config aliases just get skipped.
+pub(crate) fn augment_step_help(help: &str) -> String {
     let aliases = load_aliases_for_listing();
     if aliases.is_empty() {
-        eprint!("{help}");
-        return Ok(());
+        return help.to_string();
     }
 
     // Place the Aliases section right after Commands so it sits next to the
@@ -475,21 +466,13 @@ pub(crate) fn step_list() -> anyhow::Result<()> {
         crate::cli::help_styles().get_header().render()
     );
     match help.find(&options_heading) {
-        Some(pos) => {
-            eprint!("{}", &help[..pos]);
-            eprint!("{aliases_section}\n\n");
-            eprint!("{}", &help[pos..]);
-        }
+        Some(pos) => format!("{}{aliases_section}\n\n{}", &help[..pos], &help[pos..]),
         None => {
             // Clap's styling changed; fall back to appending so we don't
             // silently drop the aliases list.
-            eprint!("{help}");
-            eprintln!();
-            eprint!("{aliases_section}");
+            format!("{help}\n{aliases_section}")
         }
     }
-
-    Ok(())
 }
 
 /// Format the list of aliases as a styled help section.
@@ -498,22 +481,39 @@ pub(crate) fn step_list() -> anyhow::Result<()> {
 /// bold+cyan names) so the Aliases section blends in with the rest of
 /// `-h` output. Returns the block without leading or trailing blank lines —
 /// the caller positions it.
-fn render_aliases_section(aliases: &BTreeMap<String, CommandConfig>) -> String {
+///
+/// When a name is defined in both user and project config, two rows are
+/// shown (user first, then project, matching runtime order). Both rows
+/// carry a source marker so the reader can tell which pipeline is which.
+fn render_aliases_section(entries: &[(String, CommandConfig, AliasSource)]) -> String {
     use std::fmt::Write as _;
+
+    // Names appearing in both sources need source markers to be distinguishable.
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (name, _, _) in entries {
+        *counts.entry(name.as_str()).or_insert(0) += 1;
+    }
 
     let mut out = String::new();
     let _ = writeln!(out, "{}", cformat!("<bold><green>Aliases:</></>"));
-    let name_width = aliases.keys().map(|n| n.len()).max().unwrap_or(0);
+    let name_width = entries.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0);
     let mut first = true;
-    for (name, cfg) in aliases {
+    for (name, cfg, source) in entries {
         if !first {
             out.push('\n');
         }
         first = false;
         let padding = " ".repeat(name_width - name.len());
         let summary = format_alias_summary(cfg);
+        // Shadowed-by-builtin is a warning (yellow) and takes precedence over
+        // the source marker so the row doesn't pile up suffixes.
         let suffix = if BUILTIN_STEP_COMMANDS.contains(&name.as_str()) {
             cformat!(" <yellow>(shadowed by built-in)</>")
+        } else if counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+            match source {
+                AliasSource::User => cformat!(" <dim>(user)</>"),
+                AliasSource::Project => cformat!(" <dim>(project)</>"),
+            }
         } else {
             String::new()
         };
@@ -526,28 +526,48 @@ fn render_aliases_section(aliases: &BTreeMap<String, CommandConfig>) -> String {
     out
 }
 
-/// Load merged aliases (user + project) for display.
+/// Load aliases for display as a flat list sorted by name, with source tagged.
+///
+/// Duplicate names (same alias in both user and project) appear twice — once
+/// per source, user first, matching runtime execution order. Showing each
+/// separately preserves the individual command text; merging them would
+/// reduce to an uninformative step count when both are unnamed singles.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
 /// `step_alias` surfaces those errors at execution time.
-fn load_aliases_for_listing() -> BTreeMap<String, CommandConfig> {
-    let Ok(user_config) = UserConfig::load() else {
-        return BTreeMap::new();
-    };
-    let (project_id, project_config) = match Repository::current() {
-        Ok(repo) => (
-            repo.project_identifier().ok(),
-            ProjectConfig::load(&repo, true).ok().flatten(),
-        ),
-        Err(_) => (None, None),
-    };
-    let mut aliases = user_config.aliases(project_id.as_deref());
-    if let Some(pc) = project_config.as_ref() {
-        append_aliases(&mut aliases, &pc.aliases);
-    }
-    aliases
+fn load_aliases_for_listing() -> Vec<(String, CommandConfig, AliasSource)> {
+    let user_aliases = UserConfig::load()
+        .ok()
+        .map(|uc| {
+            let project_id = Repository::current()
+                .ok()
+                .and_then(|r| r.project_identifier().ok());
+            uc.aliases(project_id.as_deref())
+        })
+        .unwrap_or_default();
+
+    let project_aliases = Repository::current()
+        .ok()
+        .and_then(|repo| ProjectConfig::load(&repo, true).ok().flatten())
+        .map(|pc| pc.aliases)
+        .unwrap_or_default();
+
+    let mut entries: Vec<(String, CommandConfig, AliasSource)> = user_aliases
+        .into_iter()
+        .map(|(n, c)| (n, c, AliasSource::User))
+        .chain(
+            project_aliases
+                .into_iter()
+                .map(|(n, c)| (n, c, AliasSource::Project)),
+        )
+        .collect();
+
+    // Sort by name; for ties, user before project (derived Ord on AliasSource)
+    // so duplicates display in runtime execution order.
+    entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+    entries
 }
 
 /// One-line summary of an alias's command(s) suitable for a help listing.
@@ -688,6 +708,48 @@ test = "cargo test"
         // Anonymous pipeline entries fall back to a step count.
         let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
         assert_eq!(format_alias_summary(&cfg), "<2 steps>");
+    }
+
+    #[test]
+    fn test_render_aliases_section_source_annotations() {
+        // Names unique to one source have no annotation. Names defined in
+        // both sources show two rows (user first, matching runtime order)
+        // and each row carries a source marker so the reader can tell them
+        // apart. Shadowed-by-builtin takes precedence over the source marker.
+        let entries = vec![
+            (
+                "only-user".to_string(),
+                cfg_from_toml(r#"cmd = "echo u""#),
+                AliasSource::User,
+            ),
+            (
+                "only-project".to_string(),
+                cfg_from_toml(r#"cmd = "echo p""#),
+                AliasSource::Project,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo from-user""#),
+                AliasSource::User,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo from-project""#),
+                AliasSource::Project,
+            ),
+        ];
+        // Caller passes pre-sorted entries; mirror that here.
+        let mut sorted = entries;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+        let rendered = render_aliases_section(&sorted);
+        let rendered = rendered.ansi_strip();
+        insta::assert_snapshot!(rendered, @r"
+        Aliases:
+          only-project  echo p
+          only-user     echo u
+          shared        echo from-user (user)
+          shared        echo from-project (project)
+        ");
     }
 
     #[test]
