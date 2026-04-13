@@ -36,7 +36,7 @@ wt step - Run individual operations[0m
 
 The building blocks of [1mwt merge[0m — commit, squash, rebase, push — plus standalone utilities.[0m
 
-Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
   [1m[36mcommit[0m        Stage and commit with LLM-generated message

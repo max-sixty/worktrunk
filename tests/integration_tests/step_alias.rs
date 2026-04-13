@@ -753,6 +753,33 @@ fn test_step_list_no_aliases(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &[], Some(&feature_path)));
 }
 
+/// `wt step --help` includes the same Aliases section as bare `wt step`.
+///
+/// Without this, users running `--help` in the normal discovery flow would
+/// see only built-in commands and miss their configured aliases.
+#[cfg(not(windows))]
+#[rstest]
+fn test_step_help_includes_aliases(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["-h"],
+        Some(&feature_path)
+    ));
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {

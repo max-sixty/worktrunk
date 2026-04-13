@@ -41,7 +41,7 @@ wt step - Run individual operations
 
 The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 
-Usage: wt step [OPTIONS] [COMMAND]
+Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:
   commit        Stage and commit with LLM-generated message
