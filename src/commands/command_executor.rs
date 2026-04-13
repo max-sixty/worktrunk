@@ -8,7 +8,7 @@ use worktrunk::config::{
     Command, CommandConfig, HookStep, UserConfig, expand_template, template_references_var,
     validate_template_syntax,
 };
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
 use worktrunk::path::{format_path_for_display, to_posix_path};
 use worktrunk::styling::{eprintln, error_message, format_bash_with_gutter, progress_message};
 
@@ -513,12 +513,22 @@ fn expansion_label(cmd: &PreparedCommand, origin: &CommandOrigin) -> String {
 }
 
 /// Handle a command execution error per origin and failure strategy.
+///
+/// Signal-derived child exits (SIGINT/SIGTERM) bypass both `origin` wrapping
+/// and `failure_strategy`: the error is returned as `AlreadyDisplayed` with
+/// the `128 + signal` exit code so the enclosing loop aborts. This enforces
+/// the project-wide Ctrl-C cancellation policy — see the "Signal Handling"
+/// section of the root `CLAUDE.md` for the rationale.
 fn handle_command_error(
     err: anyhow::Error,
     cmd: &PreparedCommand,
     origin: &CommandOrigin,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    if let Some(exit_code) = interrupt_exit_code(&err) {
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
+    }
+
     let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
         match wt_err {
             WorktrunkError::ChildProcessExited { message, code, .. } => {

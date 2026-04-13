@@ -238,6 +238,21 @@ if msg.contains("no merge base") { return Ok(true); }
 
 When no structured alternative exists, document the fragility inline.
 
+### Signal Handling: Ctrl-C Cancels the Current Command
+
+**Policy:** when a child process exits from a signal (SIGINT, SIGTERM), every loop in the foreground execution path MUST abort rather than continue to the next iteration. This applies to worktree loops (`wt step for-each`), hook pipelines, alias steps, concurrent groups, and any future code that runs multiple child processes in sequence.
+
+**Why:** wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signals to child process groups before exiting cleanly. As a side effect, wt itself does not die from the user's Ctrl-C — only the current child does. Without this policy, a single Ctrl-C against `wt merge` (or any multi-step command) would let wt charge through the remaining hook steps, with `FailureStrategy::Warn` silently swallowing each interrupt. Users expect Ctrl-C to stop the command; treating signal-derived exits as ordinary per-iteration failures violates that.
+
+**Implementation:**
+
+- Signal-derived child exits surface as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`. The `signal` field is the structured channel — never sniff `code >= 128` or parse error messages.
+- Use `worktrunk::git::interrupt_exit_code(&err)` to detect them. When it returns `Some(exit_code)`, propagate via `WorktrunkError::AlreadyDisplayed { exit_code }` (`128 + sig` by convention — 130 for SIGINT, 143 for SIGTERM) and break the loop.
+- The check happens **before** any `FailureStrategy` branch — Warn must NOT swallow signal-derived errors.
+- `handle_command_error` in `src/commands/command_executor.rs` enforces the policy for hook and alias pipelines (foreground and concurrent groups). `for_each.rs` enforces it directly for the worktree loop.
+
+When adding a new code path that loops over child processes, run `interrupt_exit_code` on per-iteration errors and break.
+
 ## Hook Output Logs
 
 Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Per-branch logs live in subtrees; same operation on same branch overwrites the previous log.

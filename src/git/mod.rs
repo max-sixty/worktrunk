@@ -52,6 +52,7 @@ pub use error::{
     // Error inspection functions
     add_hook_skip_hint,
     exit_code,
+    interrupt_exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
