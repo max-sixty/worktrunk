@@ -45,9 +45,9 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config uses deprecated config section: [ci] → [forge][39m
-[2m↳[22m [2mTo apply:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[33m▲[39m [33mUser config: [1m[ci][22m is deprecated in favor of [1m[forge][22m[39m
+[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [1mindex 2e0e0bb..9d78d51 100644[m
 [107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
@@ -61,11 +61,6 @@ exit_code: 0
 [107m [0m [32m+[m[32m[forge][m
 [107m [0m [32m+[m[32mplatform = "github"[m
 [33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m
-[2m○[22m Current config:
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
-[107m [0m 
-[107m [0m [2m[36m[ci]
-[107m [0m [2mplatform = [0m[2m[32m"github"
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
