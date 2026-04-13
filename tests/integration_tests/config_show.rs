@@ -2742,6 +2742,29 @@ fn test_config_update_print_emits_both_configs(repo: TestRepo) {
     assert!(stdout.contains("pre-start"));
 }
 
+/// `wt config update --print` on a clean config exits silently with empty
+/// stdout — no "nothing to do" noise to corrupt a pipe.
+#[rstest]
+fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must be empty on clean config"
+    );
+}
+
 /// `wt config update --print` emits the migrated TOML to stdout without
 /// touching the config file. Warnings still go to stderr.
 #[rstest]
