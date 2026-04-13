@@ -6,7 +6,7 @@ docs = "cd docs && zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
 clippy = "pre-commit run clippy --all-files || true"
-build = "cargo test --no-run --all-targets"
+build = "cargo test --no-run --all-targets --locked --all-features"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 

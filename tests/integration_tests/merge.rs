@@ -673,7 +673,7 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
     // Verify the command ran in the main worktree (not the feature worktree).
     // post-merge runs in the background, so poll for the file.
     let marker_file = repo.root_path().join("post-merge-ran.txt");
-    wait_for_file(&marker_file);
+    wait_for_file_content(&marker_file);
     let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
         content.contains("merged feature to main"),

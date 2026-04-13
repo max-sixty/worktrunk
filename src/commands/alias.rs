@@ -1,40 +1,25 @@
 //! Alias command implementation.
 //!
 //! Aliases are user-defined commands configured in `[aliases]` sections of user
-//! or project config. They share execution infrastructure with hooks:
-//! `execute_shell_command` (signal forwarding, ANSI reset, `Cmd` tracing),
-//! `CommandConfig` (pipeline steps), template expansion, and the approval system.
+//! or project config. They share the foreground execution path with hooks via
+//! `execute_pipeline_foreground` in `command_executor`, which handles pipeline
+//! structure, template expansion, concurrent steps, and error handling.
 //!
 //! ## Execution model
 //!
-//! Aliases iterate `CommandConfig::steps()`, preserving pipeline structure:
-//! - `HookStep::Single` — serial execution, fail-fast
-//! - `HookStep::Concurrent` — commands spawn via `thread::scope`, all run to
-//!   completion, first error propagated
+//! Aliases build `ForegroundStep`s from `CommandConfig::steps()`, preserving
+//! pipeline structure (`Single` vs `Concurrent`). All commands use lazy template
+//! expansion — `vars.*` references resolve from git config at execution time,
+//! so prior steps that set vars via `wt config state vars set` are visible to
+//! later steps.
 //!
-//! Template expansion happens at execution time (not at a separate prep step),
-//! so `vars.*` references naturally read fresh values from git config — prior
-//! steps that set vars via `wt config state vars set` are visible to later steps.
+//! ## Why foreground and background execution differ
 //!
-//! ## Why concurrent execution isn't shared with `run_pipeline`
-//!
-//! Both alias and background pipeline runners need "spawn N commands, wait for
-//! all". They use different primitives because their leaf executors differ:
-//!
-//! - Aliases call `execute_shell_command` (the unified streaming executor),
-//!   which is *blocking* — it streams stdout/stderr to the terminal and only
-//!   returns once the child exits. Concurrency therefore needs OS threads
-//!   (`thread::scope`), one thread per command.
-//! - The background pipeline runner spawns shell processes directly with
-//!   stdout/stderr redirected to per-command log files. The `Child` handle is
-//!   the concurrency primitive — no threads needed.
-//!
-//! Bridging the two would require either making `execute_shell_command`
-//! return a non-blocking handle (invasive — entangles signal forwarding,
-//! ANSI reset, and `Cmd` streaming), or running background commands in
-//! threads they don't need. Neither pays for the abstraction. The pipeline
-//! summary formatter, on the other hand, is shared via
-//! `hooks::format_pipeline_summary_from_names`.
+//! Foreground execution (aliases + foreground hooks) uses `execute_shell_command`
+//! which streams stdout/stderr to the terminal. Concurrency needs OS threads
+//! (`thread::scope`), one per command. Background pipeline execution spawns
+//! shell processes with stdout/stderr redirected to log files — no threads
+//! needed. The two share preparation (`PreparedStep`) but not execution.
 //!
 //! ## Trust model
 //!
@@ -45,23 +30,23 @@
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
 //! arbitrary shell into the interactive session.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases};
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
 };
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, build_hook_context, expand_shell_template, wait_first_error,
+    CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
+    build_hook_context, execute_pipeline_foreground, expand_shell_template,
 };
-use crate::commands::force_serial_concurrent;
 use crate::commands::hooks::format_pipeline_summary_from_names;
-use crate::output::{DirectivePassthrough, execute_shell_command};
+use crate::output::DirectivePassthrough;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// shadowed by the built-in and will never run.
@@ -358,76 +343,50 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     // CD passed through, EXEC scrubbed (see `output::global` for rationale).
     let directives = DirectivePassthrough::inherit_from_env();
 
-    let exec = AliasExecCtx {
-        context_map: &context_map,
-        repo: &repo,
-        alias_name: &opts.name,
-        wt_path: &wt_path,
-        context_json: &context_json,
-        directives: &directives,
+    // Build ForegroundSteps: all alias commands use lazy expansion so vars.*
+    // references resolved from git config at execution time are visible to
+    // later steps that set vars via `wt config state vars set`.
+    let origin = CommandOrigin::Alias {
+        name: opts.name.clone(),
     };
-
-    for step in cmd_config.steps() {
-        match step {
-            HookStep::Single(cmd) => exec.run(cmd)?,
-            HookStep::Concurrent(cmds) => {
-                if force_serial_concurrent() {
-                    // Test-only path: deterministic ordering for snapshots.
-                    for cmd in cmds {
-                        exec.run(cmd)?;
-                    }
-                } else {
-                    std::thread::scope(|s| {
-                        let handles: Vec<_> =
-                            cmds.iter().map(|cmd| s.spawn(|| exec.run(cmd))).collect();
-                        wait_first_error(
-                            handles
-                                .into_iter()
-                                .map(|h| h.join().expect("alias command thread panicked")),
-                        )
-                    })?;
+    let foreground_steps: Vec<ForegroundStep> = cmd_config
+        .steps()
+        .iter()
+        .map(|step| {
+            let prepared = match step {
+                HookStep::Single(cmd) => {
+                    PreparedStep::Single(alias_prepared_command(cmd, &context_json))
                 }
+                HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
+                    cmds.iter()
+                        .map(|cmd| alias_prepared_command(cmd, &context_json))
+                        .collect(),
+                ),
+            };
+            ForegroundStep {
+                step: prepared,
+                origin: origin.clone(),
             }
-        }
-    }
+        })
+        .collect();
 
-    Ok(())
+    execute_pipeline_foreground(
+        &foreground_steps,
+        &repo,
+        &wt_path,
+        &directives,
+        FailureStrategy::FailFast,
+        true, // aliases support concurrent execution
+    )
 }
 
-/// Shared state for executing alias commands within a pipeline.
-struct AliasExecCtx<'a> {
-    context_map: &'a HashMap<String, String>,
-    repo: &'a Repository,
-    alias_name: &'a str,
-    wt_path: &'a std::path::Path,
-    context_json: &'a str,
-    directives: &'a DirectivePassthrough,
-}
-
-impl AliasExecCtx<'_> {
-    /// Expand and execute a single alias command.
-    ///
-    /// `vars.*` references are resolved from git config at expansion time,
-    /// so prior pipeline steps that set vars via `wt config state vars set`
-    /// are visible to later steps without special lazy-expansion handling.
-    fn run(&self, cmd: &worktrunk::config::Command) -> anyhow::Result<()> {
-        let command =
-            expand_shell_template(&cmd.template, self.context_map, self.repo, self.alias_name)?;
-        if let Err(err) = execute_shell_command(
-            self.wt_path,
-            &command,
-            Some(self.context_json),
-            None,
-            self.directives.clone(),
-        ) {
-            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
-                err.downcast_ref::<WorktrunkError>()
-            {
-                return Err(WorktrunkError::AlreadyDisplayed { exit_code: *code }.into());
-            }
-            bail!("Failed to run alias '{}': {}", self.alias_name, err);
-        }
-        Ok(())
+/// Build a PreparedCommand for an alias, deferring template expansion to execution time.
+fn alias_prepared_command(cmd: &worktrunk::config::Command, context_json: &str) -> PreparedCommand {
+    PreparedCommand {
+        name: cmd.name.clone(),
+        expanded: cmd.template.clone(),
+        context_json: context_json.to_string(),
+        lazy_template: Some(cmd.template.clone()),
     }
 }
 
@@ -656,100 +615,6 @@ test = "cargo test"
         );
         let msg = format_alias_announcement("check", &cfg);
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
-    }
-
-    #[test]
-    fn test_format_alias_summary_single_command() {
-        let cfg = cfg_from_toml(r#"cmd = "echo hello""#);
-        assert_eq!(format_alias_summary(&cfg), "echo hello");
-    }
-
-    #[test]
-    fn test_format_alias_summary_multiline_gets_ellipsis() {
-        let cfg = cfg_from_toml(
-            r#"cmd = """
-git fetch --all --prune
-git rebase @{u}
-""""#,
-        );
-        assert_eq!(format_alias_summary(&cfg), "git fetch --all --prune…");
-    }
-
-    #[test]
-    fn test_format_alias_summary_pipeline_named() {
-        let cfg = cfg_from_toml(
-            r#"
-cmd = [
-    { install = "npm install" },
-    { build = "npm run build", lint = "npm run lint" },
-]
-"#,
-        );
-        assert_eq!(format_alias_summary(&cfg), "install; build, lint");
-    }
-
-    #[test]
-    fn test_format_alias_summary_concurrent_named() {
-        // Single-step concurrent form: `[aliases.check]\nbuild=…\ntest=…`
-        // — one step, multiple commands. Must use the pipeline formatter,
-        // not fall back to "show first command's template".
-        let cfg = cfg_from_toml(
-            r#"
-[cmd]
-build = "cargo build"
-test = "cargo test"
-"#,
-        );
-        assert_eq!(format_alias_summary(&cfg), "build, test");
-    }
-
-    #[test]
-    fn test_format_alias_summary_pipeline_all_unnamed() {
-        // Anonymous pipeline entries fall back to a step count.
-        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
-        assert_eq!(format_alias_summary(&cfg), "<2 steps>");
-    }
-
-    #[test]
-    fn test_render_aliases_section_source_annotations() {
-        // Names unique to one source have no annotation. Names defined in
-        // both sources show two rows (user first, matching runtime order)
-        // and each row carries a source marker so the reader can tell them
-        // apart. Shadowed-by-builtin takes precedence over the source marker.
-        let entries = vec![
-            (
-                "only-user".to_string(),
-                cfg_from_toml(r#"cmd = "echo u""#),
-                AliasSource::User,
-            ),
-            (
-                "only-project".to_string(),
-                cfg_from_toml(r#"cmd = "echo p""#),
-                AliasSource::Project,
-            ),
-            (
-                "shared".to_string(),
-                cfg_from_toml(r#"cmd = "echo from-user""#),
-                AliasSource::User,
-            ),
-            (
-                "shared".to_string(),
-                cfg_from_toml(r#"cmd = "echo from-project""#),
-                AliasSource::Project,
-            ),
-        ];
-        // Caller passes pre-sorted entries; mirror that here.
-        let mut sorted = entries;
-        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
-        let rendered = render_aliases_section(&sorted);
-        let rendered = rendered.ansi_strip();
-        insta::assert_snapshot!(rendered, @r"
-        Aliases:
-          only-project  echo p
-          only-user     echo u
-          shared        echo from-user (user)
-          shared        echo from-project (project)
-        ");
     }
 
     #[test]
@@ -1097,5 +962,99 @@ cmd = [
                  Remove it from the list."
             );
         }
+    }
+
+    #[test]
+    fn test_format_alias_summary_single_command() {
+        let cfg = cfg_from_toml(r#"cmd = "echo hello""#);
+        assert_eq!(format_alias_summary(&cfg), "echo hello");
+    }
+
+    #[test]
+    fn test_format_alias_summary_multiline_gets_ellipsis() {
+        let cfg = cfg_from_toml(
+            r#"cmd = """
+git fetch --all --prune
+git rebase @{u}
+""""#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "git fetch --all --prune…");
+    }
+
+    #[test]
+    fn test_format_alias_summary_pipeline_named() {
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" },
+]
+"#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "install; build, lint");
+    }
+
+    #[test]
+    fn test_format_alias_summary_concurrent_named() {
+        // Single-step concurrent form: `[aliases.check]\nbuild=…\ntest=…`
+        // — one step, multiple commands. Must use the pipeline formatter,
+        // not fall back to "show first command's template".
+        let cfg = cfg_from_toml(
+            r#"
+[cmd]
+build = "cargo build"
+test = "cargo test"
+"#,
+        );
+        assert_eq!(format_alias_summary(&cfg), "build, test");
+    }
+
+    #[test]
+    fn test_format_alias_summary_pipeline_all_unnamed() {
+        // Anonymous pipeline entries fall back to a step count.
+        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
+        assert_eq!(format_alias_summary(&cfg), "<2 steps>");
+    }
+
+    #[test]
+    fn test_render_aliases_section_source_annotations() {
+        // Names unique to one source have no annotation. Names defined in
+        // both sources show two rows (user first, matching runtime order)
+        // and each row carries a source marker so the reader can tell them
+        // apart. Shadowed-by-builtin takes precedence over the source marker.
+        let entries = vec![
+            (
+                "only-user".to_string(),
+                cfg_from_toml(r#"cmd = "echo u""#),
+                AliasSource::User,
+            ),
+            (
+                "only-project".to_string(),
+                cfg_from_toml(r#"cmd = "echo p""#),
+                AliasSource::Project,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo from-user""#),
+                AliasSource::User,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo from-project""#),
+                AliasSource::Project,
+            ),
+        ];
+        // Caller passes pre-sorted entries; mirror that here.
+        let mut sorted = entries;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+        let rendered = render_aliases_section(&sorted);
+        let rendered = rendered.ansi_strip();
+        insta::assert_snapshot!(rendered, @r"
+        Aliases:
+          only-project  echo p
+          only-user     echo u
+          shared        echo from-user (user)
+          shared        echo from-project (project)
+        ");
     }
 }

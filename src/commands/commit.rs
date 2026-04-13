@@ -7,9 +7,8 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_hook_pipeline,
-};
+use super::command_executor::FailureStrategy;
+use super::hooks::{HookCommandSpec, prepare_background_hooks, spawn_hook_pipeline};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -189,7 +188,7 @@ impl CommitOptions<'_> {
                     name_filters: &[],
                     display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
                 },
-                HookFailureStrategy::FailFast,
+                FailureStrategy::FailFast,
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }

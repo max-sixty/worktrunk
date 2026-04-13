@@ -24,12 +24,11 @@ use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
 use super::branch_deletion::delete_branch_if_safe;
+use super::command_executor::FailureStrategy;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_hook_pipeline,
-};
+use super::hooks::{execute_hook, prepare_background_hooks, spawn_hook_pipeline};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::hooks::PostRemoveContext;
@@ -116,7 +115,7 @@ impl PickerCollector {
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
                     &extra_vars,
-                    HookFailureStrategy::FailFast,
+                    FailureStrategy::FailFast,
                     &[],
                     None, // no display path in TUI context
                 )?;

@@ -57,7 +57,7 @@ exit_code: 0
 [107m [0m  [m
 [107m [0m [31m-[ci][m
 [107m [0m [31m-platform = "github"[m
-[107m [0m / No newline at end of file[m
+[107m [0m \ No newline at end of file[m
 [107m [0m [32m+[m[32m[forge][m
 [107m [0m [32m+[m[32mplatform = "github"[m
 [33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m

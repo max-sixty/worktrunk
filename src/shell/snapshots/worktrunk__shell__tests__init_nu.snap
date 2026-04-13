@@ -116,16 +116,14 @@ export def --env --wrapped wt [...args: string@"nu-complete wt"] {
         }
 
         # exec file holds arbitrary shell (e.g. from --execute).
-        # Execute via sh for POSIX shell expansion (globs, pipes, $VAR).
+        # Execute the whole file as one sh invocation so multi-line payloads
+        # share a single shell session (matching bash/zsh/fish `source` semantics:
+        # variables persist, `cd` affects later commands, etc.).
         # Env changes (export) won't persist in the nushell session, but no
         # worktrunk code emits export directives.
         if ($exec_file | path exists) and (open $exec_file --raw | str trim | is-not-empty) {
-            let directives = open $exec_file --raw | str trim | lines
-            for directive in $directives {
-                if ($directive | is-not-empty) {
-                    ^sh -c $directive
-                }
-            }
+            let script = open $exec_file --raw
+            ^sh -c $script
         }
 
         rm -f $cd_file $exec_file
