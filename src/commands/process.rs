@@ -479,7 +479,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
     // TODO: the sweep is global (not branch-scoped), but `HookLog::path()`
     // always prefixes with a branch segment, so we pass a fake `"wt"` here.
     // Cleaner would be a top-level variant resolving to `internal/{op}.log`
-    // alongside the other shared logs (`commands.jsonl`, `verbose.log`, etc.).
+    // alongside the other shared logs (`commands.jsonl`, `trace.log`, etc.).
     if let Err(e) = spawn_detached(
         repo,
         &repo.wt_dir(),

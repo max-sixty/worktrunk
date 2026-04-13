@@ -507,8 +507,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 # Subcommands
@@ -563,6 +563,6 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
