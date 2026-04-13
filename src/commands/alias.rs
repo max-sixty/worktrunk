@@ -492,25 +492,28 @@ fn render_aliases_section(entries: &[(String, CommandConfig, AliasSource)]) -> S
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
+/// Project config is parsed directly from TOML here instead of going through
+/// `ProjectConfig::load`, which emits deprecation/unknown-field warnings as a
+/// side effect. Help is an informational surface that should stay quiet —
+/// users see those warnings from `wt config show` and execution paths. The
+/// `aliases` table has no deprecated forms, so skipping the migration is safe.
+///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
 /// `step_alias` surfaces those errors at execution time.
 fn load_aliases_for_listing() -> Vec<(String, CommandConfig, AliasSource)> {
+    let repo = Repository::current().ok();
+    let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
+
     let user_aliases = UserConfig::load()
         .ok()
-        .map(|uc| {
-            let project_id = Repository::current()
-                .ok()
-                .and_then(|r| r.project_identifier().ok());
-            uc.aliases(project_id.as_deref())
-        })
+        .map(|uc| uc.aliases(project_id.as_deref()))
         .unwrap_or_default();
 
-    let project_aliases = Repository::current()
-        .ok()
-        .and_then(|repo| ProjectConfig::load(&repo, true).ok().flatten())
-        .map(|pc| pc.aliases)
+    let project_aliases = repo
+        .as_ref()
+        .and_then(load_project_aliases_silent)
         .unwrap_or_default();
 
     let mut entries: Vec<(String, CommandConfig, AliasSource)> = user_aliases
@@ -527,6 +530,19 @@ fn load_aliases_for_listing() -> Vec<(String, CommandConfig, AliasSource)> {
     // so duplicates display in runtime execution order.
     entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
     entries
+}
+
+/// Parse `.config/wt.toml` directly, extracting just `aliases`, without
+/// triggering `ProjectConfig::load`'s deprecation warning and hint-writing
+/// side effects. See `load_aliases_for_listing` for why.
+fn load_project_aliases_silent(repo: &Repository) -> Option<BTreeMap<String, CommandConfig>> {
+    let path = repo.project_config_path().ok().flatten()?;
+    if !path.exists() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let config: ProjectConfig = toml::from_str(&contents).ok()?;
+    Some(config.aliases)
 }
 
 /// One-line summary of an alias's command(s) suitable for a help listing.
