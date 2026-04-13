@@ -2646,7 +2646,7 @@ approved-commands = ["npm install", "npm test"]
 /// `wt config update` migrates project config in place (from the main
 /// worktree). Covers the project-config path in `check_project_config`.
 #[rstest]
-fn test_config_update_applies_project_config_migration(mut repo: TestRepo) {
+fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     repo.write_project_config(
         r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
 "#,
@@ -2675,7 +2675,7 @@ fn test_config_update_applies_project_config_migration(mut repo: TestRepo) {
 /// config and instead points at the main worktree. Covers the `is_linked`
 /// branch in `check_project_config`.
 #[rstest]
-fn test_config_update_project_config_from_linked_worktree_shows_hint(mut repo: TestRepo) {
+fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestRepo) {
     repo.write_project_config(
         r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
 "#,
@@ -2715,7 +2715,7 @@ fn test_config_update_project_config_from_linked_worktree_shows_hint(mut repo: T
 /// `wt config update --print` with both user- and project-config deprecations
 /// emits both, separated by labeled headers on stdout.
 #[rstest]
-fn test_config_update_print_emits_both_configs(mut repo: TestRepo) {
+fn test_config_update_print_emits_both_configs(repo: TestRepo) {
     let user_config_path = repo.test_config_path();
     fs::write(
         user_config_path,
