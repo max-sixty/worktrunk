@@ -1173,13 +1173,13 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             {
               "file": "bugfix/internal/remove.log",
               "modified_at": "<MTIME>",
-              "path": "_REPO_/.git/wt/logs/bugfix-zgc/internal/remove.log",
+              "path": "_REPO_/.git/wt/logs/bugfix/internal/remove.log",
               "size": "<SIZE>"
             },
             {
               "file": "feature/user/post-start/npm.log",
               "modified_at": "<MTIME>",
-              "path": "_REPO_/.git/wt/logs/feature-axb/user/post-start/npm-iox.log",
+              "path": "_REPO_/.git/wt/logs/feature/user/post-start/npm.log",
               "size": "<SIZE>"
             }
           ],
@@ -2111,12 +2111,12 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
         .unwrap();
     assert!(output.status.success());
 
-    // Redact dynamic timestamps, sizes, and sanitize hashes (hashes vary per input).
+    // Redact dynamic timestamps and sizes. "main" and "server" are already
+    // filename-safe, so sanitize_for_filename passes them through unchanged —
+    // no hash suffixes appear and no redaction is needed.
     let mut settings = insta::Settings::clone_current();
     settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
     settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
-    settings.add_filter(r"main-[a-z0-9]{3}", "main-<HASH>");
-    settings.add_filter(r"server-[a-z0-9]{3}", "server-<HASH>");
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });

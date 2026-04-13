@@ -23,7 +23,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
     {
       "file": "main/user/post-start/server.log",
       "modified_at": "<TIMESTAMP>",
-      "path": "_REPO_/.git/wt/logs/main-<HASH>/user/post-start/server-<HASH>.log",
+      "path": "_REPO_/.git/wt/logs/main/user/post-start/server.log",
       "size": "<SIZE>"
     }
   ]
