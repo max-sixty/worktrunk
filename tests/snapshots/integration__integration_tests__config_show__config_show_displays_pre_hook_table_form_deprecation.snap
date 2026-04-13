@@ -49,10 +49,10 @@ exit_code: 0
 [33m▲[39m [33mProject config: table form for [1mpre-start[22m, [1mpre-merge[22m is deprecated in favor of the pipeline form. We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially and table form always runs in parallel — migrate now to keep the current serial behavior once the table form is repurposed.[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
+[107m [0m [1mdiff --git a/wt.toml/current b/wt.toml/migrated[m
 [107m [0m [1mindex 3a61835..dc2a222 100644[m
-[107m [0m [1m--- a_REPO_/.config/wt.toml[m
-[107m [0m [1m+++ b_REPO_/.config/wt.toml.new[m
+[107m [0m [1m--- a/wt.toml/current[m
+[107m [0m [1m+++ b/wt.toml/migrated[m
 [107m [0m [36m@@ -1,7 +1,11 @@[m
 [107m [0m [31m-[pre-merge][m
 [107m [0m [32m+[m[32m[[pre-merge]][m

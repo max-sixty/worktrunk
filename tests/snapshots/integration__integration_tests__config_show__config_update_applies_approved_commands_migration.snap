@@ -46,15 +46,15 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config: [1mapproved-commands[22m under [1m[projects][22m is deprecated in favor of [1mapprovals.toml[22m[39m
-[2m↳[22m [2mCopied approved commands to [4mapprovals.toml[24m[22m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
+[107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
 [107m [0m [1mindex 51f8ab1..a30ca31 100644[m
-[107m [0m [1m--- a[TEST_CONFIG][m
-[107m [0m [1m+++ b[TEST_CONFIG_NEW][m
+[107m [0m [1m--- a/test-config.toml/current[m
+[107m [0m [1m+++ b/test-config.toml/migrated[m
 [107m [0m [36m@@ -1,4 +1 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m [31m-[m
 [107m [0m [31m-[projects."github.com/user/repo"][m
 [107m [0m [31m-approved-commands = ["npm install", "npm test"][m
+[2m○[22m Copied approved commands to approvals.toml
 [32m✓[39m [32mUpdated user config[39m

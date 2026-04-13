@@ -520,7 +520,9 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         false, // silent mode - we'll format the output ourselves
     ) {
         if let Some(info) = result.info {
-            out.push_str(&worktrunk::config::format_deprecation_details(&info));
+            out.push_str(&worktrunk::config::format_deprecation_details(
+                &info, &contents,
+            ));
             true
         } else {
             false
@@ -669,7 +671,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         false, // silent mode - we'll format the output ourselves
     ) {
         if let Some(info) = result.info {
-            out.push_str(&worktrunk::config::format_deprecation_details(&info));
+            out.push_str(&worktrunk::config::format_deprecation_details(
+                &info, &contents,
+            ));
             true
         } else {
             false

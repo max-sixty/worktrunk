@@ -50,10 +50,10 @@ exit_code: 0
 [33m▲[39m [33mProject config: [1m[commit-generation][22m is deprecated in favor of [1m[commit.generation][22m[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
-[107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
+[107m [0m [1mdiff --git a/wt.toml/current b/wt.toml/migrated[m
 [107m [0m [1mindex 074c30f..bcaf404 100644[m
-[107m [0m [1m--- a_REPO_/.config/wt.toml[m
-[107m [0m [1m+++ b_REPO_/.config/wt.toml.new[m
+[107m [0m [1m--- a/wt.toml/current[m
+[107m [0m [1m+++ b/wt.toml/migrated[m
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-[commit-generation][m
 [107m [0m [31m-command = "claude"[m

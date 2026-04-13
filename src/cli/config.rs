@@ -400,6 +400,10 @@ This tests:
         after_long_help = r#"Updates deprecated settings in user and project config files
 to their current equivalents. Shows a diff and asks for confirmation.
 
+Migrations are computed in memory on demand — worktrunk no longer writes
+`.new` files as a side effect of loading config. Use `--print` to see the
+migrated TOML without touching any file.
+
 ## Examples
 
 Preview and apply updates:
@@ -410,12 +414,21 @@ $ wt config update
 Apply without confirmation:
 ```console
 $ wt config update --yes
+```
+
+Print the migrated config to stdout (no changes written):
+```console
+$ wt config update --print
 ```"#
     )]
     Update {
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Print the migrated config to stdout instead of writing it
+        #[arg(long, conflicts_with = "yes")]
+        print: bool,
     },
 
     /// Plugin management
