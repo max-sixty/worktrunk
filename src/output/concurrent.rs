@@ -459,7 +459,6 @@ mod tests {
     //! with a direct call proves they behave correctly when a future caller
     //! (concurrent foreground hooks, once their deprecation completes) uses them.
     use super::*;
-    use tempfile::NamedTempFile;
 
     fn run_one_with_directives(
         label: &str,
@@ -506,6 +505,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_directive_env_vars_passed_through() {
+        use tempfile::NamedTempFile;
         let cd = NamedTempFile::new().unwrap();
         let legacy = NamedTempFile::new().unwrap();
         let directives = DirectivePassthrough {
