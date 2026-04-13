@@ -918,8 +918,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
-                    // File exists but has different content (e.g. outdated version)
-                    any_not_configured = true;
+                    // File exists but has different content (e.g. outdated version).
+                    // The per-shell "To update" hint below covers this case, so we
+                    // don't flip `any_not_configured` — the generic "To configure"
+                    // summary would be misleading when the integration is installed.
                     let warning = warning_message(cformat!(
                         "<bold>{shell}</>: Outdated shell extension @ {path}"
                     ));
