@@ -268,6 +268,13 @@ fn compute_directive_mode() -> DirectiveMode {
             // and nushell is the only shell that needs a manual reinstall. A
             // global "your wrapper is old" warning would hit everyone else with
             // noise they can't avoid until their next terminal restart.
+            //
+            // TODO(2026-05): emit a deprecation warning here. By then the
+            // self-healing shells (bash/zsh/fish/PowerShell) have had a
+            // release to cycle, so anything still hitting this branch is
+            // almost certainly an outdated nushell wrapper whose user needs
+            // to rerun `wt config shell install nu` before the legacy
+            // fallback is removed in the following release.
             Some(file) => DirectiveMode::Legacy { file },
             None => DirectiveMode::Interactive,
         },

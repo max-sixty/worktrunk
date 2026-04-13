@@ -1,14 +1,20 @@
-use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
     Command, CommandConfig, HookStep, UserConfig, expand_template, template_references_var,
 };
-use worktrunk::git::Repository;
-use worktrunk::path::to_posix_path;
+use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::path::{format_path_for_display, to_posix_path};
+use worktrunk::styling::{eprintln, error_message, format_bash_with_gutter, progress_message};
 
+use super::force_serial_concurrent;
+use super::format_command_label;
 use super::hook_filter::HookSource;
+use crate::output::{DirectivePassthrough, execute_shell_command};
 
 #[derive(Debug)]
 pub struct PreparedCommand {
@@ -35,6 +41,37 @@ impl PreparedStep {
             Self::Concurrent(cmds) => cmds,
         }
     }
+}
+
+/// Where a foreground command originated — determines announcement format,
+/// error wrapping, and log label.
+#[derive(Clone, Debug)]
+pub enum CommandOrigin {
+    /// Hook command with source attribution.
+    Hook {
+        source: HookSource,
+        hook_type: HookType,
+        /// Path shown in announcement when commands run in a different directory
+        /// than where the user invoked the command.
+        display_path: Option<PathBuf>,
+    },
+    /// Alias command.
+    Alias { name: String },
+}
+
+/// A pipeline step ready for foreground execution, with origin metadata.
+pub struct ForegroundStep {
+    pub step: PreparedStep,
+    pub origin: CommandOrigin,
+}
+
+/// Controls how foreground execution responds to command failures.
+#[derive(Clone, Copy)]
+pub enum FailureStrategy {
+    /// Stop on first failure and surface the error to the caller.
+    FailFast,
+    /// Log warnings and continue executing remaining commands.
+    Warn,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -220,6 +257,232 @@ pub fn expand_shell_template(
     Ok(expand_template(template, &vars, true, repo, label)?)
 }
 
+/// Short summary name: "user:name" for named commands, "user" otherwise.
+pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
+    match name {
+        Some(n) => format!("{source}:{n}"),
+        None => source.to_string(),
+    }
+}
+
+/// Execute a pipeline of prepared steps in the foreground.
+///
+/// This is the canonical foreground execution path for both hooks and aliases.
+/// Handles serial/concurrent step execution, per-command announcement, lazy
+/// template resolution, and origin-aware error handling.
+///
+/// When `concurrent` is true, `Concurrent` steps spawn threads via
+/// `thread::scope`. When false (foreground hooks), `Concurrent` steps execute
+/// serially — a compat fallback for the **deprecated** pre-hook table form.
+/// The canonical pre-* hook shape is a list of `Single` steps; concurrent
+/// execution is reserved for aliases and the background pipeline runner.
+///
+/// TODO(unify-hook-alias): this function centralized dispatch but left four
+/// per-origin branch points. Follow-ups to collapse them:
+///   1. Unify the error type: one `CommandFailed { origin_label, exit_code,
+///      message }` lets `handle_command_error` drop its origin match.
+///   2. Unify announcement policy (decide per-command vs single-summary for
+///      both); `announce_command`'s dispatch disappears.
+///   3. Push log/expansion labels onto `PreparedCommand` at prep time so
+///      `command_log_label` / `expansion_label` go away.
+///   4. Longer term: treat hooks as aliases bound to triggers so `hooks.rs`
+///      becomes a trigger-dispatcher + config loader over the alias machinery.
+pub fn execute_pipeline_foreground(
+    steps: &[ForegroundStep],
+    repo: &Repository,
+    wt_path: &Path,
+    directives: &DirectivePassthrough,
+    failure_strategy: FailureStrategy,
+    concurrent: bool,
+) -> anyhow::Result<()> {
+    for fg_step in steps {
+        match &fg_step.step {
+            PreparedStep::Single(cmd) => {
+                run_one_command(
+                    cmd,
+                    &fg_step.origin,
+                    repo,
+                    wt_path,
+                    directives,
+                    failure_strategy,
+                )?;
+            }
+            PreparedStep::Concurrent(cmds) => {
+                if !concurrent || force_serial_concurrent() {
+                    for cmd in cmds {
+                        run_one_command(
+                            cmd,
+                            &fg_step.origin,
+                            repo,
+                            wt_path,
+                            directives,
+                            failure_strategy,
+                        )?;
+                    }
+                } else {
+                    std::thread::scope(|s| {
+                        let origin = &fg_step.origin;
+                        let handles: Vec<_> = cmds
+                            .iter()
+                            .map(|cmd| {
+                                s.spawn(|| {
+                                    run_one_command(
+                                        cmd,
+                                        origin,
+                                        repo,
+                                        wt_path,
+                                        directives,
+                                        failure_strategy,
+                                    )
+                                })
+                            })
+                            .collect();
+                        wait_first_error(
+                            handles
+                                .into_iter()
+                                .map(|h| h.join().expect("command thread panicked")),
+                        )
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Execute a single prepared command: announce, expand, run, handle errors.
+fn run_one_command(
+    cmd: &PreparedCommand,
+    origin: &CommandOrigin,
+    repo: &Repository,
+    wt_path: &Path,
+    directives: &DirectivePassthrough,
+    failure_strategy: FailureStrategy,
+) -> anyhow::Result<()> {
+    announce_command(cmd, origin);
+
+    let lazy_expanded;
+    let command_str = if let Some(template) = &cmd.lazy_template {
+        let label = expansion_label(cmd, origin);
+        let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+            .context("failed to deserialize context_json")?;
+        lazy_expanded = expand_shell_template(template, &context, repo, &label)?;
+        &lazy_expanded
+    } else {
+        &cmd.expanded
+    };
+
+    let log_label = command_log_label(cmd, origin);
+    let result = execute_shell_command(
+        wt_path,
+        command_str,
+        Some(&cmd.context_json),
+        log_label.as_deref(),
+        directives.clone(),
+    );
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => handle_command_error(err, cmd, origin, failure_strategy),
+    }
+}
+
+/// Announce a command before execution, formatted per origin.
+///
+/// Hooks get per-command announcements with the expanded command in a gutter.
+/// Aliases show a single summary line before the pipeline (in the caller),
+/// so no per-command announcement here.
+fn announce_command(cmd: &PreparedCommand, origin: &CommandOrigin) {
+    match origin {
+        CommandOrigin::Hook {
+            source,
+            hook_type,
+            display_path,
+        } => {
+            let summary = command_summary_name(cmd.name.as_deref(), *source);
+            let full_label = match &cmd.name {
+                Some(_) => format_command_label(&hook_type.to_string(), Some(&summary)),
+                None => format!("Running {hook_type} {summary} hook"),
+            };
+            let message = match display_path.as_deref() {
+                Some(path) => {
+                    let path_display = format_path_for_display(path);
+                    cformat!("{full_label} @ <bold>{path_display}</>")
+                }
+                None => full_label,
+            };
+            eprintln!("{}", progress_message(message));
+            eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
+        }
+        CommandOrigin::Alias { .. } => {}
+    }
+}
+
+/// Log label for command tracing: "pre-merge user:foo" for hooks, None for aliases.
+fn command_log_label(cmd: &PreparedCommand, origin: &CommandOrigin) -> Option<String> {
+    match origin {
+        CommandOrigin::Hook {
+            source, hook_type, ..
+        } => {
+            let summary = command_summary_name(cmd.name.as_deref(), *source);
+            Some(format!("{hook_type} {summary}"))
+        }
+        CommandOrigin::Alias { .. } => None,
+    }
+}
+
+/// Label used for template expansion error messages.
+fn expansion_label(cmd: &PreparedCommand, origin: &CommandOrigin) -> String {
+    match origin {
+        CommandOrigin::Hook { source, .. } => command_summary_name(cmd.name.as_deref(), *source),
+        CommandOrigin::Alias { name } => name.clone(),
+    }
+}
+
+/// Handle a command execution error per origin and failure strategy.
+fn handle_command_error(
+    err: anyhow::Error,
+    cmd: &PreparedCommand,
+    origin: &CommandOrigin,
+    failure_strategy: FailureStrategy,
+) -> anyhow::Result<()> {
+    let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
+        match wt_err {
+            WorktrunkError::ChildProcessExited { message, code } => (message.clone(), Some(*code)),
+            _ => (err.to_string(), None),
+        }
+    } else {
+        (err.to_string(), None)
+    };
+
+    match failure_strategy {
+        FailureStrategy::FailFast => match origin {
+            CommandOrigin::Hook { hook_type, .. } => Err(WorktrunkError::HookCommandFailed {
+                hook_type: *hook_type,
+                command_name: cmd.name.clone(),
+                error: err_msg,
+                exit_code,
+            }
+            .into()),
+            CommandOrigin::Alias { name } => {
+                if let Some(code) = exit_code {
+                    Err(WorktrunkError::AlreadyDisplayed { exit_code: code }.into())
+                } else {
+                    bail!("Failed to run alias '{}': {}", name, err_msg)
+                }
+            }
+        },
+        FailureStrategy::Warn => {
+            let message = match &cmd.name {
+                Some(name) => cformat!("Command <bold>{name}</> failed: {err_msg}"),
+                None => format!("Command failed: {err_msg}"),
+            };
+            eprintln!("{}", error_message(message));
+            Ok(())
+        }
+    }
+}
+
 /// Expand commands from a CommandConfig without approval.
 ///
 /// When `lazy_enabled` is true, commands referencing `vars.` are validated but not
@@ -352,6 +615,179 @@ pub fn prepare_steps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_cmd(name: Option<&str>) -> PreparedCommand {
+        PreparedCommand {
+            name: name.map(String::from),
+            expanded: "echo test".to_string(),
+            context_json: "{}".to_string(),
+            lazy_template: None,
+        }
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_child_process_exited() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 42,
+            message: "command failed".into(),
+        }
+        .into();
+        let cmd = make_cmd(Some("lint"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: Some(42),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_non_child_worktrunk_error() {
+        // WorktrunkError that isn't ChildProcessExited (line 439 coverage)
+        let err: anyhow::Error = WorktrunkError::CommandNotApproved.into();
+        let cmd = make_cmd(Some("build"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_hook_failfast_other_error() {
+        let err = anyhow::anyhow!("something else");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Hook {
+            source: HookSource::Project,
+            hook_type: HookType::PreCommit,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::HookCommandFailed {
+                exit_code: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_alias_failfast_child_process_exited() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit 1".into(),
+        }
+        .into();
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::AlreadyDisplayed { exit_code: 1 }
+        ));
+    }
+
+    #[test]
+    fn test_handle_command_error_alias_failfast_other_error() {
+        let err = anyhow::anyhow!("template error");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::FailFast);
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to run alias 'deploy'"));
+        assert!(err_msg.contains("template error"));
+    }
+
+    #[test]
+    fn test_handle_command_error_warn_continues() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "lint failed".into(),
+        }
+        .into();
+        let cmd = make_cmd(Some("lint"));
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PostStart,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::Warn);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_command_error_warn_unnamed() {
+        let err = anyhow::anyhow!("unexpected failure");
+        let cmd = make_cmd(None);
+        let origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PostStart,
+            display_path: None,
+        };
+        let result = handle_command_error(err, &cmd, &origin, FailureStrategy::Warn);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_command_log_label() {
+        let cmd = make_cmd(Some("lint"));
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        assert_eq!(
+            command_log_label(&cmd, &hook_origin),
+            Some("pre-merge user:lint".to_string())
+        );
+
+        let alias_origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        assert_eq!(command_log_label(&cmd, &alias_origin), None);
+    }
+
+    #[test]
+    fn test_expansion_label() {
+        let cmd = make_cmd(Some("build"));
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::Project,
+            hook_type: HookType::PreStart,
+            display_path: None,
+        };
+        assert_eq!(expansion_label(&cmd, &hook_origin), "project:build");
+
+        let alias_origin = CommandOrigin::Alias { name: "ci".into() };
+        assert_eq!(expansion_label(&cmd, &alias_origin), "ci");
+    }
 
     #[test]
     fn test_template_references_var_for_vars() {

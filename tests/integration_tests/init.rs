@@ -12,9 +12,6 @@ use rstest::rstest;
 
 /// Helper to create snapshot for config shell init command
 fn snapshot_init(test_name: &str, repo: &TestRepo, shell: &str, extra_args: &[&str]) {
-    // Custom settings for init tests - these output shell scripts with intentional
-    // backslashes (\cd, \n) so we can't use setup_snapshot_settings which has a
-    // backslash normalization filter that would corrupt the output
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     add_standard_env_redactions(&mut settings);

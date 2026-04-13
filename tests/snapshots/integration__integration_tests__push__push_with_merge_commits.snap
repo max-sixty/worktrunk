@@ -47,7 +47,7 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mPushing 3 commits to [1mmain[22m @ [2m[HASH][22m[39m
 [107m [0m *   [33mfc1fab1[m Merge temp
-[107m [0m [31m|[m[32m/[m  
+[107m [0m [31m|[m[32m\[m  
 [107m [0m [31m|[m * [33m[HASH][m Commit 2
 [107m [0m [31m|[m[31m/[m  
 [107m [0m * [33m[HASH][m Commit 1

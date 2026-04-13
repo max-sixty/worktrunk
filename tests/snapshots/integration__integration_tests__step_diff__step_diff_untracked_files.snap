@@ -49,6 +49,6 @@ index 0000000..0fea02a
 +++ b/untracked.txt
 @@ -0,0 +1 @@
 +untracked content
-/ No newline at end of file
+\ No newline at end of file
 
 ----- stderr -----
