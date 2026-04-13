@@ -158,8 +158,6 @@ Because an inner `wt switch --create` inside an alias [propagates its `cd` to th
 
 ```toml
 [aliases]
-# Tail the current worktree's post-start hook named {{ name }} (handles sanitization):
-#   wt step hook-log --name=feature/auth
 hook-log = '''
 tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" '
   .hook_output[]
@@ -169,7 +167,7 @@ tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sani
 '''
 ```
 
-The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
+Run with `wt step hook-log --name=<hook-name>` (e.g., `wt step hook-log --name=server`) to tail the current worktree's `post-start` hook of that name. The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
 
 See [`wt step` — Aliases](https://worktrunk.dev/step/#aliases) for the full reference.
 
