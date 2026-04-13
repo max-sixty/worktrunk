@@ -44,22 +44,25 @@ Hooks live in two places:
 - **User config** (`~/.config/worktrunk/config.toml`) — personal, applies everywhere, trusted
 - **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](@/hook.md#wt-hook-approvals) on first run
 
-Three formats, from simplest to most expressive:
+Three formats, from simplest to most expressive.
+
+A single command as a string:
 
 ```toml
-# Single command
 pre-start = "npm ci"
 ```
 
+A named table runs commands concurrently for `post-*` hooks and serially for `pre-*`:
+
 ```toml
-# Named commands (concurrent for post-*, serial for pre-*)
 [post-start]
 server = "npm start"
 watcher = "npm run watch"
 ```
 
+An array of tables is a pipeline — blocks run in order, commands within a block run concurrently:
+
 ```toml
-# Pipeline: blocks run in order, commands within a block run concurrently
 [[post-start]]
 install = "npm ci"
 
