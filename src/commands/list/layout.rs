@@ -517,6 +517,11 @@ pub struct LayoutConfig {
     pub max_summary_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
+    /// Glyph to use for cells whose data has not yet arrived. Interior
+    /// mutability lets the `wt list` progressive path swap the placeholder
+    /// at the 100ms reveal threshold without needing `&mut` everywhere.
+    /// See `super::render::PLACEHOLDER` / `PLACEHOLDER_BLANK`.
+    pub placeholder: std::cell::Cell<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -881,6 +886,7 @@ fn allocate_columns_with_priority(
         max_summary_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
+        placeholder: std::cell::Cell::new(super::render::PLACEHOLDER),
     }
 }
 
