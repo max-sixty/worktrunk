@@ -35,17 +35,24 @@ impl PreserveTree {
 /// Build a [`PreserveTree`] from the on-disk content by round-tripping through
 /// [`UserConfig`]. Any path present in the raw TOML but absent from the
 /// reserialized form is schema-unknown and flagged for preservation.
+///
+/// `existing_content` is already-validated TOML (parsed as
+/// `toml_edit::DocumentMut` earlier in `save_to`), so the parses here are
+/// invariants. `try_into::<UserConfig>` can fail on type mismatches (e.g.,
+/// `commit = "scalar"` from a hand edit) — the `unwrap_or_default()` fallback
+/// marks every key as unknown so the merge preserves the file contents rather
+/// than silently discarding data.
 fn compute_preserve_tree(existing_content: &str) -> PreserveTree {
-    let Ok(raw) = existing_content.parse::<toml::Table>() else {
-        return PreserveTree::default();
-    };
+    let raw: toml::Table = existing_content
+        .parse()
+        .expect("existing content already validated by toml_edit");
     let config: UserConfig = toml::Value::Table(raw.clone())
         .try_into()
         .unwrap_or_default();
-    let reserialized: toml::Table = match toml::Value::try_from(&config) {
-        Ok(toml::Value::Table(t)) => t,
-        _ => toml::Table::new(),
-    };
+    let reserialized: toml::Table = toml::to_string(&config)
+        .expect("UserConfig is serializable")
+        .parse()
+        .expect("UserConfig serializes to valid TOML");
     diff_tables(&raw, &reserialized)
 }
 
