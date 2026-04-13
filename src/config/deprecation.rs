@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use color_print::cformat;
 use minijinja::Environment;
@@ -38,6 +38,15 @@ use crate::styling::{
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Latch that silences config deprecation/unknown-field warnings for the rest
+/// of the process. Set by shell completion and picker paths, where stderr
+/// output would appear above the user's prompt or TUI.
+static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
+
+pub fn suppress_warnings() {
+    let _ = SUPPRESS_WARNINGS.set(());
+}
 
 /// Pre-compiled regexes for deprecated variable word-boundary matching.
 /// Compiled once on first use, shared across all calls to normalize/replace.
@@ -1218,19 +1227,21 @@ pub fn check_and_migrate(
 
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
-        eprintln!("{}", format_brief_warning(label));
+        if SUPPRESS_WARNINGS.get().is_none() {
+            eprintln!("{}", format_brief_warning(label));
 
-        if let Some(approvals_path) = &info.approvals_copied_to {
-            let approvals_filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Copied approved commands to <underline>{approvals_filename}</>"
-                ))
-            );
+            if let Some(approvals_path) = &info.approvals_copied_to {
+                let approvals_filename = approvals_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default();
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Copied approved commands to <underline>{approvals_filename}</>"
+                    ))
+                );
+            }
         }
 
         // Still write migration file if needed (first time only)
@@ -1586,7 +1597,7 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
 ) {
-    if unknown_keys.is_empty() {
+    if unknown_keys.is_empty() || SUPPRESS_WARNINGS.get().is_some() {
         return;
     }
 

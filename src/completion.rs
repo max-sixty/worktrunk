@@ -22,6 +22,11 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return false;
     }
 
+    // Tab-completion output lands above the user's prompt — any stray stderr
+    // warnings would display there. Silence config deprecation/unknown-field
+    // warnings for the duration of this process.
+    worktrunk::config::suppress_warnings();
+
     let mut args: Vec<OsString> = std::env::args_os().collect();
     CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 

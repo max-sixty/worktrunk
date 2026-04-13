@@ -525,6 +525,7 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
+    worktrunk::config::suppress_warnings();
     handle_picker(branches, remotes, None)
 }
 
@@ -538,6 +539,14 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
 
 fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+
+    // With no branch argument, `wt switch` opens a TUI picker — config
+    // deprecation warnings would render above the picker and push it down.
+    // They're still shown by other commands (`wt list`, `wt merge`, …).
+    if args.branch.is_none() {
+        worktrunk::config::suppress_warnings();
+    }
+
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
