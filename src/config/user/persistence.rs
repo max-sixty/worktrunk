@@ -13,6 +13,74 @@ use crate::config::ConfigError;
 use super::UserConfig;
 use super::sections::CommitGenerationConfig;
 
+/// Keys to preserve during a diff-based merge, organized by nesting level.
+///
+/// Populated from schema-unknown paths in the existing TOML (keys that serde
+/// would silently drop during deserialization). These survive the save so
+/// hand-edited settings and fields from newer wt versions aren't lost.
+#[derive(Default, Debug)]
+struct PreserveTree {
+    /// Keys at this level to keep even when absent from the serialized desired state.
+    keys: std::collections::HashSet<String>,
+    /// Sub-trees for nested tables, mirroring the TOML structure.
+    nested: std::collections::HashMap<String, PreserveTree>,
+}
+
+impl PreserveTree {
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.nested.is_empty()
+    }
+}
+
+/// Build a [`PreserveTree`] from the on-disk content by round-tripping through
+/// [`UserConfig`]. Any path present in the raw TOML but absent from the
+/// reserialized form is schema-unknown and flagged for preservation.
+fn compute_preserve_tree(existing_content: &str) -> PreserveTree {
+    let Ok(raw) = existing_content.parse::<toml::Table>() else {
+        return PreserveTree::default();
+    };
+    let config: UserConfig = toml::Value::Table(raw.clone())
+        .try_into()
+        .unwrap_or_default();
+    let reserialized: toml::Table = match toml::Value::try_from(&config) {
+        Ok(toml::Value::Table(t)) => t,
+        _ => toml::Table::new(),
+    };
+    diff_tables(&raw, &reserialized)
+}
+
+/// Walk `raw` against `known` (the schema-projected view) and record keys
+/// that exist only in `raw`. Recurses into nested tables so deeply-nested
+/// unknown keys are captured at the right level.
+fn diff_tables(raw: &toml::Table, known: &toml::Table) -> PreserveTree {
+    let mut tree = PreserveTree::default();
+    for (key, raw_val) in raw {
+        match (known.get(key), raw_val) {
+            (Some(toml::Value::Table(known_t)), toml::Value::Table(raw_t)) => {
+                let nested = diff_tables(raw_t, known_t);
+                if !nested.is_empty() {
+                    tree.nested.insert(key.clone(), nested);
+                }
+            }
+            (Some(_), _) => {}
+            (None, toml::Value::Table(raw_t)) => {
+                // Whole subtree is schema-unknown. Mark the key at this level
+                // and recurse so the preserve set is populated if a later
+                // mutation causes `desired` to introduce this table.
+                tree.keys.insert(key.clone());
+                let nested = diff_tables(raw_t, &toml::Table::new());
+                if !nested.is_empty() {
+                    tree.nested.insert(key.clone(), nested);
+                }
+            }
+            (None, _) => {
+                tree.keys.insert(key.clone());
+            }
+        }
+    }
+    tree
+}
+
 impl UserConfig {
     /// Recursively convert inline tables to standard tables for readability.
     ///
@@ -54,26 +122,27 @@ impl UserConfig {
     fn merge_tables(
         existing: &mut toml_edit::Table,
         desired: &toml_edit::Table,
-        preserve: &std::collections::HashSet<String>,
+        preserve: &PreserveTree,
     ) {
         let stale_keys: Vec<_> = existing
             .iter()
             .map(|(k, _)| k.to_string())
-            .filter(|k| !desired.contains_key(k) && !preserve.contains(k))
+            .filter(|k| !desired.contains_key(k) && !preserve.keys.contains(k))
             .collect();
         for key in &stale_keys {
             existing.remove(key);
         }
 
-        let empty = std::collections::HashSet::new();
+        let empty_tree = PreserveTree::default();
         for (key, desired_item) in desired.iter() {
             match existing.get_mut(key) {
                 // Both standard tables: recurse
                 Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
+                    let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
                     Self::merge_tables(
                         existing_item.as_table_mut().unwrap(),
                         desired_item.as_table().unwrap(),
-                        &empty,
+                        nested_preserve,
                     );
                 }
                 // Existing inline table, desired standard table: compare contents
@@ -137,7 +206,9 @@ impl UserConfig {
     ///
     /// Preserves comments and formatting in the existing file by diffing the
     /// serialized in-memory state against the parsed file and merging only
-    /// changed keys.
+    /// changed keys. Schema-unknown keys at any nesting level (typos, fields
+    /// from newer wt versions) are preserved so older wt versions don't
+    /// silently strip forward-compatible config data.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
@@ -156,17 +227,15 @@ impl UserConfig {
                 .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
             Self::expand_inline_tables(desired_doc.as_table_mut());
 
-            // Preserve unknown top-level keys (typos, future fields, deprecated
-            // keys not yet migrated) so they aren't silently deleted on save.
-            let unknown_keys: std::collections::HashSet<String> =
-                super::find_unknown_keys(&existing_content)
-                    .into_keys()
-                    .collect();
+            // Preserve unknown keys at every nesting level (typos, future
+            // fields, deprecated keys not yet migrated) so they aren't
+            // silently deleted on save.
+            let preserve = compute_preserve_tree(&existing_content);
 
             Self::merge_tables(
                 existing_doc.as_table_mut(),
                 desired_doc.as_table(),
-                &unknown_keys,
+                &preserve,
             );
             Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 

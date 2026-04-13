@@ -3097,6 +3097,166 @@ skip-shell-integration-prompt = true
 }
 
 #[test]
+fn test_save_to_existing_file_preserves_nested_unknown_keys() {
+    // Unknown keys inside a known table (e.g., a newer-version field under
+    // `[merge]`) must survive a save that touches unrelated settings. Older
+    // wt versions should leave config data they don't recognize alone.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[merge]
+squash = false
+future-option = true
+"#,
+    )
+    .unwrap();
+
+    // Mutate an unrelated setting so save_to() writes the file.
+    let config = UserConfig {
+        skip_shell_integration_prompt: true,
+        merge: MergeConfig {
+            squash: Some(false),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "nested unknown key should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("squash = false"),
+        "known sibling should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("skip-shell-integration-prompt = true"),
+        "new top-level key should be written: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_section_with_only_unknown_fields() {
+    // A section whose known fields are all absent/default (so reserialization
+    // skips the whole section) but that still contains unknown keys must
+    // survive the save — including when a mutation later introduces a known
+    // field to the same section.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[merge]
+future-option = true
+"#,
+    )
+    .unwrap();
+
+    // Mutation introduces a known field to `[merge]` that wasn't on disk.
+    let config = UserConfig {
+        merge: MergeConfig {
+            squash: Some(false),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains("future-option = true"),
+        "unknown key in otherwise-empty section should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains("squash = false"),
+        "new known field should be written: {saved}"
+    );
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_deeply_nested_unknown_keys() {
+    // Unknown keys inside a doubly-nested table (e.g., `[commit.generation]`)
+    // must also survive — the preserve set needs to traverse to the right level.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[commit.generation]
+command = "old-llm"
+future-knob = "from-newer-wt"
+"#,
+    )
+    .unwrap();
+
+    let config = UserConfig {
+        commit: CommitConfig {
+            stage: None,
+            generation: Some(CommitGenerationConfig {
+                command: Some("new-llm".to_string()),
+                ..Default::default()
+            }),
+        },
+        ..Default::default()
+    };
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains(r#"future-knob = "from-newer-wt""#),
+        "nested unknown key should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains(r#"command = "new-llm""#),
+        "known field should be updated: {saved}"
+    );
+    assert!(!saved.contains("old-llm"), "old value not removed: {saved}");
+}
+
+#[test]
+fn test_save_to_existing_file_preserves_unknown_keys_in_project_section() {
+    // Unknown keys inside a project entry (e.g., `[projects."name"]`) are also
+    // at a nested level — the fix must cover entries inside the projects map too.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        r#"[projects."repo"]
+worktree-path = "../custom"
+future-per-project = "value"
+"#,
+    )
+    .unwrap();
+
+    let mut config = UserConfig::default();
+    config.projects.insert(
+        "repo".to_string(),
+        UserProjectOverrides {
+            worktree_path: Some("../custom".to_string()),
+            ..Default::default()
+        },
+    );
+    // Flip an unrelated flag so save_to() has a reason to write.
+    config.skip_shell_integration_prompt = true;
+
+    config.save_to(&config_path).unwrap();
+
+    let saved = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        saved.contains(r#"future-per-project = "value""#),
+        "unknown key inside a project entry should be preserved: {saved}"
+    );
+    assert!(
+        saved.contains(r#"worktree-path = "../custom""#),
+        "known field should be preserved: {saved}"
+    );
+}
+
+#[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
     // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
