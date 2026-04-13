@@ -174,7 +174,7 @@ fn quote_arg(arg: &str) -> String {
 /// Always quote a string for shell use, properly escaping single quotes.
 /// Handles paths like `/path/to/worktrunk.'∅'/target/debug/wt`
 fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// Quote a path for PowerShell (escape backticks and single quotes)

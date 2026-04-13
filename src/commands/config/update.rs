@@ -88,10 +88,11 @@ pub fn handle_config_update(yes: bool) -> anyhow::Result<()> {
 fn format_update_preview(info: &DeprecationInfo) -> String {
     let mut out = format_deprecation_warnings(info);
 
-    // Show diff (without the hint that format_deprecation_details adds)
+    // Show diff (without the "To apply" hint that format_deprecation_details adds)
     if let Some(new_path) = &info.migration_path
         && let Some(diff) = format_migration_diff(&info.config_path, new_path)
     {
+        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
         let _ = writeln!(out, "{diff}");
     }
 

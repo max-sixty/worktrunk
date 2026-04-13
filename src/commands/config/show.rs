@@ -520,7 +520,6 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         false, // silent mode - we'll format the output ourselves
     ) {
         if let Some(info) = result.info {
-            // Add deprecation details to the output buffer
             out.push_str(&worktrunk::config::format_deprecation_details(&info));
             true
         } else {
@@ -544,13 +543,11 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         )));
     }
 
-    // Add "Current config" label when deprecations shown (to separate from diff)
-    if has_deprecations {
-        writeln!(out, "{}", info_message("Current config:"))?;
+    // Display TOML with syntax highlighting (gutter at column 0).
+    // Skip when deprecations were shown — the proposed diff already covers it.
+    if !has_deprecations {
+        writeln!(out, "{}", format_toml(&contents))?;
     }
-
-    // Display TOML with syntax highlighting (gutter at column 0)
-    writeln!(out, "{}", format_toml(&contents))?;
 
     if !has_system_config {
         render_system_config_hint(out)?;
@@ -672,7 +669,6 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         false, // silent mode - we'll format the output ourselves
     ) {
         if let Some(info) = result.info {
-            // Add deprecation details to the output buffer
             out.push_str(&worktrunk::config::format_deprecation_details(&info));
             true
         } else {
@@ -694,13 +690,11 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         ));
     }
 
-    // Add "Current config" label when deprecations shown (to separate from diff)
-    if has_deprecations {
-        writeln!(out, "{}", info_message("Current config:"))?;
+    // Display TOML with syntax highlighting (gutter at column 0).
+    // Skip when deprecations were shown — the proposed diff already covers it.
+    if !has_deprecations {
+        writeln!(out, "{}", format_toml(&contents))?;
     }
-
-    // Display TOML with syntax highlighting (gutter at column 0)
-    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }

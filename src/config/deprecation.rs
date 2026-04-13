@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use color_print::cformat;
 use minijinja::Environment;
@@ -30,7 +30,7 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, suggest_command_in_dir,
+    eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
 
@@ -38,6 +38,15 @@ use crate::styling::{
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Latch that silences config deprecation/unknown-field warnings for the rest
+/// of the process. Set by shell completion and picker paths, where stderr
+/// output would appear above the user's prompt or TUI.
+static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
+
+pub fn suppress_warnings() {
+    let _ = SUPPRESS_WARNINGS.set(());
+}
 
 /// Pre-compiled regexes for deprecated variable word-boundary matching.
 /// Compiled once on first use, shared across all calls to normalize/replace.
@@ -875,43 +884,37 @@ fn migrate_negated_bool_doc(
     modified
 }
 
-/// Convert a multi-entry pre-* table section into a pipeline array within a table.
+/// Convert a multi-entry pre-* table section into an array-of-tables pipeline.
 ///
-/// Removes `[key]` as a table section and inserts `key = [{name = "cmd"}, ...]`
-/// as an array of single-entry inline tables, preserving insertion order.
+/// Removes `[key]` as a table section and inserts `[[key]]` blocks —
+/// one block per named step, preserving insertion order.
+///
+/// Iterates pre-* keys in document order (not [`PRE_HOOK_KEYS`] order) so
+/// migrated sections land in the same relative position they had in the
+/// source file.
 fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) {
-    for &key in PRE_HOOK_KEYS {
-        let is_multi_entry_table = table
-            .get(key)
-            .and_then(|item| item.as_table())
-            .is_some_and(|t| t.len() >= 2);
+    let keys_to_migrate: Vec<String> = table
+        .iter()
+        .filter(|(k, v)| {
+            PRE_HOOK_KEYS.contains(k)
+                && v.as_table()
+                    .is_some_and(|t| t.len() >= 2 && t.iter().all(|(_, v)| v.as_str().is_some()))
+        })
+        .map(|(k, _)| k.to_string())
+        .collect();
 
-        if !is_multi_entry_table {
-            continue;
-        }
+    for key in keys_to_migrate {
+        let item = table.get_mut(&key).unwrap();
+        let entries = item.as_table().unwrap();
 
-        // Skip if any entry is non-string (malformed config — don't risk data loss)
-        let all_strings = table
-            .get(key)
-            .and_then(|item| item.as_table())
-            .is_some_and(|t| t.iter().all(|(_, v)| v.as_str().is_some()));
-
-        if !all_strings {
-            continue;
-        }
-
-        // Remove the table section and build a pipeline array
-        let old_table = table.remove(key).unwrap();
-        let entries = old_table.as_table().unwrap();
-
-        let mut arr = toml_edit::Array::new();
+        let mut arr = toml_edit::ArrayOfTables::new();
         for (name, value) in entries.iter() {
-            let mut inline = toml_edit::InlineTable::new();
-            inline.insert(name, value.as_str().unwrap().into());
-            arr.push(toml_edit::Value::InlineTable(inline));
+            let mut block = toml_edit::Table::new();
+            block.insert(name, toml_edit::value(value.as_str().unwrap()));
+            arr.push(block);
         }
 
-        table.insert(key, toml_edit::Item::Value(toml_edit::Value::Array(arr)));
+        *item = toml_edit::Item::ArrayOfTables(arr);
         *modified = true;
     }
 }
@@ -1218,19 +1221,21 @@ pub fn check_and_migrate(
 
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
-        eprintln!("{}", format_brief_warning(label));
+        if SUPPRESS_WARNINGS.get().is_none() {
+            eprintln!("{}", format_brief_warning(label));
 
-        if let Some(approvals_path) = &info.approvals_copied_to {
-            let approvals_filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Copied approved commands to <underline>{approvals_filename}</>"
-                ))
-            );
+            if let Some(approvals_path) = &info.approvals_copied_to {
+                let approvals_filename = approvals_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default();
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Copied approved commands to <underline>{approvals_filename}</>"
+                    ))
+                );
+            }
         }
 
         // Still write migration file if needed (first time only)
@@ -1380,24 +1385,24 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         );
     }
 
-    if !info.deprecations.commit_gen.is_empty() {
-        let mut parts = Vec::new();
-        if info.deprecations.commit_gen.has_top_level {
-            parts.push("[commit-generation] → [commit.generation]".to_string());
-        }
-        for project_key in &info.deprecations.commit_gen.project_keys {
-            parts.push(format!(
-                "[projects.\"{}\".commit-generation] → [projects.\"{}\".commit.generation]",
-                project_key, project_key
-            ));
-        }
+    if info.deprecations.commit_gen.has_top_level {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config sections: {}",
-                info.label,
-                parts.join(", ")
+            warning_message(cformat!(
+                "{}: <bold>[commit-generation]</> is deprecated in favor of <bold>[commit.generation]</>",
+                info.label
+            ))
+        );
+    }
+    for project_key in &info.deprecations.commit_gen.project_keys {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{label}: <bold>[projects.\"{k}\".commit-generation]</> is deprecated in favor of <bold>[projects.\"{k}\".commit.generation]</>",
+                label = info.label,
+                k = project_key
             ))
         );
     }
@@ -1430,8 +1435,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config section: [select] → [switch.picker]",
+            warning_message(cformat!(
+                "{}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>",
                 info.label
             ))
         );
@@ -1441,8 +1446,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated hook name: post-create → pre-start",
+            warning_message(cformat!(
+                "{}: <bold>post-create</> hook is deprecated in favor of <bold>pre-start</>",
                 info.label
             ))
         );
@@ -1452,8 +1457,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config section: [ci] → [forge]",
+            warning_message(cformat!(
+                "{}: <bold>[ci]</> is deprecated in favor of <bold>[forge]</>",
                 info.label
             ))
         );
@@ -1463,8 +1468,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated field: [merge] no-ff → ff (inverted)",
+            warning_message(cformat!(
+                "{}: <bold>merge.no-ff</> is deprecated in favor of <bold>merge.ff</> (inverted)",
                 info.label
             ))
         );
@@ -1474,21 +1479,28 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated field: [switch] no-cd → cd (inverted)",
+            warning_message(cformat!(
+                "{}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)",
                 info.label
             ))
         );
     }
 
     if !info.deprecations.pre_hook_table_form.is_empty() {
-        let hook_list = info.deprecations.pre_hook_table_form.join(", ");
+        let hook_list = info
+            .deprecations
+            .pre_hook_table_form
+            .iter()
+            .map(|h| cformat!("<bold>{h}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated table form for pre-* hooks: {} → pipeline form",
-                info.label, hook_list
+            warning_message(cformat!(
+                "{}: table form for {} is deprecated in favor of the pipeline form",
+                info.label,
+                hook_list
             ))
         );
     }
@@ -1508,18 +1520,25 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 
     // Migration hint with apply command
     if let Some(new_path) = &info.migration_path {
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter("wt config update"));
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("To apply: <underline>wt config update</>"))
+        );
 
         // Inline diff — git diff header shows the file paths
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
+            let _ = writeln!(out, "{}", info_message("Proposed diff:"));
             let _ = writeln!(out, "{diff}");
         }
     } else if let Some(main_path) = &info.main_worktree_path {
         // In linked worktree — include -C so the command works from here
         let cmd = suggest_command_in_dir(main_path, "config", &["update"], &[]);
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter(&cmd));
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("To apply: <underline>{cmd}</>"))
+        );
     }
 
     out
@@ -1586,7 +1605,7 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
 ) {
-    if unknown_keys.is_empty() {
+    if unknown_keys.is_empty() || SUPPRESS_WARNINGS.get().is_some() {
         return;
     }
 
@@ -2252,7 +2271,7 @@ command = "old-command"
 
     #[test]
     fn test_shell_join_with_quotes() {
-        assert_eq!(shell_join(&["echo", "it's"]), "echo 'it'\\''s'");
+        assert_eq!(shell_join(&["echo", "it's"]), r"echo 'it'\''s'");
     }
 
     #[test]
@@ -3624,22 +3643,20 @@ test = "cargo test"
 lint = "cargo clippy"
 "#;
         let result = migrate_pre_hook_table_form(content);
-        // Should produce an array of inline tables
+        // Should produce `[[pre-merge]]` array-of-tables blocks
         assert!(
-            !result.contains("[pre-merge]"),
-            "Table section should be removed: {result}"
-        );
-        assert!(
-            result.contains("pre-merge"),
-            "Key should still exist: {result}"
+            result.contains("[[pre-merge]]"),
+            "Should emit [[pre-merge]] blocks: {result}"
         );
         // Verify it parses back as valid TOML with the right structure
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"].as_array().expect("should be array");
+        let arr = doc["pre-merge"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
-        let first = arr.get(0).unwrap().as_inline_table().unwrap();
+        let first = arr.get(0).unwrap();
         assert_eq!(first.get("test").unwrap().as_str().unwrap(), "cargo test");
-        let second = arr.get(1).unwrap().as_inline_table().unwrap();
+        let second = arr.get(1).unwrap();
         assert_eq!(
             second.get("lint").unwrap().as_str().unwrap(),
             "cargo clippy"
@@ -3656,11 +3673,8 @@ third = "3"
 "#;
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-merge"].as_array().unwrap();
-        let names: Vec<&str> = arr
-            .iter()
-            .map(|v| v.as_inline_table().unwrap().iter().next().unwrap().0)
-            .collect();
+        let arr = doc["pre-merge"].as_array_of_tables().unwrap();
+        let names: Vec<&str> = arr.iter().map(|t| t.iter().next().unwrap().0).collect();
         assert_eq!(names, vec!["first", "second", "third"]);
     }
 
@@ -3681,7 +3695,9 @@ build = "npm run build"
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let project = doc["projects"]["web"].as_table().unwrap();
-        let arr = project["pre-start"].as_array().expect("should be array");
+        let arr = project["pre-start"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
     }
 
@@ -3701,8 +3717,8 @@ build = "npm run build"
         );
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let arr = doc["pre-start"]
-            .as_array()
-            .expect("should be pipeline array");
+            .as_array_of_tables()
+            .expect("should be pipeline array of tables");
         assert_eq!(arr.len(), 2);
     }
 
@@ -3718,8 +3734,8 @@ no-ff = true
 "#;
         let result = migrate_content(content);
         assert!(
-            !result.contains("[pre-merge]"),
-            "Table section should be migrated: {result}"
+            result.contains("[[pre-merge]]"),
+            "Table section should become [[pre-merge]] blocks: {result}"
         );
         assert!(
             result.contains("ff = false"),

@@ -552,9 +552,9 @@ mod tests {
     fn test_sanitize_branch_name() {
         let cases = [
             ("feature/foo", "feature-foo"),
-            ("user\\task", "user-task"),
+            (r"user\task", "user-task"),
             ("feature/user/task", "feature-user-task"),
-            ("feature/user\\task", "feature-user-task"),
+            (r"feature/user\task", "feature-user-task"),
             ("simple-branch", "simple-branch"),
             ("", ""),
             ("///", "---"),
@@ -722,7 +722,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
         let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
-        assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
+        assert!(expanded.contains("'my path'") || expanded.contains(r"my\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
@@ -920,7 +920,7 @@ mod tests {
         );
 
         // Backslashes are also sanitized
-        vars.insert("branch", "feature\\bar");
+        vars.insert("branch", r"feature\bar");
         assert_eq!(
             expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-bar"
@@ -948,7 +948,7 @@ mod tests {
             expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
         // sanitize replaces / with -, producing "user's-feature"
         // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
-        assert_eq!(result, "'user'\\''s-feature'", "sanitize + shell escape");
+        assert_eq!(result, r"'user'\''s-feature'", "sanitize + shell escape");
 
         // Without the fix, pre-escaping would produce corrupted output because
         // sanitize would replace the / and \ in the already-escaped value.
@@ -957,7 +957,7 @@ mod tests {
         let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
         // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
         assert_eq!(
-            result, "'user'\\''s/feature'",
+            result, r"'user'\''s/feature'",
             "shell escape without filter"
         );
 

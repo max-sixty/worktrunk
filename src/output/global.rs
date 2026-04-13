@@ -342,7 +342,7 @@ fn escape_legacy_cd(path: &Path) -> String {
     let escaped = if is_powershell {
         path_str.replace('\'', "''")
     } else {
-        path_str.replace('\'', "'\\''")
+        path_str.replace('\'', r"'\''")
     };
     format!("cd '{}'", escaped)
 }
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn test_escape_legacy_cd_single_quotes() {
         let result = escape_legacy_cd(Path::new("/test/it's/path"));
-        assert_eq!(result, "cd '/test/it'\\''s/path'");
+        assert_eq!(result, r"cd '/test/it'\''s/path'");
     }
 
     #[test]
@@ -957,14 +957,14 @@ mod tests {
         // We can't easily test the actual ANSI codes here, but document the issue
         std::println!(
             "Nested reset output: {}",
-            bad_output.replace('\x1b', "\\x1b")
+            bad_output.replace('\x1b', r"\x1b")
         );
 
         // GOOD pattern: compose styles
         let warning_bold = warning.bold();
         let good_output =
             format!("{warning}Text with {warning_bold}composed{warning_bold:#} styles{warning:#}");
-        std::println!("Composed output: {}", good_output.replace('\x1b', "\\x1b"));
+        std::println!("Composed output: {}", good_output.replace('\x1b', r"\x1b"));
 
         // The good pattern maintains color through the bold section
     }

@@ -328,6 +328,36 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
     );
 }
 
+/// With `-vvv`, subprocess stdout/stderr should appear in `verbose.log` via
+/// `log::trace!` (not just `[wt-trace]` headers). This guards the Trace
+/// branch of `shell_exec::log_output` and the `-vvv` arm of `init_logging`.
+#[rstest]
+fn test_vvv_emits_subprocess_output_at_trace(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vvv"]).output().unwrap();
+
+    let verbose_log_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt/logs")
+        .join("verbose.log");
+    assert!(
+        verbose_log_path.exists(),
+        "verbose.log should be created with -vvv"
+    );
+
+    let content = fs::read_to_string(&verbose_log_path).unwrap();
+    assert!(
+        content.contains("[wt-trace]"),
+        "verbose.log should still contain [wt-trace] records at -vvv"
+    );
+    // At Trace, captured stdout/stderr is emitted line-by-line with the
+    // `  ` / `  ! ` continuation prefix used by log_output.
+    assert!(
+        content.lines().any(|l| l.contains("  worktree ")),
+        "verbose.log should contain `git worktree list --porcelain` stdout lines at -vvv"
+    );
+}
+
 // =============================================================================
 // Tests for -vv verbosity level (always write diagnostic)
 // =============================================================================
@@ -397,10 +427,10 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
-/// With just -v (not -vv), no logging files should be written.
-/// -v is reserved for future use; -vv is required for debug logging.
+/// With just -v, info-level logging goes to stderr but no log files are written.
+/// `-vv` is the threshold for `verbose.log` and `diagnostic.md`.
 #[rstest]
-fn test_v_does_not_enable_logging(repo: TestRepo) {
+fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
     let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
 

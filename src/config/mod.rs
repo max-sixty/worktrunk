@@ -107,6 +107,7 @@ pub use deprecation::format_deprecation_warnings;
 pub use deprecation::format_migration_diff;
 pub use deprecation::migrate_content;
 pub use deprecation::normalize_template_vars;
+pub use deprecation::suppress_warnings;
 pub use deprecation::write_migration_file;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
@@ -261,7 +262,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature\\foo", &test.repo, None)
+                .format_path("myproject", r"feature\foo", &test.repo, None)
                 .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
@@ -495,7 +496,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
-        vars.insert("branch", "feat\\bar");
+        vars.insert("branch", r"feat\bar");
         let result = expand_template(
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,

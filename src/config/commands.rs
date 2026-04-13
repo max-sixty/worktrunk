@@ -2,6 +2,40 @@
 //!
 //! See `wt hook --help` → "Pipeline Ordering" for user-facing docs.
 //! See [`HookStep`] and [`CommandConfig`] for the internal model.
+//!
+//! # TOML representation notes
+//!
+//! In primitive terms, a hook deserializes from one of three values: a
+//! string, a dict, or a list of (string | dict). TOML offers multiple
+//! syntaxes for each primitive — `[hook]` section vs. `hook = {...}` inline,
+//! `[[hook]]` headers vs. `hook = [{...}]` inline. These are equivalent at
+//! the parsed value, so the deserializer sees only the primitive shape.
+//!
+//! | Primitive | Example | Resulting `steps` |
+//! |---|---|---|
+//! | string | `hook = "cmd"` | `[Single(unnamed)]` |
+//! | dict | `[hook]` + keys, or `hook = {a="...", b="..."}` | `[Concurrent(all entries)]` — always `Concurrent`, even for one entry |
+//! | list | `hook = [{a="..."}, "cmd", ...]` | one step per element: string → `Single(unnamed)`; 1-key dict → `Single(named)`; multi-key dict → `Concurrent` |
+//!
+//! ## Dict-at-top vs. dict-in-list is asymmetric
+//!
+//! A top-level dict always becomes `Concurrent`. A one-entry dict inside a
+//! list becomes `Single(named)` instead (see `map_to_step`). So
+//! `{test="..."}` and `[{test="..."}]` have the same command set but
+//! different `HookStep` variants. For pre-* hooks this is invisible
+//! (everything runs serially anyway); for post-* hooks it controls
+//! parallelism.
+//!
+//! ## `[[hook]]` header form is not a full alternative to pipeline form
+//!
+//! TOML array-of-tables headers only produce dict elements. A pipeline that
+//! mixes anonymous strings with named dicts — e.g.
+//! `hook = ["cargo setup", {build="..."}]` — cannot be rewritten as repeated
+//! `[[hook]]` blocks without inventing a name for each bare-string step.
+//! Naming is user-visible: it changes the step from anonymous `Single` to
+//! named `Single`, which affects log file paths
+//! (`.../set-vars.log` vs. a positional slot) and hook-selection filtering
+//! (`wt hook post-start <name>`).
 
 use std::collections::BTreeMap;
 

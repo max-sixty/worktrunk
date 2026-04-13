@@ -32,6 +32,7 @@
 //! ```
 
 pub mod chrome;
+pub mod emit;
 pub mod parse;
 
 // Re-export main types for convenience

@@ -208,5 +208,6 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```

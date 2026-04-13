@@ -699,7 +699,7 @@ capture = "echo 'branch={{ branch }} worktree_path={{ worktree_path }} worktree_
     // The worktree_path in hook output should end with the worktree directory name
     assert!(
         content.contains(&format!("/{feature_wt_name} "))
-            || content.contains(&format!("\\{feature_wt_name} ")),
+            || content.contains(&format!(r"\{feature_wt_name} ")),
         "worktree_path should end with the removed worktree's name '{feature_wt_name}', got: {content}"
     );
 
@@ -2433,7 +2433,7 @@ capture = "echo 'wt_path={{ worktree_path }} base={{ base }} base_wt={{ base_wor
     // worktree_path should be the destination (Active)
     assert!(
         content.contains(&format!("/{feature_name} "))
-            || content.contains(&format!("\\{feature_name} ")),
+            || content.contains(&format!(r"\{feature_name} ")),
         "worktree_path should point to destination '{feature_name}', got: {content}"
     );
 
@@ -2445,7 +2445,7 @@ capture = "echo 'wt_path={{ worktree_path }} base={{ base }} base_wt={{ base_wor
 
     // cwd should be the source (where the hook actually runs)
     assert!(
-        content.contains(&format!("/{main_name}")) || content.contains(&format!("\\{main_name}")),
+        content.contains(&format!("/{main_name}")) || content.contains(&format!(r"\{main_name}")),
         "cwd should point to source worktree '{main_name}', got: {content}"
     );
 }
@@ -3011,7 +3011,7 @@ fn test_foreground_hook_passes_directive_file(repo: TestRepo) {
         !wt_str.contains('\''),
         "wt binary path should not contain single quotes: {wt_str}"
     );
-    let wt_toml = wt_str.replace('\\', "\\\\");
+    let wt_toml = wt_str.replace('\\', r"\\");
 
     // Pre-start hook that creates a new worktree via `wt switch --create`.
     // If the CD directive file is passed through, the inner wt will write a

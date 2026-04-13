@@ -720,14 +720,14 @@ mod tests {
         assert_snapshot!(
             [
                 ("path separator /", sanitize_for_filename("feature/branch")),
-                ("path separator \\", sanitize_for_filename("feature\\branch")),
+                (r"path separator \", sanitize_for_filename(r"feature\branch")),
                 ("colon", sanitize_for_filename("bug:123")),
                 ("angle brackets", sanitize_for_filename("fix<angle>")),
                 ("pipe", sanitize_for_filename("fix|pipe")),
                 ("question mark", sanitize_for_filename("fix?question")),
                 ("wildcard", sanitize_for_filename("fix*wildcard")),
-                ("quotes", sanitize_for_filename("fix\"quotes\"")),
-                ("multiple special", sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j")),
+                ("quotes", sanitize_for_filename(r#"fix"quotes""#)),
+                ("multiple special", sanitize_for_filename(r#"a/b\c<d>e:f"g|h?i*j"#)),
                 ("already safe", sanitize_for_filename("normal-branch")),
                 ("underscore", sanitize_for_filename("branch_with_underscore")),
                 ("reserved prefix CONSOLE", sanitize_for_filename("CONSOLE")),

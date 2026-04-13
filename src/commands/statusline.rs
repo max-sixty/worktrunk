@@ -155,6 +155,10 @@ fn format_context_gauge(percentage: f64) -> String {
 /// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(format: OutputFormat) -> Result<()> {
+    // Statusline runs on every prompt redraw — deprecation warnings on stderr
+    // would appear above each prompt.
+    worktrunk::config::suppress_warnings();
+
     // JSON format: output current worktree as JSON
     if matches!(format, OutputFormat::Json) {
         return run_json();
