@@ -331,6 +331,16 @@ impl ListItem {
         self.branch.as_deref().unwrap_or("(detached)")
     }
 
+    /// Short display name for this item — the branch if present, otherwise
+    /// a truncated HEAD SHA. Use when reporting which item is pending,
+    /// stuck, or missing: `branch_name()`'s `"(detached)"` fallback collapses
+    /// distinct detached items into one label.
+    pub fn display_name(&self) -> &str {
+        self.branch
+            .as_deref()
+            .unwrap_or_else(|| &self.head[..8.min(self.head.len())])
+    }
+
     pub fn is_main(&self) -> bool {
         matches!(&self.kind, ItemKind::Worktree(data) if data.is_main)
     }

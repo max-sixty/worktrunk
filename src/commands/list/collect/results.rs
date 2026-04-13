@@ -16,22 +16,78 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-/// Deadline for the entire drain operation. Generous to avoid flaky timeouts
-/// under CI load where process spawning for ~70 work items can be slow.
-pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
-
 use super::super::model::{ItemKind, ListItem};
 use super::execution::ExpectedResults;
 use super::types::{DrainOutcome, MissingResult, TaskError, TaskKind, TaskResult};
 
-/// Boxed one-shot tick closure. Factored out so the inferred closure can
-/// coerce to `dyn FnMut` at the `Box::new` site.
-pub(super) type DrainTickFn<'a> = Box<dyn FnMut(&mut [ListItem]) + 'a>;
+/// Deadline for the entire drain operation. Generous to avoid flaky timeouts
+/// under CI load where process spawning for ~70 work items can be slow.
+pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// One-shot tick scheduled against [`drain_results`]. When `Instant` elapses,
-/// the boxed closure fires once with the full item slice — used by `wt list`
-/// to reveal the `·` loading indicator at T+200ms.
-pub(super) type DrainTick<'a> = (Instant, DrainTickFn<'a>);
+/// Stall detection timings used by production callers of `drain_results`.
+pub(super) const STALL_TIMINGS: StallTimings = StallTimings {
+    threshold: Duration::from_secs(5),
+    tick: Duration::from_millis(500),
+};
+
+/// Timings controlling `DrainEvent::Stall` emission.
+///
+/// `threshold` is how long the drain waits with no incoming result before
+/// emitting a stall event. `tick` is how often the drain wakes up while idle
+/// to re-check — lower values surface the hint faster at the cost of a few
+/// extra syscalls per second.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct StallTimings {
+    pub threshold: Duration,
+    pub tick: Duration,
+}
+
+/// A single task the drain is still waiting on — surfaced to the caller when
+/// no results have arrived in the last `STALL_TIMINGS.threshold`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PendingHint<'a> {
+    pub kind: TaskKind,
+    pub name: &'a str,
+}
+
+/// Events emitted by `drain_results`. A single callback handles every
+/// event kind so the caller can share state (e.g. the progressive table)
+/// across them without fighting the borrow checker.
+pub(super) enum DrainEvent<'a> {
+    /// A task result has been applied to `item` — progressive mode re-renders.
+    Result {
+        item_idx: usize,
+        item: &'a mut ListItem,
+    },
+    /// The `reveal_at` deadline passed — fires exactly once. `wt list` uses
+    /// this to promote blank placeholders to the `·` loading indicator.
+    Reveal { items: &'a [ListItem] },
+    /// No results for at least `STALL_TIMINGS.threshold`; here's one task
+    /// we're still waiting on. Fires repeatedly (each `STALL_TIMINGS.tick`)
+    /// while stalled.
+    Stall { pending: PendingHint<'a> },
+}
+
+/// Return the first pending `(item_idx, kind)` pair — an expected result
+/// that has not yet been received. Iteration order mirrors how work items
+/// were registered, giving a deterministic pick when multiple are pending.
+fn pick_pending_hint<'a>(
+    expected: &ExpectedResults,
+    received_by_item: &[Vec<TaskKind>],
+    items: &'a [ListItem],
+) -> Option<PendingHint<'a>> {
+    for ((item_idx, received), item) in received_by_item.iter().enumerate().zip(items.iter()) {
+        for kind in expected.results_for(item_idx) {
+            if !received.contains(&kind) {
+                return Some(PendingHint {
+                    kind,
+                    name: item.display_name(),
+                });
+            }
+        }
+    }
+    None
+}
 
 /// Drain task results from the channel and apply them to items.
 ///
@@ -58,30 +114,63 @@ pub(super) fn drain_results(
     expected_results: &ExpectedResults,
     deadline: Instant,
     integration_target: Option<&str>,
-    mut on_result: impl FnMut(usize, &mut ListItem),
-    mut tick: Option<DrainTick<'_>>,
+    on_event: impl FnMut(DrainEvent<'_>),
+    reveal_at: Option<Instant>,
+) -> DrainOutcome {
+    drain_results_with_timings(
+        rx,
+        items,
+        errors,
+        expected_results,
+        deadline,
+        integration_target,
+        STALL_TIMINGS,
+        on_event,
+        reveal_at,
+    )
+}
+
+/// Core drain loop. Stall timings are parameterized so tests can trigger the
+/// stall path quickly; production callers use [`drain_results`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drain_results_with_timings(
+    rx: chan::Receiver<Result<TaskResult, TaskError>>,
+    items: &mut [ListItem],
+    errors: &mut Vec<TaskError>,
+    expected_results: &ExpectedResults,
+    deadline: Instant,
+    integration_target: Option<&str>,
+    stall_timings: StallTimings,
+    mut on_event: impl FnMut(DrainEvent<'_>),
+    mut reveal_at: Option<Instant>,
 ) -> DrainOutcome {
     // Track which result kinds we've received per item (for timeout diagnostics)
     let mut received_by_item: Vec<Vec<TaskKind>> = vec![Vec::new(); items.len()];
 
+    // Last time a result arrived (start with now so stall is measured from
+    // the beginning of collection, not from the Unix epoch).
+    let mut last_result_time = Instant::now();
+
     // Process task results as they arrive (with deadline)
     loop {
-        // Fire the one-shot tick when its deadline has passed. The tick fires
-        // between channel recvs, so it never races with `on_result`.
-        if let Some((tick_at, _)) = tick.as_ref()
-            && Instant::now() >= *tick_at
+        // Fire the one-shot reveal when its deadline has passed. Reveal fires
+        // between channel recvs, so it never races with `DrainEvent::Result`.
+        if let Some(at) = reveal_at
+            && Instant::now() >= at
         {
-            let (_, mut tick_fn) = tick.take().unwrap();
-            tick_fn(items);
+            on_event(DrainEvent::Reveal { items });
+            reveal_at = None;
         }
 
         let now = Instant::now();
         let remaining = deadline.saturating_duration_since(now);
-        // Clamp recv timeout so we wake at the tick deadline (earliest of the two).
-        let recv_timeout_dur = match tick.as_ref() {
-            Some((tick_at, _)) => remaining.min(tick_at.saturating_duration_since(now)),
-            None => remaining,
-        };
+        // Clamp recv timeout to the nearest of: real deadline, stall tick
+        // (so we can fire stall events promptly), and the reveal deadline
+        // (so we wake to emit it).
+        let mut recv_timeout_dur = remaining.min(stall_timings.tick);
+        if let Some(at) = reveal_at {
+            recv_timeout_dur = recv_timeout_dur.min(at.saturating_duration_since(now));
+        }
         if remaining.is_zero() {
             // Deadline exceeded - build diagnostic info showing MISSING results
             let received_count: usize = received_by_item.iter().map(|v| v.len()).sum();
@@ -104,13 +193,9 @@ pub(super) fn drain_results(
                     .collect();
 
                 if !missing_kinds.is_empty() {
-                    let name = item
-                        .branch
-                        .clone()
-                        .unwrap_or_else(|| item.head[..8.min(item.head.len())].to_string());
                     items_with_missing.push(MissingResult {
                         item_idx,
-                        name,
+                        name: item.display_name().to_string(),
                         missing_kinds,
                     });
                 }
@@ -128,7 +213,21 @@ pub(super) fn drain_results(
 
         let outcome = match rx.recv_timeout(recv_timeout_dur) {
             Ok(outcome) => outcome,
-            Err(chan::RecvTimeoutError::Timeout) => continue, // Check tick/deadline next iteration
+            Err(chan::RecvTimeoutError::Timeout) => {
+                // Nothing arrived within the tick. If we've been silent for
+                // at least `stall_timings.threshold`, emit a stall event
+                // pointing at one task we're still waiting on. Fires
+                // repeatedly while stalled — `update_footer` is idempotent
+                // for same content. The loop top handles firing any
+                // due one-shot tick and re-checks the real deadline.
+                if last_result_time.elapsed() >= stall_timings.threshold
+                    && let Some(pending) =
+                        pick_pending_hint(expected_results, &received_by_item, items)
+                {
+                    on_event(DrainEvent::Stall { pending });
+                }
+                continue;
+            }
             Err(chan::RecvTimeoutError::Disconnected) => break, // All senders dropped - done
         };
 
@@ -140,6 +239,7 @@ pub(super) fn drain_results(
 
         // Track this result for diagnostics (both success and error count as "received")
         received_by_item[item_idx].push(kind);
+        last_result_time = Instant::now();
 
         // Errors leave the errored task's fields at `None`. The
         // corresponding gate stays unresolved (renders `·`). Callers
@@ -148,7 +248,10 @@ pub(super) fn drain_results(
         // footer progress counter advances.
         if let Err(error) = outcome {
             errors.push(error);
-            on_result(item_idx, &mut items[item_idx]);
+            on_event(DrainEvent::Result {
+                item_idx,
+                item: &mut items[item_idx],
+            });
             continue;
         }
 
@@ -260,7 +363,7 @@ pub(super) fn drain_results(
         item.refresh_status_symbols(integration_target);
 
         // Invoke callback (progressive mode re-renders rows, buffered mode does nothing)
-        on_result(item_idx, item);
+        on_event(DrainEvent::Result { item_idx, item });
     }
 
     DrainOutcome::Complete
@@ -365,7 +468,7 @@ mod tests {
             &expected,
             Instant::now() + DRAIN_TIMEOUT,
             None,
-            |_, _| {},
+            |_| {},
             None,
         );
         assert!(matches!(outcome, DrainOutcome::Complete));
@@ -444,7 +547,7 @@ mod tests {
             &expected,
             Instant::now() + DRAIN_TIMEOUT,
             Some("main"),
-            |_, _| {},
+            |_| {},
             None,
         );
 
@@ -488,7 +591,7 @@ mod tests {
             &expected,
             Instant::now() + DRAIN_TIMEOUT,
             Some("main"),
-            |_, _| {},
+            |_| {},
             None,
         );
 
@@ -529,7 +632,7 @@ mod tests {
             &expected,
             Instant::now() + DRAIN_TIMEOUT,
             Some("main"),
-            |_, _| {},
+            |_| {},
             None,
         );
 
@@ -560,7 +663,7 @@ mod tests {
             &expected,
             Instant::now(),
             None,
-            |_, _| {},
+            |_| {},
             None,
         );
 
@@ -588,18 +691,62 @@ mod tests {
     }
 
     #[test]
-    fn test_drain_results_tick_fires_when_deadline_passes() {
-        // A tick whose deadline has already elapsed should fire exactly once
-        // with a mutable view of the items, then stop (no re-fire on subsequent
-        // loop iterations). The drain loop wakes at the tick deadline even
-        // without any channel traffic, so this also exercises the
-        // recv_timeout-clamping path.
-        let (tx, rx) = crossbeam_channel::unbounded::<Result<TaskResult, TaskError>>();
+    fn test_drain_results_fires_stall_when_silent_past_threshold() {
+        // No results arrive; the drain should emit a Stall event pointing at
+        // the first pending task once `stall_threshold` elapses, and keep
+        // firing on each tick until the deadline.
+        let (_tx, rx) = crossbeam_channel::unbounded();
+        let mut items = vec![
+            ListItem::new_branch("abc123".into(), "feat".into()),
+            ListItem::new_branch("def456".into(), "other".into()),
+        ];
+        let mut errors = Vec::new();
+
+        let expected = ExpectedResults::default();
+        expected.expect(0, TaskKind::AheadBehind);
+        expected.expect(1, TaskKind::CommitDetails);
+
+        let mut stall_events: Vec<(TaskKind, String)> = Vec::new();
+        let outcome = drain_results_with_timings(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now() + Duration::from_millis(200),
+            None,
+            StallTimings {
+                threshold: Duration::from_millis(20),
+                tick: Duration::from_millis(20),
+            },
+            |event| {
+                if let DrainEvent::Stall { pending } = event {
+                    stall_events.push((pending.kind, pending.name.to_string()));
+                }
+            },
+            None,
+        );
+
+        assert!(matches!(outcome, DrainOutcome::TimedOut { .. }));
+        assert!(
+            !stall_events.is_empty(),
+            "expected at least one stall event before the deadline"
+        );
+        let (kind, name) = &stall_events[0];
+        assert_eq!(*kind, TaskKind::AheadBehind);
+        assert_eq!(name, "feat");
+    }
+
+    #[test]
+    fn test_drain_results_does_not_fire_stall_when_results_flow() {
+        // Results arrive faster than the stall threshold, so no Stall event
+        // should fire. last_result_time is reset on each received result.
+        let (tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
         let mut errors = Vec::new();
-        let expected = ExpectedResults::default();
 
-        // Send one result so the drain exits promptly after the tick.
+        let expected = ExpectedResults::default();
+        expected.expect(0, TaskKind::CommitDetails);
+
         tx.send(Ok(TaskResult::SummaryGenerate {
             item_idx: 0,
             summary: None,
@@ -607,26 +754,81 @@ mod tests {
         .unwrap();
         drop(tx);
 
-        let mut tick_fires = 0usize;
-        let tick_fn: DrainTickFn<'_> = Box::new(|items: &mut [ListItem]| {
-            tick_fires += 1;
-            // Mutate an item to prove we got a live mutable reference.
-            items[0].branch = Some("touched-by-tick".into());
-        });
-
-        let outcome = drain_results(
+        let mut stall_count = 0;
+        let outcome = drain_results_with_timings(
             rx,
             &mut items,
             &mut errors,
             &expected,
-            Instant::now() + DRAIN_TIMEOUT,
+            Instant::now() + Duration::from_millis(50),
             None,
-            |_, _| {},
-            Some((Instant::now(), tick_fn)),
+            StallTimings {
+                threshold: Duration::from_secs(10), // far exceeds deadline
+                tick: Duration::from_millis(20),
+            },
+            |event| {
+                if matches!(event, DrainEvent::Stall { .. }) {
+                    stall_count += 1;
+                }
+            },
+            None,
         );
 
         assert!(matches!(outcome, DrainOutcome::Complete));
-        assert_eq!(tick_fires, 1, "tick should fire exactly once");
-        assert_eq!(items[0].branch.as_deref(), Some("touched-by-tick"));
+        assert_eq!(stall_count, 0, "stall must not fire under the threshold");
+    }
+
+    #[test]
+    fn test_drain_results_survives_mid_stall_result() {
+        // Smoke test: a result arriving mid-stall doesn't crash the loop or
+        // double-fire. Does NOT prove `last_result_time` resets — that's
+        // visible in the drain source directly. Verifying reset timing in
+        // a test would need an upper-bound stall count, and `threshold/tick`
+        // is too small a window to distinguish reset-works from reset-broken
+        // without flakiness.
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
+        let mut errors = Vec::new();
+
+        let expected = ExpectedResults::default();
+        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::AheadBehind);
+
+        // Send exactly one result partway through.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            let _ = tx.send(Ok(TaskResult::SummaryGenerate {
+                item_idx: 0,
+                summary: None,
+            }));
+            // Leave tx open so the drain keeps running until deadline.
+            std::thread::sleep(Duration::from_millis(500));
+            drop(tx);
+        });
+
+        let mut stall_events = 0;
+        let _ = drain_results_with_timings(
+            rx,
+            &mut items,
+            &mut errors,
+            &expected,
+            Instant::now() + Duration::from_millis(200),
+            None,
+            StallTimings {
+                threshold: Duration::from_millis(40),
+                tick: Duration::from_millis(20),
+            },
+            |event| {
+                if matches!(event, DrainEvent::Stall { .. }) {
+                    stall_events += 1;
+                }
+            },
+            None,
+        );
+
+        assert!(
+            stall_events >= 1,
+            "drain should still emit stalls even when a result arrives mid-stall"
+        );
     }
 }
