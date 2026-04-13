@@ -946,10 +946,9 @@ fn parse_cli() -> Option<Cli> {
     let (directory, config, is_step_help) = parse_early_globals();
     apply_global_options(directory, config);
 
-    // Handle --help with pager before clap processes it
-    if help::maybe_handle_help_with_pager(is_step_help) {
-        return None;
-    }
+    // Handle --help with pager before clap processes it.
+    // Exits the process on a help/version/doc request; otherwise returns.
+    help::maybe_handle_help_with_pager(is_step_help);
 
     // TODO: Enhance error messages to show possible values for missing enum arguments
     // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.

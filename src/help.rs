@@ -68,12 +68,13 @@ use crate::cli;
 /// Uses `Error::render()` to get clap's pre-formatted help, which already
 /// respects `-h` (short) vs `--help` (long) distinction.
 ///
-/// Returns `true` if help was handled (caller should exit), `false` to continue normal parsing.
+/// On a help/version/doc-generation request, prints output and calls
+/// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
 ///
 /// `is_step_help` is computed by the caller from the same early-parse pass that
 /// extracts global options, and controls whether we splice the configured
 /// aliases into the rendered output.
-pub fn maybe_handle_help_with_pager(is_step_help: bool) -> bool {
+pub fn maybe_handle_help_with_pager(is_step_help: bool) {
     let args: Vec<String> = std::env::args().collect();
 
     // --help uses pager, -h prints directly (git convention)
@@ -132,52 +133,46 @@ pub fn maybe_handle_help_with_pager(is_step_help: bool) -> bool {
     let mut cmd = cli::build_command();
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
-    match cmd.try_get_matches_from_mut(&args) {
-        Ok(_) => false, // Normal args, not help
-        Err(err) => {
-            match err.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                    // err.render() returns a StyledStr containing ANSI codes.
-                    // Use .ansi() to preserve them; .to_string() strips ANSI codes.
-                    let clap_output = err.render().ansi().to_string();
+    if let Err(err) = cmd.try_get_matches_from_mut(&args) {
+        match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                // err.render() returns a StyledStr containing ANSI codes.
+                // Use .ansi() to preserve them; .to_string() strips ANSI codes.
+                let clap_output = err.render().ansi().to_string();
 
-                    // Splice configured aliases into `wt step --help` / `-h`
-                    // so the help here matches bare `wt step`. Scoped to the
-                    // step subcommand only — other help passes through.
-                    let clap_output = if is_step_help {
-                        crate::commands::augment_step_help(&clap_output)
-                    } else {
-                        clap_output
-                    };
+                // Splice configured aliases into `wt step --help` / `-h`
+                // so the help here matches bare `wt step`. Scoped to the
+                // step subcommand only — other help passes through.
+                let clap_output = if is_step_help {
+                    crate::commands::augment_step_help(&clap_output)
+                } else {
+                    clap_output
+                };
 
-                    // Render markdown sections (tables, code blocks, prose) with proper wrapping.
-                    // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                    let width = worktrunk::styling::terminal_width();
-                    let help = crate::md_help::render_markdown_in_help_with_width(
-                        &clap_output,
-                        Some(width),
-                    );
+                // Render markdown sections (tables, code blocks, prose) with proper wrapping.
+                // Since we disabled clap's wrapping above, our renderer controls all line breaks.
+                let width = worktrunk::styling::terminal_width();
+                let help =
+                    crate::md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
 
-                    // show_help_in_pager checks if stdout or stderr is a TTY.
-                    // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
-                    // use_pager=false for -h (short help), true for --help (long help)
-                    if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
-                        log::debug!("Pager invocation failed: {}", e);
-                        println!("{}", help);
-                    }
-                    process::exit(0);
+                // show_help_in_pager checks if stdout or stderr is a TTY.
+                // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
+                // use_pager=false for -h (short help), true for --help (long help)
+                if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
+                    log::debug!("Pager invocation failed: {}", e);
+                    println!("{}", help);
                 }
-                ErrorKind::DisplayVersion => {
-                    // Print to stdout — POSIX convention, and scripts rely on
-                    // `version=$(wt --version)` working without redirection (#2072).
-                    // Use print! because clap's Error Display already includes a trailing newline.
-                    print!("{}", err);
-                    process::exit(0);
-                }
-                _ => {
-                    // Not help or version - will be re-parsed by Cli::parse()
-                    false
-                }
+                process::exit(0);
+            }
+            ErrorKind::DisplayVersion => {
+                // Print to stdout — POSIX convention, and scripts rely on
+                // `version=$(wt --version)` working without redirection (#2072).
+                // Use print! because clap's Error Display already includes a trailing newline.
+                print!("{}", err);
+                process::exit(0);
+            }
+            _ => {
+                // Not help or version - will be re-parsed by Cli::parse()
             }
         }
     }

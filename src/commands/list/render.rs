@@ -22,6 +22,13 @@ use super::model::{ListItem, PositionMask};
 /// audit. Also update `src/cli/mod.rs` status-column help table when resplit.
 pub const PLACEHOLDER: &str = "·";
 
+/// Blank placeholder used by `wt list` during the first ~100ms of progressive
+/// rendering. The skeleton renders with blanks so fast commands (everything
+/// resolved under 100ms) never flash the `·` loading indicator. After the
+/// 100ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
+/// and every still-pending cell is re-rendered with the dot.
+pub const PLACEHOLDER_BLANK: &str = " ";
+
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
     fn exceeds_width(value: usize, digits: usize) -> bool {
@@ -250,7 +257,7 @@ impl LayoutConfig {
 
     /// Render list item line as StyledLine (for extracting both plain and styled text)
     pub fn render_list_item_line(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, PLACEHOLDER)
+        self.render_item_with_placeholder(item, self.placeholder.get())
     }
 
     /// Render with stale placeholders for items where data collection was truncated.
@@ -260,7 +267,7 @@ impl LayoutConfig {
     /// (data won't arrive vs. still loading) — see [`PLACEHOLDER`].
     #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
     pub fn render_list_item_stale(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, PLACEHOLDER)
+        self.render_item_with_placeholder(item, self.placeholder.get())
     }
 
     fn render_item_with_placeholder(&self, item: &ListItem, placeholder: &str) -> StyledLine {
@@ -289,7 +296,7 @@ impl LayoutConfig {
             .unwrap_or_default();
 
         let dim = Style::new().dimmed();
-        let spinner = PLACEHOLDER;
+        let spinner = self.placeholder.get();
 
         self.render_line(|col| {
             let mut cell = StyledLine::new();
@@ -298,12 +305,12 @@ impl LayoutConfig {
                 ColumnKind::Gutter => {
                     // Skeleton shows placeholder gutter - actual symbols (including is_previous)
                     // appear when WorktreeData is populated post-skeleton.
-                    // TODO: is this ever visible? The skeleton renders for ~50ms before data
-                    // arrives. If not, consider removing the middle dot.
+                    // Uses the current placeholder so the 100ms blank-reveal flow
+                    // keeps the gutter in lockstep with the data columns.
                     let symbol = if wt_data.is_some() {
-                        "· " // Placeholder for worktrees
+                        format!("{spinner} ") // Placeholder for worktrees
                     } else {
-                        "  " // Branch without worktree (two spaces to match width)
+                        "  ".to_string() // Branch without worktree (two spaces to match width)
                     };
                     cell.push_styled(symbol, dim);
                 }
@@ -1338,6 +1345,7 @@ mod tests {
             max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
+            placeholder: std::cell::Cell::new(PLACEHOLDER),
         };
 
         let item = ListItem::new_branch("abc123".into(), "feat".into());

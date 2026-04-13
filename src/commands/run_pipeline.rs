@@ -59,9 +59,9 @@ use std::io::Read as _;
 use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::shell_exec::ShellConfig;
 
 use super::command_executor::{expand_shell_template, wait_first_error};
@@ -108,7 +108,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = child.wait().context("failed to wait for child process")?;
                 if !status.success() {
-                    bail!("{}", format_failure(&status, &expanded));
+                    return Err(failure_error(&status, &expanded));
                 }
                 cmd_index += 1;
             }
@@ -210,10 +210,10 @@ fn run_concurrent_group(
                 .wait()
                 .with_context(|| format!("failed to wait for: {expanded}"))?;
             if !status.success() {
-                bail!(
-                    "{}",
-                    format_failure(&status, cmd.name.as_deref().unwrap_or(&expanded)),
-                );
+                return Err(failure_error(
+                    &status,
+                    cmd.name.as_deref().unwrap_or(&expanded),
+                ));
             }
         } else {
             children.push((cmd.name.clone(), expanded, child));
@@ -226,10 +226,7 @@ fn run_concurrent_group(
                 .wait()
                 .with_context(|| format!("failed to wait for: {expanded}"))?;
             if !status.success() {
-                bail!(
-                    "{}",
-                    format_failure(&status, name.as_deref().unwrap_or(&expanded)),
-                );
+                return Err(failure_error(&status, name.as_deref().unwrap_or(&expanded)));
             }
             Ok(())
         },
@@ -256,30 +253,47 @@ fn create_command_log(spec: &PipelineSpec, name: &str) -> anyhow::Result<fs::Fil
         .with_context(|| format!("failed to create log file: {}", path.display()))
 }
 
-/// Format a failed child-process status into a log message.
+/// Build the `anyhow::Error` for a failed pipeline step.
 ///
-/// On Unix, signal-killed children are reported with the signal number and
-/// name (e.g., `pipeline step terminated by signal 15 (SIGTERM): <label>`)
-/// so hook log files make it obvious *which* signal stopped the step. This
-/// matters for debugging Ctrl-C (SIGINT) versus other cancellations.
+/// Signal-killed children surface as `WorktrunkError::ChildProcessExited`
+/// with `signal: Some(sig)` and `code: 128 + sig`, matching the foreground
+/// convention established by `shell_exec`. That lets `exit_code()` and
+/// `interrupt_exit_code()` work consistently and the `wt hook run-pipeline`
+/// process exits 130 on SIGINT and 143 on SIGTERM — the expectation the
+/// "Signal Handling" section of the project `CLAUDE.md` sets for every
+/// command loop.
 ///
-/// The non-Unix path (`status.code()` is always `Some` on Windows) falls
-/// back to the plain exit-code form.
-fn format_failure(status: &ExitStatus, label: &str) -> String {
+/// Non-signal failures carry the child's exit code verbatim so log readers
+/// (and any future observer of the background process) see the real code
+/// instead of a generic `1`.
+///
+/// On non-Unix (`status.signal()` unavailable), the function falls through
+/// to the exit-code path; `status.code()` is always `Some` on Windows.
+fn failure_error(status: &ExitStatus, label: &str) -> anyhow::Error {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
         if let Some(sig) = status.signal() {
-            return format!(
+            let message = format!(
                 "pipeline step terminated by {}: {label}",
                 format_signal(sig)
             );
+            return WorktrunkError::ChildProcessExited {
+                code: 128 + sig,
+                message,
+                signal: Some(sig),
+            }
+            .into();
         }
     }
-    let exit = status
-        .code()
-        .map_or_else(|| "signal".to_string(), |c| format!("exit code {c}"));
-    format!("command failed with {exit}: {label}")
+    let code = status.code().unwrap_or(1);
+    let message = format!("command failed with exit code {code}: {label}");
+    WorktrunkError::ChildProcessExited {
+        code,
+        message,
+        signal: None,
+    }
+    .into()
 }
 
 /// Render a signal number as `signal N (SIGNAME)`, or `signal N` if nix
@@ -296,30 +310,63 @@ fn format_signal(sig: i32) -> String {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+    use worktrunk::git::interrupt_exit_code;
 
-    #[test]
-    fn format_failure_names_common_signals() {
-        let cases = [
-            (
-                15,
-                "pipeline step terminated by signal 15 (SIGTERM): my-step",
-            ),
-            (2, "pipeline step terminated by signal 2 (SIGINT): my-step"),
-            (9, "pipeline step terminated by signal 9 (SIGKILL): my-step"),
-        ];
-        for (sig, expected) in cases {
-            let status = ExitStatus::from_raw(sig);
-            assert_eq!(format_failure(&status, "my-step"), expected);
+    fn downcast_child_exit(err: &anyhow::Error) -> (i32, Option<i32>, String) {
+        match err.downcast_ref::<WorktrunkError>() {
+            Some(WorktrunkError::ChildProcessExited {
+                code,
+                message,
+                signal,
+            }) => (*code, *signal, message.clone()),
+            _ => panic!("expected ChildProcessExited, got {err:?}"),
         }
     }
 
     #[test]
-    fn format_failure_falls_back_to_exit_code() {
+    fn signal_exit_reports_named_signal_and_shell_exit_code() {
+        let cases = [
+            (
+                15,
+                143,
+                "pipeline step terminated by signal 15 (SIGTERM): my-step",
+            ),
+            (
+                2,
+                130,
+                "pipeline step terminated by signal 2 (SIGINT): my-step",
+            ),
+            (
+                9,
+                137,
+                "pipeline step terminated by signal 9 (SIGKILL): my-step",
+            ),
+        ];
+        for (sig, expected_code, expected_msg) in cases {
+            let status = ExitStatus::from_raw(sig);
+            let err = failure_error(&status, "my-step");
+            let (code, signal, message) = downcast_child_exit(&err);
+            assert_eq!(signal, Some(sig), "signal field for {sig}");
+            assert_eq!(code, expected_code, "exit code for {sig}");
+            assert_eq!(message, expected_msg, "message for {sig}");
+            assert_eq!(
+                interrupt_exit_code(&err),
+                Some(expected_code),
+                "interrupt_exit_code for {sig}",
+            );
+        }
+    }
+
+    #[test]
+    fn non_signal_exit_preserves_child_code() {
         // Non-signal exit: raw value is (code << 8) on Unix.
         let status = ExitStatus::from_raw(2 << 8);
-        assert_eq!(
-            format_failure(&status, "my-step"),
-            "command failed with exit code 2: my-step",
-        );
+        let err = failure_error(&status, "my-step");
+        let (code, signal, message) = downcast_child_exit(&err);
+        assert_eq!(signal, None);
+        assert_eq!(code, 2);
+        assert_eq!(message, "command failed with exit code 2: my-step");
+        // Non-signal errors must NOT trip the interrupt abort path.
+        assert_eq!(interrupt_exit_code(&err), None);
     }
 }
