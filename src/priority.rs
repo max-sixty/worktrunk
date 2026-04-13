@@ -121,3 +121,58 @@ pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Command {
         Command::new(program)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_of(cmd: &Command) -> Vec<&str> {
+        cmd.get_args().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn command_no_lower_returns_bare() {
+        let cmd = command("echo", false);
+        assert_eq!(cmd.get_program(), "echo");
+        assert!(args_of(&cmd).is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn command_lower_wraps_in_taskpolicy() {
+        let cmd = command("echo", true);
+        assert_eq!(cmd.get_program(), "/usr/sbin/taskpolicy");
+        assert_eq!(args_of(&cmd), ["-b", "echo"]);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn command_lower_wraps_in_nice_or_ionice() {
+        let cmd = command("echo", true);
+        if *HAS_IONICE {
+            assert_eq!(cmd.get_program(), "ionice");
+            assert_eq!(
+                args_of(&cmd),
+                ["-c", "3", "--", "nice", "-n", "19", "--", "echo"]
+            );
+        } else {
+            assert_eq!(cmd.get_program(), "nice");
+            assert_eq!(args_of(&cmd), ["-n", "19", "--", "echo"]);
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn command_lower_noop_on_non_unix() {
+        let cmd = command("echo", true);
+        assert_eq!(cmd.get_program(), "echo");
+        assert!(args_of(&cmd).is_empty());
+    }
+
+    #[test]
+    fn lower_current_process_does_not_panic() {
+        // Exercises the shell-out path; failures are silently swallowed so
+        // this is effectively a smoke test that the cfg arms compile and run.
+        lower_current_process();
+    }
+}
