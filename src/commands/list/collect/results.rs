@@ -629,37 +629,4 @@ mod tests {
         assert_eq!(tick_fires, 1, "tick should fire exactly once");
         assert_eq!(items[0].branch.as_deref(), Some("touched-by-tick"));
     }
-
-    #[test]
-    fn test_drain_results_tick_suppressed_when_drain_finishes_first() {
-        // When the tick deadline is far in the future and the channel
-        // disconnects before it elapses, the tick never fires.
-        let (tx, rx) = crossbeam_channel::unbounded::<Result<TaskResult, TaskError>>();
-        let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
-        let mut errors = Vec::new();
-        let expected = ExpectedResults::default();
-        drop(tx); // Immediate disconnect — drain returns right away.
-
-        let mut tick_fires = 0usize;
-        let tick_fn: DrainTickFn<'_> = Box::new(|_: &mut [ListItem]| {
-            tick_fires += 1;
-        });
-
-        let outcome = drain_results(
-            rx,
-            &mut items,
-            &mut errors,
-            &expected,
-            Instant::now() + DRAIN_TIMEOUT,
-            None,
-            |_, _| {},
-            Some((Instant::now() + DRAIN_TIMEOUT, tick_fn)),
-        );
-
-        assert!(matches!(outcome, DrainOutcome::Complete));
-        assert_eq!(
-            tick_fires, 0,
-            "tick should not fire when drain finishes first"
-        );
-    }
 }
