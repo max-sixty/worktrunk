@@ -97,7 +97,7 @@ server = "npm run dev"
 
 Here `install` runs first, then `build` and `server` run together.
 
-For pre-* hooks, prefer pipeline form over table form. Table form for pre-* hooks currently runs serially rather than concurrently — this inconsistency is deprecated and will change in a future version. Using pipeline form avoids the upcoming behavior change.
+Table form for pre-* hooks is deprecated and its behavior will change in a future version — use `[[hook]]` blocks instead.
 
 ## Project vs user hooks
 

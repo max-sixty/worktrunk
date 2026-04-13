@@ -662,6 +662,17 @@ $ wt config state logs clear
     Logs {
         #[command(subcommand)]
         action: Option<LogsAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// One-time hints shown in this repo
@@ -686,6 +697,17 @@ $ wt config state hints clear NAME   # re-show specific hint
     Hints {
         #[command(subcommand)]
         action: Option<HintsAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// CI status cache
@@ -717,6 +739,17 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
     CiStatus {
         #[command(subcommand)]
         action: Option<CiStatusAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// Branch markers
@@ -751,6 +784,17 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
     Marker {
         #[command(subcommand)]
         action: Option<MarkerAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// \[experimental\] Custom variables per branch
@@ -901,10 +945,6 @@ $ wt config state ci-status clear && wt config state ci-status get
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
-
-        /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Output")]
-        format: SwitchFormat,
     },
 
     /// Clear CI status cache
@@ -954,10 +994,6 @@ $ wt config state marker get --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
-
-        /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Output")]
-        format: SwitchFormat,
     },
 
     /// Set marker for a branch
@@ -1055,15 +1091,6 @@ $ wt config state logs get --hook=user:post-start:server --branch=feature
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
-
-        /// Output format (text, json)
-        #[arg(
-            long,
-            default_value = "text",
-            conflicts_with = "hook",
-            help_heading = "Output"
-        )]
-        format: SwitchFormat,
     },
 
     /// Clear all log files
@@ -1084,11 +1111,7 @@ List shown hints:
 $ wt config state hints
 ```"#
     )]
-    Get {
-        /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Output")]
-        format: SwitchFormat,
-    },
+    Get,
 
     /// Clear hints (re-show on next trigger)
     #[command(

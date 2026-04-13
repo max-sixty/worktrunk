@@ -41,8 +41,9 @@ pub enum InternalOp {
 /// - Example: `feature/internal/remove.log`
 ///
 /// Branch and hook names are sanitized for filesystem safety via
-/// `sanitize_for_filename`, which replaces invalid characters and appends a
-/// short collision-avoidance hash.
+/// `sanitize_for_filename`. Already-safe names pass through unchanged; names
+/// containing invalid characters have them replaced and a short
+/// collision-avoidance hash appended.
 ///
 /// # CLI format for lookup
 ///
@@ -556,6 +557,10 @@ pub fn sweep_stale_trash(repo: &Repository) {
         .collect();
     let command = format!("rm -rf -- {}", escaped.join(" "));
 
+    // TODO: the sweep is global (not branch-scoped), but `HookLog::path()`
+    // always prefixes with a branch segment, so we pass a fake `"wt"` here.
+    // Cleaner would be a top-level variant resolving to `internal/{op}.log`
+    // alongside the other shared logs (`commands.jsonl`, `verbose.log`, etc.).
     if let Err(e) = spawn_detached(
         repo,
         &repo.wt_dir(),
@@ -747,10 +752,10 @@ mod tests {
         wildcard: fix-wildcard-38y
         quotes: fix-quotes-2xu
         multiple special: a-b-c-d-e-f-g-h-i-j-obi
-        already safe: normal-branch-83y
-        underscore: branch_with_underscore-b65
-        reserved prefix CONSOLE: CONSOLE-8fv
-        reserved prefix COM10: COM10-1s2
+        already safe: normal-branch
+        underscore: branch_with_underscore
+        reserved prefix CONSOLE: CONSOLE
+        reserved prefix COM10: COM10
         "
         );
 
@@ -862,20 +867,20 @@ mod tests {
         let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main-vfz/user/post-start/server-f4t.log"
+            @"/repo/.git/wt/logs/main/user/post-start/server.log"
         );
 
         // Slash in branch name gets sanitized (feature/auth → feature-auth-{hash})
         assert_snapshot!(
             log.path(log_dir, "feature/auth").to_slash_lossy(),
-            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server-f4t.log"
+            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server.log"
         );
 
         // Project source
         let log = HookLog::hook(HookSource::Project, HookType::PreStart, "build");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main-vfz/project/pre-start/build-seq.log"
+            @"/repo/.git/wt/logs/main/project/pre-start/build.log"
         );
 
         // Constructor and parse produce identical paths
@@ -889,14 +894,14 @@ mod tests {
         // Internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
         assert_snapshot!(
             HookLog::internal(InternalOp::Remove).path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main-vfz/internal/remove.log"
+            @"/repo/.git/wt/logs/main/internal/remove.log"
         );
 
         // Non-branch-scoped internal ops (like TrashSweep) use a pseudo-branch
         // at the top level — `wt remove` calls this with branch = "wt".
         assert_snapshot!(
             HookLog::internal(InternalOp::TrashSweep).path(log_dir, "wt").to_slash_lossy(),
-            @"/repo/.git/wt/logs/wt-boj/internal/trash-sweep.log"
+            @"/repo/.git/wt/logs/wt/internal/trash-sweep.log"
         );
     }
 

@@ -358,35 +358,26 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
             Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
         },
-        StateCommand::CiStatus { action } => match action {
-            Some(CiStatusAction::Get { branch, format }) => {
-                handle_state_get("ci-status", branch, format)
-            }
-            None => handle_state_get("ci-status", None, SwitchFormat::Text),
+        StateCommand::CiStatus { action, format } => match action {
+            Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch, format),
+            None => handle_state_get("ci-status", None, format),
             Some(CiStatusAction::Clear { branch, all }) => {
                 handle_state_clear("ci-status", branch, all)
             }
         },
-        StateCommand::Marker { action } => match action {
-            Some(MarkerAction::Get { branch, format }) => {
-                handle_state_get("marker", branch, format)
-            }
-            None => handle_state_get("marker", None, SwitchFormat::Text),
+        StateCommand::Marker { action, format } => match action {
+            Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch, format),
+            None => handle_state_get("marker", None, format),
             Some(MarkerAction::Set { value, branch }) => handle_state_set("marker", value, branch),
             Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
         },
-        StateCommand::Logs { action } => match action {
-            Some(LogsAction::Get {
-                hook,
-                branch,
-                format,
-            }) => handle_logs_get(hook, branch, format),
-            None => handle_logs_get(None, None, SwitchFormat::Text),
+        StateCommand::Logs { action, format } => match action {
+            Some(LogsAction::Get { hook, branch }) => handle_logs_get(hook, branch, format),
+            None => handle_logs_get(None, None, format),
             Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
         },
-        StateCommand::Hints { action } => match action {
-            Some(HintsAction::Get { format }) => handle_hints_get(format),
-            None => handle_hints_get(SwitchFormat::Text),
+        StateCommand::Hints { action, format } => match action {
+            Some(HintsAction::Get) | None => handle_hints_get(format),
             Some(HintsAction::Clear { name }) => handle_hints_clear(name),
         },
         StateCommand::Vars { action } => match action {

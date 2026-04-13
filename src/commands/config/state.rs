@@ -224,7 +224,11 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 
 /// A row ready to render in the log listing table or emit as JSON.
 struct LogRow {
+    /// Path relative to `wt_logs_dir()` (forward-slashed), for compact display.
+    /// For top-level shared files this is just the filename.
     display_name: String,
+    /// Absolute path (forward-slashed), for consumers that want to open the file directly.
+    path: String,
     size: u64,
     modified_at: Option<u64>,
 }
@@ -233,6 +237,7 @@ impl LogRow {
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "file": self.display_name,
+            "path": self.path,
             "size": self.size,
             "modified_at": self.modified_at,
         })
@@ -242,6 +247,7 @@ impl LogRow {
 /// Build a `LogRow` for a top-level shared file.
 fn top_level_log_row(entry: &std::fs::DirEntry) -> LogRow {
     let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path().to_slash_lossy().into_owned();
     let meta = entry.metadata().ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let modified_at = meta
@@ -250,13 +256,14 @@ fn top_level_log_row(entry: &std::fs::DirEntry) -> LogRow {
         .map(|d| d.as_secs());
     LogRow {
         display_name: name,
+        path,
         size,
         modified_at,
     }
 }
 
 /// Build a `LogRow` for a hook-output file (display uses relative path).
-fn hook_output_log_row(entry: &HookOutputEntry) -> LogRow {
+fn hook_output_log_row(log_dir: &Path, entry: &HookOutputEntry) -> LogRow {
     let size = entry.metadata.len();
     let modified_at = entry
         .metadata
@@ -264,8 +271,13 @@ fn hook_output_log_row(entry: &HookOutputEntry) -> LogRow {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
+    let path = log_dir
+        .join(&entry.relative_display)
+        .to_slash_lossy()
+        .into_owned();
     LogRow {
         display_name: entry.relative_display.clone(),
+        path,
         size,
         modified_at,
     }
@@ -308,7 +320,7 @@ fn partition_log_files_json(
     // Hook output comes from walking the branch subtrees.
     let hook_rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
         .iter()
-        .map(hook_output_log_row)
+        .map(|e| hook_output_log_row(&log_dir, e))
         .collect();
 
     Ok((
@@ -402,7 +414,7 @@ fn render_hook_output_section(out: &mut String, repo: &Repository) -> anyhow::Re
 
     let rows: Vec<LogRow> = walk_hook_output_files(&log_dir)?
         .iter()
-        .map(hook_output_log_row)
+        .map(|e| hook_output_log_row(&log_dir, e))
         .collect();
     render_log_table(out, &rows)?;
     Ok(())
@@ -479,10 +491,16 @@ pub fn handle_logs_get(
             let log_path = hook_log.path(&log_dir, &branch);
 
             if log_path.exists() {
-                // Output just the path to stdout for easy piping.
                 // Use to_slash_lossy() so Windows paths use forward slashes, consistent
                 // with the relative paths in `logs list` output.
-                println!("{}", log_path.to_slash_lossy());
+                let path_str = log_path.to_slash_lossy().into_owned();
+                if format == SwitchFormat::Json {
+                    let output = serde_json::json!({ "path": path_str });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else {
+                    // Output just the path to stdout for easy piping.
+                    println!("{}", path_str);
+                }
                 return Ok(());
             }
 

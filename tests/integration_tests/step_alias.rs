@@ -657,6 +657,48 @@ test = "echo TEST"
     assert!(stderr.contains("TEST"), "expected TEST in output: {stderr}");
 }
 
+/// Concurrent alias commands have their output streamed with a per-command
+/// colored prefix label (`{name} │ …`), so multiple children's lines remain
+/// attributable even when they interleave.
+#[rstest]
+fn test_alias_concurrent_prefixes_output(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases.build]
+lint = "echo HELLO_LINT"
+test = "echo HELLO_TEST"
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "build"])
+        .current_dir(&feature_path)
+        .env("NO_COLOR", "1");
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "concurrent alias failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Each command must produce a line starting with its prefixed label and
+    // separated by the box-drawing `│` that the executor emits. Whitespace
+    // between label and `│` varies with padding-to-widest-label.
+    for (label, body) in [("lint", "HELLO_LINT"), ("test", "HELLO_TEST")] {
+        let has_prefixed_line = stderr
+            .lines()
+            .any(|l| l.starts_with(label) && l.contains('│') && l.contains(body));
+        assert!(
+            has_prefixed_line,
+            "expected a line starting with '{label}' containing '{body}' and a '│' separator, got:\n{stderr}"
+        );
+    }
+}
+
 /// A failing concurrent step causes the alias to fail. Covers the error
 /// propagation path in the `HookStep::Concurrent` join loop, complementing
 /// the happy-path `test_alias_concurrent_steps` above.
@@ -677,6 +719,236 @@ fail = "exit 1"
     assert!(
         !output.status.success(),
         "wt step check should fail when a concurrent step exits non-zero"
+    );
+}
+
+/// SIGINT sent to `wt step <alias>` while a concurrent group is mid-flight
+/// must reach every child's process group and tear them all down — otherwise
+/// Ctrl-C on a long-running concurrent alias would leave orphans behind.
+///
+/// We spawn the alias in its own process group, wait until BOTH children have
+/// written their "start" marker (proving they're actually running concurrently),
+/// send SIGINT to the group, then verify that the subsequent "done" markers
+/// never appear — every child was interrupted.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_concurrent_receives_sigint(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_test_config(
+        r#"
+[aliases.slow]
+one = "sh -c 'echo start-one >> slow_one.log; sleep 30; echo done-one >> slow_one.log'"
+two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_two.log'"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "slow"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0); // wt becomes leader of its own process group
+    let mut child = cmd.spawn().expect("failed to spawn wt step slow");
+
+    // Wait until BOTH children write their start marker — proves the group
+    // is running concurrently before we send the signal.
+    let one_log = repo.root_path().join("slow_one.log");
+    let two_log = repo.root_path().join("slow_two.log");
+    wait_for_file_content(&one_log);
+    wait_for_file_content(&two_log);
+
+    // SIGINT the wt process group (wt == leader). The concurrent executor's
+    // signal forwarder must propagate it to every child's process group.
+    let wt_pgid = Pid::from_raw(child.id() as i32);
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+        .expect("failed to send SIGINT to wt's process group");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(2) || status.code() == Some(130),
+        "wt should exit from SIGINT (signal 2) or with code 130, got: {status:?}"
+    );
+
+    // Grace period — the killed children must NOT reach their "done" write.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    for log in [&one_log, &two_log] {
+        let contents = std::fs::read_to_string(log).unwrap_or_default();
+        assert!(
+            !contents.contains("done"),
+            "sibling child reached 'done' after SIGINT, log: {contents:?}"
+        );
+    }
+}
+
+/// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every
+/// child immediately — otherwise a child that traps SIGINT keeps the group
+/// alive for up to N × 400ms of per-pgid escalation, with subsequent
+/// presses silently discarded.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_concurrent_second_sigint_kills(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    // Both children trap SIGINT and sleep; first SIGINT does nothing
+    // (graceful escalation to SIGTERM is also trapped), a second SIGINT
+    // must SIGKILL the pgids and exit wt promptly.
+    repo.write_test_config(
+        r#"
+[aliases.stubborn]
+one = "sh -c 'trap \"\" INT TERM; echo start-one >> stubborn_one.log; sleep 30'"
+two = "sh -c 'trap \"\" INT TERM; echo start-two >> stubborn_two.log; sleep 30'"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "stubborn"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step stubborn");
+
+    wait_for_file_content(&repo.root_path().join("stubborn_one.log"));
+    wait_for_file_content(&repo.root_path().join("stubborn_two.log"));
+
+    let wt_pgid = Pid::from_raw(child.id() as i32);
+    // First SIGINT — trapped by children; graceful path chews through
+    // escalation serially.
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send first SIGINT");
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Second SIGINT — impatient path should SIGKILL the whole tree now.
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send second SIGINT");
+
+    let start = std::time::Instant::now();
+    let _status = child.wait().expect("failed to wait for wt");
+    let elapsed = start.elapsed();
+
+    // With only graceful escalation (200ms × 2 grace windows × 2 pgids),
+    // worst case would be ~800ms. The impatient SIGKILL should be faster
+    // still. Give 3s headroom for slow CI without being so loose that a
+    // regression (no SIGKILL on 2nd press) would slip through — that
+    // regression would leave wt waiting ~60s for the sleeps to finish.
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "wt took too long to die after 2nd SIGINT; impatient path may not be firing: {elapsed:?}"
+    );
+}
+
+/// Non-UTF-8 bytes and CRLF line endings in child output must not stall the
+/// executor. Earlier code using `BufRead::lines()` returned `InvalidData` on
+/// the first invalid byte and terminated the iterator, leaving the child's
+/// pipe un-drained and `child.wait()` hanging forever. Also exercises the
+/// `\r\n` strip path so trailing carriage returns don't render visibly.
+#[rstest]
+fn test_alias_concurrent_handles_non_utf8(repo: TestRepo) {
+    // `printf` emits a raw 0xff byte (invalid as a lone UTF-8 sequence), a
+    // CRLF-terminated line, then `yes` floods 50_000 more valid UTF-8 lines.
+    // If the reader stopped at the bad byte, the pipe would fill and the
+    // child would block — we'd time out.
+    repo.write_test_config(
+        r#"
+[aliases.noisy]
+mixed = "sh -c 'printf \"BEFORE\\n\\xff\\nCRLF-LINE\\r\\nAFTER\\n\"; yes PAYLOAD | head -n 50000'"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "noisy"]);
+    let output = cmd.output().expect("wt step noisy failed to spawn");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "alias should succeed despite non-UTF-8 byte, got: {status:?}\nlast 500 bytes of stderr: {tail}",
+        status = output.status,
+        tail = &stderr[stderr.len().saturating_sub(500)..],
+    );
+
+    // All clean lines plus all 50_000 flood lines must land — proves the
+    // reader kept going past the invalid byte.
+    assert!(stderr.contains("BEFORE"), "expected BEFORE in stderr");
+    assert!(
+        stderr.contains("AFTER"),
+        "expected AFTER in stderr (reader stopped at the invalid byte)"
+    );
+    // CRLF line ending: the reader strips the trailing \r, so the visible
+    // line is `CRLF-LINE` not `CRLF-LINE\r`. Any `\r` in the output would
+    // indicate the strip didn't fire.
+    assert!(
+        stderr.contains("CRLF-LINE"),
+        "expected CRLF-LINE (with the \\r stripped) in stderr"
+    );
+    assert!(
+        !stderr.contains("CRLF-LINE\r"),
+        "trailing \\r should have been stripped before printing"
+    );
+    assert_eq!(
+        stderr.matches("PAYLOAD").count(),
+        50_000,
+        "expected 50000 PAYLOAD lines after the invalid byte, got {}",
+        stderr.matches("PAYLOAD").count(),
+    );
+}
+
+/// A concurrent child that produces a large volume of stdout must not
+/// deadlock the executor — the reader thread has to keep draining the pipe so
+/// the child can keep writing. We run two commands, each emitting ~400 KB, and
+/// assert both streams land in stderr intact.
+#[rstest]
+fn test_alias_concurrent_large_output(repo: TestRepo) {
+    // yes piped through head is a portable way to generate many lines fast.
+    // Each command produces ~400 KB = 50_000 * ~8 bytes ("aaaa...\n" etc.).
+    // If the reader thread were ever to stall, the child's stdout pipe would
+    // fill (default ~64 KB) and the child would block forever — the test would
+    // time out rather than produce a misleading pass.
+    repo.write_test_config(
+        r#"
+[aliases.bulk]
+first  = "yes 'FIRST-PAYLOAD-AAAAA' | head -n 50000"
+second = "yes 'SECOND-PAYLOAD-BBBBB' | head -n 50000"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "bulk"]);
+    let output = cmd.output().expect("wt step bulk failed to spawn");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "concurrent alias with large output should exit 0, got: {status:?}\nlast 500 bytes of stderr: {tail}",
+        status = output.status,
+        tail = &stderr[stderr.len().saturating_sub(500)..],
+    );
+
+    // Count occurrences so we know both children's full output was streamed —
+    // not truncated by a blocked pipe. 50_000 exact matches per payload.
+    let first_count = stderr.matches("FIRST-PAYLOAD-AAAAA").count();
+    let second_count = stderr.matches("SECOND-PAYLOAD-BBBBB").count();
+    assert_eq!(
+        first_count, 50_000,
+        "expected 50000 occurrences of first payload in stderr, got {first_count}"
+    );
+    assert_eq!(
+        second_count, 50_000,
+        "expected 50000 occurrences of second payload in stderr, got {second_count}"
     );
 }
 

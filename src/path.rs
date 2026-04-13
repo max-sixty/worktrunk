@@ -140,14 +140,15 @@ pub fn format_path_for_display(path: &Path) -> String {
 /// Sanitize a string for use as a filename on all platforms.
 ///
 /// Uses `sanitize-filename` crate to handle invalid characters, control characters,
-/// Windows reserved names (CON, PRN, etc.), and trailing dots/spaces. Appends a
-/// 3-character hash suffix for collision avoidance.
+/// Windows reserved names (CON, PRN, etc.), and trailing dots/spaces.
 ///
-/// The hash ensures unique outputs for inputs that would otherwise collide
-/// (e.g., `origin/feature` and `origin-feature` both sanitize to `origin-feature`
-/// but get different hash suffixes).
+/// If the input is already a safe filename, it is returned unchanged. Otherwise
+/// a 3-character hash suffix (computed from the original input) is appended so
+/// that inputs which would otherwise collide produce distinct outputs (e.g.,
+/// `origin/feature` → `origin-feature-<hash>` does not collide with the
+/// already-safe `origin-feature`).
 pub fn sanitize_for_filename(value: &str) -> String {
-    let mut result = sanitize_with_options(
+    let sanitized = sanitize_with_options(
         value,
         SanitizeOptions {
             windows: true,
@@ -156,11 +157,15 @@ pub fn sanitize_for_filename(value: &str) -> String {
         },
     );
 
-    if result.is_empty() {
-        result = "_empty".to_string();
+    if sanitized == value && !value.is_empty() {
+        return sanitized;
     }
 
-    // Append hash suffix for collision avoidance (computed from original input)
+    let mut result = if sanitized.is_empty() {
+        "_empty".to_string()
+    } else {
+        sanitized
+    };
     if !result.ends_with('-') {
         result.push('-');
     }
@@ -313,13 +318,26 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_filename_avoids_collisions() {
-        // These would collide without the hash suffix
+        // Already-safe names pass through unchanged; only sanitized inputs get
+        // a hash suffix. This still avoids collisions because the suffix makes
+        // the sanitized form distinct from any plausible already-safe name.
         let a = sanitize_for_filename("origin/feature");
         let b = sanitize_for_filename("origin-feature");
 
         assert_ne!(a, b, "collision: {a} == {b}");
         assert!(a.starts_with("origin-feature-"));
-        assert!(b.starts_with("origin-feature-"));
+        assert_eq!(b, "origin-feature");
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_passes_through_safe_names() {
+        assert_eq!(sanitize_for_filename("main"), "main");
+        assert_eq!(sanitize_for_filename("feature-x"), "feature-x");
+        assert_eq!(
+            sanitize_for_filename("rust-doc-comments"),
+            "rust-doc-comments"
+        );
+        assert_eq!(sanitize_for_filename("post-merge"), "post-merge");
     }
 
     #[test]

@@ -1367,20 +1367,13 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    if !info.deprecations.vars.is_empty() {
-        let var_list: Vec<String> = info
-            .deprecations
-            .vars
-            .iter()
-            .map(|(old, new)| cformat!("<dim>{}</> → <bold>{}</>", old, new))
-            .collect();
+    for (old, new) in &info.deprecations.vars {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated template variables: {}",
-                info.label,
-                var_list.join(", ")
+            warning_message(cformat!(
+                "{label}: template variable <bold>{old}</> is deprecated in favor of <bold>{new}</>",
+                label = info.label,
             ))
         );
     }
@@ -1411,8 +1404,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} has approved-commands in [projects] sections (moved to approvals.toml)",
+            warning_message(cformat!(
+                "{}: <bold>approved-commands</> under <bold>[projects]</> is deprecated in favor of <bold>approvals.toml</>",
                 info.label
             ))
         );

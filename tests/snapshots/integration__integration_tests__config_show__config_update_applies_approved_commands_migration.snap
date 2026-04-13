@@ -45,7 +45,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mUser config has approved-commands in [projects] sections (moved to approvals.toml)[39m
+[33m▲[39m [33mUser config: [1mapproved-commands[22m under [1m[projects][22m is deprecated in favor of [1mapprovals.toml[22m[39m
 [2m↳[22m [2mCopied approved commands to [4mapprovals.toml[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m

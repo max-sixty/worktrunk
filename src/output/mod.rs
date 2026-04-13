@@ -33,6 +33,7 @@
 //! See [`shell_integration`] module for the complete spec of warning messages.
 
 pub(crate) mod commit_generation;
+pub(crate) mod concurrent;
 mod global;
 pub(crate) mod handlers;
 pub(crate) mod prompt;

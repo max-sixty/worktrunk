@@ -1241,7 +1241,7 @@ fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
 }
 
 #[cfg(unix)]
-fn forward_signal_with_escalation(pgid: i32, sig: i32) {
+pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
     let pgid = nix::unistd::Pid::from_raw(pgid);
     let initial_signal = match sig {
         signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,

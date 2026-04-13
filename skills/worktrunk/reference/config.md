@@ -788,6 +788,10 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+Output:
+      --format <FORMAT>
+          Output format (text, json) [default: text]
+
 Global Options:
   -C <path>
           Working directory for this command
@@ -841,6 +845,10 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
+
+Output:
+      --format <FORMAT>
+          Output format (text, json) [default: text]
 
 Global Options:
   -C <path>
@@ -906,6 +914,10 @@ Commands:
 Options:
   -h, --help
           Print help (see a summary with '-h')
+
+Output:
+      --format <FORMAT>
+          Output format (text, json) [default: text]
 
 Global Options:
   -C <path>
