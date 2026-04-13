@@ -7,6 +7,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
     {
       "file": "commands.jsonl",
       "modified_at": "<TIMESTAMP>",
+      "path": "_REPO_/.git/wt/logs/commands.jsonl",
       "size": "<SIZE>"
     }
   ],
@@ -14,6 +15,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
     {
       "file": "diagnostic.md",
       "modified_at": "<TIMESTAMP>",
+      "path": "_REPO_/.git/wt/logs/diagnostic.md",
       "size": "<SIZE>"
     }
   ],
@@ -21,6 +23,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
     {
       "file": "main-<HASH>/user/post-start/server-<HASH>.log",
       "modified_at": "<TIMESTAMP>",
+      "path": "_REPO_/.git/wt/logs/main-<HASH>/user/post-start/server-<HASH>.log",
       "size": "<SIZE>"
     }
   ]

@@ -1162,6 +1162,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             {
               "file": "commands.jsonl",
               "modified_at": "<MTIME>",
+              "path": "_REPO_/.git/wt/logs/commands.jsonl",
               "size": "<SIZE>"
             }
           ],
@@ -1172,11 +1173,13 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             {
               "file": "bugfix-zgc/internal/remove.log",
               "modified_at": "<MTIME>",
+              "path": "_REPO_/.git/wt/logs/bugfix-zgc/internal/remove.log",
               "size": "<SIZE>"
             },
             {
               "file": "feature-axb/user/post-start/npm-iox.log",
               "modified_at": "<MTIME>",
+              "path": "_REPO_/.git/wt/logs/feature-axb/user/post-start/npm-iox.log",
               "size": "<SIZE>"
             }
           ],
@@ -1470,6 +1473,36 @@ fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
     assert!(
         stdout.contains(&expected),
         "Expected {expected} in stdout: {stdout}",
+    );
+}
+
+#[rstest]
+fn test_state_logs_get_hook_format_json(repo: TestRepo) {
+    // `--hook=...` combined with `--format=json` emits a JSON object
+    // containing the absolute path, not a bare path line.
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let relative = hook_log_rel_path("main", "user", "post-start", "server");
+    write_log_at(&log_dir, &relative, "server output");
+
+    let output = wt_state_cmd(
+        &repo,
+        "logs",
+        "get",
+        &["--hook=user:post-start:server", "--format=json"],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let path = parsed["path"].as_str().expect("path field missing");
+    assert!(
+        path.ends_with(&rel_display(&relative)),
+        "path {path} should end with the relative log path"
     );
 }
 
@@ -2031,6 +2064,26 @@ fn test_logs_get_json_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
         .output()
         .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "diagnostic": [],
+      "hook_output": []
+    }
+    "#);
+}
+
+/// `--format=json` on the bareword subcommand (no `get`) routes to the
+/// same list view. `--format` is `global = true` on the parent, so all three
+/// call shapes — `logs --format=json`, `logs --format=json get`,
+/// `logs get --format=json` — produce JSON.
+#[rstest]
+fn test_logs_bare_format_json(repo: TestRepo) {
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "state", "logs", "--format=json"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
     {
