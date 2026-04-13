@@ -42,8 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
@@ -66,3 +64,5 @@ exit_code: 0
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
+
+----- stderr -----

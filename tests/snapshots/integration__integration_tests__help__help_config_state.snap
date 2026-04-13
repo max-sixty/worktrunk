@@ -31,8 +31,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state - Manage internal data and cache
 
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
@@ -95,3 +93,5 @@ Show all stored state:
 
 Clear all stored state:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state clear[0m
+
+----- stderr -----

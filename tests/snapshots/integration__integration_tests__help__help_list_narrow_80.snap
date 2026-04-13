@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt list - List worktrees and their status
 
 Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
@@ -347,3 +345,5 @@ https://github.com/max-sixty/worktrunk.
 [1m[32mSee also[0m
 
 - [2mwt switch[0m — Switch worktrees or open interactive picker
+
+----- stderr -----

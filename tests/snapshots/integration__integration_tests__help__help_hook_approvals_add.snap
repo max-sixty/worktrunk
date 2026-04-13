@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt hook approvals add - Store approvals in approvals.toml
 
 Usage: [1m[36mwt hook approvals add[0m [36m[OPTIONS][0m
@@ -59,3 +57,5 @@ Prompts for approval of all project commands and saves them to approvals.toml.
 
 By default, shows only unapproved commands. Use [2m--all[0m to review all commands
 including previously approved ones.
+
+----- stderr -----

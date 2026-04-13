@@ -1988,9 +1988,9 @@ fn test_config_show_detects_nushell_integration(mut repo: TestRepo, temp_home: T
     cmd.args(["config", "show"]).current_dir(repo.root_path());
 
     let output = cmd.output().expect("Failed to execute config show");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("wt.nu") || stderr.contains("nushell"),
-        "config show should detect nushell integration:\n{stderr}"
+        stdout.contains("wt.nu") || stdout.contains("nushell"),
+        "config show should detect nushell integration:\n{stdout}"
     );
 }

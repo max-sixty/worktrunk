@@ -743,7 +743,7 @@ Query the command log:
 {{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
 
 Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
-{{ terminal(cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and .name | startswith(__WT_QUOT__server__WT_QUOT__)) | .path'") }}
+{{ terminal(cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and (.name | startswith(__WT_QUOT__server__WT_QUOT__))) | .path'") }}
 
 Logs for a specific branch:
 {{ terminal(cmd="wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith(__WT_QUOT__feature__WT_QUOT__))'") }}

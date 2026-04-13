@@ -80,8 +80,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     // Display through pager (config show is always long-form output)
     if let Err(e) = show_help_in_pager(&show_output, true) {
         log::debug!("Pager invocation failed: {}", e);
-        // Fall back to direct output via eprintln (matches help behavior)
-        worktrunk::styling::eprintln!("{}", show_output);
+        worktrunk::styling::println!("{}", show_output);
     }
 
     Ok(())

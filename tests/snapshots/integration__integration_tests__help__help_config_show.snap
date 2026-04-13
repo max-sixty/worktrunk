@@ -31,8 +31,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config show - Show configuration files & locations
 
 Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
@@ -79,3 +77,5 @@ This tests:
 - [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated
 - [1mCommit generation[0m — Whether the LLM command can generate commit messages
 - [1mVersion check[0m — Whether a newer version is available on GitHub
+
+----- stderr -----

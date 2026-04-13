@@ -533,16 +533,7 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -572,7 +563,7 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     // File sizes and ages vary across environments
     settings.add_filter(r"(?m)\d+[BK]\s+\S+[ \t]*$", "<SIZE>  <AGE>");
     settings.bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
         [36mCOMMAND LOG[39m @ <PATH>
               File      Size  Age   
          ────────────── ──── ────── 
@@ -602,16 +593,7 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -629,21 +611,21 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
-    assert!(stderr.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
+    assert!(stdout.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
     assert!(
-        stderr.contains("verbose.log"),
+        stdout.contains("verbose.log"),
         "Expected verbose.log in output"
     );
     assert!(
-        stderr.contains("diagnostic.md"),
+        stdout.contains("diagnostic.md"),
         "Expected diagnostic.md in output"
     );
 
     // Hook output should have the remove log but not the diagnostic files
-    let hook_section = stderr
+    let hook_section = stdout
         .split("DIAGNOSTIC")
         .next()
         .unwrap()
@@ -899,34 +881,7 @@ fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mDEFAULT BRANCH[39m
-        [107m [0m main
-
-        [36mPREVIOUS BRANCH[39m
-        [107m [0m (none)
-
-        [36mBRANCH MARKERS[39m
-        [107m [0m (none)
-
-        [36mVARS[39m
-        [107m [0m (none)
-
-        [36mCI STATUS CACHE[39m
-        [107m [0m (none)
-
-        [36mHINTS[39m
-        [107m [0m (none)
-
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -960,7 +915,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 
@@ -1027,7 +982,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 
@@ -1932,6 +1887,33 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
     assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
+}
+
+/// Log files that don't match the expected branch subtree layout (`{branch}/{source}/{hook_type}/{name}.log`
+/// or `{branch}/internal/{op}.log`) still appear in the JSON listing — just
+/// without structured filter fields. Guards the defensive `_ => None` arm in
+/// `parse_hook_structure` against future path-layout regressions.
+#[rstest]
+fn test_logs_get_json_unknown_layout_has_no_structure(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    // 2-segment layout: branch/file.log (missing source & hook_type).
+    let relative = PathBuf::from("main").join("stray.log");
+    write_log_at(&log_dir, &relative, "stray output");
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let hook = &parsed["hook_output"][0];
+    // Entry appears with `file` and `path`, but structured fields are omitted.
+    assert_eq!(hook["file"], "main/stray.log");
+    assert!(hook["branch"].is_null());
+    assert!(hook["source"].is_null());
+    assert!(hook["hook_type"].is_null());
+    assert!(hook["name"].is_null());
 }
 
 #[rstest]
