@@ -140,10 +140,16 @@ Alias names that collide with built-in step commands (`commit`, `squash`, `rebas
 [aliases]
 # Tail the current worktree's post-start hook named {{ name }}:
 #   wt step hook-log --name=server
-hook-log = '''tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name }}" '.hook_output[] | select(.branch == "{{ branch }}" and .hook_type == "post-start" and (.name == $name or (.name | startswith($name + "-")))) | .path' | head -1)"'''
+hook-log = '''
+tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name }}" '
+  .hook_output[]
+  | select(.branch == "{{ branch }}" and .hook_type == "post-start" and .name == $name)
+  | .path
+' | head -1)"
+'''
 ```
 
-The `startswith($name + "-")` branch matches the sanitized-with-hash form (`server-abc`) so the same alias works for hook names that required sanitization.
+Hook names that required sanitization (had invalid filename characters) pick up a short hash suffix on disk, e.g. `server-abc` for configured name `server`. The alias matches on the exact on-disk `name`, so pass the sanitized form when filtering those.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
