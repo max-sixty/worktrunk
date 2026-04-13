@@ -44,11 +44,8 @@ static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
 static DEPRECATION_HINT_EMITTED: OnceLock<()> = OnceLock::new();
 
 /// Latch that silences config deprecation/unknown-field warnings for the rest
-/// of the process, and also suppresses `.new` migration file writes and the
-/// `approved-commands` → `approvals.toml` copy. Set by shell completion,
-/// picker, statusline, and help paths — surfaces where stderr output would
-/// appear above the user's prompt or TUI and filesystem side effects would
-/// surprise users who only asked to render output.
+/// of the process. Set by shell completion, picker, statusline, and help paths
+/// — surfaces where stderr output would appear above the user's prompt or TUI.
 static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
 
 pub fn suppress_warnings() {
@@ -981,7 +978,7 @@ fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> S
 ///
 /// Parses the TOML, applies all structural migrations, and returns the result.
 /// Called by load paths that only need structural migration. `check_and_migrate()`
-/// reuses the same migration path when it also needs warnings or `.new` files.
+/// reuses the same migration path when it also needs to emit warnings.
 pub fn migrate_content(content: &str) -> String {
     let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
         return content.to_string();
@@ -1064,8 +1061,9 @@ fn shell_join(args: &[&str]) -> String {
 /// Information about deprecated config patterns that were found.
 ///
 /// Detection result plus display context (paths, labels). No filesystem side
-/// effects — `check_and_migrate` never writes `.new` files or copies
-/// approvals; `wt config update` does those under an explicit user action.
+/// effects — `check_and_migrate` never touches the filesystem; `wt config
+/// update` rewrites the config and copies approvals under an explicit user
+/// action.
 #[derive(Debug)]
 pub struct DeprecationInfo {
     /// Path to the config file with deprecations
@@ -1103,10 +1101,10 @@ pub struct CheckAndMigrateResult {
 /// - Deprecated args field (merged into command)
 /// - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 ///
-/// Pure with respect to the filesystem — never writes `.new` files and never
-/// copies approvals. The user materializes migrations by running `wt config
-/// update` (or `wt config update --print`). Deprecation warnings still go to
-/// stderr when `emit_inline_warnings` is set.
+/// Pure with respect to the filesystem — never rewrites config or copies
+/// approvals. The user materializes migrations by running `wt config update`
+/// (or `wt config update --print`). Deprecation warnings still go to stderr
+/// when `emit_inline_warnings` is set.
 ///
 /// Set `warn_and_migrate` to false for project config on feature worktrees —
 /// the warning is only actionable from the main worktree where the user would
