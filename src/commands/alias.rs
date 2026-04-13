@@ -435,6 +435,10 @@ enum AliasSource {
 /// running outside a repository: user-config aliases still list,
 /// project-config aliases just get skipped.
 pub(crate) fn augment_step_help(help: &str) -> String {
+    // Help must not emit deprecation/unknown-field warnings or write `.new`
+    // migration files as a side effect of rendering the alias list.
+    worktrunk::config::suppress_warnings();
+
     let aliases = load_aliases_for_listing();
     if aliases.is_empty() {
         return help.to_string();
@@ -519,11 +523,12 @@ fn render_aliases_section(entries: &[(String, CommandConfig, AliasSource)]) -> S
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
-/// Project config is parsed directly from TOML here instead of going through
-/// `ProjectConfig::load`, which emits deprecation/unknown-field warnings as a
-/// side effect. Help is an informational surface that should stay quiet —
-/// users see those warnings from `wt config show` and execution paths. The
-/// `aliases` table has no deprecated forms, so skipping the migration is safe.
+/// The caller (`augment_step_help`) latches `suppress_warnings()` before
+/// reaching here so the standard `UserConfig::load()` stays quiet: no
+/// deprecation warnings, no `.new` file writes, no approved-commands copy.
+/// Project config is parsed directly from TOML rather than via
+/// `ProjectConfig::load` because the `aliases` table has no deprecated forms
+/// — skipping the migration avoids the unrelated warnings entirely.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than

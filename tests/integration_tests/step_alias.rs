@@ -1113,6 +1113,39 @@ deploy = "make deploy BRANCH={{ branch }}"
     ));
 }
 
+/// `wt step --help` must not emit deprecation warnings or write `.new`
+/// migration files when the user config contains deprecated patterns —
+/// help is a discovery surface, not an execution surface, and the user
+/// will see those warnings from `wt config show` and normal commands.
+#[cfg(not(windows))]
+#[rstest]
+fn test_step_help_silent_with_deprecated_user_config(repo: TestRepo) {
+    // Deprecated `main_worktree` template variable — migrated to `repo`.
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    );
+    let migration_file = repo.test_config_path().with_extension("toml.new");
+
+    let output = repo.wt_command().args(["step", "--help"]).output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "step --help should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr, "",
+        "step --help must emit no stderr on deprecated user config"
+    );
+    assert!(
+        !migration_file.exists(),
+        "step --help must not write .new migration file at {}",
+        migration_file.display()
+    );
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {

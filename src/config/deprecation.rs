@@ -44,12 +44,19 @@ static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
 static DEPRECATION_HINT_EMITTED: OnceLock<()> = OnceLock::new();
 
 /// Latch that silences config deprecation/unknown-field warnings for the rest
-/// of the process. Set by shell completion and picker paths, where stderr
-/// output would appear above the user's prompt or TUI.
+/// of the process, and also suppresses `.new` migration file writes and the
+/// `approved-commands` → `approvals.toml` copy. Set by shell completion,
+/// picker, statusline, and help paths — surfaces where stderr output would
+/// appear above the user's prompt or TUI and filesystem side effects would
+/// surprise users who only asked to render output.
 static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
 
 pub fn suppress_warnings() {
     let _ = SUPPRESS_WARNINGS.set(());
+}
+
+fn warnings_suppressed() -> bool {
+    SUPPRESS_WARNINGS.get().is_some()
 }
 
 /// Pre-compiled regexes for deprecated variable word-boundary matching.
@@ -1220,14 +1227,21 @@ pub fn check_and_migrate(
     // Copy approved-commands to approvals.toml before generating the migration
     // file that removes them from config.toml. Without this, applying the
     // migration (`mv config.toml.new config.toml`) would lose approval data.
-    if info.deprecations.approved_commands {
+    // Skip when warnings are suppressed — help/completion/picker surfaces
+    // must not mutate the filesystem.
+    if info.deprecations.approved_commands && !warnings_suppressed() {
         info.approvals_copied_to = copy_approved_commands_to_approvals_file(path);
     }
+
+    // Writes are suppressed alongside warnings on passive display surfaces
+    // (help, completion, picker, statusline). The next config-modifying
+    // command will re-detect and write the migration file.
+    let should_write = !should_skip_write && !warnings_suppressed();
 
     // For non-config-show commands, emit per-kind warnings but skip the diff.
     // The diff is reserved for `wt config show`, where the user has opted into details.
     if emit_inline_warnings {
-        if SUPPRESS_WARNINGS.get().is_none() {
+        if !warnings_suppressed() {
             eprint!("{}", format_deprecation_warnings(&info));
             if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
                 eprintln!(
@@ -1254,7 +1268,7 @@ pub fn check_and_migrate(
 
         // Still write migration file if needed (first time only)
         // The file is needed for `wt config update` / `wt config show` to work
-        if !should_skip_write {
+        if should_write {
             info.migration_path =
                 write_migration_file(path, content, &info.deprecations, repo, &template_strings);
         }
@@ -1268,7 +1282,7 @@ pub fn check_and_migrate(
 
     // Silent mode for `wt config show` - just write migration file and return info
     // The caller will use format_deprecation_details() to add output to its buffer
-    if !should_skip_write {
+    if should_write {
         info.migration_path =
             write_migration_file(path, content, &info.deprecations, repo, &template_strings);
     }
@@ -1603,7 +1617,7 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
 ) {
-    if unknown_keys.is_empty() || SUPPRESS_WARNINGS.get().is_some() {
+    if unknown_keys.is_empty() || warnings_suppressed() {
         return;
     }
 
