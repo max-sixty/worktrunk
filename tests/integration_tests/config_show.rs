@@ -2675,7 +2675,7 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
 /// the repo as nothing-to-do — covers the project-config path through
 /// `check_and_migrate` when it returns `info == None`.
 #[rstest]
-fn test_config_update_clean_project_config_is_noop(mut repo: TestRepo) {
+fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
     repo.write_project_config(
         r#"pre-start = "echo ready"
 "#,
