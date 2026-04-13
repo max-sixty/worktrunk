@@ -27,8 +27,11 @@
           inherit system overlays;
         };
 
-        # Use latest stable Rust (must meet MSRV of 1.93)
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        # Pin to the channel declared in rust-toolchain.toml so rustup and Nix
+        # stay on the same version. Extensions are dev-shell-only, so we keep
+        # them here rather than in rust-toolchain.toml (which CI also reads).
+        toolchainChannel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
+        rustToolchain = pkgs.rust-bin.stable.${toolchainChannel}.default.override {
           extensions = [
             "rust-src"
             "rust-analyzer"
