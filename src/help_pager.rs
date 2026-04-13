@@ -74,7 +74,7 @@ fn detect_help_pager() -> Option<String> {
 ///
 /// Even when `use_pager=true`, falls back to direct output if:
 /// - No pager configured (prints to stdout)
-/// - Neither stdout nor stderr is a TTY (prints to stdout)
+/// - stdout is not a TTY (prints to stdout)
 /// - Pager spawn fails (prints to stdout)
 ///
 /// Help text goes to stdout — POSIX convention (`wt --help | less` should work
