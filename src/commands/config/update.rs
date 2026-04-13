@@ -56,11 +56,10 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
         // Emit migrated content to stdout. Multiple configs → separate with a
         // labeled header so the output is still parseable. Warnings still go
         // to stderr so stdout stays clean for piping.
-        for candidate in &candidates {
-            eprint!("{}", format_deprecation_warnings(&candidate.info));
-        }
+        let multi = candidates.len() > 1;
         for (idx, candidate) in candidates.iter().enumerate() {
-            if candidates.len() > 1 {
+            eprint!("{}", format_deprecation_warnings(&candidate.info));
+            if multi {
                 if idx > 0 {
                     println!();
                 }
