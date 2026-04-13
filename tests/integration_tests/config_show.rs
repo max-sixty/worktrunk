@@ -2643,6 +2643,105 @@ approved-commands = ["npm install", "npm test"]
 
 // ==================== config update tests ====================
 
+/// `wt config update` migrates project config in place (from the main
+/// worktree). Covers the project-config path in `check_project_config`.
+#[rstest]
+fn test_config_update_applies_project_config_migration(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "config update should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let updated = fs::read_to_string(&project_config_path).unwrap();
+    assert!(updated.contains("pre-start"));
+    assert!(updated.contains("{{ repo }}"));
+    assert!(!updated.contains("post-create"));
+}
+
+/// `wt config update` from a linked worktree declines to mutate project
+/// config and instead points at the main worktree. Covers the `is_linked`
+/// branch in `check_project_config`.
+#[rstest]
+fn test_config_update_project_config_from_linked_worktree_shows_hint(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+    let project_config_path = repo.root_path().join(".config").join("wt.toml");
+    let before = fs::read_to_string(&project_config_path).unwrap();
+
+    let feature_path = repo.root_path().parent().unwrap().join("feature-test");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature-test",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("To update project config:"),
+        "Should hint at main worktree, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&project_config_path).unwrap(),
+        before,
+        "Project config must not change when run from linked worktree"
+    );
+}
+
+/// `wt config update --print` with both user- and project-config deprecations
+/// emits both, separated by labeled headers on stdout.
+#[rstest]
+fn test_config_update_print_emits_both_configs(mut repo: TestRepo) {
+    let user_config_path = repo.test_config_path();
+    fs::write(
+        user_config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+    repo.write_project_config(
+        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+"#,
+    );
+    repo.commit("Add deprecated project config");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update", "--print"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("# User config"));
+    assert!(stdout.contains("# Project config"));
+    assert!(stdout.contains("{{ repo }}"));
+    assert!(stdout.contains("pre-start"));
+}
+
 /// `wt config update --print` emits the migrated TOML to stdout without
 /// touching the config file. Warnings still go to stderr.
 #[rstest]
