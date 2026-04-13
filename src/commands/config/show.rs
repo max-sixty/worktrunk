@@ -859,12 +859,16 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             ))
                         )?;
                     } else {
-                        any_not_configured = true;
-                        writeln!(
-                            out,
-                            "{}",
-                            hint_message(format!("{shell}: Not configured completions"))
-                        )?;
+                        // Missing completions are a fish-specific problem with a specific
+                        // remediation. Don't flip `any_not_configured` — the generic
+                        // "To configure" summary is for shells with no integration at all.
+                        let warning = warning_message(cformat!(
+                            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+                        ));
+                        let hint = hint_message(cformat!(
+                            "To configure completions, run <underline>{cmd} config shell install {shell}</>"
+                        ));
+                        writeln!(out, "{warning}\n{hint}")?;
                     }
                 }
 
@@ -1081,15 +1085,12 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
-    // Check if any shell has config already (eval line present)
-    let has_any_configured = scan_result
-        .configured
-        .iter()
-        .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
-
-    // If we have unmatched candidates but no configured shells, suggest raising an issue
-    // Apply the same confirmed_paths filter used above to avoid including wrapper files
-    if has_any_unmatched && !has_any_configured {
+    // Whenever there are unmatched candidates, offer the false-negative report link.
+    // A real detector miss in one config file is worth reporting even if another shell
+    // is correctly detected — the `confirmed_paths` filter already excludes wrapper files,
+    // and the narrow phrasing ("meant to load") steers non-integration lines (plain aliases)
+    // away from reporting themselves as bugs.
+    if has_any_unmatched {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
             .filter(|r| {
@@ -1129,7 +1130,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(format!(
-                "If {quoted} is shell integration, report a false negative: {issue_url}"
+                "If {quoted} is meant to load Worktrunk shell integration, report a false negative: {issue_url}"
             ))
         )?;
     }
