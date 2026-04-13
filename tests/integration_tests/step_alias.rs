@@ -988,6 +988,67 @@ deploy = [
     );
 }
 
+/// `--dry-run` for a pipeline where a later step references `{{ vars.X }}`
+/// set by an earlier step succeeds, mirroring the lazy execution path. The
+/// unresolved `vars.*` reference is shown as the raw template since its value
+/// isn't knowable until the earlier step actually runs.
+#[rstest]
+fn test_step_alias_dry_run_vars_across_steps(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = [
+    "git config worktrunk.state.main.vars.target 'prod'",
+    { publish = "echo deploying to {{ vars.target }}" },
+]
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Must succeed: dry-run must not require vars.* to be resolvable.
+    // --yes bypasses approval for project-config aliases.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy", "--dry-run", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// `--dry-run` still catches template syntax errors (e.g., `{{ vars..foo }}`)
+/// even on the lazy path where `vars.*` rendering is skipped.
+#[rstest]
+fn test_step_alias_dry_run_catches_syntax_error(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+broken = "echo {{ vars..target }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "broken", "--dry-run", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "dry-run should fail on syntax error; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("syntax error"),
+        "expected 'syntax error' in stderr, got:\n{stderr}"
+    );
+}
+
 /// `wt step` with no subcommand lists built-in steps plus configured aliases.
 ///
 /// Skipped on Windows: clap renders `[experimental]` subcommand tags
