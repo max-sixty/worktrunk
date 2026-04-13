@@ -21,6 +21,7 @@ use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use ignore::gitignore::GitignoreBuilder;
+use path_slash::PathExt as _;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
@@ -34,11 +35,11 @@ use worktrunk::styling::{
 };
 
 use super::command_approval::approve_hooks;
+use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
-    spawn_hook_pipeline,
+    HookCommandSpec, prepare_background_hooks, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::BranchDeletionMode;
@@ -209,7 +210,7 @@ pub fn handle_squash(
                 name_filters: &[],
                 display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
             },
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
@@ -624,8 +625,10 @@ fn list_and_filter_ignored_entries(
         let include_matcher = {
             let mut builder = GitignoreBuilder::new(worktree_path);
             if let Some(err) = builder.add(&include_path) {
+                // The `ignore` crate formats the path with OS-native separators;
+                // normalize to forward slashes for consistent display.
                 return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
-                    error: err.to_string(),
+                    error: err.to_string().replace('\\', "/"),
                 }
                 .into());
             }
@@ -1133,11 +1136,10 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Check BEFORE ensure_clean so users see the recovery path first.
     let staging_path = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     if staging_path.exists() {
+        let display = staging_path.to_slash_lossy();
         return Err(anyhow::anyhow!(
-            "Files may need manual recovery from: {}\n\
-             Remove it to retry: rm -rf \"{}\"",
-            staging_path.display(),
-            staging_path.display()
+            "Files may need manual recovery from: {display}\n\
+             Remove it to retry: rm -rf \"{display}\""
         )
         .context("Found leftover staging directory from an interrupted promote"));
     }
@@ -1196,7 +1198,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         )
         .context(format!(
             "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-            staging_path.display()
+            staging_path.to_slash_lossy()
         ))?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {

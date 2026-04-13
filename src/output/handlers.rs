@@ -11,9 +11,9 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::branch_deletion::{BranchDeletionOutcome, BranchDeletionResult};
 use crate::commands::command_executor::CommandContext;
+use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
-    HookFailureStrategy, announce_and_spawn_background_hooks, execute_hook,
-    prepare_background_hooks,
+    announce_and_spawn_background_hooks, execute_hook, prepare_background_hooks,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -1179,7 +1179,7 @@ fn execute_pre_remove_hooks_if_needed(
         &command_ctx,
         worktrunk::HookType::PreRemove,
         &extra_vars,
-        HookFailureStrategy::FailFast,
+        FailureStrategy::FailFast,
         &[],
         display_path,
     )

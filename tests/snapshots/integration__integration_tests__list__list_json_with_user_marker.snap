@@ -77,7 +77,7 @@ exit_code: 0
     "is_main": true,
     "is_current": true,
     "is_previous": false,
-    "statusline": "main  /u001b[2m^/u001b[22m/u001b[2m⇡/u001b[22m  /u001b[32m⇡1/u001b[0m",
+    "statusline": "main  \u001b[2m^\u001b[22m\u001b[2m⇡\u001b[22m  \u001b[32m⇡1\u001b[0m",
     "symbols": "^⇡"
   },
   {
@@ -112,7 +112,7 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-a  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "statusline": "feature-a  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓1\u001b[0m",
     "symbols": "↕"
   },
   {
@@ -147,7 +147,7 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-b  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "statusline": "feature-b  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓1\u001b[0m",
     "symbols": "↕"
   },
   {
@@ -182,7 +182,7 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "feature-c  /u001b[2m↕/u001b[22m  /u001b[32m↑1/u001b[0m /u001b[2m/u001b[31m↓1/u001b[0m",
+    "statusline": "feature-c  \u001b[2m↕\u001b[22m  \u001b[32m↑1\u001b[0m \u001b[2m\u001b[31m↓1\u001b[0m",
     "symbols": "↕"
   },
   {
@@ -217,7 +217,7 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "with-status  /u001b[2m_/u001b[22m🔧",
+    "statusline": "with-status  \u001b[2m_\u001b[22m🔧",
     "symbols": "_🔧"
   },
   {
@@ -252,7 +252,7 @@ exit_code: 0
     "is_main": false,
     "is_current": false,
     "is_previous": false,
-    "statusline": "without-status  /u001b[2m_/u001b[22m",
+    "statusline": "without-status  \u001b[2m_\u001b[22m",
     "symbols": "_"
   }
 ]

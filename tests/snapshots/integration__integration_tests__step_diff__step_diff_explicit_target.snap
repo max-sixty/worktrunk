@@ -50,6 +50,6 @@ index 0000000..47a4d0c
 +++ b/feature.txt
 @@ -0,0 +1 @@
 +feature content
-/ No newline at end of file
+\ No newline at end of file
 
 ----- stderr -----
