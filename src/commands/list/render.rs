@@ -22,10 +22,10 @@ use super::model::{ListItem, PositionMask};
 /// audit. Also update `src/cli/mod.rs` status-column help table when resplit.
 pub const PLACEHOLDER: &str = "·";
 
-/// Blank placeholder used by `wt list` during the first ~100ms of progressive
+/// Blank placeholder used by `wt list` during the first ~200ms of progressive
 /// rendering. The skeleton renders with blanks so fast commands (everything
-/// resolved under 100ms) never flash the `·` loading indicator. After the
-/// 100ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
+/// resolved under 200ms) never flash the `·` loading indicator. After the
+/// 200ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
 /// and every still-pending cell is re-rendered with the dot.
 pub const PLACEHOLDER_BLANK: &str = " ";
 
@@ -305,7 +305,7 @@ impl LayoutConfig {
                 ColumnKind::Gutter => {
                     // Skeleton shows placeholder gutter - actual symbols (including is_previous)
                     // appear when WorktreeData is populated post-skeleton.
-                    // Uses the current placeholder so the 100ms blank-reveal flow
+                    // Uses the current placeholder so the 200ms blank-reveal flow
                     // keeps the gutter in lockstep with the data columns.
                     let symbol = if wt_data.is_some() {
                         format!("{spinner} ") // Placeholder for worktrees

@@ -56,7 +56,13 @@ Project config: _REPO_/.config/wt.toml
 </details>
 
 <details>
-<summary>Verbose log</summary>
+<summary>Trace log</summary>
 
-[VERBOSE_LOG_CONTENT]
+[TRACE_LOG_CONTENT]
+</details>
+
+<details>
+<summary>Raw subprocess output</summary>
+
+Full captured stdout/stderr is in `_REPO_/.git/wt/logs/output.log` — not inlined because it can be multi-MB.
 </details>

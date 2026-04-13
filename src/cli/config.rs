@@ -641,10 +641,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 | File | Created when |
 |------|-------------|
-| `verbose.log` | Running with `-vv` |
+| `trace.log` | Running with `-vv` |
+| `output.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` when warnings occur |
 
-`verbose.log` is overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur.
+`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
 
 ## Location
 

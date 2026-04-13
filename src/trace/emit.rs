@@ -16,9 +16,9 @@
 //! ```
 //!
 //! Records are emitted at `log::debug!`, so `-vv` or `RUST_LOG=debug` makes
-//! them visible. Subprocess stdout/stderr continuations are emitted separately
-//! — full output at `log::trace!` (`-vvv`) and a bounded preview at
-//! `log::debug!` — so raw bodies don't spam `-vv`.
+//! them visible. Subprocess stdout/stderr continuations are emitted via
+//! separate log targets: the full output goes to `output.log`, and a bounded
+//! preview goes to stderr + `trace.log` — so raw bodies don't spam `-vv`.
 
 use std::fmt::Display;
 use std::sync::OnceLock;

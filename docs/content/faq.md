@@ -117,7 +117,8 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 | `.git/wt/cache/{kind}/*.json` | Cached CI status and git command results (merge-tree, integration probes, diff stats, ancestry checks) | `wt list`, `wt merge`, `wt remove` |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
-| `.git/wt/logs/verbose.log` | Debug log for issue reporting | Running with `-vv` |
+| `.git/wt/logs/trace.log` | Debug log (mirrors stderr) for issue reporting | Running with `-vv` |
+| `.git/wt/logs/output.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
 | `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` when warnings occur |
 | `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 

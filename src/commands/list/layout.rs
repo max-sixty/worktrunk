@@ -519,7 +519,7 @@ pub struct LayoutConfig {
     pub status_position_mask: super::model::PositionMask,
     /// Glyph to use for cells whose data has not yet arrived. Interior
     /// mutability lets the `wt list` progressive path swap the placeholder
-    /// at the 100ms reveal threshold without needing `&mut` everywhere.
+    /// at the 200ms reveal threshold without needing `&mut` everywhere.
     /// See `super::render::PLACEHOLDER` / `PLACEHOLDER_BLANK`.
     pub placeholder: std::cell::Cell<&'static str>,
 }

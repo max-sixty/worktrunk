@@ -670,7 +670,7 @@ pub fn collect(
     // Create progressive table if showing progress.
     //
     // Skeleton renders with `PLACEHOLDER_BLANK` (space) so commands that finish
-    // under ~100ms never flash the `·` loading indicator. After
+    // under ~200ms never flash the `·` loading indicator. After
     // `PLACEHOLDER_REVEAL_DELAY` the placeholder is promoted to `·` via the
     // drain tick below.
     let mut progressive_table = if show_progress {
@@ -703,8 +703,16 @@ pub fn collect(
 
     /// Delay before the `·` loading indicator replaces blank placeholders.
     /// Tuned so commands that finish promptly never flash the dots.
-    const PLACEHOLDER_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
-    let placeholder_reveal_at = std::time::Instant::now() + PLACEHOLDER_REVEAL_DELAY;
+    /// Overridable at runtime via `WORKTRUNK_PLACEHOLDER_REVEAL_MS` (milliseconds)
+    /// for interactive testing — useful to inflate the delay high enough to see
+    /// the reveal visually (e.g. `WORKTRUNK_PLACEHOLDER_REVEAL_MS=2000 wt list`).
+    const PLACEHOLDER_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+    let reveal_delay = std::env::var("WORKTRUNK_PLACEHOLDER_REVEAL_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(PLACEHOLDER_REVEAL_DELAY);
+    let placeholder_reveal_at = std::time::Instant::now() + reveal_delay;
 
     // Early exit for benchmarking skeleton render time / time-to-first-output
     if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
@@ -873,10 +881,10 @@ pub fn collect(
     // Drain task results with conditional progressive rendering.
     //
     // Progressive mutable state (table, row cache, counters) is owned by a
-    // `RefCell` so the `on_result` callback and the one-shot 100ms tick can
-    // both mutate it. They never run concurrently — the tick fires between
-    // channel recvs — so the runtime borrow checks are an invariant formalism,
-    // never a source of panics.
+    // `RefCell` so the event callback (handling results, the one-shot 200ms
+    // reveal, and stall hints) can mutate it. Events never run concurrently —
+    // they fire between channel recvs — so the runtime borrow checks are an
+    // invariant formalism, never a source of panics.
     struct ProgressiveState {
         table: ProgressiveTable,
         last_rendered_lines: Vec<String>,
@@ -952,7 +960,7 @@ pub fn collect(
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
-                    // T+100ms reveal: promote blank placeholders to `·` and
+                    // T+200ms reveal: promote blank placeholders to `·` and
                     // re-render every row so still-pending cells pick up
                     // the dot. Rows that received a result use
                     // `format_list_item_line`; untouched rows use
@@ -1006,7 +1014,7 @@ pub fn collect(
         None => (None, false),
     };
     // Reveal the placeholder synchronously for any path where the drain
-    // finished before the tick could fire — keeps subsequent renders
+    // finished before the reveal could fire — keeps subsequent renders
     // (including `finalize`) consistent with the post-reveal placeholder.
     layout.placeholder.set(super::render::PLACEHOLDER);
 
