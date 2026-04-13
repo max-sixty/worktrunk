@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state logs - Operation and debug logs
 
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -114,3 +112,5 @@ View a specific hook log:
 
 Clear all logs:
 [107m [0m [2m[0m[2m[34mwt[0m[2m config state logs clear[0m
+
+----- stderr -----

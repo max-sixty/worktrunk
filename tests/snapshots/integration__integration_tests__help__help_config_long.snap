@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config - Manage user & project configs[0m
 
 Includes shell integration, hooks, and saved state.[0m
@@ -450,4 +448,6 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_SHELL[0m                   Internal: set by shell wrappers to indicate shell type (e.g., [2mpowershell[0m)               
  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m Max parallel git commands (default: 32). Lower if hitting file descriptor limits.       
  [2mNO_COLOR[0m                          Disable colored output (standard)                                                       
- [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY
+ [2mCLICOLOR_FORCE[0m                    Force colored output even when not a TTY                                                
+
+----- stderr -----

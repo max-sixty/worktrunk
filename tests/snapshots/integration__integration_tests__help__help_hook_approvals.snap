@@ -31,8 +31,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt hook approvals - Manage command approvals
 
 Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
@@ -71,3 +69,5 @@ Clear global approvals:
 [1m[32mHow approvals work[0m
 
 Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
+
+----- stderr -----

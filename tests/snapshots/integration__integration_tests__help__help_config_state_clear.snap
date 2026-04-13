@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state clear - Clear all stored state
 
 Usage: [1m[36mwt config state clear[0m [36m[OPTIONS][0m
@@ -65,3 +63,5 @@ Clears all stored state:
 
 Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
 to clear specific state.
+
+----- stderr -----

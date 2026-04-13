@@ -43,8 +43,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER HOOKS[39m @ [TEST_CONFIG]
 [2m↳[22m [2m(none configured)[22m
 
@@ -53,3 +51,5 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mcargo[0m[2m build
 [36m❯[39m pre-merge [1mtest[22m: [2m(requires approval)[22m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test
+
+----- stderr -----

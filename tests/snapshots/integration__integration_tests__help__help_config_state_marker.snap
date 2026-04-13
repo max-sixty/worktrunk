@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state marker - Branch markers
 
 Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -78,3 +76,5 @@ Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly wi
 [107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.
+
+----- stderr -----

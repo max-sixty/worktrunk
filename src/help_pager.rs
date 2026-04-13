@@ -66,41 +66,38 @@ fn detect_help_pager() -> Option<String> {
 ///
 /// The `use_pager` flag controls whether to attempt pager display:
 /// - `true` (--help): Uses pager when available and terminal is detected
-/// - `false` (-h): Always prints directly to stderr, never uses pager
+/// - `false` (-h): Always prints directly to stdout, never uses pager
 ///
 /// This follows git's convention where `-h` never opens a pager (muscle-memory safe)
 /// while `--help` uses a pager for longer content.
 ///
 /// Even when `use_pager=true`, falls back to direct output if:
-/// - No pager configured (prints to stderr)
-/// - Neither stdout nor stderr is a TTY (prints to stderr)
-/// - Pager spawn fails (prints to stderr)
+/// - No pager configured (prints to stdout)
+/// - Neither stdout nor stderr is a TTY (prints to stdout)
+/// - Pager spawn fails (prints to stdout)
 ///
-/// Note: All fallbacks output to stderr for consistency with pager behavior
-/// (which sends output to stderr via `>&2`). This ensures `config show`
-/// works correctly since stdout is reserved for data output.
+/// Help text goes to stdout — POSIX convention (`wt --help | less` should work
+/// without redirection), matching `cargo`, `curl`, `python`, `git <cmd> -h`,
+/// and `--version` (see #2072).
 pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::Result<()> {
     // Short help (-h) never uses a pager
     if !use_pager {
-        log::debug!("Short help (-h) requested, printing directly to stderr");
-        eprint!("{}", help_text);
+        log::debug!("Short help (-h) requested, printing directly to stdout");
+        print!("{}", help_text);
         return Ok(());
     }
 
     let Some(pager_cmd) = detect_help_pager() else {
-        log::debug!("No pager configured, printing help directly to stderr");
-        eprint!("{}", help_text);
+        log::debug!("No pager configured, printing help directly to stdout");
+        print!("{}", help_text);
         return Ok(());
     };
 
-    // Check if stdout OR stderr is a TTY
-    // stdout check: direct invocation (cargo run -- --help)
-    // stderr check: shell wrapper (wt --help) redirects stdout but preserves stderr
-    let is_tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
-
-    if !is_tty {
-        log::debug!("Neither stdout nor stderr is a TTY, skipping pager");
-        eprint!("{}", help_text);
+    // Only page when our output destination is a terminal.
+    // If stdout is piped/redirected (e.g., `wt --help | grep foo`), print directly.
+    if !std::io::stdout().is_terminal() {
+        log::debug!("stdout is not a TTY, skipping pager");
+        print!("{}", help_text);
         return Ok(());
     }
 
@@ -108,24 +105,19 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
 
     let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
 
-    // Always send pager output to stderr (standard for help text, like git)
-    // This works in all cases: direct invocation, shell wrapper, piping, etc.
-    // Note: pager_cmd is expected to be valid shell code (like git's core.pager).
-    // Users with paths containing special chars must quote them in their config.
-    let final_cmd = format!("{} >&2", pager_cmd);
-
-    // Spawn pager with TTY access (interactive, unlike detached diff renderer)
+    // Spawn pager with TTY access (interactive, unlike detached diff renderer).
+    // Pager output inherits our stdout — no redirection needed.
     // Falls back to direct output if pager unavailable (e.g., less not installed)
     let shell = match ShellConfig::get() {
         Ok(shell) => shell,
         Err(e) => {
             log::debug!("Shell unavailable for pager: {}", e);
-            eprint!("{}", help_text);
+            print!("{}", help_text);
             return Ok(());
         }
     };
     log::debug!("$ {} (pager)", pager_cmd);
-    let mut cmd = shell.command(&final_cmd);
+    let mut cmd = shell.command(&pager_cmd);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
     let mut child = match cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn() {
         Ok(child) => child,
@@ -136,7 +128,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
                 shell.name,
                 e
             );
-            eprint!("{}", help_text);
+            print!("{}", help_text);
             return Ok(());
         }
     };

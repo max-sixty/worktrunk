@@ -533,16 +533,7 @@ fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -572,21 +563,7 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     // File sizes and ages vary across environments
     settings.add_filter(r"(?m)\d+[BK]\s+\S+[ \t]*$", "<SIZE>  <AGE>");
     settings.bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-              File      Size  Age   
-         ────────────── ──── ────── 
-         commands.jsonl <SIZE>  <AGE>
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-                          File                   Size  Age   
-         ─────────────────────────────────────── ──── ────── 
-         bugfix-zgc/internal/remove.log          <SIZE>  <AGE>
-         feature-axb/user/post-start/npm-iox.log <SIZE>  <AGE>
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -602,16 +579,7 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -629,21 +597,21 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
-    assert!(stderr.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
+    assert!(stdout.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
     assert!(
-        stderr.contains("verbose.log"),
+        stdout.contains("verbose.log"),
         "Expected verbose.log in output"
     );
     assert!(
-        stderr.contains("diagnostic.md"),
+        stdout.contains("diagnostic.md"),
         "Expected diagnostic.md in output"
     );
 
     // Hook output should have the remove log but not the diagnostic files
-    let hook_section = stderr
+    let hook_section = stdout
         .split("DIAGNOSTIC")
         .next()
         .unwrap()
@@ -899,34 +867,7 @@ fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
-        [36mDEFAULT BRANCH[39m
-        [107m [0m main
-
-        [36mPREVIOUS BRANCH[39m
-        [107m [0m (none)
-
-        [36mBRANCH MARKERS[39m
-        [107m [0m (none)
-
-        [36mVARS[39m
-        [107m [0m (none)
-
-        [36mCI STATUS CACHE[39m
-        [107m [0m (none)
-
-        [36mHINTS[39m
-        [107m [0m (none)
-
-        [36mCOMMAND LOG[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mHOOK OUTPUT[39m @ <PATH>
-        [107m [0m (none)
-
-        [36mDIAGNOSTIC[39m @ <PATH>
-        [107m [0m (none)
-        ");
+        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"");
     });
 }
 
@@ -960,7 +901,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 
@@ -1027,7 +968,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 

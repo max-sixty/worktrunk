@@ -27,9 +27,9 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
         // Double blanks indicate formatting issues (e.g., HTML comments like
         // `<!-- demo: file.gif -->` with blank lines on both sides).
         let output = cmd.output().expect("failed to run command");
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            !stderr.contains("\n\n\n"),
+            !stdout.contains("\n\n\n"),
             "Double blank line in help output for `wt {}`",
             args.join(" ")
         );
@@ -108,6 +108,31 @@ fn test_version() {
         cmd.arg("--version");
         assert_cmd_snapshot!("version", cmd);
     });
+}
+
+/// `--help` must write to stdout, not stderr. POSIX convention — matches
+/// `cargo`, `curl`, `python`, and `git <cmd> -h`. Lets users do
+/// `wt --help | less` or `wt --help > help.txt` without redirection.
+#[test]
+fn test_help_goes_to_stdout() {
+    for args in [&["--help"][..], &["-h"][..], &["merge", "--help"][..]] {
+        let output = wt_command()
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run wt {args:?}: {e}"));
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            stdout.contains("Usage:"),
+            "wt {args:?} should write help to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+        );
+        assert!(
+            stderr.trim().is_empty(),
+            "wt {args:?} should not write to stderr, but stderr was: {stderr:?}"
+        );
+    }
 }
 
 /// `--version` must write to stdout, not stderr. This is the POSIX convention

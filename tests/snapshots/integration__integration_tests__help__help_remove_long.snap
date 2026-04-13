@@ -30,8 +30,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt remove - Remove worktree; delete branch if merged[0m
 
 Defaults to the current worktree.[0m
@@ -157,3 +155,5 @@ Detached worktrees have no branch name. Pass the worktree path instead: [2mwt r
 
 - [2mwt merge[0m — Remove worktree after merging
 - [2mwt list[0m — View all worktrees
+
+----- stderr -----

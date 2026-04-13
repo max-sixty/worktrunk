@@ -42,8 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
 [2m↳[22m [2mTo apply:[22m
@@ -81,3 +79,5 @@ exit_code: 0
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
+
+----- stderr -----

@@ -1,14 +1,16 @@
 //! Guard test to prevent stdout leaks in command code
 //!
-//! stdout is reserved for data output (e.g., JSON). User-visible messages go to stderr.
-//! When shell integration is active (directive env vars set), directives are written
-//! to files, not stdout.
+//! stdout carries content the user may want to pipe, redirect, or capture:
+//! data (JSON, tables), rendered views (`wt config show`, `wt hook show`),
+//! and shell integration output. Interactive status, progress, and errors
+//! go to stderr. When shell integration is active (directive env vars set),
+//! directives are written to files, not stdout.
 //!
 //! This test enforces: **No accidental stdout writes in command code**
 //!
 //! Allowed:
 //! - `eprintln!` / `eprint!` (stderr is safe)
-//! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS` (data output)
+//! - `println!` / `print!` in files listed in `STDOUT_ALLOWED_PATHS`
 //!
 //! When adding stdout output:
 //! - Use `worktrunk::styling::println` for color-aware output
@@ -48,6 +50,8 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "for_each.rs",
     // JSON output for wt merge --format=json
     "merge.rs",
+    // Hook listing output for wt hook show (paged)
+    "hook_commands.rs",
 ];
 
 /// Substrings that indicate the line is a special case (e.g., in a comment or test reference)

@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state get - Get all stored state
 
 Usage: [1m[36mwt config state get[0m [36m[OPTIONS][0m
@@ -68,3 +66,5 @@ Shows all stored state including:
 - [1mLog files[0m: Operation and debug logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for.
+
+----- stderr -----

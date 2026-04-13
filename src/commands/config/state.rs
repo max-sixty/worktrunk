@@ -451,9 +451,9 @@ pub fn handle_logs_get(
             let mut out = String::new();
             render_all_log_sections(&mut out, &repo)?;
 
-            // Display through pager (fall back to stderr if pager unavailable)
+            // Display through pager; fall back to direct stdout if pager unavailable
             if show_help_in_pager(&out, true).is_err() {
-                eprintln!("{}", out);
+                println!("{}", out);
             }
         }
         Some(hook_spec) => {
@@ -1161,11 +1161,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show log files
     render_all_log_sections(&mut out, repo)?;
 
-    // Display through pager (fall back to stderr if pager unavailable)
+    // Display through pager; fall back to direct stdout if pager unavailable
     if let Err(e) = show_help_in_pager(&out, true) {
         log::debug!("Pager invocation failed: {}", e);
-        // Fall back to direct output via eprintln (matches help behavior)
-        eprintln!("{}", out);
+        println!("{}", out);
     }
 
     Ok(())

@@ -32,8 +32,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state ci-status - CI status cache
 
 Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -78,3 +76,5 @@ Results cache for 30-60 seconds. Indicators dim when local changes haven't been 
 See [2mwt list[0m CI status for display symbols and colors.
 
 Without a subcommand, runs [2mget[0m for the current branch. Use [2mclear[0m to reset cache for a branch or [2mclear --all[0m to reset all.
+
+----- stderr -----
