@@ -338,6 +338,23 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Exit with a clap-style `ArgumentConflict` error when `--format` is combined
+/// with a write action (set/clear) on the state subcommands where it has no
+/// effect. Clap accepts the flag because `--format` is declared `global = true`
+/// on the parent so the bareword and `get` forms work, but write actions don't
+/// emit structured output — silent acceptance is a surprise.
+fn reject_format_with_write_action(action_name: &str, format: SwitchFormat) {
+    if format == SwitchFormat::Text {
+        return;
+    }
+    let mut cmd = cli::build_command();
+    cmd.error(
+        ClapErrorKind::ArgumentConflict,
+        format!("the argument '--format <FORMAT>' cannot be used with '{action_name}'"),
+    )
+    .exit()
+}
+
 fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
     match action {
         StateCommand::DefaultBranch { action } => match action {
@@ -362,22 +379,35 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch, format),
             None => handle_state_get("ci-status", None, format),
             Some(CiStatusAction::Clear { branch, all }) => {
+                reject_format_with_write_action("clear", format);
                 handle_state_clear("ci-status", branch, all)
             }
         },
         StateCommand::Marker { action, format } => match action {
             Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch, format),
             None => handle_state_get("marker", None, format),
-            Some(MarkerAction::Set { value, branch }) => handle_state_set("marker", value, branch),
-            Some(MarkerAction::Clear { branch, all }) => handle_state_clear("marker", branch, all),
+            Some(MarkerAction::Set { value, branch }) => {
+                reject_format_with_write_action("set", format);
+                handle_state_set("marker", value, branch)
+            }
+            Some(MarkerAction::Clear { branch, all }) => {
+                reject_format_with_write_action("clear", format);
+                handle_state_clear("marker", branch, all)
+            }
         },
         StateCommand::Logs { action, format } => match action {
             Some(LogsAction::Get) | None => handle_logs_list(format),
-            Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
+            Some(LogsAction::Clear) => {
+                reject_format_with_write_action("clear", format);
+                handle_state_clear("logs", None, false)
+            }
         },
         StateCommand::Hints { action, format } => match action {
             Some(HintsAction::Get) | None => handle_hints_get(format),
-            Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+            Some(HintsAction::Clear { name }) => {
+                reject_format_with_write_action("clear", format);
+                handle_hints_clear(name)
+            }
         },
         StateCommand::Vars { action } => match action {
             VarsAction::Get { key, branch } => handle_vars_get(&key, branch),

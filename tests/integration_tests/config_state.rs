@@ -2074,3 +2074,52 @@ fn test_hints_get_json_with_values(repo: TestRepo) {
     ]
     "#);
 }
+
+// ============================================================================
+// --format rejected on write actions (set/clear)
+// ============================================================================
+
+/// Build `wt config state <key> [args...]` without injecting an action name.
+/// Unlike `wt_state_cmd`, this lets tests pass `--format=json` *before* the
+/// action to exercise the `global = true` propagation path that silently
+/// accepted the flag prior to gating.
+fn wt_state_raw_cmd(repo: &TestRepo, key: &str, args: &[&str]) -> Command {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", key]);
+    cmd.args(args);
+    cmd.current_dir(repo.root_path());
+    cmd
+}
+
+#[rstest]
+#[case::logs_clear_flag_after("logs", &["clear", "--format=json"], "clear")]
+#[case::logs_clear_flag_before("logs", &["--format=json", "clear"], "clear")]
+#[case::hints_clear_flag_after("hints", &["clear", "--format=json"], "clear")]
+#[case::hints_clear_flag_before("hints", &["--format=json", "clear"], "clear")]
+#[case::marker_set_flag_after("marker", &["set", "foo", "--format=json"], "set")]
+#[case::marker_set_flag_before("marker", &["--format=json", "set", "foo"], "set")]
+#[case::marker_clear_flag_after("marker", &["clear", "--format=json"], "clear")]
+#[case::marker_clear_flag_before("marker", &["--format=json", "clear"], "clear")]
+#[case::ci_status_clear_flag_after("ci-status", &["clear", "--format=json"], "clear")]
+#[case::ci_status_clear_flag_before("ci-status", &["--format=json", "clear"], "clear")]
+fn test_format_rejected_on_write_actions(
+    repo: TestRepo,
+    #[case] key: &str,
+    #[case] args: &[&str],
+    #[case] action: &str,
+) {
+    let output = wt_state_raw_cmd(&repo, key, args).output().unwrap();
+    assert!(
+        !output.status.success(),
+        "expected failure for {key} {args:?}"
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "the argument '--format <FORMAT>' cannot be used with '{action}'"
+        )),
+        "stderr did not contain expected conflict message: {stderr}"
+    );
+}
