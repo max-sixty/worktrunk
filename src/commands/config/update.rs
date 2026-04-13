@@ -111,7 +111,7 @@ fn check_user_config() -> anyhow::Result<Option<UpdateCandidate>> {
 
     let content = std::fs::read_to_string(&config_path).context("Failed to read user config")?;
 
-    // Use check_and_migrate in silent mode (show_brief_warning=false) which:
+    // Use check_and_migrate in silent mode (emit_inline_warnings=false) which:
     // - Detects deprecations
     // - Copies approved-commands to approvals.toml
     // - Writes the .new migration file

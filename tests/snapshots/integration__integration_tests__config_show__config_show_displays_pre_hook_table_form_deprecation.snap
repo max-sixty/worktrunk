@@ -46,7 +46,7 @@ exit_code: 0
 [2m↳[22m [2mNot found; to create one, run [4mwt config create[24m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
-[33m▲[39m [33mProject config: table form for [1mpre-start[22m, [1mpre-merge[22m is deprecated in favor of the pipeline form[39m
+[33m▲[39m [33mProject config: table form for [1mpre-start[22m, [1mpre-merge[22m is deprecated in favor of the pipeline form. We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially and table form always runs in parallel — migrate now to keep the current serial behavior once the table form is repurposed.[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
