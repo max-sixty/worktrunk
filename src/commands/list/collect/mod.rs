@@ -292,6 +292,33 @@ pub enum ShowConfig {
     },
 }
 
+/// Build the progressive-table footer shown while the drain is stalled.
+///
+/// Pure so it can be snapshot-tested without spinning up the live table.
+/// `first_name` is a branch / display name from the pending set;
+/// `pending_count` is the total outstanding-result count (≥ 1).
+fn format_stall_footer(
+    footer_base: &str,
+    completed: usize,
+    total: usize,
+    pending_count: usize,
+    first_kind: TaskKind,
+    first_name: &str,
+) -> String {
+    let dim = Style::new().dimmed();
+    let kind_str: &'static str = first_kind.into();
+    let waiting_clause = if pending_count == 1 {
+        cformat!("waiting on <underline>{kind_str}</> for <underline>{first_name}</>")
+    } else {
+        cformat!(
+            "waiting on {pending_count} tasks, including <underline>{kind_str}</> for <underline>{first_name}</>"
+        )
+    };
+    cformat!(
+        "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total} loaded, no recent progress; {waiting_clause}){dim:#}"
+    )
+}
+
 /// Collect worktree data with optional progressive rendering.
 ///
 /// When `show_progress` is true, renders a skeleton immediately and updates as data arrives.
@@ -982,16 +1009,22 @@ pub fn collect(
                         log::debug!("Progressive table reveal flush failed: {}", e);
                     }
                 }
-                results::DrainEvent::Stall { pending } => {
+                results::DrainEvent::Stall {
+                    pending_count,
+                    first_kind,
+                    first_name,
+                } => {
                     // No task has completed for at least `STALL_TIMINGS.threshold`.
                     // Name the signal (silence) rather than claiming "stalled":
-                    // the event fires on any 5s lull and points at the first
-                    // pending hint, not a root cause.
-                    let completed = s.completed_results;
-                    let kind_str: &'static str = pending.kind.into();
-                    let footer_msg = cformat!(
-                        "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total_results} loaded, no recent progress; waiting on <underline>{kind_str}</> for <underline>{name}</>){dim:#}",
-                        name = pending.name
+                    // the event fires on any 5s lull and reports outstanding
+                    // work, not a root cause.
+                    let footer_msg = format_stall_footer(
+                        &footer_base,
+                        s.completed_results,
+                        total_results,
+                        pending_count,
+                        first_kind,
+                        first_name,
                     );
                     if s.table.update_footer(footer_msg)
                         && let Err(e) = s.table.flush()
@@ -1370,4 +1403,51 @@ pub fn populate_item(
     item.finalize_display();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Strip ANSI escape sequences so snapshots read as plain text.
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\x1b' {
+                out.push(c);
+                continue;
+            }
+            // CSI: ESC [ ... (letter terminator)
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_format_stall_footer_single_pending() {
+        let rendered =
+            format_stall_footer("Showing 3 worktrees", 5, 12, 1, TaskKind::CiStatus, "feat");
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on ci-status for feat)"
+        );
+    }
+
+    #[test]
+    fn test_format_stall_footer_many_pending() {
+        let rendered =
+            format_stall_footer("Showing 3 worktrees", 5, 12, 3, TaskKind::CiStatus, "feat");
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
+        );
+    }
 }

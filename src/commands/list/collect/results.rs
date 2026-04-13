@@ -42,14 +42,6 @@ pub(super) struct StallTimings {
     pub tick: Duration,
 }
 
-/// A single task the drain is still waiting on — surfaced to the caller when
-/// no results have arrived in the last `STALL_TIMINGS.threshold`.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PendingHint<'a> {
-    pub kind: TaskKind,
-    pub name: &'a str,
-}
-
 /// Events emitted by `drain_results`. A single callback handles every
 /// event kind so the caller can share state (e.g. the progressive table)
 /// across them without fighting the borrow checker.
@@ -62,31 +54,40 @@ pub(super) enum DrainEvent<'a> {
     /// The `reveal_at` deadline passed — fires exactly once. `wt list` uses
     /// this to promote blank placeholders to the `·` loading indicator.
     Reveal { items: &'a [ListItem] },
-    /// No results for at least `STALL_TIMINGS.threshold`; here's one task
-    /// we're still waiting on. Fires repeatedly (each `STALL_TIMINGS.tick`)
-    /// while stalled.
-    Stall { pending: PendingHint<'a> },
+    /// No results for at least `STALL_TIMINGS.threshold`. `pending_count`
+    /// is the total number of expected-but-not-yet-received results
+    /// (includes both queued and running tasks); `first_kind` / `first_name`
+    /// identify one of them deterministically. Fires repeatedly (each
+    /// `STALL_TIMINGS.tick`) while stalled.
+    Stall {
+        pending_count: usize,
+        first_kind: TaskKind,
+        first_name: &'a str,
+    },
 }
 
-/// Return the first pending `(item_idx, kind)` pair — an expected result
-/// that has not yet been received. Iteration order mirrors how work items
-/// were registered, giving a deterministic pick when multiple are pending.
+/// Tally pending results (expected minus received) and pick the first as an
+/// exemplar. Iteration order mirrors how work items were registered, giving
+/// a deterministic pick when multiple are pending.
 fn pick_pending_hint<'a>(
     expected: &ExpectedResults,
     received_by_item: &[Vec<TaskKind>],
     items: &'a [ListItem],
-) -> Option<PendingHint<'a>> {
-    for ((item_idx, received), item) in received_by_item.iter().enumerate().zip(items.iter()) {
-        for kind in expected.results_for(item_idx) {
-            if !received.contains(&kind) {
-                return Some(PendingHint {
-                    kind,
-                    name: item.display_name(),
-                });
-            }
-        }
-    }
-    None
+) -> (usize, Option<(TaskKind, &'a str)>) {
+    let received_count: usize = received_by_item.iter().map(|v| v.len()).sum();
+    let pending_count = expected.count().saturating_sub(received_count);
+    let first = received_by_item
+        .iter()
+        .enumerate()
+        .zip(items.iter())
+        .find_map(|((item_idx, received), item)| {
+            expected
+                .results_for(item_idx)
+                .into_iter()
+                .find(|kind| !received.contains(kind))
+                .map(|kind| (kind, item.display_name()))
+        });
+    (pending_count, first)
 }
 
 /// Drain task results from the channel and apply them to items.
@@ -216,15 +217,20 @@ pub(super) fn drain_results_with_timings(
             Err(chan::RecvTimeoutError::Timeout) => {
                 // Nothing arrived within the tick. If we've been silent for
                 // at least `stall_timings.threshold`, emit a stall event
-                // pointing at one task we're still waiting on. Fires
+                // with the pending count plus one exemplar. Fires
                 // repeatedly while stalled — `update_footer` is idempotent
                 // for same content. The loop top handles firing any
                 // due one-shot tick and re-checks the real deadline.
-                if last_result_time.elapsed() >= stall_timings.threshold
-                    && let Some(pending) =
-                        pick_pending_hint(expected_results, &received_by_item, items)
-                {
-                    on_event(DrainEvent::Stall { pending });
+                if last_result_time.elapsed() >= stall_timings.threshold {
+                    let (pending_count, first) =
+                        pick_pending_hint(expected_results, &received_by_item, items);
+                    if let Some((first_kind, first_name)) = first {
+                        on_event(DrainEvent::Stall {
+                            pending_count,
+                            first_kind,
+                            first_name,
+                        });
+                    }
                 }
                 continue;
             }
@@ -692,9 +698,10 @@ mod tests {
 
     #[test]
     fn test_drain_results_fires_stall_when_silent_past_threshold() {
-        // No results arrive; the drain should emit a Stall event pointing at
-        // the first pending task once `stall_threshold` elapses, and keep
-        // firing on each tick until the deadline.
+        // No results arrive; the drain should emit a Stall event reporting
+        // the pending count plus a deterministic exemplar once
+        // `stall_threshold` elapses, and keep firing on each tick until
+        // the deadline.
         let (_tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![
             ListItem::new_branch("abc123".into(), "feat".into()),
@@ -706,7 +713,7 @@ mod tests {
         expected.expect(0, TaskKind::AheadBehind);
         expected.expect(1, TaskKind::CommitDetails);
 
-        let mut stall_events: Vec<(TaskKind, String)> = Vec::new();
+        let mut stall_events: Vec<(usize, TaskKind, String)> = Vec::new();
         let outcome = drain_results_with_timings(
             rx,
             &mut items,
@@ -719,8 +726,13 @@ mod tests {
                 tick: Duration::from_millis(20),
             },
             |event| {
-                if let DrainEvent::Stall { pending } = event {
-                    stall_events.push((pending.kind, pending.name.to_string()));
+                if let DrainEvent::Stall {
+                    pending_count,
+                    first_kind,
+                    first_name,
+                } = event
+                {
+                    stall_events.push((pending_count, first_kind, first_name.to_string()));
                 }
             },
             None,
@@ -731,7 +743,8 @@ mod tests {
             !stall_events.is_empty(),
             "expected at least one stall event before the deadline"
         );
-        let (kind, name) = &stall_events[0];
+        let (count, kind, name) = &stall_events[0];
+        assert_eq!(*count, 2);
         assert_eq!(*kind, TaskKind::AheadBehind);
         assert_eq!(name, "feat");
     }
