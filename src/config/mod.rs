@@ -261,7 +261,7 @@ mod tests {
         };
         assert_eq!(
             config
-                .format_path("myproject", "feature\\foo", &test.repo, None)
+                .format_path("myproject", r"feature\foo", &test.repo, None)
                 .unwrap(),
             ".worktrees/myproject/feature-foo"
         );
@@ -495,7 +495,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
-        vars.insert("branch", "feat\\bar");
+        vars.insert("branch", r"feat\bar");
         let result = expand_template(
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,

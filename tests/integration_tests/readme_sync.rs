@@ -1695,7 +1695,7 @@ fn sync_frontmatter_description(content: &str, description: &str) -> String {
     static DESC_PATTERN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"(?m)^description\s*=\s*"[^"]*""#).unwrap());
 
-    let new_field = format!("description = \"{}\"", description.replace('"', "\\\""));
+    let new_field = format!(r#"description = "{}""#, description.replace('"', r#"\""#));
 
     // Check if we're in a TOML frontmatter block
     if !content.starts_with("+++\n") {

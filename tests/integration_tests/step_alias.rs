@@ -552,7 +552,7 @@ fn test_alias_passes_directive_file_to_subprocess(repo: TestRepo) {
     // Double backslashes so the Windows path (e.g. `D:\a\worktrunk\...\wt.exe`)
     // parses as literal characters inside a TOML basic string rather than
     // being interpreted as escape sequences (`\a`, `\w`, ...).
-    let wt_toml = wt_str.replace('\\', "\\\\");
+    let wt_toml = wt_str.replace('\\', r"\\");
 
     // Alias body invokes the test wt binary directly (PATH lookup in the
     // subprocess shell wouldn't find it).

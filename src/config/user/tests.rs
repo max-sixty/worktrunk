@@ -15,7 +15,7 @@ fn test_default_config_path_returns_platform_path() {
     assert!(path.is_some(), "default_config_path should return Some");
     let path = path.unwrap();
     assert!(
-        path.ends_with("worktrunk/config.toml") || path.ends_with("worktrunk\\config.toml"),
+        path.ends_with("worktrunk/config.toml") || path.ends_with(r"worktrunk\config.toml"),
         "Expected path ending in worktrunk/config.toml, got: {path:?}"
     );
 }
@@ -325,7 +325,7 @@ fn test_worktrunk_config_format_path() {
     );
     // Verify it contains parent directory navigation
     assert!(
-        path.contains("/..") || path.contains("\\.."),
+        path.contains("/..") || path.contains(r"\.."),
         "Expected path containing parent navigation, got: {path}"
     );
     // The path should start with the repo path (absolute)

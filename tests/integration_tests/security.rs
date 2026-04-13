@@ -77,7 +77,7 @@ fn test_git_rejects_nul_in_commit_messages(repo: TestRepo) {
     // Try to commit with NUL in message using shell redirection
     let shell_cmd = format!(
         "printf '{}' | git commit -F -",
-        malicious_message.replace('\0', "\\0")
+        malicious_message.replace('\0', r"\0")
     );
 
     let mut cmd = Command::new("sh");

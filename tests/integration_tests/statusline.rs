@@ -145,7 +145,7 @@ fn claude_code_snapshot_settings() -> insta::Settings {
 /// Escape a path for use in JSON strings.
 /// On Windows, backslashes must be escaped as double backslashes.
 fn escape_path_for_json(path: &std::path::Path) -> String {
-    path.display().to_string().replace('\\', "\\\\")
+    path.display().to_string().replace('\\', r"\\")
 }
 
 #[rstest]

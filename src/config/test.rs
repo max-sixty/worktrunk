@@ -180,7 +180,7 @@ fn test_expand_template_backslash_in_branch() {
     let test = test_repo();
     // Use {{ branch | sanitize }} to replace backslashes with dashes
     // Note: shell_escape=false to test sanitize filter in isolation
-    let vars = vars_with_branch("feature\\branch");
+    let vars = vars_with_branch(r"feature\branch");
     let result = expand_template(
         "path/{{ branch | sanitize }}",
         &vars,

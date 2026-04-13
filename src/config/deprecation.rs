@@ -2252,7 +2252,7 @@ command = "old-command"
 
     #[test]
     fn test_shell_join_with_quotes() {
-        assert_eq!(shell_join(&["echo", "it's"]), "echo 'it'\\''s'");
+        assert_eq!(shell_join(&["echo", "it's"]), r"echo 'it'\''s'");
     }
 
     #[test]

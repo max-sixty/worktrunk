@@ -2536,7 +2536,7 @@ fn test_config_show_powershell_detected_via_psmodulepath(mut repo: TestRepo, tem
         // Set PSModulePath to trigger PowerShell detection fallback
         cmd.env(
             "PSModulePath",
-            "C:\\Users\\user\\Documents\\PowerShell\\Modules",
+            r"C:\Users\user\Documents\PowerShell\Modules",
         );
 
         assert_cmd_snapshot!(cmd);
