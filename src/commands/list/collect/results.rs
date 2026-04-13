@@ -16,6 +16,10 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
+use super::super::model::{ItemKind, ListItem};
+use super::execution::ExpectedResults;
+use super::types::{DrainOutcome, MissingResult, TaskError, TaskKind, TaskResult};
+
 /// Deadline for the entire drain operation. Generous to avoid flaky timeouts
 /// under CI load where process spawning for ~70 work items can be slow.
 pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
@@ -38,10 +42,6 @@ pub(super) struct StallTimings {
     pub tick: Duration,
 }
 
-use super::super::model::{ItemKind, ListItem};
-use super::execution::ExpectedResults;
-use super::types::{DrainOutcome, MissingResult, TaskError, TaskKind, TaskResult};
-
 /// A single task the drain is still waiting on — surfaced to the caller when
 /// no results have arrived in the last `STALL_TIMINGS.threshold`.
 #[derive(Debug, Clone, Copy)]
@@ -50,29 +50,31 @@ pub(super) struct PendingHint<'a> {
     pub name: &'a str,
 }
 
-/// Events emitted by `drain_results`. One callback handles both result
-/// arrivals and stall ticks so the caller can share state (e.g. the
-/// progressive table) across them without fighting the borrow checker.
+/// Events emitted by `drain_results`. A single callback handles every
+/// event kind so the caller can share state (e.g. the progressive table)
+/// across them without fighting the borrow checker.
 pub(super) enum DrainEvent<'a> {
     /// A task result has been applied to `item` — progressive mode re-renders.
     Result {
         item_idx: usize,
         item: &'a mut ListItem,
     },
+    /// The `reveal_at` deadline passed — fires exactly once. `wt list` uses
+    /// this to promote blank placeholders to the `·` loading indicator.
+    Reveal { items: &'a [ListItem] },
     /// No results for at least `STALL_TIMINGS.threshold`; here's one task
     /// we're still waiting on. Fires repeatedly (each `STALL_TIMINGS.tick`)
     /// while stalled.
     Stall { pending: PendingHint<'a> },
 }
 
-/// Boxed one-shot tick closure. Factored out so the inferred closure can
-/// coerce to `dyn FnMut` at the `Box::new` site.
-pub(super) type DrainTickFn<'a> = Box<dyn FnMut(&mut [ListItem]) + 'a>;
-
-/// One-shot tick scheduled against [`drain_results`]. When `Instant` elapses,
-/// the boxed closure fires once with the full item slice — used by `wt list`
-/// to reveal the `·` loading indicator at T+100ms.
-pub(super) type DrainTick<'a> = (Instant, DrainTickFn<'a>);
+/// Short display name for an item — the branch, or a truncated HEAD SHA as
+/// a fallback for detached/unborn items that carry no branch name.
+fn display_name(item: &ListItem) -> &str {
+    item.branch
+        .as_deref()
+        .unwrap_or_else(|| &item.head[..8.min(item.head.len())])
+}
 
 /// Return the first pending `(item_idx, kind)` pair — an expected result
 /// that has not yet been received. Iteration order mirrors how work items
@@ -82,15 +84,13 @@ fn pick_pending_hint<'a>(
     received_by_item: &[Vec<TaskKind>],
     items: &'a [ListItem],
 ) -> Option<PendingHint<'a>> {
-    for (item_idx, received) in received_by_item.iter().enumerate() {
+    for ((item_idx, received), item) in received_by_item.iter().enumerate().zip(items.iter()) {
         for kind in expected.results_for(item_idx) {
             if !received.contains(&kind) {
-                let name = items
-                    .get(item_idx)
-                    .and_then(|i| i.branch.as_deref())
-                    .or_else(|| items.get(item_idx).map(|i| &i.head[..8.min(i.head.len())]))
-                    .unwrap_or("?");
-                return Some(PendingHint { kind, name });
+                return Some(PendingHint {
+                    kind,
+                    name: display_name(item),
+                });
             }
         }
     }
@@ -123,7 +123,7 @@ pub(super) fn drain_results(
     deadline: Instant,
     integration_target: Option<&str>,
     on_event: impl FnMut(DrainEvent<'_>),
-    tick: Option<DrainTick<'_>>,
+    reveal_at: Option<Instant>,
 ) -> DrainOutcome {
     drain_results_with_timings(
         rx,
@@ -134,7 +134,7 @@ pub(super) fn drain_results(
         integration_target,
         STALL_TIMINGS,
         on_event,
-        tick,
+        reveal_at,
     )
 }
 
@@ -150,7 +150,7 @@ pub(super) fn drain_results_with_timings(
     integration_target: Option<&str>,
     stall_timings: StallTimings,
     mut on_event: impl FnMut(DrainEvent<'_>),
-    mut tick: Option<DrainTick<'_>>,
+    mut reveal_at: Option<Instant>,
 ) -> DrainOutcome {
     // Track which result kinds we've received per item (for timeout diagnostics)
     let mut received_by_item: Vec<Vec<TaskKind>> = vec![Vec::new(); items.len()];
@@ -161,23 +161,23 @@ pub(super) fn drain_results_with_timings(
 
     // Process task results as they arrive (with deadline)
     loop {
-        // Fire the one-shot tick when its deadline has passed. The tick fires
-        // between channel recvs, so it never races with `on_result`.
-        if let Some((tick_at, _)) = tick.as_ref()
-            && Instant::now() >= *tick_at
+        // Fire the one-shot reveal when its deadline has passed. Reveal fires
+        // between channel recvs, so it never races with `DrainEvent::Result`.
+        if let Some(at) = reveal_at
+            && Instant::now() >= at
         {
-            let (_, mut tick_fn) = tick.take().unwrap();
-            tick_fn(items);
+            on_event(DrainEvent::Reveal { items });
+            reveal_at = None;
         }
 
         let now = Instant::now();
         let remaining = deadline.saturating_duration_since(now);
         // Clamp recv timeout to the nearest of: real deadline, stall tick
-        // (so we can fire stall events promptly), and the one-shot tick
-        // (so we wake at its deadline).
+        // (so we can fire stall events promptly), and the reveal deadline
+        // (so we wake to emit it).
         let mut recv_timeout_dur = remaining.min(stall_timings.tick);
-        if let Some((tick_at, _)) = tick.as_ref() {
-            recv_timeout_dur = recv_timeout_dur.min(tick_at.saturating_duration_since(now));
+        if let Some(at) = reveal_at {
+            recv_timeout_dur = recv_timeout_dur.min(at.saturating_duration_since(now));
         }
         if remaining.is_zero() {
             // Deadline exceeded - build diagnostic info showing MISSING results
@@ -201,13 +201,9 @@ pub(super) fn drain_results_with_timings(
                     .collect();
 
                 if !missing_kinds.is_empty() {
-                    let name = item
-                        .branch
-                        .clone()
-                        .unwrap_or_else(|| item.head[..8.min(item.head.len())].to_string());
                     items_with_missing.push(MissingResult {
                         item_idx,
-                        name,
+                        name: display_name(item).to_string(),
                         missing_kinds,
                     });
                 }

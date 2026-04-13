@@ -899,32 +899,7 @@ pub fn collect(
     let drain_deadline =
         collect_deadline.unwrap_or_else(|| std::time::Instant::now() + results::DRAIN_TIMEOUT);
 
-    // Tick closure: at T+100ms, promote placeholder from blank to `·` and
-    // re-render every row so still-pending cells pick up the dot. Rows that
-    // have already received a result use `format_list_item_line`; untouched
-    // rows use `render_skeleton_row` (which avoids surfacing seeded defaults
-    // like "55y" for skipped tasks).
-    let tick_entry: Option<results::DrainTick<'_>> = progressive_state.as_ref().map(|state_cell| {
-        let f: results::DrainTickFn<'_> = Box::new(|items: &mut [ListItem]| {
-            layout.placeholder.set(super::render::PLACEHOLDER);
-            let mut s = state_cell.borrow_mut();
-            for (idx, item) in items.iter().enumerate() {
-                let rendered = if s.last_rendered_lines[idx].is_empty() {
-                    layout.render_skeleton_row(item).render()
-                } else {
-                    layout.format_list_item_line(item)
-                };
-                if rendered != s.last_rendered_lines[idx] {
-                    s.last_rendered_lines[idx] = rendered.clone();
-                    s.table.update_row(idx, rendered);
-                }
-            }
-            if let Err(e) = s.table.flush() {
-                log::debug!("Progressive table reveal flush failed: {}", e);
-            }
-        });
-        (placeholder_reveal_at, f)
-    });
+    let reveal_at = progressive_state.as_ref().map(|_| placeholder_reveal_at);
 
     let drain_outcome = drain_results(
         rx,
@@ -976,6 +951,29 @@ pub fn collect(
                         log::debug!("Progressive table flush failed: {}", e);
                     }
                 }
+                results::DrainEvent::Reveal { items } => {
+                    // T+100ms reveal: promote blank placeholders to `·` and
+                    // re-render every row so still-pending cells pick up
+                    // the dot. Rows that received a result use
+                    // `format_list_item_line`; untouched rows use
+                    // `render_skeleton_row` (which avoids surfacing seeded
+                    // defaults like "55y" for skipped tasks).
+                    layout.placeholder.set(super::render::PLACEHOLDER);
+                    for (idx, item) in items.iter().enumerate() {
+                        let rendered = if s.last_rendered_lines[idx].is_empty() {
+                            layout.render_skeleton_row(item).render()
+                        } else {
+                            layout.format_list_item_line(item)
+                        };
+                        if rendered != s.last_rendered_lines[idx] {
+                            s.last_rendered_lines[idx] = rendered.clone();
+                            s.table.update_row(idx, rendered);
+                        }
+                    }
+                    if let Err(e) = s.table.flush() {
+                        log::debug!("Progressive table reveal flush failed: {}", e);
+                    }
+                }
                 results::DrainEvent::Stall { pending } => {
                     // No task has completed for at least `STALL_TIMINGS.threshold`.
                     // Append what we're still waiting on so the user can see
@@ -994,7 +992,7 @@ pub fn collect(
                 }
             }
         },
-        tick_entry,
+        reveal_at,
     );
     worktrunk::shell_exec::trace_instant("All results drained");
 
