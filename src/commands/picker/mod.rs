@@ -518,35 +518,80 @@ pub fn handle_picker(
         PreviewMode::UpstreamDiff,
     ];
 
-    for item in &items_for_precompute {
-        for mode in modes {
-            let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(item);
-            rayon::spawn(move || {
-                let cache_key = (item.branch_name().to_string(), mode);
-                cache.entry(cache_key).or_insert_with(|| {
-                    WorktreeSkimItem::compute_and_page_preview(
-                        &item,
-                        mode,
-                        preview_width,
-                        preview_height,
-                    )
-                });
+    // Dedicated pool for preview + summary pre-compute so these tasks don't
+    // contend with skim's matcher on the global rayon pool. Skim runs its
+    // parallel matcher on rayon; if all global workers are busy computing
+    // previews, the first-item render is delayed by hundreds of ms.
+    //
+    // Sized like the global pool (2x cores) — the work is I/O-bound git
+    // subprocesses, so threads parked on pipe reads benefit from
+    // oversubscription. On build failure, fall back to the global pool.
+    let preview_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(crate::rayon_thread_count())
+        .thread_name(|i| format!("picker-preview-{i}"))
+        .build()
+        .ok()
+        .map(Arc::new);
+
+    let spawn_preview = |item: &Arc<super::list::model::ListItem>, mode: PreviewMode| {
+        let cache = Arc::clone(&preview_cache);
+        let item = Arc::clone(item);
+        let task = move || {
+            let cache_key = (item.branch_name().to_string(), mode);
+            cache.entry(cache_key).or_insert_with(|| {
+                WorktreeSkimItem::compute_and_page_preview(
+                    &item,
+                    mode,
+                    preview_width,
+                    preview_height,
+                )
             });
+        };
+        match &preview_pool {
+            Some(pool) => pool.spawn(task),
+            None => rayon::spawn(task),
+        }
+    };
+
+    // Spawn order (rayon dispatches FIFO):
+    // 1. First item's modes — user lands here and may tab-cycle immediately.
+    // 2. Mode-major for remaining items — the default tab (WorkingTree)
+    //    warms across the full list before any off-default mode starts.
+    if let Some(first) = items_for_precompute.first() {
+        for mode in modes {
+            spawn_preview(first, mode);
+        }
+    }
+    for mode in modes {
+        for item in items_for_precompute.iter().skip(1) {
+            spawn_preview(item, mode);
         }
     }
 
-    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
+    // Summaries run last: each LLM call can take seconds, so queueing them
+    // behind fast git previews keeps preview tabs warming promptly. First
+    // item's summary still goes first within the summary batch so a user
+    // who sits on the top entry gets a head start.
     if config.list.summary() && config.commit_generation.is_configured() {
         let llm_command = config.commit_generation.command.clone().unwrap();
-        for item in &items_for_precompute {
+        let spawn_summary = |item: &Arc<super::list::model::ListItem>| {
             let item = Arc::clone(item);
             let cache = Arc::clone(&preview_cache);
             let cmd = llm_command.clone();
             let repo = repo.clone();
-            rayon::spawn(move || {
+            let task = move || {
                 summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
-            });
+            };
+            match &preview_pool {
+                Some(pool) => pool.spawn(task),
+                None => rayon::spawn(task),
+            }
+        };
+        if let Some(first) = items_for_precompute.first() {
+            spawn_summary(first);
+        }
+        for item in items_for_precompute.iter().skip(1) {
+            spawn_summary(item);
         }
     } else {
         // No LLM configured or summaries disabled — insert config hint so the
