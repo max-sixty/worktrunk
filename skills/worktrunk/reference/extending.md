@@ -131,33 +131,28 @@ Alias names that collide with built-in step commands (`commit`, `squash`, `rebas
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
-Aliases compose existing commands into richer workflows. These three aliases wrap `wt switch --create` with git's stash and diff plumbing so staged, unstaged, and untracked changes can follow you into a new worktree:
+`wt switch --create` lands you in a clean worktree. To carry staged, unstaged, and untracked changes along, wrap it with git's stash plumbing:
 
 ```toml
 # .config/wt.toml
 [aliases]
-# Move all in-progress changes (staged + unstaged + untracked) to a new
-# worktree. Source becomes clean.
-#   wt step move-changes --to=feature-xyz
-move-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
-
-# Copy all changes (staged + unstaged + untracked) to a new worktree.
-# Source is unchanged.
-#   wt step copy-changes --to=feature-xyz
-copy-changes = '''if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then wt switch --create {{ to }}; else git stash push --include-untracked --quiet && git stash apply --index --quiet && wt switch --create {{ to }} --execute='git stash pop --index'; fi'''
-
-# Copy only staged changes to a new worktree. Source is unchanged.
-#   wt step copy-staged --to=feature-xyz
-copy-staged = '''if git diff --cached --quiet; then wt switch --create {{ to }}; else p=$(mktemp) && git diff --cached > "$p" && wt switch --create {{ to }} --execute="git apply --index '$p' && rm '$p'"; fi'''
+move-changes = '''
+if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then
+  wt switch --create {{ to }}
+else
+  git stash push --include-untracked --quiet
+  # Add `git stash apply --index --quiet` here to copy instead of move
+  # (source keeps its changes too).
+  wt switch --create {{ to }} --execute='git stash pop --index'
+fi
+'''
 ```
 
-How they work:
+Run with `wt step move-changes --to=feature-xyz`. The leading guard avoids touching a pre-existing stash when nothing is in flight; otherwise, `git stash push --include-untracked` captures everything, `wt switch --create` makes the new worktree, and `git stash pop --index` (via `--execute`) restores the changes there with the staged/unstaged split intact.
 
-- **`move-changes`** stashes everything (`--include-untracked`), creates the new worktree, then runs `git stash pop --index` inside it via `--execute`. The `--index` flag preserves the staged/unstaged split; the clean-state guard avoids touching a pre-existing stash.
-- **`copy-changes`** adds one extra step — `git stash apply --index --quiet` right after the push — to restore the source worktree before the pop happens in the new one. Both worktrees end up with identical in-progress state, untracked files included.
-- **`copy-staged`** writes `git diff --cached` to a tempfile and applies it with `git apply --index` in the new worktree. A diff (rather than `git stash --staged`) handles files where staged and unstaged hunks overlap on the same lines.
+For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
 
-Because an inner `wt switch --create` inside an alias [propagates its `cd` to the parent shell](https://worktrunk.dev/step/#aliases), all three drop the shell in the new worktree directly.
+Because an inner `wt switch --create` inside an alias [propagates its `cd` to the parent shell](https://worktrunk.dev/step/#aliases), the alias drops you in the new worktree directly.
 
 ### Recipe: tail a specific hook log
 
