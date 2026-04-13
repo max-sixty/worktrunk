@@ -57,7 +57,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
-use std::process::{Child, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 
 use anyhow::{Context, bail};
 
@@ -108,11 +108,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                     spawn_shell_command(&expanded, &spec.worktree_path, &step_json, log_file)?;
                 let status = child.wait().context("failed to wait for child process")?;
                 if !status.success() {
-                    bail!(
-                        "command failed with {}: {}",
-                        format_exit(status.code()),
-                        expanded,
-                    );
+                    bail!("{}", format_failure(&status, &expanded));
                 }
                 cmd_index += 1;
             }
@@ -215,9 +211,8 @@ fn run_concurrent_group(
                 .with_context(|| format!("failed to wait for: {expanded}"))?;
             if !status.success() {
                 bail!(
-                    "command failed with {}: {}",
-                    format_exit(status.code()),
-                    cmd.name.as_deref().unwrap_or(&expanded),
+                    "{}",
+                    format_failure(&status, cmd.name.as_deref().unwrap_or(&expanded)),
                 );
             }
         } else {
@@ -232,9 +227,8 @@ fn run_concurrent_group(
                 .with_context(|| format!("failed to wait for: {expanded}"))?;
             if !status.success() {
                 bail!(
-                    "command failed with {}: {}",
-                    format_exit(status.code()),
-                    name.as_deref().unwrap_or(&expanded),
+                    "{}",
+                    format_failure(&status, name.as_deref().unwrap_or(&expanded)),
                 );
             }
             Ok(())
@@ -262,6 +256,70 @@ fn create_command_log(spec: &PipelineSpec, name: &str) -> anyhow::Result<fs::Fil
         .with_context(|| format!("failed to create log file: {}", path.display()))
 }
 
-fn format_exit(code: Option<i32>) -> String {
-    code.map_or("signal".to_string(), |c| format!("exit code {c}"))
+/// Format a failed child-process status into a log message.
+///
+/// On Unix, signal-killed children are reported with the signal number and
+/// name (e.g., `pipeline step terminated by signal 15 (SIGTERM): <label>`)
+/// so hook log files make it obvious *which* signal stopped the step. This
+/// matters for debugging Ctrl-C (SIGINT) versus other cancellations.
+///
+/// The non-Unix path (`status.code()` is always `Some` on Windows) falls
+/// back to the plain exit-code form.
+fn format_failure(status: &ExitStatus, label: &str) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return format!(
+                "pipeline step terminated by {}: {label}",
+                format_signal(sig)
+            );
+        }
+    }
+    let exit = status
+        .code()
+        .map_or_else(|| "signal".to_string(), |c| format!("exit code {c}"));
+    format!("command failed with {exit}: {label}")
+}
+
+/// Render a signal number as `signal N (SIGNAME)`, or `signal N` if nix
+/// doesn't recognize it (platform-specific or real-time signals).
+#[cfg(unix)]
+fn format_signal(sig: i32) -> String {
+    match nix::sys::signal::Signal::try_from(sig) {
+        Ok(signal) => format!("signal {sig} ({signal})"),
+        Err(_) => format!("signal {sig}"),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn format_failure_names_common_signals() {
+        let cases = [
+            (
+                15,
+                "pipeline step terminated by signal 15 (SIGTERM): my-step",
+            ),
+            (2, "pipeline step terminated by signal 2 (SIGINT): my-step"),
+            (9, "pipeline step terminated by signal 9 (SIGKILL): my-step"),
+        ];
+        for (sig, expected) in cases {
+            let status = ExitStatus::from_raw(sig);
+            assert_eq!(format_failure(&status, "my-step"), expected);
+        }
+    }
+
+    #[test]
+    fn format_failure_falls_back_to_exit_code() {
+        // Non-signal exit: raw value is (code << 8) on Unix.
+        let status = ExitStatus::from_raw(2 << 8);
+        assert_eq!(
+            format_failure(&status, "my-step"),
+            "command failed with exit code 2: my-step",
+        );
+    }
 }
