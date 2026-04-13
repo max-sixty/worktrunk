@@ -255,7 +255,7 @@ impl LayoutConfig {
 
     /// Render with stale placeholders for items where data collection was truncated.
     ///
-    /// Currently uses the same `·` as [`render_list_item_line`]. Kept as a
+    /// Currently uses the same `·` as `render_list_item_line`. Kept as a
     /// separate entry point so picker callers signal the semantic difference
     /// (data won't arrive vs. still loading) — see [`PLACEHOLDER`].
     #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
