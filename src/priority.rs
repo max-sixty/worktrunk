@@ -105,20 +105,28 @@ pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Command {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if *HAS_IONICE {
-            let mut cmd = Command::new("ionice");
-            cmd.args(["-c", "3", "--", "nice", "-n", "19", "--"])
-                .arg(program);
-            cmd
-        } else {
-            let mut cmd = Command::new("nice");
-            cmd.arg("-n").arg("19").arg("--").arg(program);
-            cmd
-        }
+        linux_low_priority_command(program.as_ref(), *HAS_IONICE)
     }
     #[cfg(not(unix))]
     {
         Command::new(program)
+    }
+}
+
+/// Linux wrap: `ionice -c 3 -- nice -n 19 -- <program>` if `has_ionice`,
+/// else `nice -n 19 -- <program>`. Extracted so both branches are testable
+/// without depending on whether the runner has `ionice` installed.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_low_priority_command(program: &OsStr, has_ionice: bool) -> Command {
+    if has_ionice {
+        let mut cmd = Command::new("ionice");
+        cmd.args(["-c", "3", "--", "nice", "-n", "19", "--"])
+            .arg(program);
+        cmd
+    } else {
+        let mut cmd = Command::new("nice");
+        cmd.arg("-n").arg("19").arg("--").arg(program);
+        cmd
     }
 }
 
@@ -147,18 +155,21 @@ mod tests {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
-    fn command_lower_wraps_in_nice_or_ionice() {
-        let cmd = command("echo", true);
-        if *HAS_IONICE {
-            assert_eq!(cmd.get_program(), "ionice");
-            assert_eq!(
-                args_of(&cmd),
-                ["-c", "3", "--", "nice", "-n", "19", "--", "echo"]
-            );
-        } else {
-            assert_eq!(cmd.get_program(), "nice");
-            assert_eq!(args_of(&cmd), ["-n", "19", "--", "echo"]);
-        }
+    fn linux_wrap_with_ionice() {
+        let cmd = linux_low_priority_command(OsStr::new("echo"), true);
+        assert_eq!(cmd.get_program(), "ionice");
+        assert_eq!(
+            args_of(&cmd),
+            ["-c", "3", "--", "nice", "-n", "19", "--", "echo"]
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_wrap_without_ionice() {
+        let cmd = linux_low_priority_command(OsStr::new("echo"), false);
+        assert_eq!(cmd.get_program(), "nice");
+        assert_eq!(args_of(&cmd), ["-n", "19", "--", "echo"]);
     }
 
     #[cfg(not(unix))]
