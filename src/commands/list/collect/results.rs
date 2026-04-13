@@ -794,15 +794,20 @@ mod tests {
         expected.expect(0, TaskKind::CommitDetails);
         expected.expect(0, TaskKind::AheadBehind);
 
-        // Send exactly one result partway through.
+        // Send exactly one result partway through. Deadline is generous
+        // (1s) so that even under macOS CI scheduler lag — where the drain
+        // thread can be suspended long enough to push `last_result_time`
+        // close to a tighter deadline — the post-result `threshold + tick`
+        // window still fits and at least one Stall fires.
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
             let _ = tx.send(Ok(TaskResult::SummaryGenerate {
                 item_idx: 0,
                 summary: None,
             }));
-            // Leave tx open so the drain keeps running until deadline.
-            std::thread::sleep(Duration::from_millis(500));
+            // Keep tx alive past the deadline so the drain runs to its
+            // wall-clock limit instead of breaking early on Disconnected.
+            std::thread::sleep(Duration::from_millis(2000));
             drop(tx);
         });
 
@@ -812,7 +817,7 @@ mod tests {
             &mut items,
             &mut errors,
             &expected,
-            Instant::now() + Duration::from_millis(200),
+            Instant::now() + Duration::from_millis(1000),
             None,
             StallTimings {
                 threshold: Duration::from_millis(40),
