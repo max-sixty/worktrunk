@@ -141,8 +141,6 @@ if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)
   wt switch --create {{ to }}
 else
   git stash push --include-untracked --quiet
-  # Add `git stash apply --index --quiet` here to copy instead of move
-  # (source keeps its changes too).
   wt switch --create {{ to }} --execute='git stash pop --index'
 fi
 '''
@@ -150,7 +148,7 @@ fi
 
 Run with `wt step move-changes --to=feature-xyz`. The leading guard avoids touching a pre-existing stash when nothing is in flight; otherwise, `git stash push --include-untracked` captures everything, `wt switch --create` makes the new worktree, and `git stash pop --index` (via `--execute`) restores the changes there with the staged/unstaged split intact.
 
-For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
+To copy instead of move (source keeps its changes too), add `git stash apply --index --quiet` right after the push. For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
 
 Because an inner `wt switch --create` inside an alias [propagates its `cd` to the parent shell](https://worktrunk.dev/step/#aliases), the alias drops you in the new worktree directly.
 
