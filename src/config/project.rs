@@ -210,7 +210,7 @@ impl ProjectConfig {
 
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees
-        // Use show_brief_warning=true to emit a brief pointer to `wt config show`
+        // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
         let _ = super::deprecation::check_and_migrate(
@@ -219,7 +219,7 @@ impl ProjectConfig {
             is_main_worktree,
             "Project config",
             repo_for_hints,
-            true, // show_brief_warning
+            true, // emit_inline_warnings
         );
 
         // Warn about unknown fields (only in main worktree where it's actionable)

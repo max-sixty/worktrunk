@@ -509,7 +509,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Check for deprecations with emit_inline_warnings=false (silent mode)
     // User config is global, not tied to any repository
     let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
         &config_path,
@@ -657,7 +657,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Check for deprecations with emit_inline_warnings=false (silent mode)
     // Only write migration file in main worktree, not linked worktrees
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
     let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(

@@ -39,6 +39,10 @@ use crate::styling::{
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+/// Set once the "Run wt config show..." hint has been emitted this process,
+/// so multiple deprecated configs (user + project) share a single hint line.
+static DEPRECATION_HINT_EMITTED: OnceLock<()> = OnceLock::new();
+
 /// Latch that silences config deprecation/unknown-field warnings for the rest
 /// of the process. Set by shell completion and picker paths, where stderr
 /// output would appear above the user's prompt or TUI.
@@ -1120,8 +1124,9 @@ fn migration_path(path: &Path) -> PathBuf {
 /// (global, not repo-specific), pass `None` and the function will check if the `.new`
 /// file already exists instead.
 ///
-/// When `show_brief_warning` is true, only a brief pointer to `wt config show` is emitted
-/// instead of full deprecation details. Use this for commands other than `config show`.
+/// When `emit_inline_warnings` is true, per-kind deprecation warnings are printed to stderr
+/// with a hint pointing at `wt config show`/`wt config update`. When false, nothing is
+/// printed and the caller is expected to render via `format_deprecation_details`. Use this for commands other than `config show`.
 ///
 /// Warnings are deduplicated per path per process.
 ///
@@ -1133,7 +1138,7 @@ pub fn check_and_migrate(
     warn_and_migrate: bool,
     label: &str,
     repo: Option<&crate::git::Repository>,
-    show_brief_warning: bool,
+    emit_inline_warnings: bool,
 ) -> anyhow::Result<CheckAndMigrateResult> {
     // Parse once — shared by detection and migration
     let (deprecations, migrated_content, template_strings) =
@@ -1164,11 +1169,11 @@ pub fn check_and_migrate(
 
     let new_path = migration_path(path);
 
-    // Skip writing if: (a) this is a brief warning (not `wt config show`), AND
+    // Skip writing if: (a) caller emits inline (not `wt config show`), AND
     //                  (b) migration file already exists
     // This means first-time deprecation gets automatic file write, after that
     // users run `wt config show` to get/update the migration file.
-    let should_skip_write = show_brief_warning && new_path.exists();
+    let should_skip_write = emit_inline_warnings && new_path.exists();
 
     // Build deprecation info for return
     let mut info = DeprecationInfo {
@@ -1219,10 +1224,19 @@ pub fn check_and_migrate(
         info.approvals_copied_to = copy_approved_commands_to_approvals_file(path);
     }
 
-    // For brief warnings (non-config-show commands), just show a pointer
-    if show_brief_warning {
+    // For non-config-show commands, emit per-kind warnings but skip the diff.
+    // The diff is reserved for `wt config show`, where the user has opted into details.
+    if emit_inline_warnings {
         if SUPPRESS_WARNINGS.get().is_none() {
-            eprintln!("{}", format_brief_warning(label));
+            eprint!("{}", format_deprecation_warnings(&info));
+            if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
+                    ))
+                );
+            }
 
             if let Some(approvals_path) = &info.approvals_copied_to {
                 let approvals_filename = approvals_path
@@ -1263,18 +1277,6 @@ pub fn check_and_migrate(
         info: Some(info),
         migrated_content,
     })
-}
-
-/// Format brief warning for normal config loading.
-///
-/// Returns a formatted warning string. Does not print anything;
-/// caller is responsible for output.
-pub fn format_brief_warning(label: &str) -> String {
-    warning_message(cformat!(
-        "{} has deprecated settings. Run <bold>wt config show</> for details or <bold>wt config update</> to apply updates",
-        label
-    ))
-    .to_string()
 }
 
 /// Write migration file with all fixes applied.
@@ -1491,7 +1493,10 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             out,
             "{}",
             warning_message(cformat!(
-                "{}: table form for {} is deprecated in favor of the pipeline form",
+                "{}: table form for {} is deprecated in favor of the pipeline form. \
+                 We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially \
+                 and table form always runs in parallel — migrate now to keep the current serial behavior \
+                 once the table form is repurposed.",
                 info.label,
                 hook_list
             ))

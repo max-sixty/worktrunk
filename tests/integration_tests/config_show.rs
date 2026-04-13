@@ -1685,8 +1685,8 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
             stderr
         );
         assert!(
-            stderr.contains("deprecated settings"),
-            "Second run should show brief warning, got: {stderr}"
+            stderr.contains("is deprecated"),
+            "Second run should show deprecation warning, got: {stderr}"
         );
         assert!(
             !stderr.contains("Wrote migrated"),
@@ -1886,7 +1886,7 @@ fn test_fixing_deprecated_config_clears_hint_for_future_deprecations(
         assert!(output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("deprecated settings"),
+            stderr.contains("is deprecated"),
             "New deprecation should show warning, got: {stderr}"
         );
     }
@@ -2004,10 +2004,10 @@ fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home
             "Second run should succeed: {:?}",
             stderr
         );
-        // Should show brief warning (deprecated settings) but NOT write file
+        // Should still show deprecation warning but NOT write file
         assert!(
-            stderr.contains("User config has deprecated settings"),
-            "Second run should show brief warning, got: {stderr}"
+            stderr.contains("User config:") && stderr.contains("is deprecated"),
+            "Second run should show deprecation warning, got: {stderr}"
         );
         assert!(
             !stderr.contains("Wrote migrated"),
