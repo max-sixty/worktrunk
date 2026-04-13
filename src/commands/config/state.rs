@@ -231,16 +231,49 @@ struct LogRow {
     path: String,
     size: u64,
     modified_at: Option<u64>,
+    /// Structured hook-output segments — present for entries under branch subtrees,
+    /// absent for shared top-level files (command log, diagnostic).
+    hook_structure: Option<HookStructure>,
+}
+
+/// Structured view of a hook-output log path. Values are the on-disk (sanitized)
+/// names, so filters like `select(.source == "user")` work without splitting
+/// the relative path on `/`.
+struct HookStructure {
+    /// First path segment — sanitized branch directory (may include a short
+    /// collision-avoidance hash).
+    branch: String,
+    /// `"user"`, `"project"`, or `"internal"`.
+    source: String,
+    /// Hook type (`post-start`, `post-switch`, …) for user/project hooks;
+    /// `None` for internal operations.
+    hook_type: Option<String>,
+    /// Sanitized hook name for user/project hooks; internal op name
+    /// (e.g., `"remove"`) for internal entries.
+    name: String,
 }
 
 impl LogRow {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut obj = serde_json::json!({
             "file": self.display_name,
             "path": self.path,
             "size": self.size,
             "modified_at": self.modified_at,
-        })
+        });
+        if let Some(s) = &self.hook_structure {
+            let map = obj.as_object_mut().expect("json! produced an object");
+            map.insert("branch".into(), s.branch.clone().into());
+            map.insert("source".into(), s.source.clone().into());
+            map.insert(
+                "hook_type".into(),
+                s.hook_type
+                    .clone()
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
+            map.insert("name".into(), s.name.clone().into());
+        }
+        obj
     }
 }
 
@@ -259,6 +292,7 @@ fn top_level_log_row(entry: &std::fs::DirEntry) -> LogRow {
         path,
         size,
         modified_at,
+        hook_structure: None,
     }
 }
 
@@ -280,6 +314,37 @@ fn hook_output_log_row(log_dir: &Path, entry: &HookOutputEntry) -> LogRow {
         path,
         size,
         modified_at,
+        hook_structure: parse_hook_structure(&entry.relative_display),
+    }
+}
+
+/// Parse a hook-output relative path into its structured segments.
+///
+/// Expected layouts (enforced by the writers in `commands/process.rs`):
+/// - `{branch}/{source}/{hook_type}/{name}.log` — user/project hooks
+/// - `{branch}/internal/{op}.log` — internal operations
+///
+/// Unknown layouts (legacy flat logs, future shapes) return `None` so the
+/// entry still appears in the listing, just without structured filtering.
+fn parse_hook_structure(relative: &str) -> Option<HookStructure> {
+    let parts: Vec<&str> = relative.split('/').collect();
+    match parts.as_slice() {
+        [branch, "internal", op_log] => Some(HookStructure {
+            branch: (*branch).to_string(),
+            source: "internal".to_string(),
+            hook_type: None,
+            name: op_log.strip_suffix(".log").unwrap_or(op_log).to_string(),
+        }),
+        [branch, source, hook_type, name_log] => Some(HookStructure {
+            branch: (*branch).to_string(),
+            source: (*source).to_string(),
+            hook_type: Some((*hook_type).to_string()),
+            name: name_log
+                .strip_suffix(".log")
+                .unwrap_or(name_log)
+                .to_string(),
+        }),
+        _ => None,
     }
 }
 

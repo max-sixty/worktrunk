@@ -21,10 +21,14 @@ expression: "String::from_utf8_lossy(&output.stdout)"
   ],
   "hook_output": [
     {
+      "branch": "main-<HASH>",
       "file": "main-<HASH>/user/post-start/server-<HASH>.log",
+      "hook_type": "post-start",
       "modified_at": "<TIMESTAMP>",
+      "name": "server-<HASH>",
       "path": "_REPO_/.git/wt/logs/main-<HASH>/user/post-start/server-<HASH>.log",
-      "size": "<SIZE>"
+      "size": "<SIZE>",
+      "source": "user"
     }
   ]
 }

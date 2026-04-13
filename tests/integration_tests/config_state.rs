@@ -1171,16 +1171,24 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           "hints": [],
           "hook_output": [
             {
+              "branch": "bugfix-zgc",
               "file": "bugfix-zgc/internal/remove.log",
+              "hook_type": null,
               "modified_at": "<MTIME>",
+              "name": "remove",
               "path": "_REPO_/.git/wt/logs/bugfix-zgc/internal/remove.log",
-              "size": "<SIZE>"
+              "size": "<SIZE>",
+              "source": "internal"
             },
             {
+              "branch": "feature-axb",
               "file": "feature-axb/user/post-start/npm-iox.log",
+              "hook_type": "post-start",
               "modified_at": "<MTIME>",
+              "name": "npm-iox",
               "path": "_REPO_/.git/wt/logs/feature-axb/user/post-start/npm-iox.log",
-              "size": "<SIZE>"
+              "size": "<SIZE>",
+              "source": "user"
             }
           ],
           "markers": [],
@@ -2120,6 +2128,33 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
     settings.bind(|| {
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
+}
+
+/// Internal-op entries get `source: "internal"`, `hook_type: null`, and the
+/// op goes in `name` — so jq filters like `select(.source == "internal")`
+/// work the same as for user/project hooks.
+#[rstest]
+fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "remove output",
+    );
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let hook = &parsed["hook_output"][0];
+    assert_eq!(hook["source"], "internal");
+    assert_eq!(hook["hook_type"], serde_json::Value::Null);
+    assert_eq!(hook["name"], "remove");
+    assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
 }
 
 #[rstest]
