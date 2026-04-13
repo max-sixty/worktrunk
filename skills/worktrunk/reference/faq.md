@@ -136,7 +136,7 @@ Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
 For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
 
 ```bash
-$ git worktree lock ../myproject.feature --reason "Contains local database"
+git worktree lock ../myproject.feature --reason "Contains local database"
 ```
 
 Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
@@ -220,7 +220,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
 ```bash
-$ cargo install worktrunk --no-default-features
+cargo install worktrunk --no-default-features
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
@@ -230,7 +230,7 @@ This disables bash syntax highlighting in command output but keeps all core func
 ### Quick tests
 
 ```bash
-$ cargo test
+cargo test
 ```
 
 ### Full integration tests
@@ -238,7 +238,7 @@ $ cargo test
 Shell integration tests require bash, zsh, fish, and nushell:
 
 ```bash
-$ cargo test --test integration --features shell-integration-tests
+cargo test --test integration --features shell-integration-tests
 ```
 
 ## How can I contribute?

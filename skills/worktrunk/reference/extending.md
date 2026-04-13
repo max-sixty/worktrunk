@@ -107,9 +107,9 @@ open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
 ```bash
-$ wt step deploy
-$ wt step deploy --dry-run
-$ wt step deploy --env=staging
+wt step deploy
+wt step deploy --dry-run
+wt step deploy --env=staging
 ```
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
@@ -187,8 +187,8 @@ See [`wt step` — Aliases](https://worktrunk.dev/step/#aliases) for the full re
 Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>` — the same pattern git uses for `git-foo`. Built-in commands always take precedence.
 
 ```bash
-$ wt sync origin              # runs: wt-sync origin
-$ wt -C /tmp/repo sync        # -C is forwarded as the child's working directory
+wt sync origin              # runs: wt-sync origin
+wt -C /tmp/repo sync        # -C is forwarded as the child's working directory
 ```
 
 Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. External subcommands don't have access to template variables.

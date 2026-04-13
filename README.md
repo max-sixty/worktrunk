@@ -143,7 +143,7 @@ sudo pacman -S worktrunk && wt config shell install
 Create a worktree for a new feature:
 
 ```console
-wt switch --create feature-auth
+$ wt switch --create feature-auth
 ✓ Created branch feature-auth from main and worktree @ repo.feature-auth
 
 ```
@@ -151,7 +151,7 @@ wt switch --create feature-auth
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
 ```console
-wt list
+$ wt list
   Branch        Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
 @ feature-auth  +   ↑      +27   -8   ↑1               4bc72dc9  2h    Add authentication module
 ^ main              ^⇡                         ⇡1      0e631add  1d    Initial commit
@@ -175,7 +175,7 @@ wt remove                         # after PR is merged
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
 ```console
-wt merge main
+$ wt merge main
 ◎ Generating commit message and committing changes... (2 files, +53, no squashing needed)
   Add authentication module
 ✓ Committed changes @ a1b2c3d

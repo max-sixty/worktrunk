@@ -86,7 +86,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-$ brew install worktrunk && wt config shell install
+brew install worktrunk && wt config shell install
 ```
 
 Shell integration allows commands to change directories.
@@ -94,7 +94,7 @@ Shell integration allows commands to change directories.
 **Cargo:**
 
 ```bash
-$ cargo install worktrunk && wt config shell install
+cargo install worktrunk && wt config shell install
 ```
 
 <details>
@@ -103,8 +103,8 @@ $ cargo install worktrunk && wt config shell install
 On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 ```bash
-$ winget install max-sixty.worktrunk
-$ git-wt config shell install
+winget install max-sixty.worktrunk
+git-wt config shell install
 ```
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
@@ -114,7 +114,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 **Arch Linux:**
 
 ```bash
-$ sudo pacman -S worktrunk && wt config shell install
+sudo pacman -S worktrunk && wt config shell install
 ```
 
 ## Quick start
@@ -144,9 +144,9 @@ When done, either:
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
 ```bash
-$ wt step commit                    # commit staged changes
-$ gh pr create                      # or glab mr create
-$ wt remove                         # after PR is merged
+wt step commit                    # commit staged changes
+gh pr create                      # or glab mr create
+wt remove                         # after PR is merged
 ```
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
@@ -169,9 +169,9 @@ $ wt merge main
 For parallel agents, create multiple worktrees and launch an agent in each:
 
 ```bash
-$ wt switch -x claude -c feature-a -- 'Add user authentication'
-$ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
-$ wt switch -x claude -c feature-c -- 'Write tests for the API'
+wt switch -x claude -c feature-a -- 'Add user authentication'
+wt switch -x claude -c feature-b -- 'Fix the pagination bug'
+wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#pre-start-vs-post-start) to automate setup (install deps, start dev servers).

@@ -917,7 +917,7 @@ fn transform_zola_to_github(content: &str) -> String {
     // These are `{{ terminal(cmd="...") }}` shortcodes without body content
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         })
         .into_owned();
 
@@ -1895,8 +1895,11 @@ static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
 
 /// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
-/// Each cmd line gets `$ ` prefix; comment lines (`#`) and blank lines pass through.
-fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
+/// When `with_prompt` is false, command lines pass through verbatim so the block
+/// is directly copy-pasteable. When true, command lines get a `$ ` prefix to
+/// distinguish them from interleaved output. Comment-only lines (`#`) and blank
+/// lines never get the prefix.
+fn cmd_to_bash_block(cmd: &str, body: &str, with_prompt: bool) -> String {
     let mut result = String::from("```bash\n");
     for line in cmd.split("|||") {
         if line.is_empty() {
@@ -1905,7 +1908,9 @@ fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
             result.push_str(line);
             result.push('\n');
         } else {
-            result.push_str("$ ");
+            if with_prompt {
+                result.push_str("$ ");
+            }
             result.push_str(line);
             result.push('\n');
         }
@@ -1944,12 +1949,15 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes, converting cmd parameters back to `$ command` blocks.
-    // Commands joined by `|||` are split into separate lines.
+    // Strip terminal shortcodes, converting cmd parameters back to bash blocks.
+    // Commands joined by `|||` are split into separate lines. Block-form shortcodes
+    // with a body interleave command + output, so we keep the `$ ` prompt prefix
+    // there to distinguish the two; self-closing shortcodes are pure commands and
+    // get no prefix so the block stays copy-pasteable.
     let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
         let body = caps.get(2).map_or("", |m| m.as_str());
         match caps.get(1) {
-            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body),
+            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body, !body.trim().is_empty()),
             None if body.contains(r#"<span class="cmd">"#) => {
                 // Old-style body shortcode with <span class="cmd"> — convert to $ lines
                 let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
@@ -1962,7 +1970,7 @@ fn transform_docs_for_skill(content: &str) -> String {
     });
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         });
 
     // Strip rawcode shortcodes (keep content)
