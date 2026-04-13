@@ -1233,7 +1233,7 @@ pub fn check_and_migrate(
                 eprintln!(
                     "{}",
                     hint_message(cformat!(
-                        "Run <bold>wt config show</> for details or <bold>wt config update</> to apply updates"
+                        "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
                     ))
                 );
             }
