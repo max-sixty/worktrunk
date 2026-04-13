@@ -916,8 +916,9 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
         })
         .expect("Should have a cmd-0 log file");
 
-    // Wait for content to be written (background command might still be writing)
-    wait_for_file_content(&cmd_log);
+    // Wait for both lines — `&&` sequences two writes (stdout, then stderr),
+    // so file size > 0 can hit after only the first landed.
+    wait_for_file_lines(&cmd_log, 2);
 
     let log_contents = fs::read_to_string(&cmd_log).unwrap();
 
