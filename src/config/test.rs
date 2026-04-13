@@ -52,6 +52,50 @@ fn test_expand_template_branch_with_slashes() {
 }
 
 #[test]
+fn test_expand_template_sanitize_hash_filter() {
+    let test = test_repo();
+
+    // Already-safe names pass through unchanged (no hash suffix)
+    let vars = vars_with_branch("server");
+    let result = expand_template(
+        "{{ branch | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert_eq!(result, "server");
+
+    // Unsafe characters are replaced and a 3-char hash suffix is appended
+    let vars = vars_with_branch("feature/auth");
+    let result = expand_template(
+        "{{ branch | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert!(result.starts_with("feature-auth-"), "got: {result}");
+    assert_eq!(result.len(), "feature-auth-".len() + 3, "got: {result}");
+
+    // Empty input becomes "_empty-<hash>"
+    let mut vars = HashMap::new();
+    vars.insert("name", "");
+    let result = expand_template(
+        "{{ name | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert!(result.starts_with("_empty-"), "got: {result}");
+    assert_eq!(result.len(), "_empty-".len() + 3, "got: {result}");
+}
+
+#[test]
 fn test_expand_template_branch_raw_with_slashes() {
     let test = test_repo();
     // Raw branch preserves slashes

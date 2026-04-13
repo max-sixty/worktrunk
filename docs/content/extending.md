@@ -132,19 +132,6 @@ When both user and project config define the same alias name, both run — user 
 
 Alias names that collide with built-in step commands (`commit`, `squash`, `rebase`, etc.) are shadowed by the built-in.
 
-### Recipe: tail a specific hook log
-
-`wt config state logs --format=json` emits structured entries — `branch`, `source`, `hook_type`, `name`, `path`. Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
-
-```toml
-[aliases]
-# Tail the current worktree's post-start hook named {{ name }}:
-#   wt step hook-log --name=server
-hook-log = '''tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name }}" '.hook_output[] | select(.branch == "{{ branch }}" and .hook_type == "post-start" and (.name == $name or (.name | startswith($name + "-")))) | .path' | head -1)"'''
-```
-
-The `startswith($name + "-")` branch matches the sanitized-with-hash form (`server-abc`) so the same alias works for hook names that required sanitization.
-
 ### Recipe: move or copy in-progress changes to a new worktree
 
 Aliases compose existing commands into richer workflows. These three aliases wrap `wt switch --create` with git's stash and diff plumbing so staged, unstaged, and untracked changes can follow you into a new worktree:
@@ -174,6 +161,19 @@ How they work:
 - **`copy-staged`** writes `git diff --cached` to a tempfile and applies it with `git apply --index` in the new worktree. A diff (rather than `git stash --staged`) handles files where staged and unstaged hunks overlap on the same lines.
 
 Because an inner `wt switch --create` inside an alias [propagates its `cd` to the parent shell](@/step.md#aliases), all three drop the shell in the new worktree directly.
+
+### Recipe: tail a specific hook log
+
+`wt config state logs --format=json` emits structured entries — `branch`, `source`, `hook_type`, `name`, `path`. Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
+
+```toml
+[aliases]
+# Tail the current worktree's post-start hook named {{ name }} (handles sanitization):
+#   wt step hook-log --name=feature/auth
+hook-log = '''tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" '.hook_output[] | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == "post-start" and .name == $name) | .path' | head -1)"'''
+```
+
+The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
 
 See [`wt step` — Aliases](@/step.md#aliases) for the full reference.
 

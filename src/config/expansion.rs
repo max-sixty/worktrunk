@@ -323,6 +323,9 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env.add_filter("sanitize_db", |value: Value| -> String {
         sanitize_db(value.as_str().unwrap_or_default())
     });
+    env.add_filter("sanitize_hash", |value: Value| -> String {
+        crate::path::sanitize_for_filename(value.as_str().unwrap_or_default())
+    });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
@@ -413,6 +416,7 @@ pub fn validate_template(
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+/// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Functions
@@ -1349,6 +1353,7 @@ mod tests {
         // Filters
         assert!(validate_template("{{ branch | sanitize }}", &test.repo, "test").is_ok());
         assert!(validate_template("{{ branch | sanitize_db }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize_hash }}", &test.repo, "test").is_ok());
         assert!(validate_template("{{ branch | hash_port }}", &test.repo, "test").is_ok());
 
         // Conditionals with optional vars
