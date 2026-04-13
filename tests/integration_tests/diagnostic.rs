@@ -533,7 +533,7 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
 }
 
 /// With just -v, info-level logging goes to stderr but no log files are written.
-/// `-vv` is the threshold for `verbose.log` and `diagnostic.md`.
+/// `-vv` is the threshold for `trace.log`, `output.log`, and `diagnostic.md`.
 #[rstest]
 fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
@@ -541,19 +541,14 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
 
     assert!(output.status.success(), "Command should succeed");
 
-    // Neither diagnostic.md nor verbose.log should exist with just -v
+    // None of the -vv diagnostic files should exist with just -v
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
-    let diagnostic_path = wt_logs.join("diagnostic.md");
-    let verbose_log_path = wt_logs.join("verbose.log");
-
-    assert!(
-        !diagnostic_path.exists(),
-        "Diagnostic file should NOT be created with just -v"
-    );
-    assert!(
-        !verbose_log_path.exists(),
-        "verbose.log should NOT be created with just -v (requires -vv)"
-    );
+    for name in ["diagnostic.md", "trace.log", "output.log"] {
+        assert!(
+            !wt_logs.join(name).exists(),
+            "{name} should NOT be created with just -v (requires -vv)"
+        );
+    }
 }
 
 /// With -vv outside a git repo, command should still work (no crash).
@@ -682,8 +677,11 @@ fn normalize_report(content: &str) -> String {
     // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
     // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
     // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
-    // Match Windows paths first (drive letter + colon + any path chars)
-    result = regex::Regex::new(r"([A-Z]:[^\s)]+|/[^\s)]+/repo\.[^\s)]+)")
+    // Match Windows paths first (drive letter + colon + any path chars). Stop
+    // at whitespace, `)`, or a backtick so paths inlined in markdown code
+    // spans (e.g. `Full output in `D:\path\output.log`.`) don't eat the
+    // closing backtick.
+    result = regex::Regex::new(r"([A-Z]:[^\s)`]+|/[^\s)`]+/repo\.[^\s)`]+)")
         .unwrap()
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
