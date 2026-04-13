@@ -935,8 +935,17 @@ impl std::fmt::Display for GitError {
 /// for cases that need exit code extraction or special handling.
 #[derive(Debug)]
 pub enum WorktrunkError {
-    /// Child process exited with non-zero code (preserves exit code for signals)
-    ChildProcessExited { code: i32, message: String },
+    /// Child process exited with non-zero code (preserves exit code for signals).
+    ///
+    /// `signal` is `Some(sig)` when the process was terminated by a signal
+    /// (on Unix), `None` for a normal non-zero exit. Callers that must treat
+    /// interrupts differently from ordinary failures (e.g., aborting a loop
+    /// on Ctrl-C) check `signal` rather than inferring from `code`.
+    ChildProcessExited {
+        code: i32,
+        message: String,
+        signal: Option<i32>,
+    },
     /// Hook command failed
     HookCommandFailed {
         hook_type: HookType,
@@ -1131,6 +1140,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 42,
             message: "test".into(),
+            signal: None,
         }
         .into();
         assert_eq!(exit_code(&err), Some(42));
@@ -1209,6 +1219,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "test".into(),
+            signal: None,
         }
         .into();
         assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
@@ -1241,6 +1252,7 @@ mod tests {
         let err = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "Command failed".into(),
+            signal: None,
         };
         assert_snapshot!(err.to_string(), @"[31m✗[39m [31mCommand failed[39m");
 

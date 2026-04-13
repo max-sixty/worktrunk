@@ -53,6 +53,10 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 
     let mut failed: Vec<String> = Vec::new();
     let mut json_results: Vec<serde_json::Value> = Vec::new();
+    // Set when a child dies from a signal (Ctrl-C / SIGTERM). We abort the
+    // loop and propagate an equivalent exit code rather than visiting the
+    // remaining worktrees — the user asked for the work to stop.
+    let mut interrupted: Option<i32> = None;
     let total = worktrees.len();
 
     // Join args into a template string (will be expanded per-worktree)
@@ -100,11 +104,15 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let (exit_info, exit_code, error_msg, show_detail) =
-                    if let Some(WorktrunkError::ChildProcessExited { code, message }) =
-                        err.downcast_ref::<WorktrunkError>()
+                let (signal, exit_info, exit_code, error_msg, show_detail) =
+                    if let Some(WorktrunkError::ChildProcessExited {
+                        code,
+                        message,
+                        signal,
+                    }) = err.downcast_ref::<WorktrunkError>()
                     {
                         (
+                            *signal,
                             format!(" (exit code {code})"),
                             serde_json::json!(code),
                             message.clone(),
@@ -113,6 +121,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                     } else {
                         let msg = err.to_string();
                         (
+                            None,
                             " (spawn failed)".to_string(),
                             serde_json::json!(null),
                             msg,
@@ -136,8 +145,25 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                         "error": error_msg,
                     }));
                 }
+                if let Some(sig) = signal {
+                    interrupted = Some(128 + sig);
+                    break;
+                }
             }
         }
+    }
+
+    if let Some(exit_code) = interrupted {
+        if json_mode {
+            println!("{}", serde_json::to_string_pretty(&json_results)?);
+        } else {
+            eprintln!();
+            eprintln!(
+                "{}",
+                warning_message("Interrupted — skipped remaining worktrees")
+            );
+        }
+        return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
     }
 
     if json_mode {

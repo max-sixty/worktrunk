@@ -520,7 +520,9 @@ fn handle_command_error(
 ) -> anyhow::Result<()> {
     let (err_msg, exit_code) = if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
         match wt_err {
-            WorktrunkError::ChildProcessExited { message, code } => (message.clone(), Some(*code)),
+            WorktrunkError::ChildProcessExited { message, code, .. } => {
+                (message.clone(), Some(*code))
+            }
             _ => (err.to_string(), None),
         }
     } else {
@@ -695,6 +697,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 42,
             message: "command failed".into(),
+            signal: None,
         }
         .into();
         let cmd = make_cmd(Some("lint"));
@@ -763,6 +766,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "exit 1".into(),
+            signal: None,
         }
         .into();
         let cmd = make_cmd(None);
@@ -796,6 +800,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "lint failed".into(),
+            signal: None,
         }
         .into();
         let cmd = make_cmd(Some("lint"));

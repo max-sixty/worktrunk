@@ -361,6 +361,7 @@ fn collect_outcome(spawned: SpawnedChild, cmd: &ConcurrentCommand<'_>) -> anyhow
         Err(WorktrunkError::ChildProcessExited {
             code: 128 + sig,
             message: format!("terminated by signal {sig}"),
+            signal: Some(sig),
         }
         .into())
     } else {
@@ -368,6 +369,7 @@ fn collect_outcome(spawned: SpawnedChild, cmd: &ConcurrentCommand<'_>) -> anyhow
         Err(WorktrunkError::ChildProcessExited {
             code,
             message: format!("exit status: {code}"),
+            signal: None,
         }
         .into())
     }

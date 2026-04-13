@@ -156,6 +156,66 @@ fn test_for_each_json_spawn_failure(repo: TestRepo) {
     }
 }
 
+/// Signal-derived exit (Ctrl-C, SIGTERM) in a child must abort the loop
+/// rather than continuing into the remaining worktrees. Simulated here with
+/// a command that self-signals via SIGTERM — this drives the same
+/// `ChildProcessExited { signal: Some(_), .. }` path as a real Ctrl-C against
+/// the wt process. Sending SIGINT to the parent wt process from an integration
+/// test is impractical (it would kill the test harness), so we cover the
+/// signal-detection branch via an equivalent in-child signal.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
+    // The standard fixture already includes main + feature-{a,b,c} worktrees,
+    // so we just need the command to abort on the first visit.
+
+    // A marker file per visited worktree lets us assert that the loop stopped
+    // after the first signal. for-each joins the post-`--` args with spaces
+    // and runs the result through `sh -c`; we pass shell fragments that
+    // touch a marker and then self-signal with SIGTERM.
+    let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
+    let marker_path = marker_dir.path().to_string_lossy().to_string();
+
+    let touch_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\")");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step", "for-each", "--", &touch_cmd, "&&", "kill", "-TERM", "$$",
+        ])
+        .output()
+        .expect("run wt step for-each");
+
+    // Exit code: 128 + SIGTERM (15) = 143
+    assert_eq!(
+        output.status.code(),
+        Some(143),
+        "expected exit 143 (SIGTERM), got {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // Exactly one marker file should exist — the remaining worktrees must
+    // not have been visited after the signal aborted the loop.
+    let markers: Vec<_> = std::fs::read_dir(marker_dir.path())
+        .expect("read marker dir")
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        markers.len(),
+        1,
+        "expected exactly one worktree visited before abort, got {}: stderr={}",
+        markers.len(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Interrupted"),
+        "expected 'Interrupted' message in stderr, got: {stderr}"
+    );
+}
+
 #[rstest]
 fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");
