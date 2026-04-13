@@ -362,8 +362,8 @@ pub fn handle_picker(
 
             // The picker doesn't update progressively, so any column whose data
             // didn't arrive in time won't fill in later. Use the stale placeholder
-            // ("·") for all items — it signals "data not available" rather than the
-            // ellipsis ("⋯") which implies data is still loading.
+            // entry point; its glyph is the same `·` as the loading placeholder
+            // today but the semantic split is preserved for a future re-divergence.
             let rendered_line = layout.render_list_item_stale(&item);
             let display_text_with_ansi = rendered_line.render();
             let display_text = rendered_line.plain_text();

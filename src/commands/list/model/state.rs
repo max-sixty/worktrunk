@@ -262,7 +262,7 @@ impl MainState {
 /// - [`Tier::Wait`] — this tier's signal is not yet loaded; we cannot
 ///   safely fall through to a lower tier because a later drain tick might
 ///   still produce a higher-priority answer. Stop and return `None` from
-///   the gate resolver so the cell renders `⋯`.
+///   the gate resolver so the cell renders `·`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier<T> {
     /// Tier signal is known and positive — short-circuit with this value.

@@ -116,7 +116,7 @@ pub(super) fn drain_results(
         received_by_item[item_idx].push(kind);
 
         // Errors leave the errored task's fields at `None`. The
-        // corresponding gate stays unresolved (renders `⋯`). Callers
+        // corresponding gate stays unresolved (renders `·`). Callers
         // must call `refresh_status_symbols` post-drain to cover items
         // with zero successful results. Still run the callback so the
         // footer progress counter advances.

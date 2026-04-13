@@ -269,7 +269,7 @@ pub struct ListItem {
 
     /// Git status symbols — one `StatusSymbols` struct per item, always
     /// present after construction. Each *field inside* `StatusSymbols` is an
-    /// `Option` that progresses from `None` (loading, renders `⋯`) to `Some`
+    /// `Option` that progresses from `None` (loading, renders `·`) to `Some`
     /// as task results arrive. See the `status_symbols` module docstring for
     /// the per-gate rendering rules.
     ///
@@ -525,7 +525,7 @@ impl ListItem {
     /// Idempotent: safe to call repeatedly as task results arrive. Each
     /// gate is resolved independently; a gate once resolved is never
     /// unresolved. Gates whose inputs aren't ready yet are left at
-    /// `None`, and the renderer emits the position-level `⋯` placeholder
+    /// `None`, and the renderer emits the position-level `·` placeholder
     /// for them (step 5).
     ///
     /// See the `status_symbols` module docstring for the full per-gate

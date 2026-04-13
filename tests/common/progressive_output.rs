@@ -1,7 +1,7 @@
 //! Progressive output testing utilities
 //!
 //! Tests commands that use progressive rendering (like `wt list --full`), where the table
-//! structure appears first with placeholder dots (⋯), then data fills in incrementally using
+//! structure appears first with placeholder dots (·), then data fills in incrementally using
 //! ANSI cursor movements to update rows in-place.
 //!
 //! # The Problem
@@ -67,7 +67,7 @@
 //! ```rust,ignore
 //! let initial = output.initial().visible_text();
 //! assert!(initial.contains("Branch"));  // Header appears
-//! assert!(initial.contains("⋯"));        // Data incomplete
+//! assert!(initial.contains("·"));        // Data incomplete
 //! ```
 //!
 //! **Verify progressive data filling:**
@@ -82,7 +82,7 @@
 //! ```rust,ignore
 //! let final_text = output.final_output();
 //! assert!(final_text.contains("feature-a"));
-//! assert!(!final_text.contains("⋯"));  // No placeholders remain
+//! assert!(!final_text.contains("·"));  // No placeholders remain
 //! ```
 //!
 //! # Key API Methods
@@ -237,12 +237,12 @@ impl ProgressiveOutput {
             .collect()
     }
 
-    /// Count how many times dots (⋯) appear in each snapshot
+    /// Count how many times dots (·) appear in each snapshot
     /// Useful for verifying progressive data filling
     pub fn dots_per_stage(&self) -> Vec<usize> {
         self.stages
             .iter()
-            .map(|s| s.visible_text.matches('⋯').count())
+            .map(|s| s.visible_text.matches('·').count())
             .collect()
     }
 
@@ -630,15 +630,15 @@ mod tests {
         let stages = vec![
             OutputSnapshot {
                 timestamp: Duration::from_millis(0),
-                visible_text: "⋯ ⋯ ⋯ ⋯ ⋯".to_string(),
+                visible_text: "· · · · ·".to_string(),
             },
             OutputSnapshot {
                 timestamp: Duration::from_millis(50),
-                visible_text: "data ⋯ ⋯ ⋯".to_string(),
+                visible_text: "data · · ·".to_string(),
             },
             OutputSnapshot {
                 timestamp: Duration::from_millis(100),
-                visible_text: "data data ⋯".to_string(),
+                visible_text: "data data ·".to_string(),
             },
             OutputSnapshot {
                 timestamp: Duration::from_millis(150),

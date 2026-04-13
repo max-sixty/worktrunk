@@ -145,10 +145,10 @@ impl ExpectedResults {
 /// Seed conservative defaults for a task that will not run for an item.
 ///
 /// `refresh_status_symbols` keeps gates at `None` while their inputs are
-/// unloaded, which renders as the `⋯` placeholder. For tasks that will
+/// unloaded, which renders as the `·` placeholder. For tasks that will
 /// *never* run (stale branch, user `--skip-tasks`, unborn item missing
 /// commit-dependent tasks, prunable worktree), seeding a conservative
-/// default up front lets the gate resolve normally instead of showing `⋯`
+/// default up front lets the gate resolve normally instead of showing `·`
 /// forever.
 ///
 /// **Not seeded by this function:** `item.counts`. The ahead/behind counts
@@ -215,7 +215,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             // would misreport dirty worktrees as clean+removable and
             // fabricate an empty diff in `--format=json`. Same rule as
             // `item.counts`: leaks-to-JSON inputs stay `None`; the gate
-            // waits and renders `⋯`.
+            // waits and renders `·`.
         }
         TaskKind::WorkingTreeConflicts => {
             if let ItemKind::Worktree(data) = &mut item.kind {
@@ -257,7 +257,7 @@ pub(super) fn seed_unborn_main_state(item: &mut ListItem) {
 ///
 /// Prunable worktrees have their directory missing from disk, so no task
 /// can run for them. Without this seeding, every gate would stay `None`
-/// forever and the cell would render as seven `⋯` placeholders. This
+/// forever and the cell would render as seven `·` placeholders. This
 /// helper replaces the runtime fallback in `refresh_status_symbols`
 /// (introduced as a shim in step 4) with spawn-time seeding.
 pub(super) fn seed_prunable_item(item: &mut ListItem) {
@@ -315,7 +315,7 @@ pub fn work_items_for_worktree(
 ) -> Vec<WorkItem> {
     // Prunable worktrees have their directory missing — no task can run.
     // Seed every gate directly so the cell shows just the `⊟` metadata
-    // symbol rather than seven `⋯` placeholders.
+    // symbol rather than seven `·` placeholders.
     if wt.is_prunable() {
         seed_prunable_item(item);
         return vec![];

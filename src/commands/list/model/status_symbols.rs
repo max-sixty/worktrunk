@@ -10,7 +10,7 @@
 //!
 //! The core rule is: **each position is atomic in its own inputs**. The cell
 //! as a whole is never atomic — parts that are ready render; parts that are
-//! not render `⋯`.
+//! not render `·`.
 //!
 //! # Positions
 //!
@@ -44,11 +44,11 @@
 //! **Rule:**
 //! - `Some(_)` → render the flags it contains. A clean tree leaves all three
 //!   positions blank.
-//! - `None` → all three positions render the position-level `⋯` placeholder.
+//! - `None` → all three positions render the position-level `·` placeholder.
 //!
 //! Branches and prunable worktrees seed `working_tree_status` to a "no
 //! working tree" sentinel at spawn time, so their positions render blank,
-//! not `⋯`.
+//! not `·`.
 //!
 //! # Gate 2: Worktree state (position 3)
 //!
@@ -72,7 +72,7 @@
 //! 5. …continuing down through `⊟`, `⊞`, `/`, nothing.
 //!
 //! Until both `has_conflicts` and `git_operation` are known, we cannot rule
-//! out `✘/⤴/⤵`, so the position renders `⋯` even if metadata would otherwise
+//! out `✘/⤴/⤵`, so the position renders `·` even if metadata would otherwise
 //! produce `⊟` or `⊞`.
 //!
 //! **Exception — items with no working tree:** branches and prunable
@@ -125,7 +125,7 @@
 //!
 //! TODO: review whether the conservative-seed strategy for stale branches is
 //! the right trade-off. An alternative is to leave skipped-task fields as
-//! `None` so stale-branch rows show `⋯` in the affected positions — more
+//! `None` so stale-branch rows show `·` in the affected positions — more
 //! honest, but noisier in the picker.
 //!
 //! # Gate 4: Upstream divergence (position 5)
@@ -137,11 +137,11 @@
 //! **Rule:**
 //! - `Some(UpstreamStatus::None)` → nothing (no upstream configured).
 //! - `Some(active)` → render the divergence glyph from `active.ahead/behind`.
-//! - `None` → `⋯`.
+//! - `None` → `·`.
 //!
 //! **Exception — unborn:** `Upstream` is a `COMMIT_TASK` and is skipped for
 //! unborn items. `upstream` is seeded to "no upstream" at spawn time so
-//! gate 4 renders blank for unborn rows, not `⋯`.
+//! gate 4 renders blank for unborn rows, not `·`.
 //!
 //! # Gate 5: User marker (position 6)
 //!
@@ -152,26 +152,28 @@
 //! **Rule:**
 //! - `Some(Some(s))` → render `s`.
 //! - `Some(None)` → nothing (no marker for this item).
-//! - `None` → `⋯`.
+//! - `None` → `·`.
 //!
-//! # Rendering `⋯` at the position level
+//! # Rendering `·` at the position level
 //!
-//! `⋯` is a position-level placeholder emitted by the render function for
+//! `·` is a position-level placeholder emitted by the render function for
 //! each gate that hasn't resolved yet. It takes the full allocated width of
 //! its position so table alignment is preserved across rows.
 //!
 //! An in-progress cell might look like:
 //!
 //! ```text
-//! +!  ⋯ ↕ | ⋯     ← staged + modified known; worktree state + user marker still loading
-//! ⋯⋯⋯ ⋯ ^ | ⋯    ← main worktree known from metadata; other gates still loading
+//! +!  · ↕ | ·     ← staged + modified known; worktree state + user marker still loading
+//! ··· · ^ | ·    ← main worktree known from metadata; other gates still loading
 //!     ^ | 💬      ← everything resolved: main worktree, in sync, user marker
 //! ```
 //!
-//! TODO: the current glyph is a dim `⋯` rendered at the full position width.
-//! Consider a lighter placeholder (e.g., a dim middle dot `·`) to reduce
-//! visual noise in busy tables. Revisit once the gated rendering is in place
-//! and we can see it end-to-end.
+//! TODO: loading and post-deadline timeout both render as the same dim `·`
+//! today. The original design distinguished them (`⋯` vs `·`) but `⋯` was
+//! too loud for a tight Status column where most cells are in one state or
+//! the other at any given render. Pick a subtle second glyph — e.g., a
+//! single-dot braille or an en-dash — once the two can be evaluated
+//! side-by-side in real tables. See `PLACEHOLDER` in `render.rs`.
 //!
 //! # Timeout behavior
 //!
@@ -179,10 +181,10 @@
 //! `[list].timeout-ms`):
 //!
 //! 1. Each position's last-known state is displayed: resolved positions show
-//!    their symbol; unresolved positions show `⋯`.
+//!    their symbol; unresolved positions show `·`.
 //! 2. The diagnostic footer already lists which tasks did not finish per
 //!    item — this continues unchanged and gives the user the mapping from
-//!    "`⋯` in position X" back to "`TaskKind::Foo` timed out."
+//!    "`·` in position X" back to "`TaskKind::Foo` timed out."
 //! 3. JSON output omits fields that correspond to unresolved gates
 //!    (`working_tree`, `main_state`, `operation_state`, `upstream_divergence`,
 //!    etc.) so machine consumers can distinguish "loading / timeout" from
@@ -191,9 +193,9 @@
 //! # Error handling
 //!
 //! A task that errors counts as "result received, carrying no information."
-//! The affected field remains `None` and its gate renders `⋯`. There is **no
+//! The affected field remains `None` and its gate renders `·`. There is **no
 //! conservative-defaults fallback** for errored status-feeder tasks — a
-//! failed `WorkingTreeDiff` shows `⋯` in positions 0–2 and 3, not a
+//! failed `WorkingTreeDiff` shows `·` in positions 0–2 and 3, not a
 //! fabricated clean state. The error itself is still captured and shown in
 //! the post-render diagnostic section.
 //!
@@ -214,7 +216,7 @@
 //! ```
 //!
 //! `item.status_symbols` is always `Some(StatusSymbols::default())` after the
-//! skeleton render — every gate starts as `None` → `⋯`. Per-gate resolution
+//! skeleton render — every gate starts as `None` → `·`. Per-gate resolution
 //! populates individual fields as task results arrive.
 //!
 //! `refresh_status_symbols` (replacing the current "all or nothing"
@@ -245,7 +247,7 @@
 //!
 //! # Non-goals
 //!
-//! - **Animated `⋯`.** Out of scope.
+//! - **Animated `·`.** Out of scope.
 //! - **Partial rendering within a gate.** Gate 3 does not render `⊟` just
 //!   because prunable metadata says so — it waits until the operation family
 //!   can be ruled out. Atomicity *within* a gate is preserved; only *between*
@@ -442,18 +444,13 @@ impl StatusSymbols {
     ///
     /// Each position renders according to its [`SlotState`]:
     /// - `Loading` → `placeholder` padded to the slot width (dimmed).
-    ///   Normal rows pass `⋯`; `render_list_item_stale` passes `·`.
+    ///   Both normal and stale rows pass `·` today — see `PLACEHOLDER`.
     /// - `Empty` → whitespace padded to the slot width.
     /// - `Visible(s)` → styled content padded to the slot width.
     ///
     /// CRITICAL: Always use [`PositionMask::FULL`] for consistent spacing
     /// between progressive and final rendering. The mask provides the
     /// maximum width needed for each position across all rows.
-    ///
-    /// TODO: the `⋯` / `·` glyphs are intentional for now. Consider a
-    /// lighter placeholder (e.g. dim middle dot in all slots) once the
-    /// per-symbol rendering is in place and we can evaluate the visual
-    /// density end-to-end.
     pub fn render_with_mask(&self, mask: &PositionMask, placeholder: &str) -> String {
         use anstyle::Style;
         use worktrunk::styling::StyledLine;
@@ -512,7 +509,7 @@ impl StatusSymbols {
     ///
     /// Returns one [`SlotState`] per position. The renderer uses this to
     /// emit three kinds of cell content: `Loading` slots are rendered as the
-    /// position-level placeholder (`⋯` / `·`), `Empty` slots as allocated
+    /// position-level placeholder (`·`), `Empty` slots as allocated
     /// whitespace, and `Visible` slots as styled symbols.
     ///
     /// Order: working_tree (0-2) → worktree state (3) → main state (4) →
@@ -793,8 +790,8 @@ mod tests {
             main_state: Some(MainState::Ahead),
             ..Default::default()
         };
-        let rendered = symbols.render_with_mask(&PositionMask::FULL, "⋯");
-        assert_snapshot!(rendered, @"[2m⋯[0m[2m⋯[0m[2m⋯[0m[2m⋯[0m[2m↑[22m[2m⋯[0m[2m⋯[0m");
+        let rendered = symbols.render_with_mask(&PositionMask::FULL, "·");
+        assert_snapshot!(rendered, @"[2m·[0m[2m·[0m[2m·[0m[2m·[0m[2m↑[22m[2m·[0m[2m·[0m");
     }
 
     #[test]
