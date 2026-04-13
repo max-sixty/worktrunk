@@ -11,9 +11,9 @@ use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
 use worktrunk::styling::{eprintln, error_message, format_bash_with_gutter, progress_message};
 
-use super::force_serial_concurrent;
 use super::format_command_label;
 use super::hook_filter::HookSource;
+use crate::output::concurrent::{ConcurrentCommand, run_concurrent_commands};
 use crate::output::{DirectivePassthrough, execute_shell_command};
 
 #[derive(Debug)]
@@ -308,7 +308,7 @@ pub fn execute_pipeline_foreground(
                 )?;
             }
             PreparedStep::Concurrent(cmds) => {
-                if !concurrent || force_serial_concurrent() {
+                if !concurrent {
                     for cmd in cmds {
                         run_one_command(
                             cmd,
@@ -320,34 +320,104 @@ pub fn execute_pipeline_foreground(
                         )?;
                     }
                 } else {
-                    std::thread::scope(|s| {
-                        let origin = &fg_step.origin;
-                        let handles: Vec<_> = cmds
-                            .iter()
-                            .map(|cmd| {
-                                s.spawn(|| {
-                                    run_one_command(
-                                        cmd,
-                                        origin,
-                                        repo,
-                                        wt_path,
-                                        directives,
-                                        failure_strategy,
-                                    )
-                                })
-                            })
-                            .collect();
-                        wait_first_error(
-                            handles
-                                .into_iter()
-                                .map(|h| h.join().expect("command thread panicked")),
-                        )
-                    })?;
+                    run_concurrent_group(
+                        cmds,
+                        &fg_step.origin,
+                        repo,
+                        wt_path,
+                        directives,
+                        failure_strategy,
+                    )?;
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Run every command in a concurrent group via the prefixed-line executor.
+///
+/// Announces each command up front (origin-aware — hooks render per-command
+/// announcements, aliases only announce the outer group), expands all
+/// templates sequentially (template expansion reads git config; racing on
+/// reads would produce inconsistent state), then dispatches to
+/// `run_concurrent_commands` which streams each child's output prefixed by
+/// its label and waits for all to complete before folding outcomes.
+fn run_concurrent_group(
+    cmds: &[PreparedCommand],
+    origin: &CommandOrigin,
+    repo: &Repository,
+    wt_path: &Path,
+    directives: &DirectivePassthrough,
+    failure_strategy: FailureStrategy,
+) -> anyhow::Result<()> {
+    for cmd in cmds {
+        announce_command(cmd, origin);
+    }
+
+    let mut expanded: Vec<String> = Vec::with_capacity(cmds.len());
+    for cmd in cmds {
+        let s = if let Some(template) = &cmd.lazy_template {
+            let label = expansion_label(cmd, origin);
+            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                .context("failed to deserialize context_json")?;
+            expand_shell_template(template, &context, repo, &label)?
+        } else {
+            cmd.expanded.clone()
+        };
+        expanded.push(s);
+    }
+
+    let log_labels: Vec<Option<String>> = cmds
+        .iter()
+        .map(|cmd| command_log_label(cmd, origin))
+        .collect();
+
+    let labels: Vec<String> = cmds
+        .iter()
+        .map(|cmd| concurrent_label(cmd, origin))
+        .collect();
+
+    let specs: Vec<ConcurrentCommand<'_>> = cmds
+        .iter()
+        .enumerate()
+        .map(|(i, cmd)| ConcurrentCommand {
+            label: &labels[i],
+            expanded: &expanded[i],
+            working_dir: wt_path,
+            context_json: Some(&cmd.context_json),
+            log_label: log_labels[i].as_deref(),
+            directives,
+        })
+        .collect();
+
+    let outcomes = run_concurrent_commands(&specs)?;
+
+    let mut first_failure: Option<anyhow::Error> = None;
+    for (outcome, cmd) in outcomes.into_iter().zip(cmds) {
+        let Err(err) = outcome else { continue };
+        match handle_command_error(err, cmd, origin, failure_strategy) {
+            Ok(()) => {}
+            Err(e) => {
+                if first_failure.is_none() {
+                    first_failure = Some(e);
+                }
+            }
+        }
+    }
+    match first_failure {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+/// Prefix label for a child in a concurrent group — command name if present,
+/// otherwise a sensible origin-specific fallback.
+fn concurrent_label(cmd: &PreparedCommand, origin: &CommandOrigin) -> String {
+    cmd.name.clone().unwrap_or_else(|| match origin {
+        CommandOrigin::Hook { source, .. } => source.to_string(),
+        CommandOrigin::Alias { name } => name.clone(),
+    })
 }
 
 /// Execute a single prepared command: announce, expand, run, handle errors.
