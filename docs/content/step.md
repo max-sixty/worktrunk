@@ -75,7 +75,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 # Subcommands
@@ -155,7 +156,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step squash
@@ -238,7 +240,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step diff
@@ -295,7 +298,8 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step copy-ignored
@@ -426,7 +430,8 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step eval
@@ -500,7 +505,8 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step for-each
@@ -570,7 +576,8 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step promote
@@ -643,7 +650,8 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step prune
@@ -717,7 +725,8 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## wt step relocate
@@ -806,7 +815,8 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 ## Aliases

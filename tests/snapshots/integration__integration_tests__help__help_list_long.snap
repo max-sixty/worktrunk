@@ -71,7 +71,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
 
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 

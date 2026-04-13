@@ -102,16 +102,6 @@ fn inherited_git_env_overrides() -> &'static [(&'static str, OsString)] {
     })
 }
 
-/// Monotonic epoch for trace timestamps.
-///
-/// Using `Instant` instead of `SystemTime` ensures monotonic timestamps even if
-/// the system clock steps backward. All trace timestamps are relative to this epoch.
-static TRACE_EPOCH: OnceLock<Instant> = OnceLock::new();
-
-fn trace_epoch() -> &'static Instant {
-    TRACE_EPOCH.get_or_init(Instant::now)
-}
-
 /// Default concurrent external commands. Tuned to avoid hitting OS limits
 /// (file descriptors, process limits) while maintaining good parallelism.
 const DEFAULT_CONCURRENT_COMMANDS: usize = 32;
@@ -335,53 +325,72 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
 
 /// Emit an instant trace event (a milestone marker with no duration).
 ///
-/// Instant events appear as vertical lines in Chrome Trace Format visualization tools
-/// (chrome://tracing, Perfetto). Use them to mark significant moments in execution:
-///
-/// ```text
-/// [wt-trace] ts=1234567890 tid=3 event="Showed skeleton"
-/// ```
-///
-/// # Example
-///
-/// ```ignore
-/// use worktrunk::shell_exec::trace_instant;
-///
-/// // Mark when the skeleton UI was displayed
-/// trace_instant("Showed skeleton");
-///
-/// // Or with more context
-/// trace_instant("Progressive render: headers complete");
-/// ```
+/// Re-exported from [`crate::trace::emit::instant`] for convenience at the
+/// call sites that already import from `shell_exec`. Instant events appear as
+/// vertical lines in Chrome Trace Format visualization tools
+/// (chrome://tracing, Perfetto).
 pub fn trace_instant(event: &str) {
-    let ts = Instant::now().duration_since(*trace_epoch()).as_micros() as u64;
-    let tid = thread_id_number();
-
-    log::debug!("[wt-trace] ts={} tid={} event=\"{}\"", ts, tid, event);
+    crate::trace::emit::instant(event);
 }
 
-/// Extract numeric thread ID from ThreadId's debug format.
-/// ThreadId debug format is "ThreadId(N)" where N is the numeric ID.
-fn thread_id_number() -> u64 {
-    let thread_id = std::thread::current().id();
-    let debug_str = format!("{:?}", thread_id);
-    debug_str
-        .strip_prefix("ThreadId(")
-        .and_then(|s| s.strip_suffix(")"))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
-}
+/// Maximum lines of captured stdout/stderr emitted per stream at `log::debug!`.
+/// Exceeded content is elided with a `… (N more lines, M bytes elided)` marker.
+/// Raise the level to `log::trace!` (via `-vvv` or `RUST_LOG=trace`) for full output.
+const LOG_OUTPUT_MAX_LINES: usize = 200;
 
-/// Log command output (stdout/stderr) for debugging.
+/// Maximum bytes of captured stdout/stderr emitted per stream at `log::debug!`.
+/// Applied in addition to [`LOG_OUTPUT_MAX_LINES`].
+const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+
+/// Log captured stdout/stderr of a finished command.
+///
+/// At `log::trace!` (enabled by `-vvv`) the full output is emitted, one line
+/// per record with indent prefix (`  ` for stdout, `  ! ` for stderr). At
+/// `log::debug!` (`-vv`) the output is capped at [`LOG_OUTPUT_MAX_LINES`] and
+/// [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, so large
+/// subprocess bodies (diffs, prompts) don't flood the verbose stream.
 fn log_output(output: &std::process::Output) {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    for line in stdout.lines() {
-        log::debug!("  {}", line);
+    if log::log_enabled!(log::Level::Trace) {
+        log_stream_full(&output.stdout, "  ");
+        log_stream_full(&output.stderr, "  ! ");
+    } else if log::log_enabled!(log::Level::Debug) {
+        log_stream_bounded(&output.stdout, "  ");
+        log_stream_bounded(&output.stderr, "  ! ");
     }
-    for line in stderr.lines() {
-        log::debug!("  ! {}", line);
+}
+
+fn log_stream_full(bytes: &[u8], prefix: &str) {
+    if bytes.is_empty() {
+        return;
+    }
+    for line in String::from_utf8_lossy(bytes).lines() {
+        log::trace!("{}{}", prefix, line);
+    }
+}
+
+fn log_stream_bounded(bytes: &[u8], prefix: &str) {
+    if bytes.is_empty() {
+        return;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let total_bytes = bytes.len();
+
+    let mut bytes_emitted = 0;
+    let mut lines = text.lines().enumerate();
+    for (lines_emitted, line) in &mut lines {
+        if lines_emitted >= LOG_OUTPUT_MAX_LINES || bytes_emitted >= LOG_OUTPUT_MAX_BYTES {
+            let remaining_lines = 1 + lines.count();
+            let remaining_bytes = total_bytes.saturating_sub(bytes_emitted);
+            log::debug!(
+                "{}… ({} more lines, {} bytes elided — use -vvv for full output)",
+                prefix,
+                remaining_lines,
+                remaining_bytes
+            );
+            return;
+        }
+        log::debug!("{}{}", prefix, line);
+        bytes_emitted += line.len() + 1;
     }
 }
 
@@ -394,47 +403,21 @@ fn log_command_result(
     dur_us: u64,
     result: &std::io::Result<std::process::Output>,
 ) {
-    match (result, context) {
-        (Ok(output), Some(ctx)) => {
-            log::debug!(
-                r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} ok={}"#,
+    match result {
+        Ok(output) => {
+            crate::trace::emit::command_completed(
+                context,
+                cmd_str,
                 ts,
                 tid,
-                ctx,
-                cmd_str,
                 dur_us,
-                output.status.success()
+                output.status.success(),
             );
             log_output(output);
         }
-        (Ok(output), None) => {
-            log::debug!(
-                r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} ok={}"#,
-                ts,
-                tid,
-                cmd_str,
-                dur_us,
-                output.status.success()
-            );
-            log_output(output);
+        Err(e) => {
+            crate::trace::emit::command_errored(context, cmd_str, ts, tid, dur_us, e);
         }
-        (Err(e), Some(ctx)) => log::debug!(
-            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} err="{}""#,
-            ts,
-            tid,
-            ctx,
-            cmd_str,
-            dur_us,
-            e
-        ),
-        (Err(e), None) => log::debug!(
-            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} err="{}""#,
-            ts,
-            tid,
-            cmd_str,
-            dur_us,
-            e
-        ),
     }
 }
 
@@ -841,8 +824,10 @@ impl Cmd {
 
         // Capture timing for tracing
         let t0 = Instant::now();
-        let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
-        let tid = thread_id_number();
+        let ts = t0
+            .duration_since(crate::trace::emit::trace_epoch())
+            .as_micros() as u64;
+        let tid = crate::trace::emit::thread_id();
 
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
@@ -946,8 +931,10 @@ impl Cmd {
         let _guard = semaphore().acquire();
 
         let t0 = Instant::now();
-        let ts = t0.duration_since(*trace_epoch()).as_micros() as u64;
-        let tid = thread_id_number();
+        let ts = t0
+            .duration_since(crate::trace::emit::trace_epoch())
+            .as_micros() as u64;
+        let tid = crate::trace::emit::thread_id();
 
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);

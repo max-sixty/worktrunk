@@ -192,7 +192,7 @@ let output = Cmd::new("gh")
     .run()?;  // no context for standalone tools
 ```
 
-Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur_us=12300 ok=true`).
+Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur_us=12300 ok=true`). The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records via that module rather than ad-hoc `log::debug!("[wt-trace] ...")` format strings.
 
 For git commands, prefer `Repository::run_command()` which wraps `Cmd` with worktree context.
 

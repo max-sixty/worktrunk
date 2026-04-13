@@ -68,7 +68,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 # Subcommands
@@ -156,7 +157,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step squash
@@ -243,7 +245,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step diff
@@ -310,7 +313,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step copy-ignored
@@ -441,7 +445,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step eval
@@ -521,7 +526,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step for-each
@@ -599,7 +605,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step promote
@@ -675,7 +682,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step prune
@@ -756,7 +764,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## wt step relocate
@@ -853,7 +862,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 ```
 
 ## Aliases [experimental]

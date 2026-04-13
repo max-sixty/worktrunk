@@ -291,10 +291,12 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
 pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
-    // Log prompt for debugging (Cmd logs the command itself)
-    log::debug!("  Prompt (stdin):");
+    // Log prompt for debugging (Cmd logs the command itself). LLM prompts can
+    // be thousands of lines (full diffs), so keep them at trace — `-vv`
+    // shouldn't dump them, `-vvv` should.
+    log::trace!("  Prompt (stdin):");
     for line in prompt.lines() {
-        log::debug!("    {}", line);
+        log::trace!("    {}", line);
     }
 
     let shell = ShellConfig::get()?;

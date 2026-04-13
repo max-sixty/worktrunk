@@ -501,7 +501,8 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 # Subcommands
@@ -550,7 +551,8 @@ Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</sp
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
+          -vvv: trace logs)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt hook --help-page` -->

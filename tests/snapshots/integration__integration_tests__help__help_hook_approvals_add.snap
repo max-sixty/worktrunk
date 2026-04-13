@@ -53,7 +53,7 @@ Usage: [1m[36mwt hook approvals add[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
 
 Prompts for approval of all project commands and saves them to approvals.toml.
 

@@ -397,10 +397,10 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
-/// With just -v (not -vv), no logging files should be written.
-/// -v is reserved for future use; -vv is required for debug logging.
+/// With just -v, info-level logging goes to stderr but no log files are written.
+/// `-vv` is the threshold for `verbose.log` and `diagnostic.md`.
 #[rstest]
-fn test_v_does_not_enable_logging(repo: TestRepo) {
+fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
     let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
 
