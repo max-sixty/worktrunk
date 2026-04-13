@@ -827,14 +827,12 @@ two = "sh -c 'trap \"\" INT TERM; echo start-two >> stubborn_two.log; sleep 30'"
     let wt_pgid = Pid::from_raw(child.id() as i32);
     // First SIGINT — trapped by children; graceful path chews through
     // escalation serially.
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
-        .expect("failed to send first SIGINT");
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send first SIGINT");
 
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Second SIGINT — impatient path should SIGKILL the whole tree now.
-    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
-        .expect("failed to send second SIGINT");
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT).expect("failed to send second SIGINT");
 
     let start = std::time::Instant::now();
     let _status = child.wait().expect("failed to wait for wt");
