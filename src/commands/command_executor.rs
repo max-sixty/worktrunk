@@ -373,16 +373,24 @@ fn run_concurrent_group(
         .map(|cmd| command_log_label(cmd, origin))
         .collect();
 
-    let labels: Vec<String> = cmds
+    // Alias tables always produce named commands (TOML keys become `name`),
+    // and the concurrent path is alias-only today — so `cmd.name` is always
+    // `Some` here. When foreground concurrent hooks eventually ship, this
+    // will need an origin-aware fallback; for now, require the name.
+    let labels: Vec<&str> = cmds
         .iter()
-        .map(|cmd| concurrent_label(cmd, origin))
+        .map(|cmd| {
+            cmd.name
+                .as_deref()
+                .expect("concurrent group commands are always named")
+        })
         .collect();
 
     let specs: Vec<ConcurrentCommand<'_>> = cmds
         .iter()
         .enumerate()
         .map(|(i, cmd)| ConcurrentCommand {
-            label: &labels[i],
+            label: labels[i],
             expanded: &expanded[i],
             working_dir: wt_path,
             context_json: &cmd.context_json,
@@ -409,15 +417,6 @@ fn run_concurrent_group(
         Some(err) => Err(err),
         None => Ok(()),
     }
-}
-
-/// Prefix label for a child in a concurrent group — command name if present,
-/// otherwise a sensible origin-specific fallback.
-fn concurrent_label(cmd: &PreparedCommand, origin: &CommandOrigin) -> String {
-    cmd.name.clone().unwrap_or_else(|| match origin {
-        CommandOrigin::Hook { source, .. } => source.to_string(),
-        CommandOrigin::Alias { name } => name.clone(),
-    })
 }
 
 /// Execute a single prepared command: announce, expand, run, handle errors.
