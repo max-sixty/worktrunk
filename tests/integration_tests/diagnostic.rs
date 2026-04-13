@@ -674,14 +674,13 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
         .to_string();
 
-    // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
-    // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
-    // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
-    // Match Windows paths first (drive letter + colon + any path chars). Stop
-    // at whitespace, `)`, or a backtick so paths inlined in markdown code
-    // spans (e.g. `Full output in `D:\path\output.log`.`) don't eat the
-    // closing backtick.
-    result = regex::Regex::new(r"([A-Z]:[^\s)`]+|/[^\s)`]+/repo\.[^\s)`]+)")
+    // Normalize worktree temp paths (paths that contain `/repo.<name>` or
+    // `\repo.<name>` — the convention used by TestRepo for linked worktrees).
+    // Both branches require the `repo.` segment so the main-worktree path
+    // (which is `.../repo` without a dot) falls through to insta's prefix
+    // filter instead. Stop at whitespace, `)`, or a backtick so paths inlined
+    // in markdown code spans don't eat the closing backtick.
+    result = regex::Regex::new(r"([A-Z]:[^\s)`]+[\\/]repo\.[^\s)`]+|/[^\s)`]+/repo\.[^\s)`]+)")
         .unwrap()
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
