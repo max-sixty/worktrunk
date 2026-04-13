@@ -270,7 +270,7 @@ In summary, the bracket count tracks the shape:
 
 - `post-start = "npm install"` — one command
 - `[post-start]` — one section of concurrent commands
-- `[[post-start]]` — one in a sequence of sections, each section runs in order
+- `[[post-start]]` — one of multiple sections, run in order
 
 ## How it works
 
