@@ -1146,6 +1146,39 @@ fn test_step_help_silent_with_deprecated_user_config(repo: TestRepo) {
     );
 }
 
+/// `wt -C <other> step --help` lists aliases from `<other>`'s project config,
+/// not from the process cwd. Without applying global options before the help
+/// branch, the Aliases section was rendered from the wrong repo.
+#[cfg(not(windows))]
+#[rstest]
+fn test_step_help_honors_dash_c(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+xyzzy = "echo nothing happens"
+"#,
+    );
+    repo.commit("Add alias config");
+    let repo_path = repo.root_path().to_path_buf();
+
+    // Invoke from a directory that is *not* inside the repo so the alias can
+    // only be discovered via -C. Using the system temp dir keeps this
+    // independent of the test's working directory.
+    let cwd = std::env::temp_dir();
+    let mut cmd = repo.wt_command();
+    cmd.current_dir(&cwd)
+        .args(["-C", repo_path.to_str().unwrap(), "step", "--help"]);
+    let output = cmd.output().expect("failed to run wt");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("xyzzy"),
+        "expected `xyzzy` alias to appear in `wt -C <repo> step --help` output\n\
+         stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {

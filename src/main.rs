@@ -938,8 +938,16 @@ fn parse_cli() -> Option<Cli> {
         return None;
     }
 
+    // Apply -C / --config before help handling so `wt -C other step --help`
+    // and `wt --config custom.toml step --help` resolve aliases against the
+    // requested repo and user config (not the process cwd / default config).
+    // The same early parse also tells us whether this is `wt step` help, so
+    // the splice path in `augment_step_help` has no separate arg scanner.
+    let (directory, config, is_step_help) = parse_early_globals();
+    apply_global_options(directory, config);
+
     // Handle --help with pager before clap processes it
-    if help::maybe_handle_help_with_pager() {
+    if help::maybe_handle_help_with_pager(is_step_help) {
         return None;
     }
 
@@ -966,6 +974,35 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
     if let Some(path) = config {
         set_config_path(path);
     }
+}
+
+/// Parse global options (`-C`, `--config`) and detect whether this invocation
+/// is `wt step` help, in a single pass against the real `Cli` definition.
+///
+/// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
+/// don't abort parsing — we just read what matched. This lets `wt -C other
+/// step --help` apply `-C` before the help path renders, so `augment_step_help`
+/// resolves aliases against the requested repo instead of the process cwd.
+///
+/// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
+/// the global-flag definitions in one place (the derive on `Cli`), so renaming
+/// `-C` or adding a value-taking global doesn't silently desync this path.
+fn parse_early_globals() -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>, bool) {
+    let cmd = cli::build_command()
+        .ignore_errors(true)
+        .disable_help_flag(true);
+    let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
+        return (None, None, false);
+    };
+    let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
+    let config = matches.get_one::<std::path::PathBuf>("config").cloned();
+    // `wt step --help` (or `-h`) lands here with the `step` subcommand matched
+    // and nothing past it. `wt step promote --help` has a nested subcommand
+    // and should render plain clap help without the aliases splice.
+    let is_step_help = matches
+        .subcommand()
+        .is_some_and(|(name, sub)| name == "step" && sub.subcommand_name().is_none());
+    (directory, config, is_step_help)
 }
 
 fn init_command_log(command_line: &str) {
@@ -1205,6 +1242,9 @@ fn main() {
         verbose,
         command,
     } = cli;
+    // Globals were already applied in `parse_cli` before help rendering;
+    // OnceLock makes this call a no-op, but keeping it avoids touching the
+    // existing destructure pattern.
     apply_global_options(directory.clone(), config);
 
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
