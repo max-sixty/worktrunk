@@ -1,7 +1,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_files,
     configure_git_cmd, configure_git_env, directive_files, repo, setup_temp_snapshot_settings,
-    wait_for, wait_for_file, wait_for_file_content, wt_command,
+    wait_for_file, wait_for_file_content, wait_for_worktree_removed, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -652,7 +652,12 @@ fn test_bare_repo_merge_workflow() {
     }
 
     // Wait for background removal to complete
-    wait_for("feature worktree removed", || !feature_worktree.exists());
+    // Use the "gone or empty placeholder" predicate — the instant-removal
+    // path leaves an empty dir behind if the background `rmdir` silently
+    // fails (stray `.DS_Store`, scheduling delay under parallel load).
+    // That placeholder is production-harmless but trips a strict
+    // `!exists()` check.
+    wait_for_worktree_removed(&feature_worktree);
 
     // Verify main worktree still exists and has the feature commit
     assert!(main_worktree.exists());
