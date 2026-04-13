@@ -45,9 +45,9 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
-[2m↳[22m [2mTo apply:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[33m▲[39m [33mUser config: [1m[projects."github.com/example/repo".commit-generation][22m is deprecated in favor of [1m[projects."github.com/example/repo".commit.generation][22m[39m
+[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
 [107m [0m [1mindex de80729..131a2fd 100644[m
 [107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
@@ -58,11 +58,6 @@ exit_code: 0
 [107m [0m [31m-[projects."github.com/example/repo".commit-generation][m
 [107m [0m [32m+[m[32m[projects."github.com/example/repo".commit.generation][m
 [107m [0m  command = "llm -m gpt-4"[m
-[2m○[22m Current config:
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
-[107m [0m 
-[107m [0m [2m[36m[projects."github.com/example/repo".commit-generation]
-[107m [0m [2mcommand = [0m[2m[32m"llm -m gpt-4"
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml

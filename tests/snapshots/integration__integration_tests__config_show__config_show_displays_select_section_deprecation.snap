@@ -45,22 +45,17 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config: [1m[ci][22m is deprecated in favor of [1m[forge][22m[39m
+[33m▲[39m [33mUser config: [1m[select][22m is deprecated in favor of [1m[switch.picker][22m[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
-[107m [0m [1mindex 2e0e0bb..9d78d51 100644[m
+[107m [0m [1mindex 0d6352a..3e94895 100644[m
 [107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
 [107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
-[107m [0m [36m@@ -1,4 +1,4 @@[m
-[107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m  [m
-[107m [0m [31m-[ci][m
-[107m [0m [31m-platform = "github"[m
-[107m [0m \ No newline at end of file[m
-[107m [0m [32m+[m[32m[forge][m
-[107m [0m [32m+[m[32mplatform = "github"[m
-[33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m
+[107m [0m [36m@@ -1,2 +1,2 @@[m
+[107m [0m [31m-[select][m
+[107m [0m [32m+[m[32m[switch.picker][m
+[107m [0m  pager = "delta --paging=never"[m
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml

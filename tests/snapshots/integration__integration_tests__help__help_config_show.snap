@@ -62,7 +62,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
 and project config ([2m.config/wt.toml[0m). Also shows system config if present.

@@ -47,6 +47,7 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mUser config has approved-commands in [projects] sections (moved to approvals.toml)[39m
 [2m↳[22m [2mCopied approved commands to [4mapprovals.toml[24m[22m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
 [107m [0m [1mindex 51f8ab1..a30ca31 100644[m
 [107m [0m [1m--- a[TEST_CONFIG][m

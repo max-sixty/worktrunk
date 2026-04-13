@@ -522,6 +522,7 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
 fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
+    worktrunk::config::suppress_warnings();
     handle_picker(branches, remotes, None)
 }
 
@@ -535,6 +536,14 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
 
 fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+
+    // With no branch argument, `wt switch` opens a TUI picker — config
+    // deprecation warnings would render above the picker and push it down.
+    // They're still shown by other commands (`wt list`, `wt merge`, …).
+    if args.branch.is_none() {
+        worktrunk::config::suppress_warnings();
+    }
+
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|mut config| {
@@ -954,8 +963,9 @@ fn thread_label() -> char {
 }
 
 fn init_logging(verbose_level: u8) {
-    // Configure logging based on --verbose flag or RUST_LOG env var
-    // When -vv is set, also write logs to .git/wt/logs/verbose.log
+    // Configure logging based on --verbose flag or RUST_LOG env var.
+    // Level map: -v → Info, -vv → Debug, -vvv+ → Trace. `.git/wt/logs/verbose.log`
+    // mirrors stderr once we're at Debug or finer — Info records stay on stderr.
     if verbose_level >= 2 {
         verbose_log::init();
     }
@@ -963,12 +973,23 @@ fn init_logging(verbose_level: u8) {
     // Set global verbosity level for styled verbose output
     output::set_verbosity(verbose_level);
 
-    let mut builder = if verbose_level >= 2 {
-        let mut b = env_logger::Builder::new();
-        b.filter_level(log::LevelFilter::Debug);
-        b
-    } else {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off"))
+    let mut builder = match verbose_level {
+        0 => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")),
+        1 => {
+            let mut b = env_logger::Builder::new();
+            b.filter_level(log::LevelFilter::Info);
+            b
+        }
+        2 => {
+            let mut b = env_logger::Builder::new();
+            b.filter_level(log::LevelFilter::Debug);
+            b
+        }
+        _ => {
+            let mut b = env_logger::Builder::new();
+            b.filter_level(log::LevelFilter::Trace);
+            b
+        }
     };
 
     builder

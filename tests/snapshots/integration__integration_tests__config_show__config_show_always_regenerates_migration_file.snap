@@ -49,9 +49,9 @@ exit_code: 0
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
 [33m▲[39m [33mProject config uses deprecated template variables: [2mmain_worktree[22m → [1mrepo[22m[39m
-[33m▲[39m [33mProject config uses deprecated hook name: post-create → pre-start[39m
-[2m↳[22m [2mTo apply:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[33m▲[39m [33mProject config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
+[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
 [107m [0m [1mindex 8fcdb47..7792aac 100644[m
 [107m [0m [1m--- a_REPO_/.config/wt.toml[m
@@ -59,8 +59,6 @@ exit_code: 0
 [107m [0m [36m@@ -1 +1 @@[m
 [107m [0m [31m-post-create = "ln -sf {{ main_worktree }}/node_modules"[m
 [107m [0m [32m+[m[32mpre-start = "ln -sf {{ repo }}/node_modules"[m
-[2m○[22m Current config:
-[107m [0m [2mpost-create = [0m[2m[32m"ln -sf {{ main_worktree }}/node_modules"
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m

@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use color_print::cformat;
 use minijinja::Environment;
@@ -30,7 +30,7 @@ use shell_escape::unix::escape;
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, suggest_command_in_dir,
+    eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
 
@@ -38,6 +38,15 @@ use crate::styling::{
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Latch that silences config deprecation/unknown-field warnings for the rest
+/// of the process. Set by shell completion and picker paths, where stderr
+/// output would appear above the user's prompt or TUI.
+static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
+
+pub fn suppress_warnings() {
+    let _ = SUPPRESS_WARNINGS.set(());
+}
 
 /// Pre-compiled regexes for deprecated variable word-boundary matching.
 /// Compiled once on first use, shared across all calls to normalize/replace.
@@ -1212,19 +1221,21 @@ pub fn check_and_migrate(
 
     // For brief warnings (non-config-show commands), just show a pointer
     if show_brief_warning {
-        eprintln!("{}", format_brief_warning(label));
+        if SUPPRESS_WARNINGS.get().is_none() {
+            eprintln!("{}", format_brief_warning(label));
 
-        if let Some(approvals_path) = &info.approvals_copied_to {
-            let approvals_filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Copied approved commands to <underline>{approvals_filename}</>"
-                ))
-            );
+            if let Some(approvals_path) = &info.approvals_copied_to {
+                let approvals_filename = approvals_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default();
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Copied approved commands to <underline>{approvals_filename}</>"
+                    ))
+                );
+            }
         }
 
         // Still write migration file if needed (first time only)
@@ -1374,24 +1385,24 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         );
     }
 
-    if !info.deprecations.commit_gen.is_empty() {
-        let mut parts = Vec::new();
-        if info.deprecations.commit_gen.has_top_level {
-            parts.push("[commit-generation] → [commit.generation]".to_string());
-        }
-        for project_key in &info.deprecations.commit_gen.project_keys {
-            parts.push(format!(
-                "[projects.\"{}\".commit-generation] → [projects.\"{}\".commit.generation]",
-                project_key, project_key
-            ));
-        }
+    if info.deprecations.commit_gen.has_top_level {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config sections: {}",
-                info.label,
-                parts.join(", ")
+            warning_message(cformat!(
+                "{}: <bold>[commit-generation]</> is deprecated in favor of <bold>[commit.generation]</>",
+                info.label
+            ))
+        );
+    }
+    for project_key in &info.deprecations.commit_gen.project_keys {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{label}: <bold>[projects.\"{k}\".commit-generation]</> is deprecated in favor of <bold>[projects.\"{k}\".commit.generation]</>",
+                label = info.label,
+                k = project_key
             ))
         );
     }
@@ -1424,8 +1435,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config section: [select] → [switch.picker]",
+            warning_message(cformat!(
+                "{}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>",
                 info.label
             ))
         );
@@ -1435,8 +1446,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated hook name: post-create → pre-start",
+            warning_message(cformat!(
+                "{}: <bold>post-create</> hook is deprecated in favor of <bold>pre-start</>",
                 info.label
             ))
         );
@@ -1446,8 +1457,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config section: [ci] → [forge]",
+            warning_message(cformat!(
+                "{}: <bold>[ci]</> is deprecated in favor of <bold>[forge]</>",
                 info.label
             ))
         );
@@ -1457,8 +1468,8 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated field: [merge] no-ff → ff (inverted)",
+            warning_message(cformat!(
+                "{}: <bold>merge.no-ff</> is deprecated in favor of <bold>merge.ff</> (inverted)",
                 info.label
             ))
         );
@@ -1468,21 +1479,28 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated field: [switch] no-cd → cd (inverted)",
+            warning_message(cformat!(
+                "{}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)",
                 info.label
             ))
         );
     }
 
     if !info.deprecations.pre_hook_table_form.is_empty() {
-        let hook_list = info.deprecations.pre_hook_table_form.join(", ");
+        let hook_list = info
+            .deprecations
+            .pre_hook_table_form
+            .iter()
+            .map(|h| cformat!("<bold>{h}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated table form for pre-* hooks: {} → pipeline form",
-                info.label, hook_list
+            warning_message(cformat!(
+                "{}: table form for {} is deprecated in favor of the pipeline form",
+                info.label,
+                hook_list
             ))
         );
     }
@@ -1502,18 +1520,25 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 
     // Migration hint with apply command
     if let Some(new_path) = &info.migration_path {
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter("wt config update"));
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("To apply: <underline>wt config update</>"))
+        );
 
         // Inline diff — git diff header shows the file paths
         if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
+            let _ = writeln!(out, "{}", info_message("Proposed diff:"));
             let _ = writeln!(out, "{diff}");
         }
     } else if let Some(main_path) = &info.main_worktree_path {
         // In linked worktree — include -C so the command works from here
         let cmd = suggest_command_in_dir(main_path, "config", &["update"], &[]);
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter(&cmd));
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("To apply: <underline>{cmd}</>"))
+        );
     }
 
     out
@@ -1580,7 +1605,7 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
     unknown_keys: &HashMap<String, toml::Value>,
     label: &str,
 ) {
-    if unknown_keys.is_empty() {
+    if unknown_keys.is_empty() || SUPPRESS_WARNINGS.get().is_some() {
         return;
     }
 

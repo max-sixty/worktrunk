@@ -46,7 +46,8 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mworktree[22m → [1mworktree_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
-[33m▲[39m [33mUser config uses deprecated hook name: post-create → pre-start[39m
+[33m▲[39m [33mUser config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a[TEST_CONFIG] b[TEST_CONFIG_NEW][m
 [107m [0m [1mindex 89b3165..b3535c5 100644[m
 [107m [0m [1m--- a[TEST_CONFIG][m

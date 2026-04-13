@@ -246,7 +246,7 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Verbose output (-v: hooks, templates; -vv: debug report)
+    /// Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
     #[arg(
         long,
         short = 'v',
@@ -1059,10 +1059,11 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
-pre-merge = [
-    {test = "cargo test"},
-    {lint = "cargo clippy"},
-]
+[[pre-merge]]
+test = "cargo test"
+
+[[pre-merge]]
+lint = "cargo clippy"
 ```
 
 ## See also
@@ -1283,13 +1284,15 @@ server = "npm run dev"
 watch = "npm run watch"
 ```
 
-A pipeline is a list of steps run in order, where each step is an inline table of commands that run concurrently within the step:
+A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently:
 
 ```toml
-post-start = [
-    {install = "npm ci"},
-    {build = "npm run build", server = "npm run dev"},
-]
+[[post-start]]
+install = "npm ci"
+
+[[post-start]]
+build = "npm run build"
+server = "npm run dev"
 ```
 
 Here `install` runs first, then `build` and `server` run together.
@@ -1454,24 +1457,27 @@ build = "npm run build"
 lint = "npm run lint"
 ```
 
-When one command depends on another — `npm run build` needs `npm install` to finish first — use a list to run steps in order:
+When one command depends on another — `npm run build` needs `npm install` to finish first — use `[[hook]]` blocks to run steps in order:
 
 ```toml
-# A list of two maps, run in order.
-# Each map runs its entries concurrently.
-post-start = [
-    # install runs first
-    { install = "npm install" },
-    # ...then build and lint run concurrently
-    { build = "npm run build", lint = "npm run lint" }
-]
+# Two blocks, run in order.
+# Each block runs its entries concurrently.
+
+# install runs first
+[[post-start]]
+install = "npm install"
+
+# ...then build and lint run concurrently
+[[post-start]]
+build = "npm run build"
+lint = "npm run lint"
 ```
 
-In summary:
+In summary, the bracket count tracks the shape:
 
-- **String** — one command
-- **Map** of `name = "command"` pairs — run concurrently
-- **List** of maps — run in order
+- `post-start = "npm install"` — one command
+- `[post-start]` — one section of concurrent commands
+- `[[post-start]]` — one of multiple sections, run in order
 
 ## How it works
 
@@ -1516,10 +1522,11 @@ copy = "wt step copy-ignored"
 Use `pre-start` instead if subsequent hooks need the copied files — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages:
 
 ```toml
-pre-start = [
-    {copy = "wt step copy-ignored"},
-    {install = "pnpm install"},
-]
+[[pre-start]]
+copy = "wt step copy-ignored"
+
+[[pre-start]]
+install = "pnpm install"
 ```
 
 ## Dev servers
@@ -1553,22 +1560,23 @@ server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ bran
 Each worktree can have its own database. A pipeline sets up the container name and connection string as vars, then later steps and hooks reference them:
 
 ```toml
-post-start = [
-  { set-vars = """
-  wt config state vars set \
-    container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-    port='{{ ('db-' ~ branch) | hash_port }}' \
-    db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
-  """ },
-  { db = """
-  docker run -d --rm \
-    --name {{ vars.container }} \
-    -p {{ vars.port }}:5432 \
-    -e POSTGRES_DB={{ branch | sanitize_db }} \
-    -e POSTGRES_PASSWORD=dev \
-    postgres:16
-  """},
-]
+[[post-start]]
+set-vars = """
+wt config state vars set \
+  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
+  port='{{ ('db-' ~ branch) | hash_port }}' \
+  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
+"""
+
+[[post-start]]
+db = """
+docker run -d --rm \
+  --name {{ vars.container }} \
+  -p {{ vars.port }}:5432 \
+  -e POSTGRES_DB={{ branch | sanitize_db }} \
+  -e POSTGRES_PASSWORD=dev \
+  postgres:16
+"""
 
 [post-remove]
 db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
@@ -1587,15 +1595,17 @@ $ DATABASE_URL=$(wt config state vars get db_url) npm start
 Quick checks before commit, thorough validation before merge:
 
 ```toml
-pre-commit = [
-    {lint = "npm run lint"},
-    {typecheck = "npm run typecheck"},
-]
+[[pre-commit]]
+lint = "npm run lint"
 
-pre-merge = [
-    {test = "npm test"},
-    {build = "npm run build"},
-]
+[[pre-commit]]
+typecheck = "npm run typecheck"
+
+[[pre-merge]]
+test = "npm test"
+
+[[pre-merge]]
+build = "npm run build"
 ```
 
 ## Target-specific behavior
@@ -1628,20 +1638,23 @@ For copying dependencies and caches between worktrees, see [`wt step copy-ignore
 ```toml
 post-merge = "cargo install --path ."
 
-pre-start = [
-    {install = "npm ci"},
-    {env = "echo 'PORT={{ branch | hash_port }}' > .env.local"},
-]
+[[pre-start]]
+install = "npm ci"
 
-pre-commit = [
-    {format = "cargo fmt -- --check"},
-    {lint = "cargo clippy -- -D warnings"},
-]
+[[pre-start]]
+env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 
-pre-merge = [
-    {test = "cargo test"},
-    {build = "cargo build --release"},
-]
+[[pre-commit]]
+format = "cargo fmt -- --check"
+
+[[pre-commit]]
+lint = "cargo clippy -- -D warnings"
+
+[[pre-merge]]
+test = "cargo test"
+
+[[pre-merge]]
+build = "cargo build --release"
 
 [pre-switch]
 pull = """

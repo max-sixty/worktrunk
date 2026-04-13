@@ -48,9 +48,9 @@ exit_code: 0
 [2m↳[22m [2mNot found; to create one, run [4mwt config create[24m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
-[33m▲[39m [33mProject config uses deprecated table form for pre-* hooks: pre-start, pre-merge → pipeline form[39m
-[2m↳[22m [2mTo apply:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config update
+[33m▲[39m [33mProject config: table form for [1mpre-start[22m, [1mpre-merge[22m is deprecated in favor of the pipeline form[39m
+[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a_REPO_/.config/wt.toml b_REPO_/.config/wt.toml.new[m
 [107m [0m [1mindex 3a61835..dc2a222 100644[m
 [107m [0m [1m--- a_REPO_/.config/wt.toml[m
@@ -69,14 +69,6 @@ exit_code: 0
 [107m [0m [32m+[m
 [107m [0m [32m+[m[32m[[pre-start]][m
 [107m [0m  env = "cp .env.example .env"[m
-[2m○[22m Current config:
-[107m [0m [2m[36m[pre-merge]
-[107m [0m [2mtest = [0m[2m[32m"cargo test"
-[107m [0m [2mlint = [0m[2m[32m"cargo clippy"
-[107m [0m 
-[107m [0m [2m[36m[pre-start]
-[107m [0m [2minstall = [0m[2m[32m"npm ci"
-[107m [0m [2menv = [0m[2m[32m"cp .env.example .env"
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
