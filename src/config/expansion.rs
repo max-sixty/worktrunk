@@ -352,6 +352,17 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
     tmpl.undeclared_variables(false).contains(var)
 }
 
+/// Parse-only syntax check for a template.
+///
+/// Used on lazy-expansion paths (hooks + aliases) where rendering would fail
+/// because `vars.*` values are only known at execution time — we still want
+/// to catch typos like `{{ vars..foo }}` upfront.
+pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), minijinja::Error> {
+    minijinja::Environment::new()
+        .template_from_named_str(name, template)
+        .map(|_| ())
+}
+
 /// Validate that a template can be expanded without errors.
 ///
 /// Performs a trial expansion with placeholder values for all known template variables

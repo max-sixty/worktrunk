@@ -30,11 +30,14 @@
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
 //! arbitrary shell into the interactive session.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::config::{CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases};
+use worktrunk::config::{
+    CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, template_references_var,
+    validate_template_syntax,
+};
 use worktrunk::git::Repository;
 use worktrunk::styling::{
     eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
@@ -318,8 +321,8 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     if opts.dry_run {
         let expanded: Vec<_> = cmd_config
             .commands()
-            .map(|cmd| expand_shell_template(&cmd.template, &context_map, &repo, &opts.name))
-            .collect::<Result<_, _>>()?;
+            .map(|cmd| render_for_dry_run(&cmd.template, &context_map, &repo, &opts.name))
+            .collect::<anyhow::Result<_>>()?;
         eprintln!(
             "{}",
             info_message(cformat!(
@@ -378,6 +381,30 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         FailureStrategy::FailFast,
         true, // aliases support concurrent execution
     )
+}
+
+/// Render a command template for `--dry-run` display.
+///
+/// Mirrors execution-time lazy semantics: templates referencing `vars.*` may
+/// read values set by earlier pipeline steps via git config, and at dry-run
+/// time those values haven't been written yet (even if git config happens to
+/// hold a stale value from a previous run, the execution path would overwrite
+/// it). For those templates, syntax-validate (catching typos like
+/// `{{ vars..foo }}`) and show the raw template. Other templates expand
+/// eagerly against the initial context just like before.
+fn render_for_dry_run(
+    template: &str,
+    context: &HashMap<String, String>,
+    repo: &Repository,
+    alias_name: &str,
+) -> anyhow::Result<String> {
+    if template_references_var(template, "vars") {
+        validate_template_syntax(template, alias_name)
+            .map_err(|e| anyhow::anyhow!("syntax error in alias {alias_name}: {e}"))?;
+        Ok(template.to_string())
+    } else {
+        Ok(expand_shell_template(template, context, repo, alias_name)?)
+    }
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.

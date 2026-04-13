@@ -6,6 +6,7 @@ use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
     Command, CommandConfig, HookStep, UserConfig, expand_template, template_references_var,
+    validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -593,8 +594,7 @@ fn expand_commands(
             // Parse-only validation: catch syntax errors upfront without rendering.
             // Full rendering (validate_template) would fail on {{ vars.X }} because
             // vars aren't set yet — that's the whole point of lazy expansion.
-            let env = minijinja::Environment::new();
-            env.template_from_named_str(&template_name, &cmd.template)
+            validate_template_syntax(&cmd.template, &template_name)
                 .map_err(|e| anyhow::anyhow!("syntax error in {template_name}: {e}"))?;
             let tpl = cmd.template.clone();
             (tpl.clone(), Some(tpl))
