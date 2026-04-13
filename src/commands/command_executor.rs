@@ -385,7 +385,7 @@ fn run_concurrent_group(
             label: &labels[i],
             expanded: &expanded[i],
             working_dir: wt_path,
-            context_json: Some(&cmd.context_json),
+            context_json: &cmd.context_json,
             log_label: log_labels[i].as_deref(),
             directives,
         })
@@ -566,10 +566,6 @@ fn expand_commands(
     source: HookSource,
     lazy_enabled: bool,
 ) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
-    if commands.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let mut base_context = build_hook_context(ctx, extra_vars)?;
 
     // hook_type is always available as a template variable and in JSON context
@@ -633,9 +629,6 @@ pub fn prepare_steps(
     source: HookSource,
 ) -> anyhow::Result<Vec<PreparedStep>> {
     let steps = command_config.steps();
-    if steps.is_empty() {
-        return Ok(Vec::new());
-    }
 
     // Collect step sizes so we can re-partition after a single expand_commands call.
     // This avoids calling build_hook_context (which spawns git subprocesses) per step.
