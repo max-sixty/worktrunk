@@ -2671,6 +2671,30 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     assert!(!updated.contains("post-create"));
 }
 
+/// `wt config update` with a clean project config (no deprecations) treats
+/// the repo as nothing-to-do — covers the project-config path through
+/// `check_and_migrate` when it returns `info == None`.
+#[rstest]
+fn test_config_update_clean_project_config_is_noop(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-start = "echo ready"
+"#,
+    );
+    repo.commit("Add clean project config");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "update"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No deprecated settings found"),
+        "Expected no-op message, got: {stderr}"
+    );
+}
+
 /// `wt config update` from a linked worktree declines to mutate project
 /// config and instead points at the main worktree. Covers the `is_linked`
 /// branch in `check_project_config`.
