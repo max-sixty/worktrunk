@@ -260,7 +260,7 @@ Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directo
 - **Background hooks**: `{branch}/{source}/{hook-type}/{name}.log` (source: `user` or `project`)
 - **Background removal**: `{branch}/internal/remove.log`
 
-Top-level *files* are shared logs (`commands.jsonl*`, `verbose.log`, `diagnostic.md`); top-level *directories* are per-branch log trees. Branch and hook names are sanitized via `sanitize_for_filename`: already-safe names pass through unchanged; names with invalid characters have them replaced with `-` and a short collision-avoidance hash appended.
+Top-level *files* are shared logs (`commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`); top-level *directories* are per-branch log trees. Branch and hook names are sanitized via `sanitize_for_filename`: already-safe names pass through unchanged; names with invalid characters have them replaced with `-` and a short collision-avoidance hash appended.
 
 ## Coverage
 

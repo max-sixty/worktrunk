@@ -495,8 +495,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 # Subcommands
@@ -555,8 +555,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state
@@ -641,8 +641,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state default-branch
@@ -698,8 +698,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state logs
@@ -742,10 +742,11 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 
 | File | Created when |
 |------|-------------|
-| `verbose.log` | Running with `-vv` |
+| `trace.log` | Running with `-vv` |
+| `output.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` when warnings occur |
 
-`verbose.log` is overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur.
+`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
 
 ### Location
 
@@ -809,8 +810,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state ci-status
@@ -867,8 +868,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state marker
@@ -936,8 +937,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```
 
 ## wt config state vars
@@ -1019,6 +1020,6 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 ```

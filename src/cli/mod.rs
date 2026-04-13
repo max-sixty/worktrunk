@@ -246,7 +246,7 @@ pub(crate) struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report; -vvv: trace logs)
+    /// Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
     #[arg(
         long,
         short = 'v',

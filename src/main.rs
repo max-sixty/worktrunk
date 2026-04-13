@@ -28,11 +28,11 @@ mod help;
 pub(crate) mod help_pager;
 mod invocation;
 mod llm;
+mod log_files;
 mod md_help;
 mod output;
 mod pager;
 mod summary;
-mod verbose_log;
 
 // Re-export invocation utilities at crate level for use by other modules
 pub(crate) use invocation::{
@@ -1034,10 +1034,12 @@ fn thread_label() -> char {
 
 fn init_logging(verbose_level: u8) {
     // Configure logging based on --verbose flag or RUST_LOG env var.
-    // Level map: -v → Info, -vv → Debug, -vvv+ → Trace. `.git/wt/logs/verbose.log`
-    // mirrors stderr once we're at Debug or finer — Info records stay on stderr.
+    // Level map: -v → Info, -vv+ → Debug (stderr, with subprocess output
+    // capped). At -vv, `.git/wt/logs/trace.log` mirrors stderr and
+    // `.git/wt/logs/output.log` receives the uncapped subprocess bodies
+    // routed via `shell_exec::SUBPROCESS_FULL_TARGET`.
     if verbose_level >= 2 {
-        verbose_log::init();
+        log_files::init();
     }
 
     // Set global verbosity level for styled verbose output
@@ -1050,25 +1052,31 @@ fn init_logging(verbose_level: u8) {
             b.filter_level(log::LevelFilter::Info);
             b
         }
-        2 => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Debug);
-            b
-        }
         _ => {
             let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Trace);
+            b.filter_level(log::LevelFilter::Debug);
             b
         }
     };
 
     builder
         .format(|buf, record| {
-            let msg = record.args().to_string();
-            let thread_num = thread_label();
+            let route = log_files::route(record.target());
+            if matches!(route, log_files::Route::Drop) {
+                return Ok(());
+            }
 
-            // Write plain text to log file (no ANSI codes)
-            verbose_log::write_line(&format!("[{thread_num}] {msg}"));
+            let thread_num = thread_label();
+            let msg = record.args().to_string();
+            let file_line = format!("[{thread_num}] {msg}");
+
+            if let log_files::Route::File(sink) = route {
+                sink.write_line(&file_line);
+                return Ok(());
+            }
+            // Route::Stderr: mirror to trace.log (no-op when inactive), then
+            // write the ANSI-formatted version to stderr below.
+            log_files::TRACE.write_line(&file_line);
 
             // Commands start with $, make only the command bold (not $ or [worktree])
             if let Some(rest) = msg.strip_prefix("$ ") {

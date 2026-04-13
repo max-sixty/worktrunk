@@ -6,8 +6,9 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `verbose.log`, `diagnostic.md`) and top-level *directories* are per-branch log
-//! trees (`{branch}/{source|internal}/{hook-type}/{name}.log`). Categorization
+//! `trace.log`, `output.log`, `diagnostic.md`) and top-level *directories* are
+//! per-branch log trees (`{branch}/{source|internal}/{hook-type}/{name}.log`).
+//! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
 //! must remain files. If a future category needs multiple files, it should live
 //! under a single reserved subdirectory rather than adding sibling top-level dirs.
@@ -46,11 +47,11 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 // ==================== Log Management ====================
 
-/// Check if a top-level file is a diagnostic file (`verbose.log` or `diagnostic.md`).
-///
-/// These are created by `-vv` and live directly under `wt_logs_dir()`.
+/// Top-level files created by `-vv` under `wt_logs_dir()`.
+const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
+
 fn is_diagnostic_file(name: &str) -> bool {
-    name == "verbose.log" || name == "diagnostic.md"
+    DIAGNOSTIC_FILES.contains(&name)
 }
 
 /// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
@@ -180,7 +181,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `verbose.log`, `diagnostic.md`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively

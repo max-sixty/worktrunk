@@ -281,8 +281,8 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report;
-          -vvv: trace logs)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt list --help-page` -->
