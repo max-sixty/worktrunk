@@ -130,6 +130,21 @@ Multi-line aliases work too. This [2mup[0m alias fetches all remotes and rebas
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m step up[0m
 
+Multi-step aliases run commands in order using [2m[[aliases.NAME]][0m blocks. Each block is one step; multiple keys within a block run concurrently.
+
+[107m [0m [2m# .config/wt.toml[0m
+[107m [0m [2m[36m[[aliases.release]][0m
+[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
+[107m [0m 
+[107m [0m [2m[36m[[aliases.release]][0m
+[107m [0m [2mbuild = [0m[2m[32m"cargo build --release"[0m
+[107m [0m [2mpackage = [0m[2m[32m"cargo package --no-verify"[0m
+[107m [0m 
+[107m [0m [2m[36m[[aliases.release]][0m
+[107m [0m [2mpublish = [0m[2m[32m"cargo publish"[0m
+
+Here [2mtest[0m runs first, then [2mbuild[0m and [2mpackage[0m run together, then [2mpublish[0m runs last. A step failure aborts the remaining steps.
+
 When defined in both user and project config, both run — user first, then project. Project-config aliases require command approval on first run, same as project hooks. User-config aliases are trusted.
 
 Inside an alias body, an inner [2mwt switch[0m (or [2mwt switch --create[0m) passes its [2mcd[0m through to the parent shell, so an alias wrapping [2mwt switch --create[0m lands the shell in the new worktree just like running it directly.
