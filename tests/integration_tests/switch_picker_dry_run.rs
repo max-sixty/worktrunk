@@ -86,11 +86,14 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         .as_array()
         .expect("top-level `entries` array");
 
-    // Summary mode is `4` (see PreviewMode). At least one entry should be a
-    // summary when summaries are enabled — that proves the summary spawn
-    // branch ran to completion.
+    // Summary mode is `5` (see `PreviewMode` in `src/commands/picker/preview.rs`).
+    // At least one entry should be a summary when summaries are enabled —
+    // that proves the summary spawn branch ran to completion. Mode 4
+    // (UpstreamDiff) is always present as part of the normal preview
+    // modes array, so asserting on it would not prove anything about
+    // the summary path.
     assert!(
-        entries.iter().any(|e| e["mode"] == 4),
+        entries.iter().any(|e| e["mode"] == 5),
         "expected at least one Summary entry, got: {stdout}"
     );
 }
