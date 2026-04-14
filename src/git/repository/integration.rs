@@ -511,6 +511,18 @@ impl Repository {
         }
     }
 
+    /// Resolve a ref to its commit SHA, skipping git when the input already
+    /// looks like a 40-char hex SHA.
+    ///
+    /// Used at cache boundaries (e.g. [`Self::merge_base`]) to normalize keys
+    /// without spawning `git rev-parse` for inputs that are already SHAs.
+    pub(super) fn resolve_to_commit_sha(&self, r: &str) -> anyhow::Result<String> {
+        if is_hex_commit_sha(r) {
+            return Ok(r.to_string());
+        }
+        self.rev_parse_commit(r)
+    }
+
     /// Check if a branch is integrated into a target.
     ///
     /// This is a convenience method that combines [`compute_integration_lazy()`] and
@@ -555,5 +567,46 @@ impl Repository {
                 Ok(e.insert(result).clone())
             }
         }
+    }
+}
+
+/// Returns true when `s` is a 40-character hex string — the canonical form
+/// of a git commit SHA-1.
+fn is_hex_commit_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod hex_sha_tests {
+    use super::is_hex_commit_sha;
+
+    #[test]
+    fn detects_full_hex_sha() {
+        assert!(is_hex_commit_sha(
+            "273f078bd20a09f1a524aae48fcb1771ceac9b5d"
+        ));
+    }
+
+    #[test]
+    fn rejects_branch_names() {
+        assert!(!is_hex_commit_sha("main"));
+        assert!(!is_hex_commit_sha("feature/foo"));
+    }
+
+    #[test]
+    fn rejects_short_or_long() {
+        assert!(!is_hex_commit_sha(
+            "273f078bd20a09f1a524aae48fcb1771ceac9b5"
+        ));
+        assert!(!is_hex_commit_sha(
+            "273f078bd20a09f1a524aae48fcb1771ceac9b5d0"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_hex_chars() {
+        assert!(!is_hex_commit_sha(
+            "z73f078bd20a09f1a524aae48fcb1771ceac9b5d"
+        ));
     }
 }

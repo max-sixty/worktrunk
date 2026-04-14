@@ -288,6 +288,21 @@ static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Default base path when -C flag is not provided.
 static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
 
+/// Process-wide cache for `git rev-parse --git-common-dir` resolution,
+/// keyed by the discovery path passed to [`Repository::at`].
+///
+/// Unlike per-Repository caches, this lives for the whole process so that
+/// multiple Repository instances pointed at the same path (e.g.
+/// `init_command_log` early in `main`, then a command handler later) skip
+/// the duplicate `git rev-parse` subprocess. The value (a canonicalized
+/// `.git` directory) is invariant for the lifetime of the process.
+///
+/// Keys are stored as-is (not canonicalized) — the goal is only to dedupe
+/// repeated calls with the same path. The duplicate case we care about (both
+/// callers go through `base_path()`) always passes the same `PathBuf`, so
+/// equality on the raw path is sufficient.
+static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
 /// Initialize the global base path for repository operations.
 ///
 /// This should be called once at program startup from main().
@@ -456,7 +471,15 @@ impl Repository {
     ///
     /// Always returns a canonicalized absolute path to ensure consistent
     /// comparison with `WorkingTree::git_dir()`.
+    ///
+    /// Result is cached process-wide in [`GIT_COMMON_DIR_CACHE`] so multiple
+    /// `Repository::at()` calls for the same discovery path don't each spawn
+    /// `git rev-parse --git-common-dir`.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+        if let Some(cached) = GIT_COMMON_DIR_CACHE.get(discovery_path) {
+            return Ok(cached.clone());
+        }
+
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)
@@ -477,7 +500,10 @@ impl Repository {
         } else {
             path
         };
-        canonicalize(&absolute_path).context("Failed to resolve git common directory")
+        let resolved =
+            canonicalize(&absolute_path).context("Failed to resolve git common directory")?;
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), resolved.clone());
+        Ok(resolved)
     }
 
     /// Get the path this repository was discovered from.
@@ -498,11 +524,16 @@ impl Repository {
     /// Get a worktree view at a specific path.
     ///
     /// Use this when you need to operate on a worktree other than the current one.
+    ///
+    /// The path is canonicalized when it exists so that callers passing
+    /// equivalent forms (e.g., cwd from JSON vs path from `git worktree list
+    /// --porcelain`) hit the same per-worktree cache entries in `RepoCache`.
+    /// Falls back to the raw path if canonicalization fails (e.g., path does
+    /// not yet exist for a worktree about to be created).
     pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorkingTree<'_> {
-        WorkingTree {
-            repo: self,
-            path: path.into(),
-        }
+        let raw = path.into();
+        let path = canonicalize(&raw).unwrap_or(raw);
+        WorkingTree { repo: self, path }
     }
 
     /// Get a branch handle for branch-specific operations.

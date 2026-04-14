@@ -72,7 +72,11 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the path this WorkingTree was created with.
     ///
-    /// This is the path passed to `worktree_at()` or `base_path()` for `current_worktree()`.
+    /// Returns the canonicalized form when the input passed to `worktree_at()` /
+    /// `base_path()` for `current_worktree()` exists on disk; otherwise returns
+    /// the raw input. So on macOS, a temp path like `/tmp/foo` may surface here
+    /// (and to hook template variables) as `/private/tmp/foo`.
+    ///
     /// For the canonical git-determined root, use [`root()`](Self::root) instead.
     pub fn path(&self) -> &Path {
         &self.path
