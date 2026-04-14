@@ -1,0 +1,5 @@
+---
+source: src/commands/picker/items.rs
+expression: "WorktreeSkimItem::loading_placeholder(mode)"
+---
+○ Loading working-tree diff. Press 1 again to refresh.
