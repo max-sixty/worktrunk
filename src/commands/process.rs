@@ -539,6 +539,99 @@ fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
 ///
 /// When `changed_directory` is false, no placeholder exists, so the background
 /// command just removes the staged directory directly.
+///
+/// # Design alternatives evaluated (2026-04)
+///
+/// Two weaknesses in the current design prompted an investigation:
+///
+/// 1. **Silent `rmdir` failure.** If anything lands in the placeholder
+///    during the 1-second sleep (e.g., macOS `.DS_Store`, a filesystem
+///    race, an editor saving against the old path), `rmdir` fails silently
+///    because of `2>/dev/null`, and the empty directory at `original_path`
+///    lingers forever. This was the root cause of an intermittent
+///    `test_bare_repo_merge_workflow` flake.
+/// 2. **"Create then delete" placeholder lifecycle.** wt creates an empty
+///    directory that the background shell removes one second later; its
+///    only purpose is keeping `$PWD` valid for shells (notably Nushell)
+///    that stat it between wt's exit and the wrapper's `cd`.
+///
+/// Two alternatives were prototyped and reviewed; neither was adopted.
+///
+/// ## Option A — Fully deferred cleanup with a pending-removal marker
+///
+/// Sync phase shrinks to: write a `PendingRemoval` marker under
+/// `<git-common-dir>/wt/pending/`, spawn detached `wt internal
+/// finish-removal <marker>`, exit. The detached process sleeps 1 second,
+/// then does rename + prune + `branch -D` + `rm -rf` + marker delete —
+/// the work that today happens synchronously. Concurrent operations
+/// (e.g., `wt switch --create <same-branch>` within the 1-second window)
+/// check for matching markers and force-finish the cleanup inline via a
+/// `finish_blocking_for` helper. Crashed cleanup processes are reclaimed
+/// by extending the existing `sweep_stale_trash` path with a
+/// `sweep_stale_pending` variant.
+///
+/// Benefits: eliminates the placeholder lifecycle entirely (the original
+/// path never disappears during wt's execution, so `$PWD` stays valid
+/// "for free"); no `rmdir` silent-failure mode; marker-based
+/// coordination on the recreate race.
+///
+/// Drawbacks surfaced by Codex review:
+///
+/// - **Data safety (P1).** The clean-check runs sync but the rename
+///   runs ~1 second later. Writes to existing files during that window
+///   (editor save, background build) are silently renamed into trash
+///   and `rm -rf`'d. Today's sync rename keeps that window
+///   microsecond-wide. Mitigation: revalidate cleanliness in the
+///   finisher and bail on dirty — but that turns "remove" into a silent
+///   no-op visible only in log files.
+/// - **Hook timing (P2).** `spawn_hooks_after_remove` runs right after
+///   the sync phase returns. In the deferred design, `post-remove`
+///   hooks fire while `git worktree list` still reports the worktree
+///   and the branch still exists, contrary to the hook's documented
+///   contract. Fix: move hook invocation into the finisher.
+/// - **Retained-branch coordination (P1).** The marker's `branch` field
+///   must be recorded independently of the `delete_branch` flag, or
+///   `finish_blocking_for(Some("feature"), ..)` misses markers whose
+///   branch was retained (`--no-delete-branch`, unmerged safe-delete).
+/// - **Complexity cost.** New module (`src/commands/pending.rs`), new
+///   hidden CLI subcommand (`wt internal finish-removal`), sweep
+///   recovery, coordination calls in `plan_switch`,
+///   `validate_worktree_creation`, and `handle_remove_command`. ~450
+///   lines of new code plus tests.
+///
+/// ## Option B — Sync rename + `rm -rf` instead of `rmdir`
+///
+/// Keep the current sync phase (rename + prune + `branch -D` + create
+/// placeholder), add the pending-removal marker + coordination hooks,
+/// and in this function substitute `rm -rf <placeholder>` for
+/// `rmdir <placeholder> 2>/dev/null`.
+///
+/// Benefits: fixes the flake's root cause (silent-failure mode gone);
+/// inherits marker-based coordination; keeps the data-safety window at
+/// microseconds; keeps hook timing correct.
+///
+/// Drawbacks:
+///
+/// - Doesn't eliminate the "create then delete" placeholder pattern —
+///   just makes its cleanup robust.
+/// - Introduces a narrow new window: if something writes to the
+///   placeholder during the 1-second sleep, `rm -rf` deletes it.
+///   Today's silent `rmdir` accidentally preserves such writes as
+///   orphaned leftovers (ugly but data-preserving). Mitigation:
+///   revalidate emptiness in the finisher and skip `rm -rf` on
+///   non-empty placeholders — turns that accidental preservation into a
+///   deliberate invariant.
+///
+/// ## Decision
+///
+/// Neither was adopted. The flaky test was fixed at the test layer by
+/// teaching `wait_for_worktree_removed` to accept "gone or empty
+/// placeholder" as the success condition — matching what
+/// `assert_worktree_removed` already documents. If flakiness resurfaces
+/// or the visible-placeholder aesthetic becomes a real friction point,
+/// Option B is the low-risk path forward: strictly dominates main
+/// except for the narrow write-into-placeholder edge case, and reuses
+/// most of the pending-module work from Option A.
 pub fn build_remove_command_staged(
     staged_path: &std::path::Path,
     original_path: &std::path::Path,

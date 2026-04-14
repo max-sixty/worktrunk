@@ -2199,22 +2199,49 @@ fn exponential_sleep(attempt: u32) {
     ExponentialBackoff::default().sleep(attempt);
 }
 
-/// Assert that a worktree's contents have been removed.
+/// True when a worktree's contents have been removed — either the path
+/// is gone, or it's an empty placeholder directory.
 ///
-/// After background removal, the path may briefly exist as an empty placeholder
-/// directory (for shell PWD validity). This asserts the contents are gone —
-/// either the path doesn't exist, or it's an empty directory.
-pub fn assert_worktree_removed(path: &Path) {
-    // Use read_dir as the single check to avoid a TOCTOU race where the
-    // background process removes the placeholder between exists() and read_dir().
-    let is_empty_or_gone = match path.read_dir() {
+/// After the instant-removal path renames the worktree into trash, the
+/// original path can linger as an empty placeholder until the background
+/// shell's `sleep 1 && rmdir` runs (the placeholder keeps `$PWD` valid
+/// for shells like Nushell that validate it). The `rmdir` silences
+/// errors with `2>/dev/null` and only removes empty directories, so
+/// under load — or when any stray file (e.g., `.DS_Store`) lands in the
+/// placeholder — the path can remain indefinitely. Production doesn't
+/// care (empty placeholder is harmless); tests that do a strict
+/// `!path.exists()` check would flake.
+fn worktree_contents_removed(path: &Path) -> bool {
+    // Single `read_dir` avoids a TOCTOU race between `exists()` and the
+    // background process removing the placeholder.
+    match path.read_dir() {
         Ok(mut entries) => entries.next().is_none(), // empty placeholder
         Err(_) => true,                              // already gone (NotFound or other)
-    };
+    }
+}
+
+/// Assert that a worktree's contents have been removed.
+///
+/// Mirrors `worktree_contents_removed`: the path must be either gone
+/// or an empty placeholder.
+pub fn assert_worktree_removed(path: &Path) {
     assert!(
-        is_empty_or_gone,
+        worktree_contents_removed(path),
         "Worktree contents should be removed (empty placeholder OK): {}",
         path.display()
+    );
+}
+
+/// Poll until a worktree's contents have been removed.
+///
+/// Prefer this over `wait_for(..., || !path.exists())` when removal
+/// goes through the instant-removal path (`wt merge`, `wt remove`),
+/// which can leave an empty placeholder directory. See
+/// `worktree_contents_removed`.
+pub fn wait_for_worktree_removed(path: &Path) {
+    wait_for(
+        &format!("worktree contents removed: {}", path.display()),
+        || worktree_contents_removed(path),
     );
 }
 
