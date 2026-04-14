@@ -10,7 +10,7 @@
 //! - `test_diagnostic_hint_without_vv`: Hint tells user to use -vv
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
-//! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
+//! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
@@ -219,7 +219,7 @@ fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
 
 /// Trace log should contain git command traces for debugging.
 #[rstest]
-fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
+fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
@@ -234,26 +234,26 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
     .unwrap();
 
     // Extract trace log section
-    let verbose_start = content
+    let trace_start = content
         .find("<summary>Trace log</summary>")
         .expect("Should have trace log");
-    let verbose_section = &content[verbose_start..];
+    let trace_section = &content[trace_start..];
 
     // Should contain git command traces
     assert!(
-        verbose_section.contains("git worktree list"),
+        trace_section.contains("git worktree list"),
         "Trace log should contain git worktree list command"
     );
     assert!(
-        verbose_section.contains("[wt-trace]"),
+        trace_section.contains("[wt-trace]"),
         "Trace log should contain wt-trace entries"
     );
     assert!(
-        verbose_section.contains("dur_us="),
+        trace_section.contains("dur_us="),
         "Trace log should contain command durations in microseconds"
     );
     assert!(
-        verbose_section.contains("ok="),
+        trace_section.contains("ok="),
         "Trace log should contain success/failure indicators"
     );
 }
