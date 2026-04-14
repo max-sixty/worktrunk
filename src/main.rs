@@ -914,19 +914,24 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
         })
 }
 
+/// Rayon thread count sized for mixed git+network I/O workloads.
+///
+/// `wt list` and the picker's preview pre-compute both run git subprocesses
+/// (often blocked on pipe reads) alongside occasional network requests. 2x CPU
+/// cores lets threads waiting on I/O overlap with compute work without excessive
+/// context-switch overhead.
+pub(crate) fn rayon_thread_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get() * 2)
+        .unwrap_or(8)
+}
+
 fn init_rayon_thread_pool() {
-    // Configure Rayon's global thread pool for mixed I/O workloads.
-    // The `wt list` command runs git operations (CPU + disk I/O) and network
-    // requests (CI status, URL health checks) in parallel. Using 2x CPU cores
-    // allows threads blocked on I/O to overlap with compute work.
-    //
     // Override with RAYON_NUM_THREADS=N for benchmarking.
     let num_threads = if std::env::var_os("RAYON_NUM_THREADS").is_some() {
         0 // Let Rayon handle the env var (includes validation)
     } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get() * 2)
-            .unwrap_or(8)
+        rayon_thread_count()
     };
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)

@@ -64,4 +64,5 @@ pub mod step_prune;
 pub mod step_relocate;
 pub mod switch;
 pub mod switch_picker;
+pub mod switch_picker_dry_run;
 pub mod user_hooks;

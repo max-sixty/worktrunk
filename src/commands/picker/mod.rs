@@ -6,6 +6,7 @@ mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod preview_orchestrator;
 mod summary;
 
 use std::cell::RefCell;
@@ -18,7 +19,6 @@ use std::time::Instant;
 
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
-use dashmap::DashMap;
 use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
@@ -41,6 +41,7 @@ use crate::output::handle_switch_output;
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
+use preview_orchestrator::PreviewOrchestrator;
 
 /// Action selected by the user in the picker.
 enum PickerAction {
@@ -281,8 +282,10 @@ pub fn handle_picker(
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Interactive picker requires a terminal for the TUI
-    if !std::io::stdin().is_terminal() {
+    // Interactive picker requires a terminal for the TUI. The dry-run path
+    // bypasses skim entirely, so no TTY is required — useful for tests and
+    // for diagnosing the pre-compute pipeline from scripts.
+    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
 
@@ -296,6 +299,32 @@ pub fn handle_picker(
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
+
+    // Preview cache + dedicated pool are created up-front so the speculative
+    // first-item preview can run in parallel with `collect::collect` below.
+    let orchestrator = PreviewOrchestrator::new();
+    let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
+
+    // Speculative warm-up: the picker sorts the current worktree first, and
+    // the default tab (WorkingTree = `git diff HEAD` in that worktree) is
+    // what skim will render first. Kicking this off before `collect::collect`
+    // overlaps preview compute with list collection (up to 500ms budget).
+    // The real spawn later skips this key via `contains_key`.
+    if let (Ok(Some(branch)), Ok(path)) = (
+        repo.current_worktree().branch(),
+        repo.current_worktree().root(),
+    ) {
+        use super::list::model::{ItemKind, ListItem, WorktreeData};
+        let mut item = ListItem::new_branch(String::new(), branch);
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path,
+            ..Default::default()
+        }));
+        // num_items doesn't matter for Right (dims independent of it); for
+        // Down it only affects height, which doesn't alter pager wrapping.
+        let dims = state.initial_layout.preview_dimensions(0);
+        orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
+    }
 
     // Gather list data using simplified collection (buffered mode)
     // Skip expensive operations not needed for picker UI
@@ -347,9 +376,6 @@ pub fn handle_picker(
     let header_line = layout.render_header_line();
     let header_display_text = header_line.render();
     let header_plain_text = header_line.plain_text();
-
-    // Create shared cache for all preview modes (pre-computed in background)
-    let preview_cache: PreviewCache = Arc::new(DashMap::new());
 
     // Convert to skim items using the layout system for rendering
     // Keep Arc<ListItem> refs for background pre-computation
@@ -518,35 +544,33 @@ pub fn handle_picker(
         PreviewMode::UpstreamDiff,
     ];
 
-    for item in &items_for_precompute {
+    // Spawn order (rayon dispatches FIFO):
+    // 1. First item's modes — user lands here and may tab-cycle immediately.
+    // 2. Mode-major for remaining items — the default tab (WorkingTree)
+    //    warms across the full list before any off-default mode starts.
+    let dims = (preview_width, preview_height);
+    if let Some(first) = items_for_precompute.first() {
         for mode in modes {
-            let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(item);
-            rayon::spawn(move || {
-                let cache_key = (item.branch_name().to_string(), mode);
-                cache.entry(cache_key).or_insert_with(|| {
-                    WorktreeSkimItem::compute_and_page_preview(
-                        &item,
-                        mode,
-                        preview_width,
-                        preview_height,
-                    )
-                });
-            });
+            orchestrator.spawn_preview(Arc::clone(first), mode, dims);
+        }
+    }
+    for mode in modes {
+        for item in items_for_precompute.iter().skip(1) {
+            orchestrator.spawn_preview(Arc::clone(item), mode, dims);
         }
     }
 
-    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
+    // Summaries run last: each LLM call can take seconds, so queueing them
+    // behind fast git previews keeps preview tabs warming promptly. First
+    // item's summary still goes first within the summary batch so a user
+    // who sits on the top entry gets a head start.
     if config.list.summary() && config.commit_generation.is_configured() {
         let llm_command = config.commit_generation.command.clone().unwrap();
-        for item in &items_for_precompute {
-            let item = Arc::clone(item);
-            let cache = Arc::clone(&preview_cache);
-            let cmd = llm_command.clone();
-            let repo = repo.clone();
-            rayon::spawn(move || {
-                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
-            });
+        if let Some(first) = items_for_precompute.first() {
+            orchestrator.spawn_summary(Arc::clone(first), llm_command.clone(), repo.clone());
+        }
+        for item in items_for_precompute.iter().skip(1) {
+            orchestrator.spawn_summary(Arc::clone(item), llm_command.clone(), repo.clone());
         }
     } else {
         // No LLM configured or summaries disabled — insert config hint so the
@@ -567,6 +591,15 @@ pub fn handle_picker(
             let branch = item.branch_name().to_string();
             preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
         }
+    }
+
+    // Dry-run: wait for all pre-compute tasks and dump the cache as JSON
+    // instead of launching skim. Used by tests and for diagnosing
+    // "previews never load" bugs without a TTY.
+    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+        orchestrator.wait_for_idle();
+        println!("{}", orchestrator.dump_cache_json());
+        return Ok(());
     }
 
     // Run skim (single invocation — alt-r uses reload, not re-launch)
