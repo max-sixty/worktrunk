@@ -24,12 +24,17 @@ tasks:
           exit 0
         fi
         VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$VENDORED/Cargo.toml" | head -1)
-        UPSTREAM=$(find ~/.cargo/registry/src -maxdepth 2 -type d -name "skim-tuikit-${VERSION}" | head -1)
-        if [ -z "$UPSTREAM" ]; then
-          echo "pristine skim-tuikit-${VERSION} not found in ~/.cargo/registry — run \`cargo fetch\` first"
+        # Fetch the pristine tarball directly from crates.io rather than relying
+        # on ~/.cargo/registry — `[patch.crates-io]` suppresses the download, so
+        # that cache is never populated on a fresh checkout.
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        URL="https://static.crates.io/crates/skim-tuikit/skim-tuikit-${VERSION}.crate"
+        if ! curl -sSfL "$URL" | tar -xz -C "$TMP"; then
+          echo "failed to fetch pristine skim-tuikit-${VERSION} from $URL"
           exit 1
         fi
-        diff -ruN "$UPSTREAM" "$VENDORED" || true
+        diff -ruN "$TMP/skim-tuikit-${VERSION}" "$VENDORED" || true
 
   setup-web:
     desc: Setup Claude Code web environment for development
