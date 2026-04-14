@@ -72,7 +72,7 @@ use worktrunk::HookType;
 /// Enhance clap errors with command-specific hints, then exit.
 ///
 /// For unrecognized subcommands that match nested commands, suggests the full path.
-fn enhance_and_exit_error(err: clap::Error) -> ! {
+pub(crate) fn enhance_and_exit_error(err: clap::Error) -> ! {
     // For unrecognized subcommands, check if they match a nested subcommand
     // e.g., `wt squash` -> suggest `wt step squash`
     if err.kind() == ClapErrorKind::InvalidSubcommand

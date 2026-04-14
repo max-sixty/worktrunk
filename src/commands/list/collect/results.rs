@@ -793,12 +793,17 @@ mod tests {
 
     #[test]
     fn test_drain_results_survives_mid_stall_result() {
-        // Smoke test: a result arriving mid-stall doesn't crash the loop or
-        // double-fire. Does NOT prove `last_result_time` resets — that's
-        // visible in the drain source directly. Verifying reset timing in
-        // a test would need an upper-bound stall count, and `threshold/tick`
-        // is too small a window to distinguish reset-works from reset-broken
-        // without flakiness.
+        // A result arriving mid-stall must not break the loop: the drain
+        // processes the result, keeps emitting stalls, and exits cleanly
+        // when tx drops.
+        //
+        // The scenario is driven causally through `on_event` — the first
+        // Stall injects a result, and a Stall observed after the result
+        // drops tx to end the drain. No wall-clock sleeps, so the test
+        // runs at the speed of the threshold on any hardware.
+        //
+        // This does NOT verify `last_result_time` resets on receipt —
+        // that would need a mock clock.
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut items = vec![ListItem::new_branch("abc123".into(), "feat".into())];
         let mut errors = Vec::new();
@@ -807,41 +812,52 @@ mod tests {
         expected.expect(0, TaskKind::CommitDetails);
         expected.expect(0, TaskKind::AheadBehind);
 
-        // Send exactly one result partway through.
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(80));
-            let _ = tx.send(Ok(TaskResult::SummaryGenerate {
-                item_idx: 0,
-                summary: None,
-            }));
-            // Leave tx open so the drain keeps running until deadline.
-            std::thread::sleep(Duration::from_millis(500));
-            drop(tx);
-        });
+        let mut sender = Some(tx);
+        let mut saw_result = false;
+        let mut stalls_before_result = 0;
+        let mut stalls_after_result = 0;
 
-        let mut stall_events = 0;
-        let _ = drain_results_with_timings(
+        let outcome = drain_results_with_timings(
             rx,
             &mut items,
             &mut errors,
             &expected,
-            Instant::now() + Duration::from_millis(200),
+            Instant::now() + Duration::from_secs(5),
             None,
             StallTimings {
-                threshold: Duration::from_millis(40),
-                tick: Duration::from_millis(20),
+                threshold: Duration::from_millis(20),
+                tick: Duration::from_millis(10),
             },
-            |event| {
-                if matches!(event, DrainEvent::Stall { .. }) {
-                    stall_events += 1;
+            |event| match event {
+                DrainEvent::Stall { .. } => {
+                    if saw_result {
+                        stalls_after_result += 1;
+                        sender.take();
+                    } else {
+                        stalls_before_result += 1;
+                        if let Some(tx) = sender.as_ref() {
+                            tx.send(Ok(TaskResult::SummaryGenerate {
+                                item_idx: 0,
+                                summary: None,
+                            }))
+                            .unwrap();
+                        }
+                    }
                 }
+                DrainEvent::Result { .. } => {
+                    saw_result = true;
+                }
+                _ => {}
             },
             None,
         );
 
+        assert!(matches!(outcome, DrainOutcome::Complete));
+        assert!(stalls_before_result >= 1);
+        assert!(saw_result, "drain should deliver the injected result");
         assert!(
-            stall_events >= 1,
-            "drain should still emit stalls even when a result arrives mid-stall"
+            stalls_after_result >= 1,
+            "drain should keep emitting stalls after a mid-stall result"
         );
     }
 }

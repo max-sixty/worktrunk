@@ -98,6 +98,49 @@ wait_for_file_content(&marker_file);
 
 These use exponential backoff (10ms → 500ms cap) for fast initial checks that back off on slow CI. The 30-second default timeout is generous enough to avoid flakiness under CI load.
 
+### Event-driven code: drive the scenario from the callback
+
+When the system under test exposes a callback, channel, or event hook, drive the scenario **causally** through that hook instead of racing wall-clock timers. The callback gives you a happens-before edge into the loop — use it to inject inputs and terminate the run, so the test's timing depends on the event ordering, not on CPU scheduling.
+
+```rust
+// ✅ GOOD: causally driven — first Stall event injects a result; a Stall
+// observed after the result drops tx to end the drain via Disconnected.
+// Runs at threshold speed on any hardware; the 5s deadline is only a
+// safety net.
+let mut sender = Some(tx);
+let mut saw_result = false;
+let outcome = drain_results_with_timings(
+    rx, /* ... */,
+    Instant::now() + Duration::from_secs(5),
+    StallTimings { threshold: ms(20), tick: ms(10) },
+    |event| match event {
+        DrainEvent::Stall { .. } if !saw_result => {
+            sender.as_ref().unwrap().send(result).unwrap();
+        }
+        DrainEvent::Stall { .. } => { sender.take(); } // end drain
+        DrainEvent::Result { .. } => { saw_result = true; }
+        _ => {}
+    },
+);
+
+// ❌ BAD: producer sleeps to land a result "partway through" a window
+// whose size is itself a wall-clock deadline. Every extension of the
+// deadline just makes the race wider, not correct.
+std::thread::spawn(move || {
+    std::thread::sleep(Duration::from_millis(80));
+    tx.send(result).unwrap();
+    std::thread::sleep(Duration::from_millis(2000));
+    drop(tx);
+});
+let outcome = drain_results_with_timings(
+    rx, /* ... */,
+    Instant::now() + Duration::from_millis(1000),
+    /* ... */,
+);
+```
+
+**Rule of thumb:** if your producer thread needs `thread::sleep` to line up with a deadline in the code under test, you're racing the scheduler. Reach for the callback, a channel, or a condvar instead. Fixed deadlines belong only in the safety-net role — "stop if something has truly hung" — not in the assertion path.
+
 **Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
 
 ```rust
