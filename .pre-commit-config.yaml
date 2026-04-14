@@ -20,6 +20,7 @@ repos:
     rev: v1.0.1
     hooks:
       - id: fmt
+        exclude: '^vendor/'
   - repo: https://github.com/r0x0d/pre-commit-rust
     rev: v1.0.1
     hooks:
