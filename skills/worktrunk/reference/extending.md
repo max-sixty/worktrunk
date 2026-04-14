@@ -188,3 +188,7 @@ wt -C /tmp/repo sync        # -C is forwarded as the child's working directory
 Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. External subcommands don't have access to template variables.
 
 If nothing matches — no built-in, no nested subcommand, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
+
+### Examples
+
+- [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync) — rebases stacked worktree branches in dependency order, inferring the tree from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
