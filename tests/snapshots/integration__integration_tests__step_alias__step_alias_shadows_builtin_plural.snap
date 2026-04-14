@@ -40,9 +40,13 @@ info:
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 1
+exit_code: 2
 ----- stdout -----
 
 ----- stderr -----
 [33m▲[39m [33mAliases [1mcommit[22m, [1mrebase[22m shadow built-in step commands and will never run[39m
-[31m✗[39m [31mUnknown alias [1mnonexistent[22m (available: hello)[39m
+[1m[31merror:[0m unrecognized subcommand '[33mnonexistent[0m'
+
+[1m[4mUsage:[0m [1mwt step[0m <COMMAND>
+
+For more information, try '[1m--help[0m'.

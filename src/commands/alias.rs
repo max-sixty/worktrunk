@@ -33,7 +33,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, bail};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
+use strsim::jaro_winkler;
 use worktrunk::config::{
     CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, template_references_var,
     validate_template_syntax,
@@ -160,18 +162,57 @@ fn alias_needs_approval(
         .cloned()
 }
 
-/// Find the closest match for `input` among `candidates` using Jaro similarity.
+/// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
+/// and exit through `enhance_and_exit_error`, so the output matches what
+/// `wt <typo>` produces at the top level. Suggestion candidates include both
+/// the visible built-in `wt step` subcommands and the user's configured
+/// aliases — `SuggestedSubcommand` takes arbitrary strings, so aliases show
+/// up in the `tip:` line for typos like `wt step deplyo` → `'deploy'`.
 ///
-/// Returns `Some(match)` if a candidate is sufficiently similar (threshold 0.7),
-/// `None` otherwise. Uses `jaro` (not `jaro_winkler`) with the same threshold
-/// as clap — see clap GH #4660 for why.
-fn find_closest_match<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
-    candidates
-        .iter()
-        .map(|c| (*c, strsim::jaro(input, c)))
-        .filter(|(_, score)| *score > 0.7)
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(name, _)| name)
+/// Uses the same `jaro_winkler > 0.7` threshold as clap's internal
+/// `did_you_mean` so the tip line reads identically to the top-level path.
+fn unknown_step_command_exit(name: &str, alias_names: &[&str]) -> ! {
+    let mut top = crate::cli::build_command();
+    let step_cmd = top
+        .find_subcommand_mut("step")
+        .expect("`step` subcommand is defined in the CLI");
+    // `render_usage` uses the command's `bin_name`, which clap only sets
+    // after matching. When we synthesize the error ahead of that, the
+    // subcommand has no bin_name and usage renders as `Usage: step
+    // <COMMAND>` instead of `Usage: wt step [COMMAND]`. Set it to the same
+    // display_name applied by `apply_help_template_recursive`.
+    step_cmd.set_bin_name("wt step");
+    let usage = step_cmd.render_usage();
+
+    let mut candidates: Vec<&str> = step_cmd
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set())
+        .map(|c| c.get_name())
+        .filter(|&n| n != "help")
+        .collect();
+    candidates.extend(alias_names);
+
+    let mut scored: Vec<(f64, String)> = candidates
+        .into_iter()
+        .map(|candidate| (jaro_winkler(name, candidate), candidate.to_string()))
+        .filter(|(score, _)| *score > 0.7)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let suggestions: Vec<String> = scored.into_iter().map(|(_, n)| n).collect();
+
+    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(step_cmd);
+    err.insert(
+        ContextKind::InvalidSubcommand,
+        ContextValue::String(name.to_string()),
+    );
+    if !suggestions.is_empty() {
+        err.insert(
+            ContextKind::SuggestedSubcommand,
+            ContextValue::Strings(suggestions),
+        );
+    }
+    err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
+    crate::enhance_and_exit_error(err)
 }
 
 /// Format the "Running alias …" announcement.
@@ -247,42 +288,18 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     }
 
     let Some(cmd_config) = aliases.get(&opts.name) else {
-        // Check for typos against both built-in commands and aliases
-        let mut all_candidates: Vec<&str> = BUILTIN_STEP_COMMANDS.to_vec();
-        // Only include non-shadowed aliases as candidates
-        let available_aliases: Vec<_> = aliases
+        // Mirror clap's native `unrecognized subcommand` error so `wt step
+        // <typo>` reads the same as `wt <typo>`. Aliases are fed into the
+        // `SuggestedSubcommand` list so a typo like `wt step deplyo` still
+        // gets `tip: ... 'deploy'` when `deploy` is user-defined. The
+        // Aliases block in `wt step --help` is the full discovery surface —
+        // the error just needs to point there via `Usage: wt step [COMMAND]`.
+        let alias_names: Vec<&str> = aliases
             .keys()
             .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
             .map(|k| k.as_str())
             .collect();
-        all_candidates.extend(&available_aliases);
-
-        if let Some(closest) = find_closest_match(&opts.name, &all_candidates) {
-            bail!(
-                "{}",
-                cformat!(
-                    "Unknown step command <bold>{}</> — perhaps <bold>{closest}</>?",
-                    opts.name,
-                ),
-            );
-        }
-        if available_aliases.is_empty() {
-            bail!(
-                "{}",
-                cformat!(
-                    "Unknown step command <bold>{}</> (no aliases configured)",
-                    opts.name,
-                ),
-            );
-        }
-        bail!(
-            "{}",
-            cformat!(
-                "Unknown alias <bold>{}</> (available: {})",
-                opts.name,
-                available_aliases.join(", "),
-            ),
-        );
+        unknown_step_command_exit(&opts.name, &alias_names);
     };
 
     // Check if this alias needs project-config approval (skip for --dry-run).
@@ -960,20 +977,6 @@ cmd = [
         assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
         assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
         assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
-    }
-
-    #[test]
-    fn test_find_closest_match() {
-        assert_eq!(
-            find_closest_match("deplyo", &["deploy", "hello"]),
-            Some("deploy")
-        );
-        assert_eq!(
-            find_closest_match("comit", &["commit", "squash", "push", "rebase"]),
-            Some("commit")
-        );
-        assert_eq!(find_closest_match("zzz", &["deploy", "hello"]), None);
-        assert_eq!(find_closest_match("deploy", &[]), None);
     }
 
     /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.
