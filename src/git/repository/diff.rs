@@ -146,20 +146,28 @@ impl Repository {
     ///
     /// Results are cached in the shared repo cache to avoid redundant git commands
     /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
-    /// The cache key is normalized (sorted) since merge-base(A, B) == merge-base(B, A).
+    /// Inputs are resolved to commit SHAs (via the cached `commit_shas` map) before
+    /// keying the cache, so equivalent forms (e.g., `"main"` vs the SHA `main` points
+    /// to) hit the same entry. The key is also order-normalized since merge-base is
+    /// symmetric: `merge-base(A, B) == merge-base(B, A)`.
     pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<Option<String>> {
-        // Normalize key order since merge-base is symmetric: merge-base(A, B) == merge-base(B, A)
-        let key = if commit1 <= commit2 {
-            (commit1.to_string(), commit2.to_string())
+        // Resolve to SHAs so different forms of the same commit dedupe in the cache.
+        // `resolve_to_commit_sha` is a no-op for inputs that already look like SHAs.
+        let sha1 = self.resolve_to_commit_sha(commit1)?;
+        let sha2 = self.resolve_to_commit_sha(commit2)?;
+
+        // Normalize key order since merge-base is symmetric.
+        let key = if sha1 <= sha2 {
+            (sha1.clone(), sha2.clone())
         } else {
-            (commit2.to_string(), commit1.to_string())
+            (sha2.clone(), sha1.clone())
         };
 
         match self.cache.merge_base.entry(key) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-                let output = self.run_command_output(&["merge-base", commit1, commit2])?;
+                let output = self.run_command_output(&["merge-base", &sha1, &sha2])?;
 
                 let result = if output.status.success() {
                     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
