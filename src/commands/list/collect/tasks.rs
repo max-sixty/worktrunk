@@ -766,9 +766,6 @@ impl Task for SummaryGenerateTask {
         let branch = ctx.branch_ref.branch.as_deref().unwrap_or("(detached)");
         let worktree_path = ctx.branch_ref.worktree_path.as_deref();
 
-        // Acquire semaphore before any LLM call (cache hits return before calling LLM)
-        let _permit = crate::summary::LLM_SEMAPHORE.acquire();
-
         let summary = crate::summary::generate_summary_core(
             branch,
             &ctx.branch_ref.commit_sha,
