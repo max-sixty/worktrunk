@@ -13,6 +13,24 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
 
+  vendor-diff:
+    desc: Show the patch we carry in vendor/ vs the pristine upstream crate source
+    cmds:
+      - |
+        set -e
+        VENDORED=vendor/skim-tuikit
+        if [ ! -d "$VENDORED" ]; then
+          echo "no vendored source at $VENDORED"
+          exit 0
+        fi
+        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$VENDORED/Cargo.toml" | head -1)
+        UPSTREAM=$(find ~/.cargo/registry/src -maxdepth 2 -type d -name "skim-tuikit-${VERSION}" | head -1)
+        if [ -z "$UPSTREAM" ]; then
+          echo "pristine skim-tuikit-${VERSION} not found in ~/.cargo/registry — run \`cargo fetch\` first"
+          exit 1
+        fi
+        diff -ruN "$UPSTREAM" "$VENDORED" || true
+
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]

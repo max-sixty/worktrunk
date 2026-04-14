@@ -175,3 +175,14 @@ unsafe_code = "forbid"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[patch.crates-io]
+# Local fork of skim-tuikit 0.6.6 with a one-line fix for a dropped-bytes
+# bug in `Output::flush` — it used `write()` instead of `write_all()`, so
+# when the kernel accepted a partial write (common under load or in tmux
+# PTYs with small pipe buffers) the remainder of the buffer was dropped by
+# the subsequent `buffer.clear()`, leaving the picker's first render
+# missing whichever rows didn't fit in the first chunk. Upstream fix
+# proposed in skim-rs/skim#1056; drop this patch once merged and released.
+# See vendor/skim-tuikit/src/output.rs and `task vendor-diff`.
+skim-tuikit = { path = "vendor/skim-tuikit" }

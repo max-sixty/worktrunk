@@ -2242,8 +2242,6 @@ checksum = "d8312ae7ca1a5883e68042b9c6bce05bfc12f06b814ecfda06c34abfb6c88175"
 [[package]]
 name = "skim-tuikit"
 version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb54242783b4234134359fea4d11f26879c49ace6c00c5d402fd04a5ab2ad7bd"
 dependencies = [
  "bitflags 1.3.2",
  "lazy_static",
