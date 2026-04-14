@@ -7,12 +7,13 @@
 //!
 //! Behaviour:
 //!
-//! 1. If the name matches a nested subcommand (e.g. `squash` → `wt step squash`),
-//!    print the suggestion and exit — preserves the existing hint behaviour.
-//! 2. Otherwise, resolve `wt-<name>` via `which`. If found, run it with the
-//!    remaining args, inheriting stdio, and propagate the exit code.
-//! 3. If not found, print a git-style "not a wt command" error, with a
-//!    best-match suggestion computed from the list of built-in subcommands.
+//! 1. Resolve `wt-<name>` via `which`. If found, run it with the remaining
+//!    args, inheriting stdio, and propagate the exit code.
+//! 2. If not found, synthesize clap's native `InvalidSubcommand` error and
+//!    route it through `enhance_and_exit_error` so the output matches what
+//!    clap would have produced without `external_subcommand` — same
+//!    formatting, suggestions, Usage line, and nested-subcommand tip (e.g.
+//!    `wt squash` → `perhaps wt step squash?`).
 //!
 //! Built-in subcommands always take precedence — clap only dispatches
 //! `Commands::External` when no built-in matched, so there is no way for an
@@ -23,13 +24,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use clap::CommandFactory;
-use color_print::cformat;
-use strsim::levenshtein;
+use clap::error::{ContextKind, ContextValue, ErrorKind};
+use strsim::jaro_winkler;
 use worktrunk::git::WorktrunkError;
-use worktrunk::styling::{eprintln, error_message, hint_message};
 
-use crate::cli::{Cli, suggest_nested_subcommand};
+use crate::cli::build_command;
+use crate::enhance_and_exit_error;
 
 /// Handle a `Commands::External` invocation.
 ///
@@ -38,11 +38,11 @@ use crate::cli::{Cli, suggest_nested_subcommand};
 /// flag — applied as the child's current directory so global `-C` works the
 /// same for external subcommands as it does for built-ins.
 ///
-/// On success (child exit code 0), returns `Ok(())`. On non-zero exit or when
-/// the command isn't found, returns `WorktrunkError::AlreadyDisplayed` with
-/// the appropriate exit code so `main` can propagate it without printing an
-/// extra error line (the child, or this module, has already reported the
-/// failure). Exit code 1 for "not found" matches git's behaviour.
+/// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
+/// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
+/// can propagate it without printing an extra error line. When the command
+/// isn't found on PATH, diverges via `enhance_and_exit_error` with clap's
+/// standard exit code 2.
 pub(crate) fn handle_external_command(
     args: Vec<OsString>,
     working_dir: Option<PathBuf>,
@@ -63,29 +63,52 @@ pub(crate) fn handle_external_command(
         })?
         .to_owned();
 
-    // Nested subcommand suggestion takes precedence: `wt squash` should still
-    // hint at `wt step squash` rather than searching PATH for `wt-squash`.
-    let cli_cmd = Cli::command();
-    if let Some(suggestion) = suggest_nested_subcommand(&cli_cmd, &name) {
-        eprintln!(
-            "{}",
-            error_message(cformat!("Unrecognized subcommand '<cyan,bold>{name}</>'"))
-        );
-        eprintln!(
-            "{}",
-            hint_message(cformat!("Perhaps <cyan,bold>{suggestion}</>?"))
-        );
-        eprintln!("{}", hint_message(help_hint()));
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into());
+    // Try the PATH lookup first. If a `wt-<name>` binary exists, it takes
+    // precedence over clap's "unrecognized subcommand" error path — but *not*
+    // over built-ins, because clap only dispatches `External` when no built-in
+    // matched. Nested-subcommand hints (`wt squash` → `wt step squash`) are
+    // applied by `enhance_and_exit_error` when we fall through below, so a
+    // name that matches a nested subcommand still gets its tip even though
+    // we look at PATH first (nested names aren't expected to collide with
+    // real `wt-*` binaries, and if they do the on-PATH binary wins — same as
+    // git's behaviour).
+    let binary = format!("wt-{name}");
+    if let Ok(path) = which::which(&binary) {
+        return run_external(&path, &rest, working_dir.as_deref());
     }
 
-    let binary = format!("wt-{name}");
-    let Ok(path) = which::which(&binary) else {
-        print_not_found(&name, &cli_cmd);
-        return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
-    };
+    // Not on PATH — emit clap's native `InvalidSubcommand` error. Routing
+    // through `enhance_and_exit_error` keeps the rendering consistent with
+    // every other clap error (same tip/Usage formatting) and layers the
+    // wt-specific nested-subcommand hint on top.
+    enhance_and_exit_error(unrecognized_subcommand_error(&name));
+}
 
-    run_external(&path, &rest, working_dir.as_deref())
+/// Build a `clap::Error` that mirrors what clap itself would have raised for
+/// an unrecognized top-level subcommand if we weren't capturing via
+/// `#[command(external_subcommand)]`. Populates `InvalidSubcommand`,
+/// `SuggestedSubcommand`, and `Usage` context so clap's rich formatter
+/// produces its native output (the "tip:" line and "Usage:" block come from
+/// these context entries).
+fn unrecognized_subcommand_error(name: &str) -> clap::Error {
+    let mut cmd = build_command();
+    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(&cmd);
+    err.insert(
+        ContextKind::InvalidSubcommand,
+        ContextValue::String(name.to_string()),
+    );
+    let suggestions = similar_subcommands(name, &cmd);
+    if !suggestions.is_empty() {
+        err.insert(
+            ContextKind::SuggestedSubcommand,
+            ContextValue::Strings(suggestions),
+        );
+    }
+    err.insert(
+        ContextKind::Usage,
+        ContextValue::StyledStr(cmd.render_usage()),
+    );
+    err
 }
 
 /// Spawn the external binary, inheriting stdio, and propagate its exit code.
@@ -121,46 +144,22 @@ fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> R
     Err(WorktrunkError::AlreadyDisplayed { exit_code: code }.into())
 }
 
-/// Print a git-style "not a wt command" error, with an optional typo suggestion.
-fn print_not_found(name: &str, cli_cmd: &clap::Command) {
-    eprintln!(
-        "{}",
-        error_message(cformat!("'<cyan,bold>{name}</>' is not a wt command"))
-    );
-    if let Some(suggestion) = closest_subcommand(name, cli_cmd) {
-        eprintln!(
-            "{}",
-            hint_message(cformat!(
-                "The most similar command is <cyan,bold>{suggestion}</>"
-            ))
-        );
-    }
-    eprintln!("{}", hint_message(help_hint()));
-}
-
-/// The "For more information, try `wt --help`" tail shared by both
-/// unrecognized-subcommand branches. Mirrors the suggestion clap emitted
-/// before we took over this error path.
-fn help_hint() -> String {
-    cformat!("For more information, try '<cyan,bold>wt --help</>'.")
-}
-
-/// Return the closest visible built-in subcommand name by Levenshtein distance,
-/// or `None` if nothing is reasonably close.
-fn closest_subcommand(name: &str, cli_cmd: &clap::Command) -> Option<String> {
-    // Threshold chosen to mirror clap's internal `did_you_mean`: allow up to
-    // a third of the input length in edits, but always tolerate at least one.
-    let max_distance = (name.len() / 3).max(1);
-
-    cli_cmd
+/// Return visible built-in subcommand names similar to `name`, sorted by
+/// descending confidence. Mirrors clap's internal `did_you_mean` (Jaro–Winkler
+/// similarity with a 0.7 threshold) so the `tip:` line reads the same as it
+/// would have without `#[command(external_subcommand)]` intercepting the
+/// error.
+fn similar_subcommands(name: &str, cli_cmd: &clap::Command) -> Vec<String> {
+    let mut scored: Vec<(f64, String)> = cli_cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
         .map(|c| c.get_name())
         .filter(|&candidate| candidate != "help")
-        .map(|candidate| (candidate, levenshtein(name, candidate)))
-        .filter(|&(_, dist)| dist <= max_distance)
-        .min_by_key(|&(_, dist)| dist)
-        .map(|(candidate, _)| candidate.to_string())
+        .map(|candidate| (jaro_winkler(name, candidate), candidate.to_string()))
+        .filter(|(score, _)| *score > 0.7)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.into_iter().map(|(_, name)| name).collect()
 }
 
 #[cfg(test)]
@@ -168,26 +167,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn closest_subcommand_finds_typo() {
-        let cmd = Cli::command();
+    fn similar_subcommands_finds_typo() {
+        let cmd = build_command();
+        let suggestions = similar_subcommands("siwtch", &cmd);
         assert_eq!(
-            closest_subcommand("siwtch", &cmd).as_deref(),
-            Some("switch")
+            suggestions.first().map(String::as_str),
+            Some("switch"),
+            "got: {suggestions:?}"
         );
     }
 
     #[test]
-    fn closest_subcommand_ignores_unrelated() {
-        let cmd = Cli::command();
-        assert_eq!(closest_subcommand("zzzzzzzz", &cmd), None);
+    fn similar_subcommands_ignores_unrelated() {
+        let cmd = build_command();
+        assert!(similar_subcommands("zzzzzzzz", &cmd).is_empty());
     }
 
     #[test]
-    fn closest_subcommand_skips_hidden() {
+    fn similar_subcommands_skips_hidden() {
         // `select` is hidden (deprecated); it should not be suggested even
         // though an exact-match candidate exists.
-        let cmd = Cli::command();
-        assert_eq!(closest_subcommand("select", &cmd), None);
+        let cmd = build_command();
+        assert!(!similar_subcommands("select", &cmd).contains(&"select".to_string()));
     }
 
     #[cfg(unix)]

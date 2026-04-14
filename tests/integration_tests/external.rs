@@ -60,7 +60,7 @@ fn external_subcommand_runs_wt_prefixed_binary_on_path() {
 }
 
 #[test]
-fn external_subcommand_not_found_prints_hint_and_exits_nonzero() {
+fn external_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();
     // Clear PATH so no `wt-*` binaries can be discovered, then add a single
     // empty dir so `which` has somewhere to look.
@@ -70,11 +70,16 @@ fn external_subcommand_not_found_prints_hint_and_exits_nonzero() {
 
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success(), "expected failure");
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // clap's standard InvalidSubcommand exit code.
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
     assert!(
-        stderr.contains("is not a wt command"),
-        "stderr missing hint: {stderr}"
+        stderr.contains("unrecognized subcommand 'definitely-not-a-wt-subcommand'"),
+        "stderr should use clap's native error format: {stderr}"
+    );
+    assert!(
+        stderr.contains("Usage:") && stderr.contains("try '--help'"),
+        "stderr should include Usage block and --help suggestion: {stderr}"
     );
 }
 
@@ -87,22 +92,22 @@ fn external_subcommand_typo_suggests_closest_builtin() {
 
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
     assert!(
-        stderr.contains("most similar command"),
-        "stderr missing similar-command hint: {stderr}"
+        stderr.contains("tip:") && stderr.contains("similar subcommand"),
+        "stderr missing clap's similar-subcommand tip: {stderr}"
     );
     assert!(
-        stderr.contains("switch"),
+        stderr.contains("'switch'"),
         "stderr should suggest 'switch': {stderr}"
     );
 }
 
 #[test]
 fn external_subcommand_nested_suggestion_wins_over_path_lookup() {
-    // `wt squash` should suggest `wt step squash` even if `wt-squash` were on
-    // PATH. We don't place one there because that's the point — nested
-    // suggestion pre-empts the PATH lookup.
+    // `wt squash` should suggest `wt step squash` even though `wt-squash` is
+    // not on PATH. The nested tip is layered on top of clap's standard
+    // unrecognized-subcommand error.
     let mut cmd = wt_command();
     let empty = TempDir::new().unwrap();
     cmd.env("PATH", empty.path());
@@ -111,11 +116,32 @@ fn external_subcommand_nested_suggestion_wins_over_path_lookup() {
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
     assert!(
         stderr.contains("wt step squash"),
         "stderr should suggest 'wt step squash': {stderr}"
     );
+}
+
+/// Strip ANSI escape sequences so test assertions can match rendered text
+/// without worrying about colour codes clap inserts.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // CSI: ESC [ ... letter. Drop everything up to (and including)
+            // the terminator (any ASCII letter).
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[test]

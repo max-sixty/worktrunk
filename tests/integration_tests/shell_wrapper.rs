@@ -1609,8 +1609,8 @@ approved-commands = ["echo 'fish background task'"]
 
         // CRITICAL: Should see wt's actual error message about an unknown subcommand
         assert!(
-            output.combined.contains("is not a wt command"),
-            "{}: Should show actual wt error message 'is not a wt command'.\nOutput:\n{}",
+            output.combined.contains("unrecognized subcommand"),
+            "{}: Should show clap's 'unrecognized subcommand' error.\nOutput:\n{}",
             shell,
             output.combined
         );
