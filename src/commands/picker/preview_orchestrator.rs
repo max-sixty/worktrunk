@@ -212,6 +212,27 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    /// `spawn_summary` delegates to the same spawn-task machinery as
+    /// `spawn_preview`, but via the LLM summary path. The test uses `/bin/cat`
+    /// as a fake LLM command (it echoes the prompt back), so the test stays
+    /// hermetic — no real LLM is invoked, but the cache receives a Summary
+    /// entry proving the task ran to completion.
+    #[test]
+    fn spawn_summary_populates_cache() {
+        let (t, item) = dirty_worktree_item();
+        let repo = worktrunk::git::Repository::at(t.path()).unwrap();
+
+        let orch = PreviewOrchestrator::new();
+        orch.spawn_summary(Arc::clone(&item), "/bin/cat".to_string(), repo);
+        orch.wait_for_idle();
+
+        assert!(
+            orch.cache
+                .contains_key(&("main".to_string(), PreviewMode::Summary)),
+            "Summary entry not cached"
+        );
+    }
+
     #[test]
     fn dump_cache_json_format() {
         let orch = PreviewOrchestrator::new();

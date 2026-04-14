@@ -9,6 +9,9 @@
 use crate::common::{TestRepo, repo};
 use rstest::rstest;
 
+/// Runs the dry-run picker with summaries disabled (default). Covers the
+/// base cache-dump path and the `else` branch that inserts a config hint
+/// in place of real summaries.
 #[rstest]
 fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
@@ -46,4 +49,43 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
         assert!(e["mode"].is_number(), "entry missing mode: {e}");
         assert!(e["bytes"].is_number(), "entry missing bytes: {e}");
     }
+}
+
+/// Same as above but with `list.summary=true` and a fake LLM command
+/// configured, to exercise the `spawn_summary` branch in `handle_picker`.
+/// Uses `/bin/cat` as the LLM: it reads stdin and writes it back, so the
+/// summary pipeline runs end-to-end without a real model.
+#[rstest]
+#[cfg(unix)]
+fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .env("WORKTRUNK_LIST__SUMMARY", "true")
+        .env("WORKTRUNK_COMMIT__GENERATION__COMMAND", "/bin/cat")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is valid JSON");
+    let entries = parsed["entries"]
+        .as_array()
+        .expect("top-level `entries` array");
+
+    // Summary mode is `4` (see PreviewMode). At least one entry should be a
+    // summary when summaries are enabled — that proves the summary spawn
+    // branch ran to completion.
+    assert!(
+        entries.iter().any(|e| e["mode"] == 4),
+        "expected at least one Summary entry, got: {stdout}"
+    );
 }
