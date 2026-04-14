@@ -28,19 +28,20 @@ impl Drop for PendingGuard {
 
 pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
-    pool: Option<Arc<rayon::ThreadPool>>,
+    pool: Arc<rayon::ThreadPool>,
     pending: Arc<AtomicUsize>,
 }
 
 impl PreviewOrchestrator {
     pub(super) fn new() -> Self {
         let cache = Arc::new(DashMap::new());
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(crate::rayon_thread_count())
-            .thread_name(|i| format!("picker-preview-{i}"))
-            .build()
-            .ok()
-            .map(Arc::new);
+        let pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(crate::rayon_thread_count())
+                .thread_name(|i| format!("picker-preview-{i}"))
+                .build()
+                .expect("failed to build picker preview rayon pool"),
+        );
         Self {
             cache,
             pool,
@@ -91,10 +92,7 @@ impl PreviewOrchestrator {
             let _g = guard;
             task();
         };
-        match &self.pool {
-            Some(pool) => pool.spawn(wrapped),
-            None => rayon::spawn(wrapped),
-        }
+        self.pool.spawn(wrapped);
     }
 
     /// Block until all spawned tasks complete.
