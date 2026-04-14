@@ -3,12 +3,13 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
-        exclude: '.*\.snap$'
+        exclude: '.*\.snap$|^vendor/'
       - id: check-yaml
       - id: mixed-line-ending
+        exclude: '^vendor/'
       - id: trailing-whitespace
         # rustfmt handles rust files, and in snapshots we expect trailing spaces.
-        exclude: '.*\.(rs|snap)$'
+        exclude: '.*\.(rs|snap)$|^vendor/'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
     rev: v1.45.0
