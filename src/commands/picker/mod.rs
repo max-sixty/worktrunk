@@ -23,7 +23,6 @@ use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
-use super::branch_deletion::delete_branch_if_safe;
 use super::command_executor::FailureStrategy;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
@@ -33,11 +32,14 @@ use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
-    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
-    execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
+use worktrunk::git::{
+    BranchDeletionMode, RemoveOptions, delete_branch_if_safe, remove_worktree_with_cleanup,
+};
 
 use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
@@ -121,13 +123,15 @@ impl PickerCollector {
                     None, // no display path in TUI context
                 )?;
 
-                let output = execute_removal(
+                let output = remove_worktree_with_cleanup(
                     &repo,
                     worktree_path,
-                    branch_name.as_deref(),
-                    *deletion_mode,
-                    target_branch.as_deref(),
-                    *force_worktree,
+                    RemoveOptions {
+                        branch: branch_name.clone(),
+                        deletion_mode: *deletion_mode,
+                        target_branch: target_branch.clone(),
+                        force_worktree: *force_worktree,
+                    },
                 )?;
                 if let Some(staged) = output.staged_path {
                     let _ = std::fs::remove_dir_all(&staged);
@@ -748,8 +752,9 @@ fn resolve_identifier(
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
     use super::{PickerAction, PickerCollector, resolve_identifier};
-    use crate::commands::worktree::{BranchDeletionMode, RemoveResult};
+    use crate::commands::worktree::RemoveResult;
     use std::fs;
+    use worktrunk::git::BranchDeletionMode;
 
     #[test]
     fn test_preview_state_data_roundtrip() {

@@ -15,9 +15,9 @@ use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
-    path_mismatch,
+    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
 };
+use worktrunk::git::BranchDeletionMode;
 
 /// Options for the merge command
 ///

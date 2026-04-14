@@ -9,7 +9,6 @@ use color_print::cformat;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
-use crate::commands::branch_deletion::{BranchDeletionOutcome, BranchDeletionResult};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
@@ -19,15 +18,16 @@ use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
-use crate::commands::worktree::{
-    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
-    stage_worktree_removal,
-};
+use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
+use worktrunk::git::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
+    remove_worktree_with_cleanup, stage_worktree_removal,
+};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
@@ -1212,13 +1212,15 @@ fn handle_detached_removed_worktree_output(
                 format_path_for_display(ctx.worktree_path)
             ))
         );
-        let output = execute_removal(
+        let output = remove_worktree_with_cleanup(
             repo,
             ctx.worktree_path,
-            None,
-            ctx.deletion_mode,
-            ctx.target_branch,
-            ctx.force_worktree,
+            RemoveOptions {
+                branch: None,
+                deletion_mode: ctx.deletion_mode,
+                target_branch: ctx.target_branch.map(String::from),
+                force_worktree: ctx.force_worktree,
+            },
         )
         .map_err(|err| GitError::WorktreeRemovalFailed {
             branch: path_dir_name(ctx.worktree_path).to_string(),
@@ -1279,13 +1281,15 @@ fn handle_named_removed_worktree_foreground(
         );
     }
 
-    let output = execute_removal(
+    let output = remove_worktree_with_cleanup(
         repo,
         ctx.worktree_path,
-        Some(branch_name),
-        ctx.deletion_mode,
-        ctx.target_branch,
-        ctx.force_worktree,
+        RemoveOptions {
+            branch: Some(branch_name.to_string()),
+            deletion_mode: ctx.deletion_mode,
+            target_branch: ctx.target_branch.map(String::from),
+            force_worktree: ctx.force_worktree,
+        },
     )
     .map_err(|err| GitError::WorktreeRemovalFailed {
         branch: branch_name.into(),

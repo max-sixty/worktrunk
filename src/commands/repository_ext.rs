@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{BranchDeletionMode, RemoveResult, path_mismatch};
+use super::worktree::{RemoveResult, path_mismatch};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
-    GitError, IntegrationReason, Repository, WorktreeInfo, parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, Repository, WorktreeInfo, parse_porcelain_z,
+    parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
