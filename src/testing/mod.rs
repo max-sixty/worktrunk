@@ -888,10 +888,10 @@ impl TestRepo {
                 self.test_approvals_path().display().to_string(),
             ),
             // Disable picker collect timeout to prevent flaky snapshots on slow
-            // CI runners (especially macOS). Bypasses config file loading.
+            // CI runners (especially macOS).
             (
-                "WORKTRUNK_TEST_PICKER_NO_TIMEOUT".to_string(),
-                "1".to_string(),
+                "WORKTRUNK__SWITCH__PICKER__TIMEOUT_MS".to_string(),
+                "0".to_string(),
             ),
         ]);
 

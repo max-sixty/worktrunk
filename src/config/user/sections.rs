@@ -351,13 +351,8 @@ impl SwitchPickerConfig {
     }
 
     /// Wall-clock budget for picker data collection (default: 500ms).
-    /// Returns `None` when disabled (timeout_ms = 0 or WORKTRUNK_TEST_PICKER_NO_TIMEOUT set).
+    /// Returns `None` when disabled (timeout_ms = 0).
     pub fn timeout(&self) -> Option<std::time::Duration> {
-        // Env var bypass for test reliability — config file loading is unreliable
-        // in PTY subprocesses on macOS CI, so tests disable the timeout directly.
-        if std::env::var_os("WORKTRUNK_TEST_PICKER_NO_TIMEOUT").is_some() {
-            return None;
-        }
         match self.timeout_ms {
             Some(0) => None,
             Some(ms) => Some(std::time::Duration::from_millis(ms)),
