@@ -185,16 +185,16 @@ inherits = "release"
 lto = "thin"
 
 [patch.crates-io]
-# Local fork of skim-tuikit 0.6.6 carrying two small fixes. Run
+# Local fork of skim-tuikit 0.6.6 carrying three small fixes. Run
 # `task vendor-diff` to see the full diff against the upstream tarball.
 #
 # Upstream status: skim-tuikit is effectively abandoned. Upstream skim
 # migrated to ratatui in skim-rs/skim#864 (merged 2026-01-12) and has
 # shipped several releases on the new backend; crates.io skim-tuikit is
-# frozen at 0.6.6 (Aug 2025) and will not receive another release. Both
-# bugs below are resolved in ratatui-era skim but not in the vendored
-# tuikit. These patches are load-bearing until we either migrate our
-# picker to a post-ratatui skim (breaking API change in
+# frozen at 0.6.6 (Aug 2025) and will not receive another release. The
+# bugs below are resolved (or moot) in ratatui-era skim but not in the
+# vendored tuikit. These patches are permanent until we either migrate
+# our picker to a post-ratatui skim (breaking API change in
 # `src/commands/picker/`) or drop skim entirely.
 #
 # 1. Dropped-bytes bug in `Output::flush` — it used `write()` instead of
@@ -212,4 +212,13 @@ lto = "thin"
 #    flag. See vendor/skim-tuikit/src/term.rs. Upstream bug was
 #    skim-rs/skim#880, resolved via the ratatui migration rather than a
 #    tuikit patch.
+#
+# 3. `usize` underflow panic in `Term::on_resize` — when the terminal is
+#    smaller than the picker's preferred height, `screen_height - height`
+#    underflowed and panicked with "attempt to subtract with overflow".
+#    Reachable by running `wt switch` under `script(1)` with stdin closed,
+#    or in any sufficiently small tmux pane. Fixed with `saturating_sub`,
+#    which clamps `cursor_row` to 0 — matching the full-screen fallback
+#    `ensure_height` already uses. See vendor/skim-tuikit/src/term.rs. No
+#    known upstream tracking issue; moot post-ratatui.
 skim-tuikit = { path = "vendor/skim-tuikit" }

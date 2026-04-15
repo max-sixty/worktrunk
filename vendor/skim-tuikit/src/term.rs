@@ -640,7 +640,13 @@ impl TermLock {
         }
 
         if self.bottom_intact {
-            self.cursor_row = screen_height - height;
+            // Saturating subtraction: when the terminal is smaller than the
+            // picker's preferred height, `height > screen_height` and the
+            // original `screen_height - height` underflows on `usize` and
+            // panics. Clamp to 0 (top of screen) — matches the
+            // `cursor_row = 0` fallback `ensure_height` already uses for the
+            // full-screen case.
+            self.cursor_row = screen_height.saturating_sub(height);
         }
 
         // clear the screen
