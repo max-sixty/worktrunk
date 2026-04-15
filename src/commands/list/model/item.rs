@@ -178,7 +178,7 @@ impl WorktreeData {
 /// WorktreeData is boxed to reduce the size of ItemKind enum (304 bytes → 24 bytes).
 /// This reduces stack pressure when passing ListItem by value and improves cache locality
 /// in `Vec<ListItem>` by keeping the discriminant and common fields together.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
@@ -191,7 +191,7 @@ pub enum ItemKind {
 /// was collected (`None` = not loaded, render shows placeholder). The inner type `U` is
 /// whatever the data naturally is — e.g., `AheadBehind` (always has a value, even if zero)
 /// or `Option<PrStatus>` (CI may not exist).
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
     #[serde(rename = "head_sha")]
@@ -289,14 +289,6 @@ pub struct ListItem {
 /// Container for list command results.
 pub struct ListData {
     pub items: Vec<ListItem>,
-    /// Path to the main worktree, used for computing relative paths in display.
-    #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
-    pub main_worktree_path: std::path::PathBuf,
-    /// Tasks that were skipped during collection (includes runtime gating like
-    /// SummaryGenerate disabled when no LLM configured). Callers that recalculate
-    /// layout (e.g., the picker at a different width) should use this set.
-    #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
-    pub skip_tasks: std::collections::HashSet<super::super::collect::TaskKind>,
 }
 
 impl ListItem {

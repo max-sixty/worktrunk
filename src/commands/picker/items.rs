@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anstyle::Reset;
 use color_print::cformat;
@@ -81,11 +81,29 @@ fn compute_diff_preview(args: &[&str], no_changes_msg: &str, width: usize) -> St
     output
 }
 
-/// Wrapper to implement SkimItem for ListItem
+/// Wrapper to implement SkimItem for ListItem.
+///
+/// Progressive updates live inside `rendered` — the picker handler rewrites
+/// the ANSI-colored display string in place as task results arrive. Skim
+/// redraws from `display()` on its 100ms heartbeat, so new values surface
+/// without any explicit re-send through the item channel.
+///
+/// `search_text` (what the matcher sees) stays based on fast-only fields
+/// so cached ranks don't need to re-compute when a slow field lands.
 pub(super) struct WorktreeSkimItem {
-    pub display_text: String,
-    pub display_text_with_ansi: String,
+    /// Stable text used for fuzzy matching — branch name + path. Keeping
+    /// this independent of the rendered display means skim's matcher
+    /// cache survives progressive updates.
+    pub search_text: String,
+    /// Current ANSI-colored display line. Starts as the skeleton render;
+    /// replaced in place as data arrives.
+    pub rendered: Arc<Mutex<String>>,
+    /// Branch name — also what `output()` returns when this item is
+    /// selected.
     pub branch_name: String,
+    /// Skeleton-snapshot of the underlying ListItem. Used by preview
+    /// computation, which kicks off at skeleton time and doesn't re-run
+    /// as slow fields arrive.
     pub item: Arc<ListItem>,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
@@ -93,11 +111,15 @@ pub(super) struct WorktreeSkimItem {
 
 impl SkimItem for WorktreeSkimItem {
     fn text(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.display_text)
+        Cow::Borrowed(&self.search_text)
     }
 
     fn display<'a>(&'a self, _context: skim::DisplayContext<'a>) -> skim::AnsiString<'a> {
-        skim::AnsiString::parse(&self.display_text_with_ansi)
+        // Clone-under-lock so AnsiString's input outlives the guard.
+        // `AnsiString::parse` returns `AnsiString<'static>`, so the borrow
+        // ends with this function.
+        let snapshot = self.rendered.lock().unwrap().clone();
+        skim::AnsiString::parse(&snapshot)
     }
 
     fn output(&self) -> Cow<'_, str> {
@@ -491,8 +513,8 @@ mod tests {
                 "Add auth module\n\nImplements JWT-based authentication.".to_string(),
             );
             WorktreeSkimItem {
-                display_text: String::new(),
-                display_text_with_ansi: String::new(),
+                search_text: String::new(),
+                rendered: Arc::new(Mutex::new(String::new())),
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
                 preview_cache,
@@ -502,8 +524,8 @@ mod tests {
         let cache_miss = {
             let preview_cache: PreviewCache = Arc::new(DashMap::new());
             WorktreeSkimItem {
-                display_text: String::new(),
-                display_text_with_ansi: String::new(),
+                search_text: String::new(),
+                rendered: Arc::new(Mutex::new(String::new())),
                 branch_name: "feature".to_string(),
                 item: Arc::clone(&item),
                 preview_cache,

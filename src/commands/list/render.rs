@@ -17,9 +17,8 @@ use super::model::{ListItem, PositionMask};
 /// is too visually loud for a tight column where most cells are in one state
 /// or the other during a render. Revisit and pick a subtle second glyph
 /// (e.g. `·` for one, `–` or braille dot for the other) once we can evaluate
-/// them side-by-side in real tables. See `render_list_item_stale` — the
-/// picker-side entry point is preserved so the re-split doesn't need a caller
-/// audit. Also update `src/cli/mod.rs` status-column help table when resplit.
+/// them side-by-side in real tables. Also update `src/cli/mod.rs`
+/// status-column help table when resplit.
 pub const PLACEHOLDER: &str = "·";
 
 /// Blank placeholder used by `wt list` during the first ~200ms of progressive
@@ -260,16 +259,6 @@ impl LayoutConfig {
         self.render_item_with_placeholder(item, self.placeholder.get())
     }
 
-    /// Render with stale placeholders for items where data collection was truncated.
-    ///
-    /// Currently uses the same `·` as `render_list_item_line`. Kept as a
-    /// separate entry point so picker callers signal the semantic difference
-    /// (data won't arrive vs. still loading) — see [`PLACEHOLDER`].
-    #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
-    pub fn render_list_item_stale(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, self.placeholder.get())
-    }
-
     fn render_item_with_placeholder(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         self.render_line(|column| {
             column.render_cell(
@@ -417,8 +406,7 @@ impl ColumnLayout {
                 // position for unresolved gates, so a row whose Status
                 // cell is partially loaded renders e.g. `+!  · ↕ | ·`
                 // rather than a cell-level placeholder. The `placeholder`
-                // arg comes from `render_list_item_line` or
-                // `render_list_item_stale` (both pass `·` today — see
+                // arg comes from `render_list_item_line` (`·` today — see
                 // `PLACEHOLDER`).
                 let mut cell = StyledLine::new();
                 cell.push_raw(
@@ -1324,14 +1312,11 @@ mod tests {
     }
 
     #[test]
-    fn test_loading_and_stale_both_use_middle_dot() {
+    fn test_loading_uses_middle_dot() {
         use super::super::layout::{ColumnLayout, LayoutConfig};
         use super::super::model::{ListItem, PositionMask};
         use std::path::PathBuf;
 
-        // Both entry points emit `·` today; this is a canary for the
-        // temporary collapse (see `PLACEHOLDER`). When the re-split lands,
-        // this test gets replaced with one asserting the two glyphs differ.
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
                 kind: ColumnKind::Summary,
@@ -1353,10 +1338,6 @@ mod tests {
         let line = layout.render_list_item_line(&item).render();
         assert!(line.contains('·'), "expected `·` in: {line}");
         assert!(!line.contains('⋯'), "unexpected `⋯` in: {line}");
-
-        let stale = layout.render_list_item_stale(&item).render();
-        assert!(stale.contains('·'), "expected `·` in: {stale}");
-        assert!(!stale.contains('⋯'), "unexpected `⋯` in: {stale}");
     }
 
     #[test]

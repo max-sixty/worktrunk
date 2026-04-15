@@ -7,6 +7,7 @@ mod log_formatter;
 mod pager;
 mod preview;
 mod preview_orchestrator;
+mod progressive_handler;
 mod summary;
 
 use std::cell::RefCell;
@@ -15,7 +16,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
@@ -39,7 +39,7 @@ use super::worktree::{
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
 
-use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
 
@@ -302,7 +302,9 @@ pub fn handle_picker(
 
     // Preview cache + dedicated pool are created up-front so the speculative
     // first-item preview can run in parallel with `collect::collect` below.
-    let orchestrator = PreviewOrchestrator::new();
+    // Wrapped in `Arc` because the progressive handler (running on the
+    // collect background thread) also calls `spawn_preview`.
+    let orchestrator = Arc::new(PreviewOrchestrator::new());
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
@@ -326,95 +328,90 @@ pub fn handle_picker(
         orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
     }
 
-    // Gather list data using simplified collection (buffered mode)
-    // Skip expensive operations not needed for picker UI
+    // Skip expensive operations — BranchDiff walks history per item,
+    // CiStatus hits the network. Both are slow enough that waiting for
+    // them adds perceptible cost for a modest column-population win.
     let skip_tasks: std::collections::HashSet<collect::TaskKind> =
         [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
             .into_iter()
             .collect();
 
-    // Per-task command timeout from shared [list] config.
+    // Per-task command timeout (bounds any single git invocation) from
+    // shared `[list]` config. Still applies in progressive mode.
     let command_timeout = config.list.task_timeout();
 
-    // Wall-clock budget for the entire collect phase (default: 500ms).
-    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
+    // Progressive rendering means the picker is never blocked waiting for
+    // collect — so there's no "UI freeze budget" to bound. The drain runs
+    // until its results channel closes (all tasks complete) or the fallback
+    // DRAIN_TIMEOUT (120s) fires. `config.switch_picker.timeout()` is kept
+    // for backwards compat in the config schema but ignored here; users on
+    // slow repos get more data in the picker, not a truncated view.
 
-    let Some(list_data) = collect::collect(
-        &repo,
-        collect::ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            skip_tasks: skip_tasks.clone(),
-            command_timeout,
-            collect_deadline,
-        },
-        false, // show_progress (no progress bars)
-        false, // render_table (picker renders its own UI)
-    )?
-    else {
-        return Ok(());
-    };
-
-    // Use the same layout system as `wt list` for proper column alignment
-    // List width depends on preview position:
-    // - Right layout: skim splits ~50% for list, ~50% for preview
-    // - Down layout: list gets full width, preview is below
+    // List width depends on the preview position. Right splits the terminal
+    // ~50/50; Down gives the list the full width. Passed to `collect` so
+    // the skeleton layout matches the picker's actual render width.
     let terminal_width = crate::display::terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
     };
-    let layout = super::list::layout::calculate_layout_with_width(
-        &list_data.items,
-        &list_data.skip_tasks,
-        skim_list_width,
-        &list_data.main_worktree_path,
-        None, // URL column not shown in picker
-    );
 
-    // Render header using layout system (need both plain and styled text for skim)
-    let header_line = layout.render_header_line();
-    let header_display_text = header_line.render();
-    let header_plain_text = header_line.plain_text();
+    // Estimate item count for the preview window spec (only the Down
+    // layout depends on it). A cheap `list_worktrees` call gives an exact
+    // count for worktrees; branches are unknown up front, so we cap at
+    // MAX_VISIBLE_ITEMS for the Down height computation — users with more
+    // worktrees than fit on screen get the minimum preview height, which
+    // is the same result the old synchronous path produced.
+    let num_items_estimate = repo
+        .list_worktrees()
+        .map(|w| w.len())
+        .unwrap_or(preview::MAX_VISIBLE_ITEMS);
+    let preview_window_spec = state
+        .initial_layout
+        .to_preview_window_spec(num_items_estimate);
+    let preview_dims = state.initial_layout.preview_dimensions(num_items_estimate);
 
-    // Convert to skim items using the layout system for rendering
-    // Keep Arc<ListItem> refs for background pre-computation
-    let mut items_for_precompute: Vec<Arc<super::list::model::ListItem>> = Vec::new();
-    let mut items: Vec<Arc<dyn SkimItem>> = list_data
-        .items
-        .into_iter()
-        .map(|item| {
-            let branch_name = item.branch_name().to_string();
+    // Summary hint: when summaries are disabled, prime the Summary cache
+    // with config guidance instead of showing a perpetual "Generating…"
+    // placeholder.
+    let (llm_command, summary_hint) =
+        if config.list.summary() && config.commit_generation.is_configured() {
+            (config.commit_generation.command.clone(), None)
+        } else {
+            let hint = if !config.commit_generation.is_configured() {
+                "Configure [commit.generation] command to enable LLM summaries.\n\n\
+                 Example in ~/.config/worktrunk/config.toml:\n\n\
+                 [commit.generation]\n\
+                 command = \"llm -m haiku\"\n\n\
+                 [list]\n\
+                 summary = true\n"
+            } else {
+                "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+                 [list]\n\
+                 summary = true\n"
+            };
+            (None, Some(hint.to_string()))
+        };
 
-            // The picker doesn't update progressively, so any column whose data
-            // didn't arrive in time won't fill in later. Use the stale placeholder
-            // entry point; its glyph is the same `·` as the loading placeholder
-            // today but the semantic split is preserved for a future re-divergence.
-            let rendered_line = layout.render_list_item_stale(&item);
-            let display_text_with_ansi = rendered_line.render();
-            let display_text = rendered_line.plain_text();
+    // Shared items list: populated by the handler's `on_skeleton` and read
+    // by `PickerCollector` on alt-r reload. Starts empty — the collector's
+    // `invoke` only fires after skim has displayed items, by which time
+    // the handler has already published them.
+    let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(Vec::new()));
 
-            let item = Arc::new(item);
-            items_for_precompute.push(Arc::clone(&item));
+    // Signal file for alt-r removal communication. execute-silent writes
+    // the branch name here; the PickerCollector reads it on reload.
+    // Cleaned up in PreviewState::Drop.
+    let signal_path = state.path.with_extension("remove");
 
-            Arc::new(WorktreeSkimItem {
-                display_text,
-                display_text_with_ansi,
-                branch_name,
-                item,
-                preview_cache: Arc::clone(&preview_cache),
-            }) as Arc<dyn SkimItem>
-        })
-        .collect();
+    let collector = PickerCollector {
+        items: Arc::clone(&shared_items),
+        signal_path: signal_path.clone(),
+        repo: repo.clone(),
+    };
 
-    // Insert header row at the beginning (will be non-selectable via header_lines option)
-    items.insert(
-        0,
-        Arc::new(HeaderSkimItem {
-            display_text: header_plain_text,
-            display_text_with_ansi: header_display_text,
-        }) as Arc<dyn SkimItem>,
-    );
+    let signal_path_escaped =
+        shell_escape::escape(signal_path.display().to_string().into()).into_owned();
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
@@ -424,29 +421,6 @@ pub fn handle_picker(
     let half_page = terminal_size::terminal_size()
         .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
         .unwrap_or(10);
-
-    // Calculate preview window spec based on auto-detected layout
-    // items.len() - 1 because we added a header row
-    let num_items = items.len().saturating_sub(1);
-    let preview_window_spec = state.initial_layout.to_preview_window_spec(num_items);
-
-    // Signal file for alt-r removal communication. execute-silent writes the branch
-    // name here; the PickerCollector reads it on reload. Cleaned up in PreviewState::Drop.
-    let signal_path = state.path.with_extension("remove");
-
-    // Shared items list: the PickerCollector reads and modifies this on reload.
-    let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(items));
-
-    // Custom collector for skim's reload action — performs removal and streams
-    // updated items back, all without leaving the picker.
-    let collector = PickerCollector {
-        items: Arc::clone(&shared_items),
-        signal_path: signal_path.clone(),
-        repo: repo.clone(),
-    };
-
-    let signal_path_escaped =
-        shell_escape::escape(signal_path.display().to_string().into()).into_owned();
 
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
@@ -521,89 +495,85 @@ pub fn handle_picker(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
 
-    // Send initial items to skim via channel
-    let items = shared_items.lock().unwrap();
+    // Skim item channel. `tx` (cloned) lives inside the picker handler —
+    // dropped only when the background collect thread exits, which is how
+    // we tell skim's heartbeat to stop. Keeping it alive while drain is
+    // running means every in-place update to a row's `rendered` string
+    // gets picked up by the next 100ms heartbeat redraw.
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-    for item in items.iter() {
-        tx.send(Arc::clone(item))
-            .map_err(|e| anyhow::anyhow!("Failed to send item to skim: {}", e))?;
-    }
+
+    let handler: Arc<dyn collect::PickerProgressHandler> =
+        Arc::new(progressive_handler::PickerHandler {
+            tx: tx.clone(),
+            shared_items: Arc::clone(&shared_items),
+            rendered_slots: Mutex::new(Vec::new()),
+            preview_cache: Arc::clone(&preview_cache),
+            orchestrator: Arc::clone(&orchestrator),
+            preview_dims,
+            llm_command,
+            repo: repo.clone(),
+            summary_hint,
+        });
+
+    // Spawn collect on a background thread. The handler holds the only
+    // remaining `tx` clone; when collect returns and the bg thread exits,
+    // the handler drops, `tx` drops, and skim's reader sees EOF → heartbeat
+    // stops. That's the explicit contract: progressive work finishes →
+    // picker goes idle.
+    let bg_handler = Arc::clone(&handler);
+    let bg_repo = repo.clone();
+    let bg_skip_tasks = skip_tasks.clone();
+    let bg_handle = std::thread::Builder::new()
+        .name("picker-collect".into())
+        .spawn(move || {
+            let _ = collect::collect(
+                &bg_repo,
+                collect::ShowConfig::Resolved {
+                    show_branches,
+                    show_remotes,
+                    skip_tasks: bg_skip_tasks,
+                    command_timeout,
+                    collect_deadline: None,
+                    list_width: Some(skim_list_width),
+                    progressive_handler: Some(bg_handler),
+                },
+                false, // show_progress (picker renders its own UI)
+                false, // render_table
+            );
+        })
+        .context("Failed to spawn picker-collect thread")?;
+
+    // Main thread drops its tx + handler clones so the bg thread's copies
+    // are the only remaining references.
     drop(tx);
-    drop(items);
+    drop(handler);
 
-    // Pre-compute all preview modes for all worktrees in parallel via rayon.
-    // Each (worktree, mode) pair is a separate rayon task, allowing the thread pool
-    // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
-    // git commands are harmless read-only operations even if skim exits early.
-    let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
-
-    let modes = [
-        PreviewMode::WorkingTree,
-        PreviewMode::Log,
-        PreviewMode::BranchDiff,
-        PreviewMode::UpstreamDiff,
-    ];
-
-    // Spawn order (rayon dispatches FIFO):
-    // 1. First item's modes — user lands here and may tab-cycle immediately.
-    // 2. Mode-major for remaining items — the default tab (WorkingTree)
-    //    warms across the full list before any off-default mode starts.
-    let dims = (preview_width, preview_height);
-    if let Some(first) = items_for_precompute.first() {
-        for mode in modes {
-            orchestrator.spawn_preview(Arc::clone(first), mode, dims);
-        }
-    }
-    for mode in modes {
-        for item in items_for_precompute.iter().skip(1) {
-            orchestrator.spawn_preview(Arc::clone(item), mode, dims);
-        }
-    }
-
-    // Summaries run last: each LLM call can take seconds, so queueing them
-    // behind fast git previews keeps preview tabs warming promptly. First
-    // item's summary still goes first within the summary batch so a user
-    // who sits on the top entry gets a head start.
-    if config.list.summary() && config.commit_generation.is_configured() {
-        let llm_command = config.commit_generation.command.clone().unwrap();
-        if let Some(first) = items_for_precompute.first() {
-            orchestrator.spawn_summary(Arc::clone(first), llm_command.clone(), repo.clone());
-        }
-        for item in items_for_precompute.iter().skip(1) {
-            orchestrator.spawn_summary(Arc::clone(item), llm_command.clone(), repo.clone());
-        }
-    } else {
-        // No LLM configured or summaries disabled — insert config hint so the
-        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
-        let hint = if !config.commit_generation.is_configured() {
-            "Configure [commit.generation] command to enable LLM summaries.\n\n\
-             Example in ~/.config/worktrunk/config.toml:\n\n\
-             [commit.generation]\n\
-             command = \"llm -m haiku\"\n\n\
-             [list]\n\
-             summary = true\n"
-        } else {
-            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
-             [list]\n\
-             summary = true\n"
-        };
-        for item in &items_for_precompute {
-            let branch = item.branch_name().to_string();
-            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
-        }
-    }
-
-    // Dry-run: wait for all pre-compute tasks and dump the cache as JSON
-    // instead of launching skim. Used by tests and for diagnosing
-    // "previews never load" bugs without a TTY.
+    // Dry-run: let collect finish (handler spawns previews during its run),
+    // then wait for the preview pool to drain, then dump the cache as JSON.
+    // Used by tests and for diagnosing "previews never load" bugs without
+    // a TTY.
     if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+        // Skim is not launched — drop the receiver so handler sends don't
+        // accumulate unboundedly (well, they'd drain on thread exit either
+        // way, but explicit is clearer).
+        drop(rx);
+        let _ = bg_handle.join();
         orchestrator.wait_for_idle();
         println!("{}", orchestrator.dump_cache_json());
         return Ok(());
     }
 
-    // Run skim (single invocation — alt-r uses reload, not re-launch)
+    // Run skim (single invocation — alt-r uses reload, not re-launch).
+    // Skim receives items as the bg thread's handler sends them.
     let output = Skim::run_with(&options, Some(rx));
+
+    // Don't join the bg thread. It may still be running the drain (network
+    // tasks can take seconds) and joining would block exit until every
+    // outstanding git command finished. Rust threads are effectively
+    // daemons — the process-exit path below terminates them cleanly. Git
+    // subprocesses the thread spawned are read-only, so an abrupt exit is
+    // safe. The thread handle is held explicitly to document the contract.
+    let _bg_handle = bg_handle;
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
