@@ -262,6 +262,8 @@ pub struct Deprecations {
     pub no_cd: bool,
     /// Pre-* hooks using multi-entry table form (will become concurrent in a future version)
     pub pre_hook_table_form: Vec<String>,
+    /// Has `timeout-ms` under `[switch.picker]` (removed — picker now renders progressively)
+    pub switch_picker_timeout_ms: bool,
 }
 
 impl Deprecations {
@@ -276,6 +278,7 @@ impl Deprecations {
             && !self.no_ff
             && !self.no_cd
             && self.pre_hook_table_form.is_empty()
+            && !self.switch_picker_timeout_ms
     }
 }
 
@@ -309,6 +312,7 @@ fn detect_deprecations_from_doc(
         no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
         no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
         pre_hook_table_form: find_pre_hook_table_form_from_doc(doc),
+        switch_picker_timeout_ms: find_switch_picker_timeout_from_doc(doc),
     }
 }
 
@@ -963,6 +967,77 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     modified |= migrate_ci_doc(doc);
     modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
     modified |= migrate_negated_bool_doc(doc, "switch", "no-cd", "cd");
+    modified |= migrate_switch_picker_timeout_doc(doc);
+    modified
+}
+
+/// Check if a table has `timeout-ms` under `[switch.picker]`.
+///
+/// `[switch.picker]` can be written either as a section (regular table) or
+/// inline (`picker = { ... }`); `toml_edit` surfaces these as different node
+/// types, so both branches are needed.
+fn has_switch_picker_timeout(table: &toml_edit::Table) -> bool {
+    table
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .and_then(|p| match p {
+            toml_edit::Item::Table(t) => Some(t.contains_key("timeout-ms")),
+            toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
+                Some(it.contains_key("timeout-ms"))
+            }
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+fn find_switch_picker_timeout_from_doc(doc: &toml_edit::DocumentMut) -> bool {
+    if has_switch_picker_timeout(doc.as_table()) {
+        return true;
+    }
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && has_switch_picker_timeout(project_table)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Remove `timeout-ms` from `[switch.picker]` in a table (top-level or project).
+fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
+    let Some(picker) = table
+        .get_mut("switch")
+        .and_then(|s| s.as_table_mut())
+        .and_then(|t| t.get_mut("picker"))
+    else {
+        return false;
+    };
+    match picker {
+        toml_edit::Item::Table(t) => t.remove("timeout-ms").is_some(),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
+            it.remove("timeout-ms").is_some()
+        }
+        _ => false,
+    }
+}
+
+/// Remove deprecated `timeout-ms` from `[switch.picker]` sections.
+///
+/// Strips the key at both the top level and under `[projects."..."]`. Empty
+/// `[switch.picker]` sections are left in place — they round-trip harmlessly.
+fn migrate_switch_picker_timeout_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = remove_switch_picker_timeout_in(doc.as_table_mut());
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut() {
+                modified |= remove_switch_picker_timeout_in(project_table);
+            }
+        }
+    }
     modified
 }
 
@@ -1391,6 +1466,17 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             "{}",
             warning_message(cformat!(
                 "{}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.switch_picker_timeout_ms {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively",
                 info.label
             ))
         );
@@ -2622,6 +2708,7 @@ approved-commands = ["npm install"]
                 no_ff: false,
                 no_cd: false,
                 pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -2904,6 +2991,7 @@ pager = "delta --paging=never"
                 no_ff: false,
                 no_cd: false,
                 pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
@@ -3099,6 +3187,139 @@ pre-start = "npm install"
         assert_eq!(result, content, "No post-create means no migration");
     }
 
+    fn migrate_switch_picker_timeout(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_switch_picker_timeout_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_top_level() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".switch.picker]
+timeout-ms = 300
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_inline_table() {
+        let content = r#"
+[switch]
+picker = { pager = "delta", timeout-ms = 500 }
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_inline_table() {
+        let content = r#"
+[switch]
+picker = { pager = "delta", timeout-ms = 500 }
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(!result.contains("timeout-ms"));
+        assert!(result.contains("pager"));
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_absent() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(!deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_removes_key() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 500
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(
+            !result.contains("timeout-ms"),
+            "Should strip timeout-ms: {result}"
+        );
+        assert!(
+            result.contains("pager"),
+            "Should preserve sibling keys: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".switch.picker]
+pager = "bat"
+timeout-ms = 100
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(!result.contains("timeout-ms"));
+        assert!(result.contains("pager"));
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_noop_when_absent() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_switch_picker_timeout(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_format_deprecation_warnings_switch_picker_timeout() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            deprecations: Deprecations {
+                switch_picker_timeout_ms: true,
+                ..Deprecations::default()
+            },
+            label: "User config".to_string(),
+            main_worktree_path: None,
+        };
+        let output = format_deprecation_warnings(&info);
+        assert!(
+            output.contains("switch.picker.timeout-ms"),
+            "Should mention the field: {output}"
+        );
+        assert!(
+            output.contains("no longer used"),
+            "Should explain deprecation reason: {output}"
+        );
+    }
+
     #[test]
     fn test_detect_deprecations_includes_post_create() {
         let content = r#"
@@ -3136,6 +3357,7 @@ server = "npm run dev"
                 no_ff: false,
                 no_cd: false,
                 pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "Project config".to_string(),
             main_worktree_path: None,
@@ -3185,6 +3407,7 @@ server = "npm run dev"
                 no_ff: true,
                 no_cd: true,
                 pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,

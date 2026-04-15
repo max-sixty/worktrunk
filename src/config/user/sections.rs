@@ -331,15 +331,6 @@ pub struct SwitchPickerConfig {
     /// Example: `pager = "delta --paging=never"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
-
-    /// Accepted for backward compatibility; currently ignored.
-    ///
-    /// Previously bounded how long the picker blocked before rendering.
-    /// The picker now renders its skeleton immediately and fills rows in
-    /// place as results arrive, so there's no UI-freeze budget to tune.
-    /// Left in the schema so existing configs keep parsing without error.
-    #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
 }
 
 impl SwitchPickerConfig {
@@ -347,24 +338,12 @@ impl SwitchPickerConfig {
     pub fn pager(&self) -> Option<&str> {
         self.pager.as_deref()
     }
-
-    /// Parses the legacy `timeout-ms` field. Kept for schema round-tripping;
-    /// the picker no longer consults it (progressive rendering made the
-    /// UI-freeze budget obsolete).
-    pub fn timeout(&self) -> Option<std::time::Duration> {
-        match self.timeout_ms {
-            Some(0) => None,
-            Some(ms) => Some(std::time::Duration::from_millis(ms)),
-            None => Some(std::time::Duration::from_millis(500)),
-        }
-    }
 }
 
 impl Merge for SwitchPickerConfig {
     fn merge_with(&self, other: &Self) -> Self {
         Self {
             pager: other.pager.clone().or_else(|| self.pager.clone()),
-            timeout_ms: other.timeout_ms.or(self.timeout_ms),
         }
     }
 }

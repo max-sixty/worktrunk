@@ -347,8 +347,7 @@ pub fn handle_picker(
     // Progressive rendering means the picker never blocks waiting for
     // collect — so there's no UI-freeze budget to bound. The drain runs
     // until its results channel closes or the fallback DRAIN_TIMEOUT
-    // (120s) fires. The legacy `switch.picker.timeout-ms` config field is
-    // still parsed for schema compat but no longer read.
+    // (120s) fires.
 
     // List width depends on the preview position. Right splits the terminal
     // ~50/50; Down gives the list the full width. Passed to `collect` so

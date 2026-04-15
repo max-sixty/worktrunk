@@ -1035,43 +1035,11 @@ fn test_switch_picker_config_accessor_methods() {
 
     let config = SwitchPickerConfig::default();
     assert!(config.pager().is_none());
-    // Default wall-clock budget is 500ms
-    assert_eq!(
-        config.timeout(),
-        Some(std::time::Duration::from_millis(500))
-    );
 
     let config = SwitchPickerConfig {
         pager: Some("delta --paging=never".to_string()),
-        timeout_ms: Some(1000),
     };
     assert_eq!(config.pager(), Some("delta --paging=never"));
-    assert_eq!(
-        config.timeout(),
-        Some(std::time::Duration::from_millis(1000))
-    );
-}
-
-#[test]
-fn test_switch_picker_timeout_zero_disables() {
-    use crate::config::user::SwitchPickerConfig;
-
-    let config = SwitchPickerConfig {
-        timeout_ms: Some(0),
-        ..Default::default()
-    };
-    assert!(config.timeout().is_none());
-}
-
-#[test]
-fn test_switch_picker_timeout_none_uses_default() {
-    use crate::config::user::SwitchPickerConfig;
-
-    let config = SwitchPickerConfig::default();
-    assert_eq!(
-        config.timeout(),
-        Some(std::time::Duration::from_millis(500))
-    );
 }
 
 #[test]
@@ -1079,12 +1047,10 @@ fn test_switch_picker_config_parse_toml() {
     let content = r#"
 [switch.picker]
 pager = "delta --paging=never"
-timeout-ms = 300
 "#;
     let config: UserConfig = toml::from_str(content).unwrap();
     let picker = config.switch.picker.as_ref().unwrap();
     assert_eq!(picker.pager.as_deref(), Some("delta --paging=never"));
-    assert_eq!(picker.timeout_ms, Some(300));
 }
 
 #[test]
@@ -1093,16 +1059,13 @@ fn test_switch_picker_merge() {
 
     let base = SwitchPickerConfig {
         pager: Some("delta".to_string()),
-        timeout_ms: Some(500),
     };
     let override_config = SwitchPickerConfig {
-        pager: None,         // Fall back to base
-        timeout_ms: Some(0), // Override: disable timeout
+        pager: None, // Fall back to base
     };
 
     let merged = base.merge_with(&override_config);
     assert_eq!(merged.pager.as_deref(), Some("delta"));
-    assert_eq!(merged.timeout_ms, Some(0));
 }
 
 #[test]
@@ -1113,15 +1076,11 @@ fn test_switch_config_merge() {
     let base = SwitchConfig {
         picker: Some(SwitchPickerConfig {
             pager: Some("delta".to_string()),
-            timeout_ms: None,
         }),
         ..Default::default()
     };
     let other = SwitchConfig {
-        picker: Some(SwitchPickerConfig {
-            pager: None,
-            timeout_ms: Some(300),
-        }),
+        picker: Some(SwitchPickerConfig { pager: None }),
         ..Default::default()
     };
     let merged = base.merge_with(&other);
@@ -1129,7 +1088,6 @@ fn test_switch_config_merge() {
         merged.picker.as_ref().unwrap().pager.as_deref(),
         Some("delta")
     );
-    assert_eq!(merged.picker.as_ref().unwrap().timeout_ms, Some(300));
 
     // Base has picker, other doesn't
     let other_none = SwitchConfig::default();
@@ -1251,12 +1209,6 @@ pager = "bat"
             .and_then(|picker| picker.pager.as_deref()),
         Some("bat")
     );
-    // timeout_ms not available from select, so default applies
-    assert_eq!(picker.timeout_ms, None);
-    assert_eq!(
-        picker.timeout(),
-        Some(std::time::Duration::from_millis(500))
-    );
 }
 
 #[test]
@@ -1265,7 +1217,6 @@ fn test_switch_picker_prefers_new_over_select() {
         r#"
 [switch.picker]
 pager = "delta"
-timeout-ms = 100
 
 [select]
 pager = "bat"
@@ -1275,7 +1226,6 @@ pager = "bat"
 
     let picker = config.switch_picker(None);
     assert_eq!(picker.pager.as_deref(), Some("delta"));
-    assert_eq!(picker.timeout_ms, Some(100));
 }
 
 #[test]
@@ -1286,7 +1236,6 @@ fn test_switch_picker_project_override() {
         switch: SwitchConfig {
             picker: Some(SwitchPickerConfig {
                 pager: Some("delta".to_string()),
-                timeout_ms: Some(200),
             }),
             ..Default::default()
         },
@@ -1299,7 +1248,6 @@ fn test_switch_picker_project_override() {
             switch: SwitchConfig {
                 picker: Some(SwitchPickerConfig {
                     pager: Some("bat".to_string()),
-                    timeout_ms: None, // Fall back to global
                 }),
                 ..Default::default()
             },
@@ -1309,7 +1257,6 @@ fn test_switch_picker_project_override() {
 
     let picker = config.switch_picker(Some("github.com/user/repo"));
     assert_eq!(picker.pager.as_deref(), Some("bat")); // From project
-    assert_eq!(picker.timeout_ms, Some(200)); // From global
 }
 
 #[test]
@@ -1318,7 +1265,6 @@ fn test_switch_picker_project_fallback_from_select() {
         r#"
 [switch.picker]
 pager = "delta"
-timeout-ms = 300
 
 [projects."github.com/user/repo".select]
 pager = "bat"
@@ -1328,7 +1274,6 @@ pager = "bat"
 
     let picker = config.switch_picker(Some("github.com/user/repo"));
     assert_eq!(picker.pager.as_deref(), Some("bat"));
-    assert_eq!(picker.timeout_ms, Some(300));
     // [select] is migrated to [switch.picker] at the TOML level before parsing,
     // so it ends up in the switch.picker field, not select
     assert!(
@@ -1365,7 +1310,6 @@ fn test_resolved_config_for_project() {
         switch: SwitchConfig {
             picker: Some(SwitchPickerConfig {
                 pager: Some("less".to_string()),
-                timeout_ms: Some(300),
             }),
             ..Default::default()
         },
@@ -1381,7 +1325,6 @@ fn test_resolved_config_for_project() {
     assert!(resolved.merge.commit()); // Default true
     assert_eq!(resolved.commit.stage(), StageMode::None);
     assert_eq!(resolved.switch_picker.pager(), Some("less"));
-    assert_eq!(resolved.switch_picker.timeout_ms, Some(300));
     assert!(resolved.switch.cd()); // Default true
 }
 
