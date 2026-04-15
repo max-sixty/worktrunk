@@ -15,17 +15,9 @@ use crate::config::is_default;
 
 /// What to stage before committing
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    clap::ValueEnum,
-    serde::Serialize,
-    serde::Deserialize,
-    JsonSchema,
+    Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, JsonSchema,
 )]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
 pub enum StageMode {
     /// Stage everything: untracked files + unstaged tracked changes

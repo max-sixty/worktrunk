@@ -27,17 +27,18 @@ pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
 ///
 /// On Windows, Git Bash users should use `bash` for shell integration.
 /// PowerShell integration is available for native Windows users without Git Bash.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum Shell {
     Bash,
     Fish,
     #[strum(serialize = "nu")]
-    #[clap(name = "nu")]
+    #[cfg_attr(feature = "cli", clap(name = "nu"))]
     Nushell,
     Zsh,
     #[strum(serialize = "powershell")]
-    #[clap(name = "powershell")]
+    #[cfg_attr(feature = "cli", clap(name = "powershell"))]
     PowerShell,
 }
 

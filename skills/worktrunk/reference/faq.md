@@ -225,7 +225,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
 ```bash
-cargo install worktrunk --no-default-features
+cargo install worktrunk --no-default-features --features cli
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.

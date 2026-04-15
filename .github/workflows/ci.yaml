@@ -44,6 +44,29 @@ jobs:
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
 
+  feature-check:
+    # Guards the library/CLI cleave: the `cli` feature gates clap, skim,
+    # crossterm, termimad, env_logger, humantime. If anything reachable from
+    # `pub mod` in src/lib.rs starts using one of those crates, library
+    # consumers (e.g. worktrunk-sync) would silently regain the transitive
+    # dependency graph. These checks fail before that can ship.
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Library builds without any features
+      run: cargo check --lib --no-default-features
+
+    - name: Library builds with syntax-highlighting only
+      run: cargo check --lib --no-default-features --features syntax-highlighting
+
+    - name: Binary builds without syntax-highlighting
+      run: cargo check --bin wt --no-default-features --features cli
+
   test:
     strategy:
       fail-fast: false

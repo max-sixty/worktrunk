@@ -374,13 +374,13 @@ pub fn branch_tracks_ref(
     Copy,
     PartialEq,
     Eq,
-    clap::ValueEnum,
     serde::Serialize,
     serde::Deserialize,
     strum::Display,
     strum::EnumString,
     strum::EnumIter,
 )]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookType {
