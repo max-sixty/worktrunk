@@ -221,7 +221,7 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m 
 [107m [0m [2m[36m[switch.picker][0m
 [107m [0m [2mpager = [0m[2m[32m"delta --paging=never"[0m[2m   [0m[2m# Example: override git's core.pager for diff preview[0m
-[107m [0m [2mtimeout-ms = [0m[2m[33m500[0m[2m   [0m[2m# Wall-clock budget (ms) for picker data collection; 0 disables[0m
+[107m [0m [2mtimeout-ms = [0m[2m[33m0[0m[2m   [0m[2m# Deprecated. Accepted for backward compatibility, currently ignored.[0m
 
 [32mStep[0m
 

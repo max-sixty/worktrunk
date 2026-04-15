@@ -332,11 +332,6 @@ pub enum ShowConfig {
     },
 }
 
-/// Build the progressive-table footer shown while the drain is stalled.
-///
-/// Pure so it can be snapshot-tested without spinning up the live table.
-/// `first_name` is a branch / display name from the pending set;
-/// `pending_count` is the total outstanding-result count (≥ 1).
 /// Per-row render cache shared by the `wt list` progressive table and the
 /// picker's `PickerProgressHandler`. Both sinks write through the same dedup
 /// path so one rendering pass serves both.
@@ -397,6 +392,11 @@ impl RowCache {
     }
 }
 
+/// Build the progressive-table footer shown while the drain is stalled.
+///
+/// Pure so it can be snapshot-tested without spinning up the live table.
+/// `first_name` is a branch / display name from the pending set;
+/// `pending_count` is the total outstanding-result count (≥ 1).
 fn format_stall_footer(
     footer_base: &str,
     completed: usize,

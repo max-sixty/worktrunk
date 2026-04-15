@@ -175,7 +175,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
 [107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m
-[107m [0m [2m# timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables[0m
+[107m [0m [2m# timeout-ms = 0   # Deprecated. Accepted for backward compatibility, currently ignored.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Step[0m
 [107m [0m [2m#[0m

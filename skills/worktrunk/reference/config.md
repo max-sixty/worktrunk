@@ -205,7 +205,7 @@ cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
-timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables
+timeout-ms = 0   # Deprecated. Accepted for backward compatibility, currently ignored.
 ```
 
 ### Step
