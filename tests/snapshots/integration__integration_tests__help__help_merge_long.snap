@@ -150,8 +150,6 @@ The full workflow: start an agent (one of many) on a task, work elsewhere, retur
 
 [107m [0m [2m[36m[[pre-merge]][0m
 [107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
-[107m [0m 
-[107m [0m [2m[36m[[pre-merge]][0m
 [107m [0m [2mlint = [0m[2m[32m"cargo clippy"[0m
 
 [1m[32mSee also[0m
