@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 [package]
 name = "worktrunk"
-version = "0.37.0"
+version = "0.37.1"
 edition = "2024"
 rust-version = "1.93"
 build = "build.rs"

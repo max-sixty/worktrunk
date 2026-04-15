@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.37.1
+
+### Improved
+
+- **Progressive rendering in `wt switch` picker**: The picker now mirrors `wt list`'s skeleton-first model — branch and path render immediately, while status, diff stats, counts, and summaries fill in in place as they resolve. Replaces the previous ~500ms blocking freeze before first render. ([#2231](https://github.com/max-sixty/worktrunk/pull/2231))
+
+- **Clean rows no longer flash the timeout glyph in the picker**: The LLM semaphore is now acquired only around the actual LLM call, so the no-changes and cache-hit fast paths return immediately instead of sitting behind up to 8 concurrent LLM calls. A clean `main` row in the picker now renders blank rather than the `·` "timed out" placeholder. ([#2222](https://github.com/max-sixty/worktrunk/pull/2222))
+
+### Fixed
+
+- **Picker preview styling bleed**: `color_print`'s `</>` emits SGR 22 to reset `<bold>`/`<dim>`, which skim 0.20's ANSI parser silently drops. Preview spans now emit an explicit full reset (`\x1b[0m`), so dim and bold no longer bleed across the rest of the preview pane. ([#2232](https://github.com/max-sixty/worktrunk/pull/2232))
+
+- **Picker alt-screen enter/exit asymmetry**: In partial-height mode (`height=90%`), skim-tuikit skipped `smcup` on startup but still emitted `rmcup` on exit, corrupting the outer terminal's scrollback. The vendored tuikit now pairs enter/exit symmetrically. ([#2230](https://github.com/max-sixty/worktrunk/pull/2230))
+
+- **Partial first render under tmux**: Under tmux PTY pressure, rows past the first ~1024 bytes would silently vanish because `Output::flush` used `write` instead of `write_all`. Vendored skim-tuikit fixes the short-write bug. ([#2226](https://github.com/max-sixty/worktrunk/pull/2226))
+
+### Library
+
+- **Expose worktree removal API from the `worktrunk` library**: `remove_worktree_with_cleanup`, `RemoveOptions`, and `BranchDeletionMode` are now public, letting external tools reuse the canonical removal flow (fsmonitor cleanup, trash-path staging) instead of reimplementing it with raw git commands. Motivated by [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync). ([#2227](https://github.com/max-sixty/worktrunk/pull/2227), thanks @pablospe for the request in [#2053](https://github.com/max-sixty/worktrunk/issues/2053))
+
+### Documentation
+
+- **Document `worktrunk-sync`**: Linked from the Extending page and the FAQ as a community-maintained companion tool for rebasing stacked worktree branches. ([#2225](https://github.com/max-sixty/worktrunk/pull/2225))
+
+- **Catalog vendored skim patches**: `vendor/skim-tuikit/PATCHES.md` now records both landed and candidate patches against skim-tuikit, and a Cargo.toml comment records why skim is pinned to 0.20.x. ([#2228](https://github.com/max-sixty/worktrunk/pull/2228), [#2229](https://github.com/max-sixty/worktrunk/pull/2229))
+
+### Internal
+
+- **Drop unreachable `rayon::spawn` fallback** in the picker orchestrator. ([#2216](https://github.com/max-sixty/worktrunk/pull/2216))
+
 ## 0.37.0
 
 ### Improved
