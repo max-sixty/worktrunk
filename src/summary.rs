@@ -12,11 +12,13 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use anstyle::Reset;
 use color_print::cformat;
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
+use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
 
 use crate::llm::{execute_llm_command, prepare_diff};
@@ -252,7 +254,10 @@ pub(crate) fn generate_summary(
 ) -> String {
     match generate_summary_core(branch, head, worktree_path, llm_command, repo) {
         Ok(Some(summary)) => summary,
-        Ok(None) => cformat!("<dim>No changes to summarize on {branch}.</>"),
+        Ok(None) => {
+            let reset = Reset;
+            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
+        }
         Err(e) => format!("Error: {e}"),
     }
 }

@@ -460,7 +460,7 @@ mod tests {
             "echo 'should not run'",
             &repo,
         );
-        assert_snapshot!(summary, @"[2mNo changes to summarize on main.[22m");
+        assert_snapshot!(summary, @"[2m○[22m[0m [1mmain[22m[0m has no changes to summarize");
     }
 
     #[test]
