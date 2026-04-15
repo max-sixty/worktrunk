@@ -684,7 +684,13 @@ impl TermLock {
             output.show_cursor();
             if self.clear_on_exit || !exiting {
                 // clear drawn contents
-                if !self.disable_alternate_screen {
+                //
+                // Only send rmcup if we actually sent smcup in `ensure_height`;
+                // otherwise use cursor_goto + erase_down. Previously this gated
+                // on `!self.disable_alternate_screen`, which emitted rmcup even
+                // in partial-height mode (where smcup was skipped), leaving
+                // terminal artifacts. See skim-rs/skim#880.
+                if self.alternate_screen {
                     output.quit_alternate_screen();
                 } else {
                     output.cursor_goto(self.cursor_row, 0);
@@ -719,11 +725,13 @@ impl TermLock {
         let (mut cursor_row, cursor_col) = cursor_pos;
         if height_to_be >= screen_height {
             // whole screen
-            self.alternate_screen = true;
             self.bottom_intact = false;
             self.cursor_row = 0;
             if !self.disable_alternate_screen {
                 output.enter_alternate_screen();
+                // Track that smcup was actually emitted so `pause` can emit
+                // rmcup symmetrically. See skim-rs/skim#880.
+                self.alternate_screen = true;
             }
         } else {
             // only use part of the screen
