@@ -40,10 +40,8 @@
 //!
 //! ## Phase timings
 //!
-//! Captured with
-//! `cargo build --release && ./target/release/wt-perf phases switch --repo . --runs 10 --warmup 2`
-//! on the worktrunk dev repo (7 worktrees, 6 branches, warm caches, release
-//! build). Regenerate via the same command after meaningful changes.
+//! Representative medians on the worktrunk dev repo (7 worktrees, 6 branches,
+//! warm caches, release build).
 //!
 //! | Phase (instant-to-instant) | median | cmds |
 //! |-----------------------------|-------:|-----:|
@@ -59,11 +57,28 @@
 //! | `Parallel execution started → All results drained` (post-skeleton work) | ~1.1s | 254 |
 //! | Wall clock under `WORKTRUNK_PICKER_DRY_RUN=1` (median / p95) | ~1.4s / ~4.4s | |
 //!
-//! The p95 wall-clock outlier is network-bound (CI/remote-ref fetches in the
-//! post-skeleton phase) and has no effect on time-to-skeleton. Skim's own
-//! paint cost isn't observable from the dry-run path — skim is bypassed
-//! there. See `tests/helpers/wt-perf/src/phases.rs` for the measurement
-//! driver (subcommand: `wt-perf phases`).
+//! Skim's own paint cost isn't observable from the dry-run path — skim is
+//! bypassed there.
+//!
+//! ### Reproducing
+//!
+//! End-to-end time-to-first-output (criterion, synthetic repo):
+//!
+//! ```bash
+//! cargo bench --bench time_to_first_output -- switch
+//! ```
+//!
+//! Per-phase breakdown on a specific repo (a single trace is usually enough
+//! to spot where time goes; re-run a few times if you want variance):
+//!
+//! ```bash
+//! RUST_LOG=debug WORKTRUNK_PICKER_DRY_RUN=1 \
+//!   ./target/release/wt -C <repo> switch 2>&1 \
+//!     | grep '\[wt-trace\]' \
+//!     | cargo run -p wt-perf --release -- trace > trace.json
+//! # Then open trace.json in Perfetto, or run the phase-duration SQL query
+//! # documented in benches/CLAUDE.md §"What's on the critical path?".
+//! ```
 //!
 //! # TODO(picker-perf): dedupe git calls
 //!

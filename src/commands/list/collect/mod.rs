@@ -76,11 +76,9 @@
 //!
 //! ### Measured Phase Timings
 //!
-//! From
-//! `cargo build --release && ./target/release/wt-perf phases list --repo . --runs 10 --warmup 2`
-//! on the worktrunk dev repo (7 worktrees, 6 branches, warm caches, release
-//! build). `wt-perf` passes `--progressive` so the progressive-table path
-//! runs even with stdout piped.
+//! Representative medians on the worktrunk dev repo (7 worktrees, 6
+//! branches, warm caches, release build, `--progressive` forced so the
+//! progressive-table path fires even with stdout piped).
 //!
 //! | Phase | median | cmds |
 //! |-------|-------:|-----:|
@@ -94,8 +92,18 @@
 //!
 //! The 23-command pre-skeleton count is above the "6-8 commands" target
 //! above — worth an audit. Most of the extras come from per-worktree probes
-//! that creep into the phase. Regenerate after meaningful changes; see
-//! `tests/helpers/wt-perf/src/phases.rs`.
+//! that creep into the phase.
+//!
+//! Reproduce end-to-end via
+//! `cargo bench --bench time_to_first_output -- list`; for a per-phase
+//! breakdown, capture a trace and run the phase-duration SQL query from
+//! `benches/CLAUDE.md`:
+//!
+//! ```bash
+//! RUST_LOG=debug ./target/release/wt -C <repo> list --progressive 2>&1 \
+//!     | grep '\[wt-trace\]' \
+//!     | cargo run -p wt-perf --release -- trace > trace.json
+//! ```
 //!
 //! ## Unified Collection Architecture
 //!
