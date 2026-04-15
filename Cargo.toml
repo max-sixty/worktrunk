@@ -177,12 +177,31 @@ inherits = "release"
 lto = "thin"
 
 [patch.crates-io]
-# Local fork of skim-tuikit 0.6.6 with a one-line fix for a dropped-bytes
-# bug in `Output::flush` — it used `write()` instead of `write_all()`, so
-# when the kernel accepted a partial write (common under load or in tmux
-# PTYs with small pipe buffers) the remainder of the buffer was dropped by
-# the subsequent `buffer.clear()`, leaving the picker's first render
-# missing whichever rows didn't fit in the first chunk. Upstream fix
-# proposed in skim-rs/skim#1056; drop this patch once merged and released.
-# See vendor/skim-tuikit/src/output.rs and `task vendor-diff`.
+# Local fork of skim-tuikit 0.6.6 carrying two small fixes. Run
+# `task vendor-diff` to see the full diff against the upstream tarball.
+#
+# Upstream status: skim-tuikit is effectively abandoned. Upstream skim
+# migrated to ratatui in skim-rs/skim#864 (merged 2026-01-12) and has
+# shipped several releases on the new backend; crates.io skim-tuikit is
+# frozen at 0.6.6 (Aug 2025) and will not receive another release. Both
+# bugs below are resolved in ratatui-era skim but not in the vendored
+# tuikit. These patches are load-bearing until we either migrate our
+# picker to a post-ratatui skim (breaking API change in
+# `src/commands/picker/`) or drop skim entirely.
+#
+# 1. Dropped-bytes bug in `Output::flush` — it used `write()` instead of
+#    `write_all()`, so when the kernel accepted a partial write (common
+#    under load or in tmux PTYs with small pipe buffers) the remainder of
+#    the buffer was dropped by the subsequent `buffer.clear()`, leaving
+#    the picker's first render missing whichever rows didn't fit in the
+#    first chunk. See vendor/skim-tuikit/src/output.rs.
+#
+# 2. Asymmetric alternate-screen enter/exit in partial-height mode — in
+#    full-height mode tuikit emits smcup on enter and rmcup on exit, but
+#    in partial-height mode (e.g. `height("90%")`) it skips smcup yet
+#    still emits rmcup on shutdown, leaving terminal artifacts. Fixed by
+#    tracking whether smcup was actually emitted and gating rmcup on that
+#    flag. See vendor/skim-tuikit/src/term.rs. Upstream bug was
+#    skim-rs/skim#880, resolved via the ratatui migration rather than a
+#    tuikit patch.
 skim-tuikit = { path = "vendor/skim-tuikit" }
