@@ -2974,11 +2974,12 @@ fi
     /// output as external subcommands.
     ///
     /// NOTE: passing this via `.env("PATH", ...)` is not enough when spawning
-    /// an interactive/login shell: zsh startup files (`/etc/zprofile` runs
-    /// `path_helper`, plus any user `~/.zshenv`) and fish universal vars
-    /// re-prepend `~/.cargo/bin` and friends. Invoke the shell with its
-    /// config-bypass flag (`zsh -f`, `bash --noprofile --norc`,
-    /// `fish --no-config`) alongside the PATH override.
+    /// a shell whose startup files mutate PATH: a typical `~/.zshenv` sources
+    /// `~/.cargo/env` (even for non-interactive `zsh -c`), and `~/.bashrc` or
+    /// `~/.bash_profile` can do the same. Invoke the shell with its
+    /// rc-bypass flag (`zsh -f`, `bash --noprofile --norc`) alongside the
+    /// PATH override. `/etc/zshenv` is always sourced and cannot be bypassed,
+    /// but it doesn't typically touch PATH on the environments we care about.
     fn completion_test_path(wt_bin: &std::path::Path) -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(wt_bin, dir.path().join("wt")).unwrap();
@@ -3019,8 +3020,9 @@ _wt_lazy_complete
         // helper) doesn't leak into completion output as an external subcommand.
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
-        // `-f` skips /etc/zshenv, /etc/zprofile (path_helper), and ~/.zshenv
-        // so our clean PATH isn't polluted with ~/.cargo/bin etc.
+        // `-f` skips ~/.zshenv (which typically sources ~/.cargo/env and
+        // re-prepends ~/.cargo/bin). `/etc/zshenv` is still read — it can't
+        // be bypassed — but doesn't touch PATH in our test environments.
         let output = std::process::Command::new("zsh")
             .args(["-f", "-c"])
             .arg(&script)
