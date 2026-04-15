@@ -332,14 +332,12 @@ pub struct SwitchPickerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pager: Option<String>,
 
-    /// Wall-clock budget for picker data collection in milliseconds.
+    /// Accepted for backward compatibility; currently ignored.
     ///
-    /// Controls how long the picker waits for git data before displaying.
-    /// Tasks still running when the budget expires are abandoned.
-    ///
-    /// - Unset: 500ms default
-    /// - `0`: No budget (wait for all results)
-    /// - Positive value: Custom budget in milliseconds
+    /// Previously bounded how long the picker blocked before rendering.
+    /// The picker now renders its skeleton immediately and fills rows in
+    /// place as results arrive, so there's no UI-freeze budget to tune.
+    /// Left in the schema so existing configs keep parsing without error.
     #[serde(rename = "timeout-ms", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
 }
@@ -350,8 +348,9 @@ impl SwitchPickerConfig {
         self.pager.as_deref()
     }
 
-    /// Wall-clock budget for picker data collection (default: 500ms).
-    /// Returns `None` when disabled (timeout_ms = 0).
+    /// Parses the legacy `timeout-ms` field. Kept for schema round-tripping;
+    /// the picker no longer consults it (progressive rendering made the
+    /// UI-freeze budget obsolete).
     pub fn timeout(&self) -> Option<std::time::Duration> {
         match self.timeout_ms {
             Some(0) => None,

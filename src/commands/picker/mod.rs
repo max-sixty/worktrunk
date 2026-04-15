@@ -344,12 +344,11 @@ pub fn handle_picker(
     // shared `[list]` config. Still applies in progressive mode.
     let command_timeout = config.list.task_timeout();
 
-    // Progressive rendering means the picker is never blocked waiting for
-    // collect — so there's no "UI freeze budget" to bound. The drain runs
-    // until its results channel closes (all tasks complete) or the fallback
-    // DRAIN_TIMEOUT (120s) fires. `config.switch_picker.timeout()` is kept
-    // for backwards compat in the config schema but ignored here; users on
-    // slow repos get more data in the picker, not a truncated view.
+    // Progressive rendering means the picker never blocks waiting for
+    // collect — so there's no UI-freeze budget to bound. The drain runs
+    // until its results channel closes or the fallback DRAIN_TIMEOUT
+    // (120s) fires. The legacy `switch.picker.timeout-ms` config field is
+    // still parsed for schema compat but no longer read.
 
     // List width depends on the preview position. Right splits the terminal
     // ~50/50; Down gives the list the full width. Passed to `collect` so

@@ -337,6 +337,66 @@ pub enum ShowConfig {
 /// Pure so it can be snapshot-tested without spinning up the live table.
 /// `first_name` is a branch / display name from the pending set;
 /// `pending_count` is the total outstanding-result count (≥ 1).
+/// Per-row render cache shared by the `wt list` progressive table and the
+/// picker's `PickerProgressHandler`. Both sinks write through the same dedup
+/// path so one rendering pass serves both.
+///
+/// `set_result` records a new render and returns `Some(line)` only when it
+/// differs from the cached value.
+///
+/// `set_reveal` runs after `layout.placeholder` is promoted from blank to
+/// `·`. Every row is re-rendered (skeleton for rows with no data yet to
+/// avoid surfacing seeded defaults like "55y"; `format_list_item_line` for
+/// rows that received at least one result, so still-pending cells pick up
+/// the promoted `·`). Dedup against the cache keeps emitted updates minimal.
+struct RowCache {
+    last: Vec<String>,
+    has_data: Vec<bool>,
+}
+
+impl RowCache {
+    fn new(n: usize) -> Self {
+        Self {
+            last: vec![String::new(); n],
+            has_data: vec![false; n],
+        }
+    }
+
+    fn set_result(&mut self, idx: usize, rendered: String) -> Option<String> {
+        self.has_data[idx] = true;
+        if self.last[idx] == rendered {
+            None
+        } else {
+            self.last[idx] = rendered.clone();
+            Some(rendered)
+        }
+    }
+
+    fn set_reveal(
+        &mut self,
+        items: &[super::model::ListItem],
+        layout: &super::layout::LayoutConfig,
+    ) -> Vec<Option<String>> {
+        items
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let new = if self.has_data[idx] {
+                    layout.format_list_item_line(item)
+                } else {
+                    layout.render_skeleton_row(item).render()
+                };
+                if self.last[idx] == new {
+                    None
+                } else {
+                    self.last[idx] = new.clone();
+                    Some(new)
+                }
+            })
+            .collect()
+    }
+}
+
 fn format_stall_footer(
     footer_base: &str,
     completed: usize,
@@ -1005,64 +1065,6 @@ pub fn collect(
         first_result_traced: bool,
     }
 
-    // Shared row-render cache, used by both sinks.
-    //
-    // `set_result` records the new render and returns `Some(line)` only when
-    // it differs from the last — deduping the write path.
-    //
-    // `set_reveal` runs after `layout.placeholder` is promoted to `·`. It
-    // re-renders every row (skeleton for rows without data to avoid seeded
-    // defaults like "55y"; `format_list_item_line` for rows that received
-    // results, so still-pending cells pick up the promoted `·`). Dedup
-    // against the cache keeps the emitted updates minimal.
-    struct RowCache {
-        last: Vec<String>,
-        has_data: Vec<bool>,
-    }
-
-    impl RowCache {
-        fn new(n: usize) -> Self {
-            Self {
-                last: vec![String::new(); n],
-                has_data: vec![false; n],
-            }
-        }
-
-        fn set_result(&mut self, idx: usize, rendered: String) -> Option<String> {
-            self.has_data[idx] = true;
-            if self.last[idx] == rendered {
-                None
-            } else {
-                self.last[idx] = rendered.clone();
-                Some(rendered)
-            }
-        }
-
-        fn set_reveal(
-            &mut self,
-            items: &[ListItem],
-            layout: &super::layout::LayoutConfig,
-        ) -> Vec<Option<String>> {
-            items
-                .iter()
-                .enumerate()
-                .map(|(idx, item)| {
-                    let new = if self.has_data[idx] {
-                        layout.format_list_item_line(item)
-                    } else {
-                        layout.render_skeleton_row(item).render()
-                    };
-                    if self.last[idx] == new {
-                        None
-                    } else {
-                        self.last[idx] = new.clone();
-                        Some(new)
-                    }
-                })
-                .collect()
-        }
-    }
-
     let n_items = all_items.len();
     let progressive_state = progressive_table.take().map(|table| {
         std::cell::RefCell::new(ProgressiveState {
@@ -1596,5 +1598,59 @@ mod tests {
             strip_ansi(&rendered),
             @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
         );
+    }
+
+    /// `set_result` marks the row as having data and dedups by comparing
+    /// against the cached render; `set_reveal` picks skeleton-vs-format
+    /// per row based on `has_data` and also dedups. These two behaviors
+    /// are load-bearing for the picker's partial-row reveal correctness
+    /// (see the RowCache doc comment).
+    #[test]
+    fn test_row_cache_dedup_and_reveal() {
+        use super::super::layout::calculate_layout_with_width;
+        use super::super::model::ListItem;
+        use std::collections::HashSet;
+        use std::path::Path;
+
+        let items = vec![
+            ListItem::new_branch("aaa".into(), "row-zero".into()),
+            ListItem::new_branch("bbb".into(), "row-one".into()),
+        ];
+        let skip_tasks: HashSet<TaskKind> = HashSet::new();
+        let layout = calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None);
+
+        let mut cache = RowCache::new(2);
+
+        // First set_result: cache was empty, so the new line is emitted.
+        let first = cache.set_result(0, "row-zero-line-v1".into());
+        assert_eq!(first.as_deref(), Some("row-zero-line-v1"));
+
+        // Same render again → dedup: None.
+        let dup = cache.set_result(0, "row-zero-line-v1".into());
+        assert_eq!(dup, None);
+
+        // Different render → Some again.
+        let changed = cache.set_result(0, "row-zero-line-v2".into());
+        assert_eq!(changed.as_deref(), Some("row-zero-line-v2"));
+
+        // set_reveal after the placeholder flip. Row 0 has data: use
+        // format_list_item_line; the result is different from the cached
+        // synthetic string above so it's emitted as Some. Row 1 has no
+        // data: use render_skeleton_row; cache was empty so it's emitted.
+        layout.placeholder.set(super::super::render::PLACEHOLDER);
+        let updates = cache.set_reveal(&items, &layout);
+        assert_eq!(updates.len(), 2);
+        assert!(
+            updates[0].is_some(),
+            "row 0 had data but cached string was synthetic; reveal must emit new render"
+        );
+        assert!(
+            updates[1].is_some(),
+            "row 1 had no data; reveal must emit skeleton render"
+        );
+
+        // Second reveal with no intervening changes: both rows dedup to None.
+        let updates2 = cache.set_reveal(&items, &layout);
+        assert_eq!(updates2, vec![None, None]);
     }
 }
