@@ -48,11 +48,13 @@ impl SkimItem for HeaderSkimItem {
 }
 
 /// Common diff rendering: check stat, show stat + full diff if non-empty.
-fn compute_diff_preview(args: &[&str], no_changes_msg: &str, width: usize) -> String {
+fn compute_diff_preview(
+    repo: &Repository,
+    args: &[&str],
+    no_changes_msg: &str,
+    width: usize,
+) -> String {
     let mut output = String::new();
-    let Ok(repo) = Repository::current() else {
-        return format!("{no_changes_msg}\n");
-    };
 
     // Check stat output first
     let mut stat_args = args.to_vec();
@@ -236,12 +238,13 @@ impl WorktreeSkimItem {
     /// that the cache always stores display-ready content (no pager subprocess
     /// needed at render time).
     pub(super) fn compute_and_page_preview(
+        repo: &Repository,
         item: &ListItem,
         mode: PreviewMode,
         width: usize,
         height: usize,
     ) -> String {
-        let content = Self::compute_preview(item, mode, width, height);
+        let content = Self::compute_preview(repo, item, mode, width, height);
         match mode {
             PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
                 if let Some(pager_cmd) = diff_pager() {
@@ -256,22 +259,23 @@ impl WorktreeSkimItem {
 
     /// Compute raw preview for any mode.
     pub(super) fn compute_preview(
+        repo: &Repository,
         item: &ListItem,
         mode: PreviewMode,
         width: usize,
         height: usize,
     ) -> String {
         match mode {
-            PreviewMode::WorkingTree => Self::compute_working_tree_preview(item, width),
-            PreviewMode::Log => Self::compute_log_preview(item, width, height),
-            PreviewMode::BranchDiff => Self::compute_branch_diff_preview(item, width),
-            PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(item, width),
+            PreviewMode::WorkingTree => Self::compute_working_tree_preview(repo, item, width),
+            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
+            PreviewMode::BranchDiff => Self::compute_branch_diff_preview(repo, item, width),
+            PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(repo, item, width),
             PreviewMode::Summary => Self::loading_placeholder(PreviewMode::Summary),
         }
     }
 
     /// Compute Tab 1: Working tree preview (uncommitted changes vs HEAD)
-    fn compute_working_tree_preview(item: &ListItem, width: usize) -> String {
+    fn compute_working_tree_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let Some(wt_info) = item.worktree_data() else {
             let reset = Reset;
@@ -284,6 +288,7 @@ impl WorktreeSkimItem {
 
         let reset = Reset;
         compute_diff_preview(
+            repo,
             &["-C", &path, "diff", "HEAD"],
             &cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes"),
             width,
@@ -295,14 +300,9 @@ impl WorktreeSkimItem {
     /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
     /// fallback covers the ahead=0 case, so the preview is correct even
     /// before the list-row pipeline has populated counts.
-    fn compute_branch_diff_preview(item: &ListItem, width: usize) -> String {
+    fn compute_branch_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
-        let Ok(repo) = Repository::current() else {
-            return cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
-            );
-        };
         let Some(default_branch) = repo.default_branch() else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
@@ -311,6 +311,7 @@ impl WorktreeSkimItem {
 
         let merge_base = format!("{}...{}", default_branch, item.head());
         compute_diff_preview(
+            repo,
             &["diff", &merge_base],
             &cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{default_branch}</>{reset}"
@@ -326,14 +327,9 @@ impl WorktreeSkimItem {
     /// existence (non-zero exit when `@{u}` is unresolvable) and counts,
     /// so the preview is correct even before the list-row pipeline has
     /// populated upstream.
-    fn compute_upstream_diff_preview(item: &ListItem, width: usize) -> String {
+    fn compute_upstream_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
-        let Ok(repo) = Repository::current() else {
-            return cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
-            );
-        };
 
         let upstream_ref = format!("{branch}@{{u}}");
         let probe_range = format!("{}...{upstream_ref}", item.head());
@@ -367,6 +363,7 @@ impl WorktreeSkimItem {
         if ahead > 0 && behind > 0 {
             let range = format!("{}...{}", upstream_ref, item.head());
             compute_diff_preview(
+                repo,
                 &["diff", &range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{ahead} ⇣{behind}) but no unique file changes"
@@ -376,6 +373,7 @@ impl WorktreeSkimItem {
         } else if ahead > 0 {
             let range = format!("{}...{}", upstream_ref, item.head());
             compute_diff_preview(
+                repo,
                 &["diff", &range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no unpushed file changes"
@@ -385,6 +383,7 @@ impl WorktreeSkimItem {
         } else {
             let range = format!("{}...{}", item.head(), upstream_ref);
             compute_diff_preview(
+                repo,
                 &["diff", &range],
                 &cformat!(
                     "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{behind}) but no file changes"
@@ -396,7 +395,12 @@ impl WorktreeSkimItem {
 
     /// Compute log preview for a worktree item.
     /// This can be called from background threads for pre-computation.
-    pub(super) fn compute_log_preview(item: &ListItem, width: usize, height: usize) -> String {
+    pub(super) fn compute_log_preview(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
+    ) -> String {
         // Minimum preview width to show timestamps (adds ~7 chars: space + 4-char time + space)
         // Note: preview is typically 50% of terminal width, so 50 = 100-col terminal
         const TIMESTAMP_WIDTH_THRESHOLD: usize = 50;
@@ -410,12 +414,6 @@ impl WorktreeSkimItem {
         let head = item.head();
         let branch = item.branch_name();
         let reset = Reset;
-        let Ok(repo) = Repository::current() else {
-            output.push_str(&cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
-            ));
-            return output;
-        };
         let Some(default_branch) = repo.default_branch() else {
             output.push_str(&cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
@@ -498,7 +496,7 @@ impl WorktreeSkimItem {
                 process_log_with_dimming(&log_output, unique_commits.as_ref());
             if show_timestamps {
                 // Batch fetch stats for all commits
-                let stats = batch_fetch_stats(&repo, &hashes);
+                let stats = batch_fetch_stats(repo, &hashes);
                 output.push_str(&format_log_output(&processed, &stats));
             } else {
                 // Strip hash markers (SOH...NUL) since we're not using format_log_output
@@ -587,6 +585,148 @@ mod tests {
         assert_snapshot!(
             "cache_miss",
             cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)
+        );
+    }
+
+    /// Helper: build a test repo with `main` at the initial commit, then a
+    /// second commit so branches can diverge from it.
+    fn repo_with_main() -> (worktrunk::testing::TestRepo, Repository) {
+        let t = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(t.path()).unwrap();
+        // Add a second commit on main so later branches have a merge base
+        // with a real parent (otherwise `rev-list main...HEAD` walks back
+        // to the initial commit unconditionally).
+        std::fs::write(t.path().join("main2.txt"), "main2").unwrap();
+        repo.run_command(&["add", "main2.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "main2"]).unwrap();
+        (t, repo)
+    }
+
+    fn item_at(repo: &Repository, branch: &str) -> ListItem {
+        let head = repo
+            .run_command(&["rev-parse", branch])
+            .unwrap()
+            .trim()
+            .to_string();
+        ListItem::new_branch(head, branch.to_string())
+    }
+
+    #[test]
+    fn branch_diff_empty_when_no_commits_ahead() {
+        // A branch at the same commit as main has no commits ahead — the
+        // empty-diff fallback message should fire.
+        let (_t, repo) = repo_with_main();
+        repo.run_command(&["branch", "parity"]).unwrap();
+        let item = item_at(&repo, "parity");
+        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("has no file changes vs"),
+            "expected empty-diff fallback, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn branch_diff_shows_diff_when_commits_ahead() {
+        // A branch with a unique commit should produce a non-empty diff.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("feat.txt"), "feature\n").unwrap();
+        repo.run_command(&["add", "feat.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "feat"]).unwrap();
+        let item = item_at(&repo, "feature");
+        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("feat.txt"),
+            "expected diff to mention feat.txt, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_no_tracking_branch() {
+        // Branch with no configured upstream should hit the no-upstream path
+        // via non-zero exit from `git rev-list --left-right --count HEAD...@{u}`.
+        let (_t, repo) = repo_with_main();
+        repo.run_command(&["branch", "orphan"]).unwrap();
+        let item = item_at(&repo, "orphan");
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("has no upstream tracking branch"),
+            "expected no-upstream message, got: {output:?}"
+        );
+    }
+
+    /// Sets up a branch that tracks another local branch, so `@{u}` resolves
+    /// without needing a remote. This covers all four ahead/behind shapes.
+    fn repo_with_tracked_pair() -> (worktrunk::testing::TestRepo, Repository) {
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["branch", "upstream-base"]).unwrap();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        repo.run_command(&["branch", "--set-upstream-to=upstream-base"])
+            .unwrap();
+        (t, repo)
+    }
+
+    #[test]
+    fn upstream_diff_up_to_date() {
+        let (_t, repo) = repo_with_tracked_pair();
+        let item = item_at(&repo, "feature");
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("is up to date with upstream"),
+            "expected up-to-date message, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_ahead_only() {
+        let (t, repo) = repo_with_tracked_pair();
+        std::fs::write(t.path().join("ahead.txt"), "ahead\n").unwrap();
+        repo.run_command(&["add", "ahead.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "ahead"]).unwrap();
+        let item = item_at(&repo, "feature");
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("ahead.txt"),
+            "expected diff to mention ahead.txt, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_behind_only() {
+        let (t, repo) = repo_with_tracked_pair();
+        // Advance the upstream (upstream-base) past feature
+        repo.run_command(&["checkout", "upstream-base"]).unwrap();
+        std::fs::write(t.path().join("behind.txt"), "behind\n").unwrap();
+        repo.run_command(&["add", "behind.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "behind"]).unwrap();
+        repo.run_command(&["checkout", "feature"]).unwrap();
+        let item = item_at(&repo, "feature");
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert!(
+            output.contains("behind.txt"),
+            "expected diff to mention behind.txt, got: {output:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_diverged() {
+        let (t, repo) = repo_with_tracked_pair();
+        // feature has a unique commit
+        std::fs::write(t.path().join("feat.txt"), "feat\n").unwrap();
+        repo.run_command(&["add", "feat.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "feat"]).unwrap();
+        // upstream-base has a unique commit
+        repo.run_command(&["checkout", "upstream-base"]).unwrap();
+        std::fs::write(t.path().join("upstream.txt"), "upstream\n").unwrap();
+        repo.run_command(&["add", "upstream.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "upstream"]).unwrap();
+        repo.run_command(&["checkout", "feature"]).unwrap();
+        let item = item_at(&repo, "feature");
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        // Diverged path runs the diff; symmetric difference includes both files.
+        assert!(
+            output.contains("feat.txt") || output.contains("upstream.txt"),
+            "expected diverged diff, got: {output:?}"
         );
     }
 

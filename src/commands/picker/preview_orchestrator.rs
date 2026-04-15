@@ -30,10 +30,15 @@ pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
     pool: Arc<rayon::ThreadPool>,
     pending: Arc<AtomicUsize>,
+    /// Repository used by preview compute. Captured once at construction
+    /// so background tasks see a stable repo binding, and so unit tests
+    /// can inject a `TestRepo`-rooted `Repository` instead of relying on
+    /// process CWD.
+    repo: Repository,
 }
 
 impl PreviewOrchestrator {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(repo: Repository) -> Self {
         let cache = Arc::new(DashMap::new());
         let pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
@@ -46,6 +51,7 @@ impl PreviewOrchestrator {
             cache,
             pool,
             pending: Arc::new(AtomicUsize::new(0)),
+            repo,
         }
     }
 
@@ -64,12 +70,13 @@ impl PreviewOrchestrator {
     ) {
         let cache = Arc::clone(&self.cache);
         let (w, h) = dims;
+        let repo = self.repo.clone();
         self.spawn_task(move || {
             let cache_key = (item.branch_name().to_string(), mode);
             if cache.contains_key(&cache_key) {
                 return;
             }
-            let value = WorktreeSkimItem::compute_and_page_preview(&item, mode, w, h);
+            let value = WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
             cache.insert(cache_key, value);
         });
     }
@@ -137,6 +144,10 @@ mod tests {
     use std::fs;
     use worktrunk::testing::TestRepo;
 
+    fn orch_for(t: &TestRepo) -> PreviewOrchestrator {
+        PreviewOrchestrator::new(Repository::at(t.path()).unwrap())
+    }
+
     fn dirty_worktree_item() -> (TestRepo, Arc<ListItem>) {
         let t = TestRepo::new();
         fs::write(t.path().join("README.md"), "# Project\n").unwrap();
@@ -164,9 +175,9 @@ mod tests {
     /// spawn pipeline silently fails, this catches it without needing skim.
     #[test]
     fn orchestrator_populates_cache_for_real_worktree() {
-        let (_t, item) = dirty_worktree_item();
+        let (t, item) = dirty_worktree_item();
 
-        let orch = PreviewOrchestrator::new();
+        let orch = orch_for(&t);
         orch.spawn_preview(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24));
         orch.spawn_preview(Arc::clone(&item), PreviewMode::Log, (80, 24));
         orch.wait_for_idle();
@@ -186,9 +197,9 @@ mod tests {
 
     #[test]
     fn duplicate_spawn_short_circuits() {
-        let (_t, item) = dirty_worktree_item();
+        let (t, item) = dirty_worktree_item();
 
-        let orch = PreviewOrchestrator::new();
+        let orch = orch_for(&t);
         orch.spawn_preview(Arc::clone(&item), PreviewMode::WorkingTree, (80, 24));
         orch.wait_for_idle();
         let first = orch
@@ -218,9 +229,9 @@ mod tests {
     #[test]
     fn spawn_summary_populates_cache() {
         let (t, item) = dirty_worktree_item();
-        let repo = worktrunk::git::Repository::at(t.path()).unwrap();
+        let repo = Repository::at(t.path()).unwrap();
 
-        let orch = PreviewOrchestrator::new();
+        let orch = orch_for(&t);
         orch.spawn_summary(Arc::clone(&item), "/bin/cat".to_string(), repo);
         orch.wait_for_idle();
 
@@ -233,7 +244,8 @@ mod tests {
 
     #[test]
     fn dump_cache_json_format() {
-        let orch = PreviewOrchestrator::new();
+        let t = TestRepo::new();
+        let orch = orch_for(&t);
         orch.cache.insert(
             ("branch-a".to_string(), PreviewMode::WorkingTree),
             "x".to_string(),

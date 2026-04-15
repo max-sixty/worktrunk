@@ -186,9 +186,9 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let (tx, rx) = crossbeam_channel::unbounded::<Arc<dyn SkimItem>>();
         let shared_items = Arc::new(Mutex::new(Vec::new()));
-        let orchestrator = Arc::new(PreviewOrchestrator::new());
-        let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let repo = test.repo.clone();
+        let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
+        let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let handler = PickerHandler {
             tx,
             shared_items,

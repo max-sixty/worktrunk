@@ -308,7 +308,7 @@ pub fn handle_picker(
     // first-item preview can run in parallel with `collect::collect` below.
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
-    let orchestrator = Arc::new(PreviewOrchestrator::new());
+    let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
     // Speculative warm-up: the picker sorts the current worktree first, and
