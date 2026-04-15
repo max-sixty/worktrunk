@@ -2972,6 +2972,13 @@ fi
     /// from that dir + system dirs (excluding cargo target directories). This
     /// prevents co-built binaries like `wt-perf` from leaking into completion
     /// output as external subcommands.
+    ///
+    /// NOTE: passing this via `.env("PATH", ...)` is not enough when spawning
+    /// an interactive/login shell: zsh startup files (`/etc/zprofile` runs
+    /// `path_helper`, plus any user `~/.zshenv`) and fish universal vars
+    /// re-prepend `~/.cargo/bin` and friends. Invoke the shell with its
+    /// config-bypass flag (`zsh -f`, `bash --noprofile --norc`,
+    /// `fish --no-config`) alongside the PATH override.
     fn completion_test_path(wt_bin: &std::path::Path) -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(wt_bin, dir.path().join("wt")).unwrap();
@@ -3012,8 +3019,10 @@ _wt_lazy_complete
         // helper) doesn't leak into completion output as an external subcommand.
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
+        // `-f` skips /etc/zshenv, /etc/zprofile (path_helper), and ~/.zshenv
+        // so our clean PATH isn't polluted with ~/.cargo/bin etc.
         let output = std::process::Command::new("zsh")
-            .arg("-c")
+            .args(["-f", "-c"])
             .arg(&script)
             .env("PATH", &clean_path)
             .output()
@@ -3045,8 +3054,10 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
 
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
+        // `--noprofile --norc` skips ~/.bash_profile, ~/.bashrc, /etc/profile
+        // so our clean PATH isn't polluted with ~/.cargo/bin etc.
         let output = std::process::Command::new("bash")
-            .arg("-c")
+            .args(["--noprofile", "--norc", "-c"])
             .arg(&script)
             .env("PATH", &clean_path)
             .output()
@@ -3189,7 +3200,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         );
 
         let output = std::process::Command::new("bash")
-            .arg("-c")
+            .args(["--noprofile", "--norc", "-c"])
             .arg(&script)
             .env("PATH", &clean_path)
             .output()
