@@ -887,12 +887,6 @@ impl TestRepo {
                 "WORKTRUNK_APPROVALS_PATH".to_string(),
                 self.test_approvals_path().display().to_string(),
             ),
-            // Disable picker collect timeout to prevent flaky snapshots on slow
-            // CI runners (especially macOS).
-            (
-                "WORKTRUNK__SWITCH__PICKER__TIMEOUT_MS".to_string(),
-                "0".to_string(),
-            ),
         ]);
 
         vars
