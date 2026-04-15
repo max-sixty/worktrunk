@@ -13,3 +13,5 @@ PNGs = "PNGs"
 deplyo = "deplyo"
 comit = "comit"
 siwtch = "siwtch"
+# Intentional typo in CHANGELOG.md illustrating the unreferenced-var warning
+brnach = "brnach"

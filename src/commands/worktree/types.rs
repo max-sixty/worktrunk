@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use worktrunk::git::RefType;
+use worktrunk::git::{BranchDeletionMode, RefType};
 
 /// Flags indicating which merge operations occurred
 #[derive(Debug, Clone, Copy)]
@@ -134,45 +134,6 @@ impl SwitchPlan {
     /// Returns true if this plan will create a new worktree.
     pub fn is_create(&self) -> bool {
         matches!(self, SwitchPlan::Create { .. })
-    }
-}
-
-/// How the branch should be handled after worktree removal.
-///
-/// This enum replaces the previous boolean flag pair,
-/// making the three valid states explicit and preventing invalid combinations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BranchDeletionMode {
-    /// Keep the branch regardless of merge status (--no-delete-branch flag).
-    Keep,
-    /// Delete the branch only if it's fully merged into the target branch (default).
-    SafeDelete,
-    /// Delete the branch even if it's not merged (-D flag).
-    ForceDelete,
-}
-
-impl BranchDeletionMode {
-    /// Create from CLI flags.
-    ///
-    /// `--no-delete-branch` takes precedence over `-D` (force delete).
-    pub fn from_flags(keep_branch: bool, force_delete: bool) -> Self {
-        if keep_branch {
-            Self::Keep
-        } else if force_delete {
-            Self::ForceDelete
-        } else {
-            Self::SafeDelete
-        }
-    }
-
-    /// Whether the branch should be kept (not deleted).
-    pub fn should_keep(&self) -> bool {
-        matches!(self, Self::Keep)
-    }
-
-    /// Whether to force delete even if not merged.
-    pub fn is_force(&self) -> bool {
-        matches!(self, Self::ForceDelete)
     }
 }
 

@@ -50,8 +50,10 @@
 //! for process-global singletons that are computed once and never change:
 //! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
-//! - Global state: `OUTPUT_STATE` (output), `VERBOSE_LOG`, `COMMAND_LOG`
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//! - Git discovery: `GIT_COMMON_DIR_CACHE` (below) — memoizes `git rev-parse --git-common-dir`
+//!   across `Repository::at()` calls
 //!
 //! These are lazy initialization, not caches — they have no invalidation concerns
 //! because the container is initialized once and never replaced — unlike `RepoCache`,

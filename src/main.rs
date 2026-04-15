@@ -44,7 +44,7 @@ pub(crate) use crate::cli::OutputFormat;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
-use commands::worktree::{BranchDeletionMode, handle_no_ff_merge, handle_push};
+use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
@@ -59,6 +59,7 @@ use commands::{
     step_relocate,
 };
 use output::handle_remove_output;
+use worktrunk::git::BranchDeletionMode;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,

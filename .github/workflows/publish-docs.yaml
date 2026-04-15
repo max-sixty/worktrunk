@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Zola
-        uses: taiki-e/install-action@v2.75.7
+        uses: taiki-e/install-action@v2.75.10
         with:
           tool: zola@0.22.1
 
@@ -38,7 +38,7 @@ jobs:
         run: zola build
         working-directory: docs
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/public/
           retention-days: 1

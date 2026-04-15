@@ -42,8 +42,8 @@ use super::hooks::{
     HookCommandSpec, prepare_background_hooks, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::worktree::BranchDeletionMode;
 use crate::output::handle_remove_output;
+use worktrunk::git::BranchDeletionMode;
 
 /// Handle `wt step commit` command
 ///

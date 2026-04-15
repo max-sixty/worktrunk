@@ -126,6 +126,14 @@ tempfile = "3.27"
 wait-timeout = "0.2"
 
 [target.'cfg(unix)'.dependencies]
+# Pinned to the 0.20.x line. Newer skim releases (the 3.x / 4.x rewrite)
+# pin many of their direct dependencies with exact versions — e.g.,
+# `color-eyre = "=0.6.5"`, `derive_builder = "=0.20.2"`, `kanal = "=0.1.1"`,
+# `tokio-util = "=0.7.18"`, `unicode-normalization = "=0.1.25"`, and ~12
+# others. Depending on skim would lock worktrunk onto each of those exact
+# versions, so an upgrade blocks on upstream relaxing those pins.
+# Windows picker support (worktrunk#2223) landed in skim v4.3.0 but is
+# gated by the same constraint.
 skim = "0.20"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"

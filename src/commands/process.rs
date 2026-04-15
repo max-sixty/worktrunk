@@ -428,23 +428,6 @@ fn spawn_detached_exec_windows(
     Ok(())
 }
 
-/// Generate a staging path for worktree removal.
-///
-/// Places the staging directory inside `.git/wt/trash/` so it is hidden from the
-/// user's workspace. For the main worktree, `.git/` is on the same filesystem,
-/// so `rename()` is an instant metadata operation. Linked worktrees on different
-/// mount points will get EXDEV and fall back to legacy removal.
-///
-/// Format: `<wt/trash>/<name>-<timestamp>`
-pub fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> PathBuf {
-    let timestamp = epoch_now();
-    let name = worktree_path
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_default();
-    trash_dir.join(format!("{}-{}", name, timestamp))
-}
-
 /// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 
@@ -497,7 +480,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
 ///
 /// Entries whose filename can't be parsed as `<name>-<timestamp>` are skipped —
 /// the sweep only touches directories worktrunk created via
-/// [`generate_removing_path`].
+/// [`worktrunk::git::remove::stage_worktree_removal`].
 fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) -> Vec<PathBuf> {
     let Ok(read_dir) = fs::read_dir(trash_dir) else {
         return Vec::new();
@@ -516,10 +499,10 @@ fn collect_stale_trash_entries(trash_dir: &Path, now: u64, threshold_secs: u64) 
 
 /// Extract the Unix timestamp suffix from a trash entry filename.
 ///
-/// Filenames produced by [`generate_removing_path`] have the form
-/// `<name>-<timestamp>`, where timestamp is a bare unsigned integer in Unix
-/// epoch seconds. The worktree name may contain hyphens, so splitting from the
-/// right and parsing the tail is unambiguous.
+/// Filenames produced by [`worktrunk::git::remove::stage_worktree_removal`]
+/// have the form `<name>-<timestamp>`, where timestamp is a bare unsigned
+/// integer in Unix epoch seconds. The worktree name may contain hyphens, so
+/// splitting from the right and parsing the tail is unambiguous.
 fn parse_trash_entry_timestamp(name: &str) -> Option<u64> {
     let (_, suffix) = name.rsplit_once('-')?;
     suffix.parse::<u64>().ok()
@@ -828,28 +811,6 @@ mod tests {
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
         assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
-    }
-
-    #[test]
-    fn test_generate_removing_path() {
-        let trash_dir = PathBuf::from("/tmp/repo/.git/wt/trash");
-        let path = PathBuf::from("/tmp/my-project.feature");
-        let removing_path = generate_removing_path(&trash_dir, &path);
-
-        // Should be inside the trash directory
-        assert_eq!(removing_path.parent(), Some(trash_dir.as_path()));
-
-        // Should have the expected prefix
-        let name = removing_path.file_name().unwrap().to_string_lossy();
-        assert!(name.starts_with("my-project.feature-"), "got: {}", name);
-
-        // Should have a timestamp suffix (digits only after the prefix)
-        let timestamp_part = name.trim_start_matches("my-project.feature-");
-        assert!(
-            timestamp_part.chars().all(|c| c.is_ascii_digit()),
-            "timestamp part should be numeric: {}",
-            timestamp_part
-        );
     }
 
     #[test]

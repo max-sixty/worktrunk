@@ -87,12 +87,6 @@ mod resolve;
 mod switch;
 mod types;
 
-use std::path::{Path, PathBuf};
-
-use super::branch_deletion::{BranchDeletionResult, delete_branch_if_safe};
-use super::process::generate_removing_path;
-use worktrunk::git::Repository;
-
 // Re-export public types and functions
 pub use push::{handle_no_ff_merge, handle_push};
 pub(crate) use resolve::paths_match;
@@ -102,97 +96,5 @@ pub use resolve::{
 };
 pub use switch::{execute_switch, plan_switch};
 pub use types::{
-    BranchDeletionMode, MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchPlan,
-    SwitchResult,
+    MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchPlan, SwitchResult,
 };
-
-/// Execute core worktree removal: stop fsmonitor, remove worktree, delete branch.
-///
-/// Uses the fast path (rename into `.git/wt/trash/` + prune) when possible,
-/// falling back to `git worktree remove` on cross-filesystem setups.
-/// On the fast path the directory disappears instantly; the caller is responsible
-/// for cleaning up the staged trash entry (returned via `staged_path`).
-///
-/// Called from the synchronous (foreground) removal path and from the TUI picker.
-/// The background removal path (`output::handlers::spawn_background_removal`)
-/// uses `stage_worktree_removal` directly so it can defer the `rm -rf` to a
-/// detached process. See `handle_remove_command` in `main.rs` for the full
-/// `wt remove` command flow.
-///
-/// `branch_result` is the raw `delete_branch_if_safe` outcome, preserved so
-/// callers can handle branch deletion failures independently:
-/// - The picker ignores it (best-effort in TUI context)
-/// - The output handler processes it for user-facing display
-///
-/// `branch_result` is `None` when deletion was not attempted (no branch name,
-/// or `deletion_mode.should_keep()`).
-pub struct RemovalOutput {
-    pub branch_result: Option<anyhow::Result<BranchDeletionResult>>,
-    /// Path to the staged trash directory (fast path only). Caller should
-    /// `remove_dir_all` this — either synchronously or in the background.
-    pub staged_path: Option<PathBuf>,
-}
-
-pub fn execute_removal(
-    repo: &Repository,
-    worktree_path: &Path,
-    branch_name: Option<&str>,
-    deletion_mode: BranchDeletionMode,
-    target_branch: Option<&str>,
-    force_worktree: bool,
-) -> anyhow::Result<RemovalOutput> {
-    // Stop fsmonitor daemon (best effort — prevents zombie daemons when using
-    // builtin fsmonitor). Must happen while the worktree path still exists.
-    let _ = repo
-        .worktree_at(worktree_path)
-        .run_command(&["fsmonitor--daemon", "stop"]);
-
-    // Fast path: rename into .git/wt/trash/ (instant on same filesystem),
-    // then prune git metadata. Falls back to `git worktree remove` if the
-    // rename fails (cross-filesystem, permissions, Windows file locking).
-    let staged_path = stage_worktree_removal(repo, worktree_path);
-    if staged_path.is_none() {
-        repo.remove_worktree(worktree_path, force_worktree)?;
-    }
-
-    // Delete branch if safe
-    let branch_result = if let Some(branch) = branch_name
-        && !deletion_mode.should_keep()
-    {
-        let target = target_branch.unwrap_or("HEAD");
-        Some(delete_branch_if_safe(
-            repo,
-            branch,
-            target,
-            deletion_mode.is_force(),
-        ))
-    } else {
-        None
-    };
-
-    Ok(RemovalOutput {
-        branch_result,
-        staged_path,
-    })
-}
-
-/// Rename a worktree into `.git/wt/trash/` and prune git metadata.
-///
-/// Returns `Some(staged_path)` on success, `None` if the rename failed.
-/// Used internally by `execute_removal` and by the output handler's
-/// `execute_instant_removal_or_fallback` (which builds shell command strings
-/// and adds a placeholder directory — needs the raw staged path).
-pub(crate) fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option<PathBuf> {
-    let trash_dir = repo.wt_trash_dir();
-    let _ = std::fs::create_dir_all(&trash_dir);
-    let staged_path = generate_removing_path(&trash_dir, worktree_path);
-
-    if std::fs::rename(worktree_path, &staged_path).is_ok() {
-        if let Err(e) = repo.prune_worktrees() {
-            log::debug!("Failed to prune worktrees after rename: {e}");
-        }
-        Some(staged_path)
-    } else {
-        None
-    }
-}

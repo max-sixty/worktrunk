@@ -9,7 +9,6 @@ use worktrunk::git::Repository;
 use super::super::list::model::ListItem;
 use super::items::PreviewCacheKey;
 use super::preview::PreviewMode;
-use crate::summary::LLM_SEMAPHORE;
 
 /// Render LLM summary for terminal display using the project's markdown theme.
 ///
@@ -36,14 +35,15 @@ pub(super) fn render_summary(text: &str, width: usize) -> String {
 }
 
 /// Generate a summary for one item and insert it into the preview cache.
-/// Acquires the LLM semaphore to limit concurrent calls across rayon tasks.
+///
+/// `generate_summary_core` acquires `LLM_SEMAPHORE` internally, so the
+/// no-changes and cache-hit fast paths return without contending.
 pub(super) fn generate_and_cache_summary(
     item: &ListItem,
     llm_command: &str,
     preview_cache: &DashMap<PreviewCacheKey, String>,
     repo: &Repository,
 ) {
-    let _permit = LLM_SEMAPHORE.acquire();
     let branch = item.branch_name();
     let worktree_path = item.worktree_data().map(|d| d.path.as_path());
     let summary =
