@@ -499,18 +499,13 @@ pub fn handle_picker(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
 
-    // Skim item channel. `tx` (cloned) lives inside the picker handler —
-    // dropped only when the background collect thread exits, which is how
-    // we tell skim's heartbeat to stop. Keeping it alive while drain is
-    // running means every in-place update to a row's `rendered` string
-    // gets picked up by the next 100ms heartbeat redraw.
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
     let handler: Arc<dyn collect::PickerProgressHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
             shared_items: Arc::clone(&shared_items),
-            rendered_slots: Mutex::new(Vec::new()),
+            rendered_slots: std::sync::OnceLock::new(),
             preview_cache: Arc::clone(&preview_cache),
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
@@ -520,10 +515,8 @@ pub fn handle_picker(
         });
 
     // Spawn collect on a background thread. The handler holds the only
-    // remaining `tx` clone; when collect returns and the bg thread exits,
-    // the handler drops, `tx` drops, and skim's reader sees EOF → heartbeat
-    // stops. That's the explicit contract: progressive work finishes →
-    // picker goes idle.
+    // remaining `tx` clone; when the bg thread exits, `tx` drops, and skim's
+    // heartbeat stops. Contract: background work done → picker idle.
     let bg_handler = Arc::clone(&handler);
     let bg_repo = repo.clone();
     let bg_skip_tasks = skip_tasks.clone();
@@ -547,19 +540,14 @@ pub fn handle_picker(
         })
         .context("Failed to spawn picker-collect thread")?;
 
-    // Main thread drops its tx + handler clones so the bg thread's copies
-    // are the only remaining references.
+    // Drop main-thread copies so the bg thread's `tx` clone is the last
+    // sender (its drop is what stops skim's heartbeat).
     drop(tx);
     drop(handler);
 
-    // Dry-run: let collect finish (handler spawns previews during its run),
-    // then wait for the preview pool to drain, then dump the cache as JSON.
-    // Used by tests and for diagnosing "previews never load" bugs without
-    // a TTY.
+    // Dry-run: skim is bypassed. Wait for collect (which spawns previews
+    // via the handler), then for the preview pool, then dump the cache.
     if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
-        // Skim is not launched — drop the receiver so handler sends don't
-        // accumulate unboundedly (well, they'd drain on thread exit either
-        // way, but explicit is clearer).
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
@@ -569,15 +557,13 @@ pub fn handle_picker(
 
     // Run skim (single invocation — alt-r uses reload, not re-launch).
     // Skim receives items as the bg thread's handler sends them.
+    //
+    // Don't join `bg_handle` after skim exits: drain may still be running
+    // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
+    // (120s). Process exit terminates the bg thread; its git subprocesses
+    // are read-only.
     let output = Skim::run_with(&options, Some(rx));
-
-    // Don't join the bg thread. It may still be running the drain (network
-    // tasks can take seconds) and joining would block exit until every
-    // outstanding git command finished. Rust threads are effectively
-    // daemons — the process-exit path below terminates them cleanly. Git
-    // subprocesses the thread spawned are read-only, so an abrupt exit is
-    // safe. The thread handle is held explicitly to document the contract.
-    let _bg_handle = bg_handle;
+    drop(bg_handle);
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output

@@ -274,37 +274,31 @@ fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
 ///
 /// `collect()` owns the layout and re-renders each row as task results land.
 /// The handler receives pre-rendered strings so it doesn't need to share the
-/// layout across threads (LayoutConfig is `!Sync` via an interior
+/// layout across threads (`LayoutConfig` is `!Sync` via an interior
 /// `Cell<&'static str>`).
-///
-/// All methods may be called from rayon worker threads; implementations must
-/// be `Send + Sync`. Strings are owned — the handler can store them freely.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub trait PickerProgressHandler: Send + Sync {
     /// Fired once after items are initialized and layout is computed, but
     /// before any task results arrive. `rendered` is one entry per item,
-    /// already populated with fast fields (branch, path, head) and blank
-    /// placeholders for slow cells. `header_ansi`/`header_plain` are the
-    /// column-header line in both forms — the picker uses the ANSI form
-    /// for display and the plain form for matcher input.
+    /// with fast fields (branch, path, head) populated and blank
+    /// placeholders for slow cells. `header` is the column-header line;
+    /// the handler calls `render()` / `plain_text()` as needed.
     fn on_skeleton(
         &self,
         items: Vec<super::model::ListItem>,
         rendered: Vec<String>,
-        header_ansi: String,
-        header_plain: String,
+        header: worktrunk::styling::StyledLine,
     );
 
-    /// Fired after a single task result updates `item`. `rendered` is the
-    /// new line for row `idx` — write it through the item's shared state so
-    /// skim picks it up on the next heartbeat.
-    fn on_update(&self, idx: usize, item: &super::model::ListItem, rendered: String);
+    /// Fired after a single task result updates row `idx`. `rendered` is the
+    /// new line — write it through the item's shared state so skim picks it
+    /// up on the next heartbeat.
+    fn on_update(&self, idx: usize, rendered: String);
 
-    /// Fired at the 200ms reveal deadline. `rendered` holds a new line for
-    /// every row — the placeholder has been promoted from blank to `·`, so
-    /// still-pending cells now render the loading dot instead of empty
-    /// space.
-    fn on_reveal(&self, rendered: Vec<String>);
+    /// Fired at the 200ms reveal deadline. Entry per row: `Some(line)` for
+    /// rows still at skeleton state (placeholder needs promoting to `·`),
+    /// `None` for rows that already received real data via `on_update`.
+    fn on_reveal(&self, rendered: Vec<Option<String>>);
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -808,18 +802,13 @@ pub fn collect(
 
     // Deliver the skeleton to the picker handler. Rendered strings use the
     // blank placeholder so skim's initial render mirrors the `wt list`
-    // pre-reveal look. The header is rendered twice (ANSI + plain) — skim
-    // needs both: ANSI for display, plain for matcher input (the plain
-    // form is what `SkimItem::text` returns for the header row).
+    // pre-reveal look.
     if let Some(handler) = progressive_handler.as_ref() {
         let skeletons: Vec<String> = all_items
             .iter()
             .map(|item| layout.render_skeleton_row(item).render())
             .collect();
-        let header_line = layout.render_header_line();
-        let header_ansi = header_line.render();
-        let header_plain = header_line.plain_text();
-        handler.on_skeleton(all_items.clone(), skeletons, header_ansi, header_plain);
+        handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
     }
 
     /// Delay before the `·` loading indicator replaces blank placeholders.
@@ -1006,37 +995,91 @@ pub fn collect(
     // reveal, and stall hints) can mutate it. Events never run concurrently —
     // they fire between channel recvs — so the runtime borrow checks are an
     // invariant formalism, never a source of panics.
+    // Table-specific state: footer progress counter, overflow guard,
+    // first-result tracing. `ProgressiveTable` itself owns stdout so the
+    // whole thing is local and non-`Send`.
     struct ProgressiveState {
         table: ProgressiveTable,
-        last_rendered_lines: Vec<String>,
         completed_results: usize,
         progress_overflow: bool,
         first_result_traced: bool,
+    }
+
+    // Shared row-render cache, used by both sinks.
+    //
+    // `set_result` records the new render and returns `Some(line)` only when
+    // it differs from the last — deduping the write path.
+    //
+    // `set_reveal` runs after `layout.placeholder` is promoted to `·`. It
+    // re-renders every row (skeleton for rows without data to avoid seeded
+    // defaults like "55y"; `format_list_item_line` for rows that received
+    // results, so still-pending cells pick up the promoted `·`). Dedup
+    // against the cache keeps the emitted updates minimal.
+    struct RowCache {
+        last: Vec<String>,
+        has_data: Vec<bool>,
+    }
+
+    impl RowCache {
+        fn new(n: usize) -> Self {
+            Self {
+                last: vec![String::new(); n],
+                has_data: vec![false; n],
+            }
+        }
+
+        fn set_result(&mut self, idx: usize, rendered: String) -> Option<String> {
+            self.has_data[idx] = true;
+            if self.last[idx] == rendered {
+                None
+            } else {
+                self.last[idx] = rendered.clone();
+                Some(rendered)
+            }
+        }
+
+        fn set_reveal(
+            &mut self,
+            items: &[ListItem],
+            layout: &super::layout::LayoutConfig,
+        ) -> Vec<Option<String>> {
+            items
+                .iter()
+                .enumerate()
+                .map(|(idx, item)| {
+                    let new = if self.has_data[idx] {
+                        layout.format_list_item_line(item)
+                    } else {
+                        layout.render_skeleton_row(item).render()
+                    };
+                    if self.last[idx] == new {
+                        None
+                    } else {
+                        self.last[idx] = new.clone();
+                        Some(new)
+                    }
+                })
+                .collect()
+        }
     }
 
     let n_items = all_items.len();
     let progressive_state = progressive_table.take().map(|table| {
         std::cell::RefCell::new(ProgressiveState {
             table,
-            last_rendered_lines: vec![String::new(); n_items],
             completed_results: 0,
             progress_overflow: false,
             first_result_traced: false,
         })
     });
+    let mut row_cache = RowCache::new(n_items);
 
     let drain_deadline =
         collect_deadline.unwrap_or_else(|| std::time::Instant::now() + results::DRAIN_TIMEOUT);
 
-    // Reveal needs to fire whenever a downstream consumer is listening —
-    // either the progressive table for `wt list`, or the picker handler.
+    // Reveal fires only when a downstream consumer is listening.
     let reveal_at = (progressive_state.is_some() || progressive_handler.is_some())
         .then_some(placeholder_reveal_at);
-
-    // Track which rows have been re-rendered with real data. Used by the
-    // picker-handler reveal path to avoid flashing `·` back over cells that
-    // already arrived (the progressive_table has its own copy inside `s`).
-    let mut picker_rendered_has_data = vec![false; all_items.len()];
 
     let drain_outcome = drain_results(
         rx,
@@ -1051,8 +1094,8 @@ pub fn collect(
 
             match event {
                 results::DrainEvent::Result { item_idx, item } => {
-                    // Common render (used by both consumers).
                     let rendered = layout.format_list_item_line(item);
+                    let changed = row_cache.set_result(item_idx, rendered);
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
@@ -1062,7 +1105,6 @@ pub fn collect(
                         }
 
                         s.completed_results += 1;
-
                         debug_assert!(
                             s.completed_results <= total_results,
                             "completed ({}) > expected ({}): task result sent without registering expectation",
@@ -1079,9 +1121,8 @@ pub fn collect(
                         );
                         s.table.update_footer(footer_msg);
 
-                        if rendered != s.last_rendered_lines[item_idx] {
-                            s.last_rendered_lines[item_idx] = rendered.clone();
-                            s.table.update_row(item_idx, rendered.clone());
+                        if let Some(line) = &changed {
+                            s.table.update_row(item_idx, line.clone());
                         }
 
                         if let Err(e) = s.table.flush() {
@@ -1089,31 +1130,21 @@ pub fn collect(
                         }
                     }
 
-                    if let Some(handler) = progressive_handler.as_ref() {
-                        picker_rendered_has_data[item_idx] = true;
-                        handler.on_update(item_idx, item, rendered);
+                    if let Some(handler) = progressive_handler.as_ref()
+                        && let Some(line) = changed
+                    {
+                        handler.on_update(item_idx, line);
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
-                    // T+200ms reveal: promote blank placeholders to `·` and
-                    // re-render every row so still-pending cells pick up
-                    // the dot. Rows that received a result use
-                    // `format_list_item_line`; untouched rows use
-                    // `render_skeleton_row` (which avoids surfacing seeded
-                    // defaults like "55y" for skipped tasks).
                     layout.placeholder.set(super::render::PLACEHOLDER);
+                    let updates = row_cache.set_reveal(items, &layout);
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
-                        for (idx, item) in items.iter().enumerate() {
-                            let rendered = if s.last_rendered_lines[idx].is_empty() {
-                                layout.render_skeleton_row(item).render()
-                            } else {
-                                layout.format_list_item_line(item)
-                            };
-                            if rendered != s.last_rendered_lines[idx] {
-                                s.last_rendered_lines[idx] = rendered.clone();
-                                s.table.update_row(idx, rendered);
+                        for (idx, update) in updates.iter().enumerate() {
+                            if let Some(line) = update {
+                                s.table.update_row(idx, line.clone());
                             }
                         }
                         if let Err(e) = s.table.flush() {
@@ -1122,25 +1153,7 @@ pub fn collect(
                     }
 
                     if let Some(handler) = progressive_handler.as_ref() {
-                        // Only rewrite rows still at skeleton state. Rows
-                        // that received a result already rendered with real
-                        // data via `on_update`; re-rendering them here would
-                        // clobber newer data with slightly older state (the
-                        // drain passes the current `items` snapshot, but the
-                        // handler's view may be fresher by the time its
-                        // lock is taken).
-                        let rendered: Vec<String> = items
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, item)| {
-                                if picker_rendered_has_data[idx] {
-                                    layout.format_list_item_line(item)
-                                } else {
-                                    layout.render_skeleton_row(item).render()
-                                }
-                            })
-                            .collect();
-                        handler.on_reveal(rendered);
+                        handler.on_reveal(updates);
                     }
                 }
                 results::DrainEvent::Stall {
@@ -1148,12 +1161,12 @@ pub fn collect(
                     first_kind,
                     first_name,
                 } => {
+                    // No task has completed for at least `STALL_TIMINGS.threshold`.
+                    // Name the signal (silence) rather than claiming "stalled":
+                    // the event fires on any 5s lull and reports outstanding
+                    // work, not a root cause.
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
-                        // No task has completed for at least `STALL_TIMINGS.threshold`.
-                        // Name the signal (silence) rather than claiming "stalled":
-                        // the event fires on any 5s lull and reports outstanding
-                        // work, not a root cause.
                         let footer_msg = format_stall_footer(
                             &footer_base,
                             s.completed_results,
@@ -1168,8 +1181,7 @@ pub fn collect(
                             log::debug!("Progressive table flush failed: {}", e);
                         }
                     }
-                    // Picker has no stall UI; the heartbeat loop keeps
-                    // skim responsive regardless.
+                    // Picker has no stall UI; heartbeat keeps it responsive.
                 }
             }
         },

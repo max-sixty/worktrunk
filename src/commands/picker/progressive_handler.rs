@@ -1,38 +1,24 @@
 //! Progressive-rendering glue between `collect::collect` and the skim picker.
 //!
-//! `collect` fires `on_skeleton` once the layout is ready, then `on_update`
-//! per task result, then `on_reveal` at the 200ms blank→`·` transition. The
-//! handler funnels each event into:
+//! Each event funnels into three places: skim's item stream (`tx`, alive
+//! while updates may arrive so the 100ms heartbeat keeps firing), each
+//! item's shared `rendered` mutex (in-place redraws picked up by the
+//! heartbeat), and `shared_items` used by `PickerCollector` for alt-r.
 //!
-//!   1. the skim item stream (`tx`, kept alive while updates may still
-//!      arrive so skim's 100ms heartbeat keeps redrawing),
-//!   2. each item's shared `rendered` mutex (in-place redraws on the
-//!      heartbeat, no channel ping needed),
-//!   3. the `shared_items` vec used by `PickerCollector` for alt-r reload.
-//!
-//! Preview + summary pre-compute is kicked off at skeleton time so the
-//! first preview the user opens is already warm.
+//! Preview + summary pre-compute kicks off at skeleton time so the first
+//! preview the user opens is already warm.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use skim::prelude::*;
 use worktrunk::git::Repository;
-use worktrunk::styling::strip_osc8_hyperlinks;
+use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
 use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
 use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
-
-/// Skim's rendering pipeline mangles OSC 8 hyperlinks — they show up as
-/// garbage like `^[8;;…` in the picker's columns. The list code emits
-/// hyperlinks for URL and CI cells when the terminal reports support; we
-/// strip them on the way in so the picker shows plain text. Colors (SGR
-/// codes) are preserved — only the hyperlink wrapper goes.
-fn sanitize_for_picker(rendered: String) -> String {
-    strip_osc8_hyperlinks(&rendered)
-}
 
 /// Handler owned by the background collect thread. Implements the
 /// `PickerProgressHandler` trait that `collect` drives.
@@ -47,8 +33,8 @@ pub(super) struct PickerHandler {
     /// atomically in `on_skeleton`.
     pub(super) shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     /// One `Arc<Mutex<String>>` per data row — same Arcs `WorktreeSkimItem`
-    /// holds. Updates land here.
-    pub(super) rendered_slots: Mutex<Vec<Arc<Mutex<String>>>>,
+    /// holds. Set once in `on_skeleton`, read lock-free thereafter.
+    pub(super) rendered_slots: OnceLock<Box<[Arc<Mutex<String>>]>>,
     pub(super) preview_cache: PreviewCache,
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
@@ -61,13 +47,7 @@ pub(super) struct PickerHandler {
 }
 
 impl PickerProgressHandler for PickerHandler {
-    fn on_skeleton(
-        &self,
-        items: Vec<ListItem>,
-        rendered: Vec<String>,
-        header_ansi: String,
-        header_plain: String,
-    ) {
+    fn on_skeleton(&self, items: Vec<ListItem>, rendered: Vec<String>, header: StyledLine) {
         debug_assert_eq!(items.len(), rendered.len());
 
         let mut slots: Vec<Arc<Mutex<String>>> = Vec::with_capacity(items.len());
@@ -76,8 +56,8 @@ impl PickerProgressHandler for PickerHandler {
 
         // Header row — non-selectable via `header_lines(1)` on the options.
         skim_items.push(Arc::new(HeaderSkimItem {
-            display_text: header_plain,
-            display_text_with_ansi: header_ansi,
+            display_text: header.plain_text(),
+            display_text_with_ansi: header.render(),
         }) as Arc<dyn SkimItem>);
 
         for (item, rendered_line) in items.into_iter().zip(rendered) {
@@ -95,7 +75,9 @@ impl PickerProgressHandler for PickerHandler {
                 format!("{branch_name} {path_str}")
             };
 
-            let rendered_arc = Arc::new(Mutex::new(sanitize_for_picker(rendered_line)));
+            // Strip OSC 8 hyperlinks — skim's pipeline mangles them into
+            // garbage like `^[8;;…`. Colors (SGR codes) are preserved.
+            let rendered_arc = Arc::new(Mutex::new(strip_osc8_hyperlinks(&rendered_line)));
             slots.push(Arc::clone(&rendered_arc));
 
             let item_arc = Arc::new(item);
@@ -113,7 +95,7 @@ impl PickerProgressHandler for PickerHandler {
         // Publish slots + skim items before sending to skim so alt-r reload
         // (which reads `shared_items`) sees a populated list the moment
         // skim calls `CommandCollector::invoke`.
-        *self.rendered_slots.lock().unwrap() = slots;
+        let _ = self.rendered_slots.set(slots.into_boxed_slice());
         *self.shared_items.lock().unwrap() = skim_items.clone();
 
         for skim_item in &skim_items {
@@ -123,17 +105,22 @@ impl PickerProgressHandler for PickerHandler {
         self.spawn_precompute(&list_items);
     }
 
-    fn on_update(&self, idx: usize, _item: &ListItem, rendered: String) {
-        let slots = self.rendered_slots.lock().unwrap();
-        if let Some(slot) = slots.get(idx) {
-            *slot.lock().unwrap() = sanitize_for_picker(rendered);
+    fn on_update(&self, idx: usize, rendered: String) {
+        if let Some(slots) = self.rendered_slots.get()
+            && let Some(slot) = slots.get(idx)
+        {
+            *slot.lock().unwrap() = strip_osc8_hyperlinks(&rendered);
         }
     }
 
-    fn on_reveal(&self, rendered: Vec<String>) {
-        let slots = self.rendered_slots.lock().unwrap();
+    fn on_reveal(&self, rendered: Vec<Option<String>>) {
+        let Some(slots) = self.rendered_slots.get() else {
+            return;
+        };
         for (slot, line) in slots.iter().zip(rendered) {
-            *slot.lock().unwrap() = sanitize_for_picker(line);
+            if let Some(line) = line {
+                *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
+            }
         }
     }
 }
@@ -205,7 +192,7 @@ mod tests {
         let handler = PickerHandler {
             tx,
             shared_items,
-            rendered_slots: Mutex::new(Vec::new()),
+            rendered_slots: OnceLock::new(),
             preview_cache,
             orchestrator,
             preview_dims: (80, 24),
@@ -214,6 +201,12 @@ mod tests {
             summary_hint: Some("disabled".to_string()),
         };
         (handler, test, rx)
+    }
+
+    fn header(text: &str) -> StyledLine {
+        let mut line = StyledLine::new();
+        line.push_raw(text);
+        line
     }
 
     /// Skeleton → update → reveal: verifies that each event writes through
@@ -229,31 +222,30 @@ mod tests {
         ];
         let rendered = vec!["skel-one".to_string(), "skel-two".to_string()];
 
-        handler.on_skeleton(
-            items.clone(),
-            rendered,
-            "hdr-ansi".into(),
-            "hdr-plain".into(),
-        );
+        handler.on_skeleton(items, rendered, header("hdr"));
 
         // Header + 2 items sent to skim.
         let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         assert_eq!(received.len(), 3, "expected header + 2 items");
 
-        let slots = handler.rendered_slots.lock().unwrap().clone();
+        let slots = handler.rendered_slots.get().unwrap();
         assert_eq!(slots.len(), 2);
         assert_eq!(*slots[0].lock().unwrap(), "skel-one");
         assert_eq!(*slots[1].lock().unwrap(), "skel-two");
 
         // on_update rewrites a single slot (the second item here).
-        handler.on_update(1, &items[1], "updated-two".into());
+        handler.on_update(1, "updated-two".into());
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");
 
-        // on_reveal rewrites every slot (200ms blank→`·` promotion).
-        handler.on_reveal(vec!["rev-one".into(), "rev-two".into()]);
+        // on_reveal: Some entries rewrite the slot, None entries leave it.
+        handler.on_reveal(vec![Some("rev-one".into()), None]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
-        assert_eq!(*slots[1].lock().unwrap(), "rev-two");
+        assert_eq!(
+            *slots[1].lock().unwrap(),
+            "updated-two",
+            "row 1 had data — reveal must not clobber it"
+        );
     }
 
     /// Header + items get published in order. `output()` of the
@@ -270,8 +262,7 @@ mod tests {
         handler.on_skeleton(
             items,
             vec!["skel-a".into(), "skel-b".into()],
-            "header-ansi".into(),
-            "header-plain".into(),
+            header("Branch Status"),
         );
 
         let received: Vec<Arc<dyn SkimItem>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
