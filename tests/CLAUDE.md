@@ -416,7 +416,7 @@ code. Delete these. Test the behavior that uses these types instead.
 
 ## Deterministic Time in Tests
 
-Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
+Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `src/testing/mod.rs`, re-exported via `tests/common/mod.rs`, and automatically set as `WORKTRUNK_TEST_EPOCH` in the test environment.
 
 **For test data with timestamps** (cache entries, etc.), use the constant:
 
