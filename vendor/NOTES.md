@@ -22,6 +22,8 @@ These are workarounds in our crate that exist because we couldn't change skim. N
 
 ### High payoff
 
+- **SGR 22 (intensity reset) handling** — `src/commands/picker/items.rs` scatters `anstyle::Reset` after every styled span in preview info lines because skim's `ANSIParser::csi_dispatch` (`skim-0.20.5/src/ansi.rs`) handles SGR codes 0/1/2/4/5/7 but silently drops 22 (the reset that `color_print`'s `</>` emits for `<bold>` and `<dim>`). Without explicit `\x1b[0m`, dim/bold bleeds across the rest of the line. A one-line fix in the parser (`22 => attr.effect &= !(Effect::BOLD | Effect::DIM)`, plus 24/25/27 for parity) removes the workaround and stops future preview messages from needing to remember it. Revisit if more users report preview formatting issues.
+
 - **TypeId-mismatch downcast** — `src/commands/picker/mod.rs:217-220` falls back to string-matching `item.output()` because `as_any().downcast_ref::<WorktreeSkimItem>()` always fails (skim 0.20 builds the `SkimItem` trait in two compilation units with different TypeIds). Fixing in skim lets `PickerCollector::invoke()` work with real types.
 
 - **Action context for `reload` / `refresh-preview`** — we keep two temp files purely as side-channel IPC: one for preview mode in `src/commands/picker/preview.rs`, one for the alt-r selected item in `src/commands/picker/mod.rs:435,508-511`. Both exist because skim's actions don't pass any context to the collector. A small skim API (e.g. `Action::WithContext`) would delete both files and ~150 lines.

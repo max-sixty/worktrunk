@@ -122,10 +122,18 @@ impl WorktreeSkimItem {
     /// and unselected modes dimmed. Controls shown below in normal text
     /// for visual distinction from inactive tabs.
     pub(super) fn render_preview_tabs(mode: PreviewMode) -> String {
-        // Full SGR reset (\x1b[0m) to ensure clean state between styled elements.
-        // Using anstyle::Reset instead of cformat's </> (\x1b[22m) because some terminals
-        // don't properly handle the intensity-only reset after bold text. This matches
-        // the pattern used in src/styling/format.rs for similar ANSI reset handling.
+        // Full SGR reset (\x1b[0m). color_print's `</>` emits \x1b[22m (intensity
+        // reset), which skim's ANSI parser silently ignores — see
+        // `skim-0.20.5/src/ansi.rs` `csi_dispatch`, which handles codes 0/1/2/4/5/7
+        // but not 22. Without explicit [0m, dim/bold bleeds across the rest of
+        // the line in the list and preview panels. Same reason the
+        // `compute_*_preview` helpers below scatter `{reset}` after each styled
+        // span.
+        //
+        // TODO(vendor-skim): a one-line fix in skim's ANSIParser removes this
+        // workaround everywhere. See `vendor/NOTES.md` → "SGR 22 (intensity
+        // reset) handling"; revisit if more users report preview formatting
+        // issues.
         let reset = Reset;
 
         /// Format a tab label with bold (active) or dimmed (inactive) styling
@@ -238,19 +246,20 @@ impl WorktreeSkimItem {
 
     /// Compute Tab 1: Working tree preview (uncommitted changes vs HEAD)
     fn compute_working_tree_preview(item: &ListItem, width: usize) -> String {
+        let branch = item.branch_name();
         let Some(wt_info) = item.worktree_data() else {
-            let branch = item.branch_name();
-            return format!(
-                "{INFO_SYMBOL} {branch} is branch only — press Enter to create worktree\n"
+            let reset = Reset;
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is branch only — press Enter to create worktree\n"
             );
         };
 
-        let branch = item.branch_name();
         let path = wt_info.path.display().to_string();
 
+        let reset = Reset;
         compute_diff_preview(
             &["-C", &path, "diff", "HEAD"],
-            &cformat!("{INFO_SYMBOL} <bold>{branch}</> has no uncommitted changes"),
+            &cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no uncommitted changes"),
             width,
         )
     }
@@ -258,15 +267,20 @@ impl WorktreeSkimItem {
     /// Compute Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
     fn compute_branch_diff_preview(item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
+        let reset = Reset;
         let Ok(repo) = Repository::current() else {
-            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
+            );
         };
         let Some(default_branch) = repo.default_branch() else {
-            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
+            );
         };
         if item.counts.is_some_and(|c| c.ahead == 0) {
             return cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of <bold>{default_branch}</>{reset}\n"
             );
         }
 
@@ -274,7 +288,7 @@ impl WorktreeSkimItem {
         compute_diff_preview(
             &["diff", &merge_base],
             &cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no file changes vs <bold>{default_branch}</>"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{default_branch}</>{reset}"
             ),
             width,
         )
@@ -283,15 +297,20 @@ impl WorktreeSkimItem {
     /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
     fn compute_upstream_diff_preview(item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
+        let reset = Reset;
 
         let Some(active) = item.upstream.as_ref().and_then(|u| u.active()) else {
-            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no upstream tracking branch\n");
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
+            );
         };
 
         let upstream_ref = format!("{}@{{u}}", branch);
 
         if active.ahead == 0 && active.behind == 0 {
-            return cformat!("{INFO_SYMBOL} <bold>{branch}</> is up to date with upstream\n");
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n"
+            );
         }
 
         if active.ahead > 0 && active.behind > 0 {
@@ -299,7 +318,7 @@ impl WorktreeSkimItem {
             compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
-                    "{INFO_SYMBOL} <bold>{branch}</> has diverged (⇡{} ⇣{}) but no unique file changes",
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{} ⇣{}) but no unique file changes",
                     active.ahead,
                     active.behind
                 ),
@@ -309,7 +328,9 @@ impl WorktreeSkimItem {
             let range = format!("{}...{}", upstream_ref, item.head());
             compute_diff_preview(
                 &["diff", &range],
-                &cformat!("{INFO_SYMBOL} <bold>{branch}</> has no unpushed file changes"),
+                &cformat!(
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no unpushed file changes"
+                ),
                 width,
             )
         } else {
@@ -317,7 +338,7 @@ impl WorktreeSkimItem {
             compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
-                    "{INFO_SYMBOL} <bold>{branch}</> is behind upstream (⇣{}) but no file changes",
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{}) but no file changes",
                     active.behind
                 ),
                 width,
@@ -340,15 +361,16 @@ impl WorktreeSkimItem {
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
         let head = item.head();
         let branch = item.branch_name();
+        let reset = Reset;
         let Ok(repo) = Repository::current() else {
             output.push_str(&cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
             ));
             return output;
         };
         let Some(default_branch) = repo.default_branch() else {
             output.push_str(&cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
             ));
             return output;
         };
@@ -365,7 +387,7 @@ impl WorktreeSkimItem {
         // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
         let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
             output.push_str(&cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
             ));
             return output;
         };
