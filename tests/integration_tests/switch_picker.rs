@@ -888,9 +888,6 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
         r#"
 [list]
 branches = true
-
-[switch-picker]
-timeout-ms = 0
 "#,
     );
 
