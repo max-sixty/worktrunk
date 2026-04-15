@@ -359,15 +359,25 @@ pub fn handle_picker(
     };
 
     // Estimate item count for the preview window spec (only the Down
-    // layout depends on it). A cheap `list_worktrees` call gives an exact
-    // count for worktrees; branches are unknown up front, so we cap at
-    // MAX_VISIBLE_ITEMS for the Down height computation — users with more
-    // worktrees than fit on screen get the minimum preview height, which
-    // is the same result the old synchronous path produced.
-    let num_items_estimate = repo
-        .list_worktrees()
-        .map(|w| w.len())
-        .unwrap_or(preview::MAX_VISIBLE_ITEMS);
+    // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
+    // for the height computation, so we short-circuit once we know the
+    // list already fills the cap.
+    let num_items_estimate = {
+        let cap = preview::MAX_VISIBLE_ITEMS;
+        let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
+        if estimate < cap && show_branches {
+            // Local branches are a superset of worktree branches (each
+            // linked worktree normally has one), so take the max rather
+            // than summing.
+            let local = repo.list_local_branches().map(|b| b.len()).unwrap_or(cap);
+            estimate = estimate.max(local);
+        }
+        if estimate < cap && show_remotes {
+            let remotes = repo.list_remote_branches().map(|b| b.len()).unwrap_or(0);
+            estimate = estimate.saturating_add(remotes);
+        }
+        estimate
+    };
     let preview_window_spec = state
         .initial_layout
         .to_preview_window_spec(num_items_estimate);
