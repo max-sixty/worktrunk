@@ -314,7 +314,7 @@ pub fn handle_picker(
     // Speculative warm-up: the picker sorts the current worktree first, and
     // the default tab (WorkingTree = `git diff HEAD` in that worktree) is
     // what skim will render first. Kicking this off before `collect::collect`
-    // overlaps preview compute with list collection (up to 500ms budget).
+    // overlaps preview compute with list collection.
     // The real spawn later skips this key via `contains_key`.
     if let (Ok(Some(branch)), Ok(path)) = (
         repo.current_worktree().branch(),
