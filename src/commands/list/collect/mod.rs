@@ -74,6 +74,29 @@
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
 //!
+//! ### Measured Phase Timings
+//!
+//! From
+//! `cargo build --release && ./target/release/wt-perf phases list --repo . --runs 10 --warmup 2`
+//! on the worktrunk dev repo (7 worktrees, 6 branches, warm caches, release
+//! build). `wt-perf` passes `--progressive` so the progressive-table path
+//! runs even with stdout piped.
+//!
+//! | Phase | median | cmds |
+//! |-------|-------:|-----:|
+//! | `List collect started → Skeleton rendered` (pre-skeleton) | ~60ms | 23 |
+//! | `Skeleton rendered → Spawning worker thread` (rayon::scope + work-item setup) | ~41ms | 7 |
+//! | `Spawning worker thread → Parallel execution started` | <100µs | 0 |
+//! | `Parallel execution started → First result received` | <100µs | 0 |
+//! | `First result received → All results drained` (parallel work) | ~436ms | 154 |
+//! | `All results drained → List collect complete` (final render) | ~344µs | 0 |
+//! | Wall clock | ~549ms | — |
+//!
+//! The 23-command pre-skeleton count is above the "6-8 commands" target
+//! above — worth an audit. Most of the extras come from per-worktree probes
+//! that creep into the phase. Regenerate after meaningful changes; see
+//! `tests/helpers/wt-perf/src/phases.rs`.
+//!
 //! ## Unified Collection Architecture
 //!
 //! Progressive and buffered modes use the same collection and rendering code.
@@ -869,6 +892,9 @@ pub fn collect(
             .map(|item| layout.render_skeleton_row(item).render())
             .collect();
         handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
+        // Mirror the `wt list` progressive-table marker so `wt-perf phases`
+        // sees the same boundary across both commands.
+        worktrunk::shell_exec::trace_instant("Skeleton rendered");
     }
 
     /// Delay before the `·` loading indicator replaces blank placeholders.

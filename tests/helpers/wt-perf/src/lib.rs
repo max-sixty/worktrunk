@@ -37,6 +37,8 @@ use std::sync::OnceLock;
 use tempfile::TempDir;
 use worktrunk::shell_exec::Cmd;
 
+pub mod phases;
+
 /// Lazy-initialized rust repo path.
 static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
 

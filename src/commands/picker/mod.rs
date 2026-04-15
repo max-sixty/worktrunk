@@ -1,6 +1,75 @@
 //! Interactive branch/worktree selector.
 //!
-//! A skim-based TUI for selecting and switching between worktrees.
+//! A skim-based TUI for selecting and switching between worktrees. The picker
+//! shares `super::list::collect::collect` with `wt list` — see
+//! `commands/list/collect/mod.rs` for the rendering-pipeline spec — but inverts
+//! the ordering because skim's `preview_window` height is baked into
+//! `SkimOptions` before `Skim::run_with` takes over the terminal, so we have
+//! to estimate the visible row count up front rather than learn it from
+//! collect's skeleton pass.
+//!
+//! # "Skeleton"
+//!
+//! Same meaning as in `wt list`: the column/row frame with placeholder cells
+//! the user sees first. In the picker, `collect::collect` builds those rows
+//! and streams them via `on_skeleton` → `PickerHandler` → `SkimItemSender` →
+//! skim. (Not to be confused with the rendered skeleton-row *strings* that
+//! flow through that channel.)
+//!
+//! # Startup flow
+//!
+//! On the main thread, `handle_picker`:
+//!
+//! 1. `current_or_recover` + config resolution.
+//! 2. `PreviewState::new` — auto-detects Right vs Down layout.
+//! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
+//!    `git diff HEAD` for the current worktree on the preview pool. That bg
+//!    work overlaps with everything below.
+//! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
+//!    `list_local_branches` / `list_remote_branches`, capped at
+//!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
+//! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
+//!    to run first).
+//! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
+//! 7. Calls `Skim::run_with(rx)`; skim paints the empty frame and then ingests
+//!    skeleton rows from the channel as the bg thread streams them via
+//!    `on_skeleton`.
+//!
+//! Time-to-skeleton = steps 1-6 on the main thread *plus* collect's
+//! pre-skeleton phase on the bg thread.
+//!
+//! ## Phase timings
+//!
+//! Captured with
+//! `cargo build --release && ./target/release/wt-perf phases switch --repo . --runs 10 --warmup 2`
+//! on the worktrunk dev repo (7 worktrees, 6 branches, warm caches, release
+//! build). Regenerate via the same command after meaningful changes.
+//!
+//! | Phase (instant-to-instant) | median | cmds |
+//! |-----------------------------|-------:|-----:|
+//! | `Picker started → Picker config resolved` | ~16ms | 3 |
+//! | `Picker config resolved → Picker layout detected` | <1ms | 0 |
+//! | `Picker layout detected → Picker estimate computed` | ~39ms | 11 (includes bg preview `git diff`s) |
+//! | `Picker estimate computed → Picker skim options built` | <1ms | 0 |
+//! | `Picker skim options built → Picker collect spawned` | <100µs | 0 |
+//! | `Picker collect spawned → List collect started` | <100µs | 0 |
+//! | `List collect started → Skeleton rendered` (bg, pre-skeleton) | ~41ms | 25 |
+//! | **Time-to-skeleton** (≈ main-thread prelude + bg pre-skeleton) | **~96ms** | |
+//! | `Skeleton rendered → Spawning worker thread` (post-skeleton, pre-work) | ~156ms | 86 |
+//! | `Parallel execution started → All results drained` (post-skeleton work) | ~1.1s | 254 |
+//! | Wall clock under `WORKTRUNK_PICKER_DRY_RUN=1` (median / p95) | ~1.4s / ~4.4s | |
+//!
+//! The p95 wall-clock outlier is network-bound (CI/remote-ref fetches in the
+//! post-skeleton phase) and has no effect on time-to-skeleton. Skim's own
+//! paint cost isn't observable from the dry-run path — skim is bypassed
+//! there. See `tests/helpers/wt-perf/src/phases.rs` for the measurement
+//! driver (subcommand: `wt-perf phases`).
+//!
+//! # TODO(picker-perf): dedupe git calls
+//!
+//! `num_items_estimate` and `collect::collect` each call `list_worktrees` and
+//! `list_local_branches`. Pre-seed collect's OnceCells from the main-thread
+//! fetch to save one of each on the bg thread's critical path toward skeleton.
 
 mod items;
 mod log_formatter;
@@ -292,6 +361,7 @@ pub fn handle_picker(
     if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
+    worktrunk::shell_exec::trace_instant("Picker started");
 
     let (repo, is_recovered) = current_or_recover()?;
 
@@ -300,9 +370,11 @@ pub fn handle_picker(
     let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
+    worktrunk::shell_exec::trace_instant("Picker config resolved");
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
+    worktrunk::shell_exec::trace_instant("Picker layout detected");
 
     // Preview cache + dedicated pool are created up-front so the speculative
     // first-item preview can run in parallel with `collect::collect` below.
@@ -378,6 +450,7 @@ pub fn handle_picker(
         }
         estimate
     };
+    worktrunk::shell_exec::trace_instant("Picker estimate computed");
     let preview_window_spec = state
         .initial_layout
         .to_preview_window_spec(num_items_estimate);
@@ -502,6 +575,7 @@ pub fn handle_picker(
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
+    worktrunk::shell_exec::trace_instant("Picker skim options built");
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
@@ -543,6 +617,7 @@ pub fn handle_picker(
             );
         })
         .context("Failed to spawn picker-collect thread")?;
+    worktrunk::shell_exec::trace_instant("Picker collect spawned");
 
     // Drop main-thread copies so the bg thread's `tx` clone is the last
     // sender (its drop is what stops skim's heartbeat).

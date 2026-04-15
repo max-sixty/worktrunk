@@ -20,6 +20,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use wt_perf::phases::{self, BenchCommand};
 use wt_perf::{canonicalize, create_repo_at, invalidate_caches_auto, parse_config};
 
 #[derive(Parser)]
@@ -88,6 +89,49 @@ enum Commands {
     CacheCheck {
         /// Path to trace log file (reads from stdin if omitted)
         file: Option<PathBuf>,
+    },
+
+    /// Run a wt command N times and report per-phase startup timings
+    #[command(after_long_help = r#"EXAMPLES:
+  # Measure picker startup phases against the current repo
+  cargo build && cargo run -p wt-perf -- phases switch \
+      --repo . --wt ./target/debug/wt
+
+  # Measure wt list against a synthetic 8-worktree repo
+  cargo run -p wt-perf -- setup typical-8 --persist
+  cargo run -p wt-perf -- phases list \
+      --repo /tmp/wt-perf-typical-8 --wt ./target/debug/wt
+
+  # Machine-readable output (diff across commits)
+  cargo run -p wt-perf -- phases switch --repo . --wt ./target/debug/wt --json
+
+  `switch` runs with WORKTRUNK_PICKER_DRY_RUN=1 so no TTY is required.
+"#)]
+    Phases {
+        /// Which command to benchmark: `list` or `switch`
+        command: String,
+
+        /// Path to the repo to benchmark against (absolute or relative)
+        #[arg(long)]
+        repo: PathBuf,
+
+        /// Path to the wt binary. Defaults to the release build at
+        /// `target/release/wt` relative to the current directory; override
+        /// with `--wt wt` to use whatever is on PATH.
+        #[arg(long, default_value = "target/release/wt")]
+        wt: PathBuf,
+
+        /// Number of timed runs after warmup
+        #[arg(long, default_value_t = 10)]
+        runs: usize,
+
+        /// Number of warmup runs to discard
+        #[arg(long, default_value_t = 2)]
+        warmup: usize,
+
+        /// Emit JSON instead of a human-readable table
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -199,6 +243,96 @@ fn main() {
         Commands::CacheCheck { file } => {
             let entries = read_trace_entries(file.as_deref());
             cache_check(&entries);
+        }
+
+        Commands::Phases {
+            command,
+            repo,
+            wt,
+            runs,
+            warmup,
+            json,
+        } => {
+            let bench = BenchCommand::parse(&command).unwrap_or_else(|| {
+                eprintln!("Unknown command: {command}");
+                eprintln!("Valid values: list, switch");
+                std::process::exit(1);
+            });
+
+            let repo = canonicalize(&repo).unwrap_or_else(|e| {
+                eprintln!("Invalid repo path {}: {}", repo.display(), e);
+                std::process::exit(1);
+            });
+            if !repo.join(".git").exists() {
+                eprintln!("Not a git repository: {}", repo.display());
+                std::process::exit(1);
+            }
+            if wt.is_relative() && !wt.exists() {
+                eprintln!("wt binary not found at {} — build it first:", wt.display());
+                eprintln!("  cargo build --release");
+                eprintln!("(or pass a different --wt path)");
+                std::process::exit(1);
+            }
+
+            let total = warmup + runs;
+            if total == 0 {
+                eprintln!("Must request at least one run (warmup + runs > 0)");
+                std::process::exit(1);
+            }
+
+            eprintln!(
+                "Running wt {} × {} ({} warmup + {} timed) against {}...",
+                bench.name(),
+                total,
+                warmup,
+                runs,
+                repo.display()
+            );
+
+            let mut collected = Vec::with_capacity(total);
+            for i in 0..total {
+                match phases::run_once(&wt, &repo, bench) {
+                    Ok(run) => {
+                        let n_instants = run
+                            .entries
+                            .iter()
+                            .filter(|e| {
+                                matches!(e.kind, worktrunk::trace::TraceEntryKind::Instant { .. })
+                            })
+                            .count();
+                        eprintln!(
+                            "  run {}/{}: wall {:.1}ms, {} instant events",
+                            i + 1,
+                            total,
+                            run.wall_us as f64 / 1_000.0,
+                            n_instants
+                        );
+                        if n_instants < 2 {
+                            eprintln!(
+                                "    (hint: no phase markers found — check RUST_LOG=debug is respected and that wt build has trace_instant calls)"
+                            );
+                        }
+                        collected.push(run);
+                    }
+                    Err(e) => {
+                        eprintln!("  run {}/{}: failed: {}", i + 1, total, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            let repo_label = repo
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("repo")
+                .to_string();
+            let report = phases::aggregate(bench, &repo_label, &collected, warmup);
+            if json {
+                println!("{}", phases::format_json(&report));
+            } else {
+                println!();
+                print!("{}", phases::format_human(&report));
+            }
         }
     }
 }
