@@ -101,9 +101,13 @@ pub(super) struct WorktreeSkimItem {
     /// Branch name — also what `output()` returns when this item is
     /// selected.
     pub branch_name: String,
-    /// Skeleton-snapshot of the underlying ListItem. Used by preview
-    /// computation, which kicks off at skeleton time and doesn't re-run
-    /// as slow fields arrive.
+    /// Skeleton-snapshot of the underlying ListItem. Preview computation
+    /// reads only skeleton-time fields (`branch_name`, `head`,
+    /// `worktree_data`) and runs git directly for anything else — see
+    /// `compute_*_preview` in this file — so the snapshot staying frozen
+    /// while slow fields (`counts`, `upstream`) arrive via the list-row
+    /// task pipeline (see `commands::list::collect`) is intentional and
+    /// correct.
     pub item: Arc<ListItem>,
     /// Shared cache for pre-computed previews (all modes)
     pub preview_cache: PreviewCache,
@@ -287,6 +291,10 @@ impl WorktreeSkimItem {
     }
 
     /// Compute Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
+    ///
+    /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
+    /// fallback covers the ahead=0 case, so the preview is correct even
+    /// before the list-row pipeline has populated counts.
     fn compute_branch_diff_preview(item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
@@ -300,11 +308,6 @@ impl WorktreeSkimItem {
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of main\n"
             );
         };
-        if item.counts.is_some_and(|c| c.ahead == 0) {
-            return cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits ahead of <bold>{default_branch}</>{reset}\n"
-            );
-        }
 
         let merge_base = format!("{}...{}", default_branch, item.head());
         compute_diff_preview(
@@ -317,36 +320,60 @@ impl WorktreeSkimItem {
     }
 
     /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
+    ///
+    /// Independent of `item.upstream` — a single
+    /// `git rev-list --left-right --count HEAD...@{u}` probes both
+    /// existence (non-zero exit when `@{u}` is unresolvable) and counts,
+    /// so the preview is correct even before the list-row pipeline has
+    /// populated upstream.
     fn compute_upstream_diff_preview(item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
-
-        let Some(active) = item.upstream.as_ref().and_then(|u| u.active()) else {
+        let Ok(repo) = Repository::current() else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
         };
 
-        let upstream_ref = format!("{}@{{u}}", branch);
+        let upstream_ref = format!("{branch}@{{u}}");
+        let probe_range = format!("{}...{upstream_ref}", item.head());
+        let Ok(counts) = repo.run_command(&["rev-list", "--left-right", "--count", &probe_range])
+        else {
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
+            );
+        };
+        let mut parts = counts.split_whitespace();
+        let parsed = parts
+            .next()
+            .zip(parts.next())
+            .and_then(|(a, b)| Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)));
+        let Some((ahead, behind)) = parsed else {
+            // Unreachable if `rev-list --left-right --count` succeeded —
+            // git guarantees two whitespace-separated integers. Fall
+            // through to the safe no-upstream message rather than
+            // fabricating zeros if git ever changes output format.
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
+            );
+        };
 
-        if active.ahead == 0 && active.behind == 0 {
+        if ahead == 0 && behind == 0 {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n"
             );
         }
 
-        if active.ahead > 0 && active.behind > 0 {
+        if ahead > 0 && behind > 0 {
             let range = format!("{}...{}", upstream_ref, item.head());
             compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
-                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{} ⇣{}) but no unique file changes",
-                    active.ahead,
-                    active.behind
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has diverged (⇡{ahead} ⇣{behind}) but no unique file changes"
                 ),
                 width,
             )
-        } else if active.ahead > 0 {
+        } else if ahead > 0 {
             let range = format!("{}...{}", upstream_ref, item.head());
             compute_diff_preview(
                 &["diff", &range],
@@ -360,8 +387,7 @@ impl WorktreeSkimItem {
             compute_diff_preview(
                 &["diff", &range],
                 &cformat!(
-                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{}) but no file changes",
-                    active.behind
+                    "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is behind upstream (⇣{behind}) but no file changes"
                 ),
                 width,
             )
