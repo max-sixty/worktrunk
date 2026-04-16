@@ -466,11 +466,20 @@ impl Repository {
 
     /// Return the path for the project config file.
     ///
-    /// Uses the current worktree when inside one (both normal and bare repos).
-    /// For bare repos at the bare root (outside any worktree), falls back to
-    /// the primary worktree. Returns `None` when no worktree can be determined
-    /// (bare repo with no linked worktrees).
+    /// If `WORKTRUNK_PROJECT_CONFIG_PATH` is set, returns that path (used for
+    /// test isolation so the spawned `wt` does not pick up this repo's
+    /// `.config/wt.toml`). A missing file at that path still resolves to
+    /// `Ok(None)` via `ProjectConfig::load`, matching the no-config case.
+    ///
+    /// Otherwise: uses the current worktree when inside one (both normal and
+    /// bare repos). For bare repos at the bare root (outside any worktree),
+    /// falls back to the primary worktree. Returns `None` when no worktree can
+    /// be determined (bare repo with no linked worktrees).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
+        if let Ok(path) = std::env::var("WORKTRUNK_PROJECT_CONFIG_PATH") {
+            return Ok(Some(PathBuf::from(path)));
+        }
+
         let in_worktree = self
             .current_worktree()
             .run_command(&["rev-parse", "--is-inside-work-tree"])

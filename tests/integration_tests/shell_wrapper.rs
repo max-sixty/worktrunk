@@ -2990,20 +2990,16 @@ fi
         (dir, path)
     }
 
-    /// Point the spawned `wt` (and its child shells) at an empty config so
-    /// user-config aliases don't leak into completion output. Aliases now
-    /// surface as top-level completion candidates, so without this isolation
-    /// any global aliases in the developer's `~/.config/worktrunk/config.toml`
-    /// would pollute the snapshot.
-    ///
-    /// Project config (`.config/wt.toml`) is not isolated — the spawned `wt`
-    /// runs in this repo's working directory and reads its project config.
-    /// Today the project has no `[aliases]` so the snapshot is stable; if a
-    /// future contributor adds an alias to this repo's own `.config/wt.toml`,
-    /// that alias will start showing up in completion output. Watch for it.
-    fn set_empty_user_config(cmd: &mut std::process::Command) {
+    /// Point the spawned `wt` (and its child shells) at empty user, system,
+    /// and project configs so aliases don't leak into completion output.
+    /// Aliases surface as top-level completion candidates, so without this
+    /// isolation any aliases in the developer's
+    /// `~/.config/worktrunk/config.toml`, a system config, or this repo's own
+    /// `.config/wt.toml` would pollute the snapshot.
+    fn set_empty_configs(cmd: &mut std::process::Command) {
         cmd.env("WORKTRUNK_CONFIG_PATH", "/dev/null");
         cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", "/dev/null");
+        cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "/dev/null");
     }
 
     /// Black-box test: zsh completion produces correct subcommands.
@@ -3041,7 +3037,7 @@ _wt_lazy_complete
         // be bypassed — but doesn't touch PATH in our test environments.
         let mut cmd = std::process::Command::new("zsh");
         cmd.args(["-f", "-c"]).arg(&script).env("PATH", &clean_path);
-        set_empty_user_config(&mut cmd);
+        set_empty_configs(&mut cmd);
         let output = cmd.output().unwrap();
 
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
@@ -3076,7 +3072,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         cmd.args(["--noprofile", "--norc", "-c"])
             .arg(&script)
             .env("PATH", &clean_path);
-        set_empty_user_config(&mut cmd);
+        set_empty_configs(&mut cmd);
         let output = cmd.output().unwrap();
 
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
@@ -3095,7 +3091,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
             .env("COMPLETE", "fish")
             .env("_CLAP_COMPLETE_INDEX", "1")
             .env("PATH", &clean_path);
-        set_empty_user_config(&mut cmd);
+        set_empty_configs(&mut cmd);
         let output = cmd.output().unwrap();
 
         // Fish format is "value\tdescription" - extract just values
@@ -3120,7 +3116,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         cmd.args(["--", "wt", ""])
             .env("COMPLETE", "nu")
             .env("PATH", &clean_path);
-        set_empty_user_config(&mut cmd);
+        set_empty_configs(&mut cmd);
         let output = cmd.output().unwrap();
 
         // Nushell format is "value\tdescription" - extract just values
