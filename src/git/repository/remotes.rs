@@ -114,7 +114,7 @@ impl Repository {
                 if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
                 {
                     let default_remote = default_remote.trim();
-                    if !default_remote.is_empty() && self.remote_has_url(default_remote) {
+                    if !default_remote.is_empty() && self.remote_url(default_remote).is_some() {
                         return Some(default_remote.to_string());
                     }
                 }
@@ -141,11 +141,6 @@ impl Repository {
             })
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No remotes configured"))
-    }
-
-    /// Check if a remote has a URL configured.
-    fn remote_has_url(&self, remote: &str) -> bool {
-        self.remote_url(remote).is_some()
     }
 
     /// Get the URL for a remote, if configured.
