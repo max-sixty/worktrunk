@@ -94,19 +94,33 @@ impl<'a> Branch<'a> {
     ///
     /// Uses [`@{upstream}` syntax][1] to resolve the tracking branch.
     ///
+    /// Results are cached per-branch-name in the shared repo cache. Both the
+    /// integration path (`effective_integration_target`) and the per-row
+    /// `UpstreamTask` look up the same branch's upstream, so caching collapses
+    /// them to a single `git rev-parse`.
+    ///
     /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let result =
-            self.repo
-                .run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", self.name)]);
-
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
-        }
+        Ok(self
+            .repo
+            .cache
+            .branch_upstreams
+            .entry(self.name.to_string())
+            .or_insert_with(|| {
+                let result = self.repo.run_command(&[
+                    "rev-parse",
+                    "--abbrev-ref",
+                    &format!("{}@{{u}}", self.name),
+                ]);
+                match result {
+                    Ok(upstream) => {
+                        let trimmed = upstream.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_string())
+                    }
+                    Err(_) => None, // No upstream configured
+                }
+            })
+            .clone())
     }
 
     /// Unset the upstream tracking branch for this branch.
@@ -116,6 +130,7 @@ impl<'a> Branch<'a> {
     pub fn unset_upstream(&self) -> anyhow::Result<()> {
         self.repo
             .run_command(&["branch", "--unset-upstream", &self.name])?;
+        self.repo.cache.branch_upstreams.remove(&self.name);
         Ok(())
     }
 

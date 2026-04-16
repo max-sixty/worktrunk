@@ -261,6 +261,11 @@ pub(super) struct RepoCache {
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.
     pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// Branch upstream cache: branch name -> upstream ref (None = no upstream).
+    /// The integration path and the per-row `UpstreamTask` both look up
+    /// `branch("main").upstream()` — this collapses them to a single
+    /// `git rev-parse --abbrev-ref main@{u}`.
+    pub(super) branch_upstreams: DashMap<String, Option<String>>,
     /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
     /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
     /// from racing through the file-based cache for the same SHA pair.
