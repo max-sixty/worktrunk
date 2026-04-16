@@ -227,6 +227,10 @@ pub(super) struct RepoCache {
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
+    /// Raw remote URLs: remote_name -> URL from `.git/config` (no `url.insteadOf`).
+    /// Cached because `primary_remote` validates the URL, then `primary_remote_url`
+    /// reads it again — two calls for the same key without this cache.
+    pub(super) remote_urls: DashMap<String, Option<String>>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Cached because forge detection may query the same remote multiple times.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
@@ -252,6 +256,15 @@ pub(super) struct RepoCache {
     /// The commit SHA for a given ref doesn't change during a command.
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
+
+    /// Commit details cache: commit SHA -> (timestamp, subject).
+    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
+    /// would otherwise each spawn a `git log -1` for the same SHA.
+    pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
+    /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
+    /// from racing through the file-based cache for the same SHA pair.
+    pub(super) diff_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Per-worktree git directory: worktree_path -> canonicalized git dir
