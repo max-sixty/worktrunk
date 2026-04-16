@@ -565,6 +565,13 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     // isn't ready when wt list tries to read commit timestamps.
     repo.run_git_in(&no_upstream_wt, &["status", "--porcelain"]);
 
+    // Scenario 6: Upstream configured but remote ref deleted (git's [gone] state).
+    // Should be treated as no upstream — blank Remote column, no error.
+    let gone_wt = repo.add_worktree("gone-upstream");
+    repo.run_git_in(&gone_wt, &["push", "-u", "origin", "gone-upstream"]);
+    repo.run_git(&["push", "origin", "--delete", "gone-upstream"]);
+    repo.run_git_in(&gone_wt, &["fetch", "--prune", "origin"]);
+
     // Run list --branches --full to show all columns including Remote
     assert_cmd_snapshot!("with_upstream_tracking", {
         let mut cmd = wt_command();

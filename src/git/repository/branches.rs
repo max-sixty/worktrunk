@@ -119,20 +119,25 @@ impl Repository {
     /// Fetch all upstream tracking branches in a single `git for-each-ref` call.
     ///
     /// Returns a map from local branch name to upstream ref (or None if no
-    /// upstream is configured). Called lazily via `OnceCell` on first
+    /// upstream is configured, or if the configured upstream ref no longer
+    /// exists on the remote — git reports that as `[gone]` via
+    /// `%(upstream:track)`). Called lazily via `OnceCell` on first
     /// `Branch::upstream()` access.
     pub(super) fn fetch_all_upstreams(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
         let output = self.run_command(&[
             "for-each-ref",
-            "--format=%(refname:lstrip=2)\t%(upstream:short)",
+            "--format=%(refname:lstrip=2)\t%(upstream:short)\t%(upstream:track)",
             "refs/heads/",
         ])?;
 
         Ok(output
             .lines()
             .filter_map(|line| {
-                let (branch, upstream) = line.split_once('\t')?;
-                let value = if upstream.is_empty() {
+                let mut parts = line.splitn(3, '\t');
+                let branch = parts.next()?;
+                let upstream = parts.next()?;
+                let track = parts.next()?;
+                let value = if upstream.is_empty() || track == "[gone]" {
                     None
                 } else {
                     Some(upstream.to_string())
