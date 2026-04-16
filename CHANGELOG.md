@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.38.0
+
+### Improved
+
+- **Concurrent execution in `pre-*` pipeline hooks**: Pipeline blocks (`[[pre-start]]`, `[[pre-merge]]`, etc.) now run their concurrent commands in parallel for foreground hooks, matching the existing behavior in post-* hooks and aliases. The deprecated single-table form (`[pre-start]`) remains serial. ([#2249](https://github.com/max-sixty/worktrunk/pull/2249))
+
+- **`cli` feature unbundles CLI-only deps for library consumers**: The `worktrunk` crate is also consumed as a library (e.g. by [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync)). Everything reachable from `src/lib.rs` previously pulled in `clap`, `clap_complete`, `skim`, `crossterm`, `termimad`, `env_logger`, and `humantime` transitively. A new `cli` feature (on by default) gates these; library consumers with `default-features = false` drop from 195 to 126 transitive crates. ([#2238](https://github.com/max-sixty/worktrunk/pull/2238))
+
+- **Faster `wt list` and `wt switch` on warm caches**:
+
+    - In-memory caches for remote URLs, commit details, and diff stats in `RepoCache` eliminate ~11 duplicate git subprocesses per `wt switch`. ([#2252](https://github.com/max-sixty/worktrunk/pull/2252))
+
+    - `list_local_branches()` primes ref/SHA caches from `for-each-ref` data already collected; `Branch::upstream()` uses a single batch `for-each-ref` call instead of N per-branch `rev-parse` commands. Reduces `rev-parse` calls from 53 to 27 on a typical-8 benchmark. ([#2255](https://github.com/max-sixty/worktrunk/pull/2255))
+
+    - Share `git status --porcelain` output between `WorkingTreeDiffTask` and `WorkingTreeConflictsTask`, halving duplicate subprocesses. ([#2259](https://github.com/max-sixty/worktrunk/pull/2259))
+
+- **Faster `wt statusline`**: `terminal_width()` no longer walks parent processes to find a TTY — the fallback is now behind a dedicated helper used only by `wt statusline` under Claude Code. Picker, `wt list`, and help callers skip the walker entirely. ([#2260](https://github.com/max-sixty/worktrunk/pull/2260))
+
+- **`switch.picker.timeout-ms` deprecated**: After progressive rendering landed in 0.37.1, this config field was parsed but silently ignored. It's now flagged as deprecated with migration via `wt config update`. (Breaking for library consumers: `SwitchPickerConfig::timeout_ms` field and `timeout()` accessor removed.) ([#2236](https://github.com/max-sixty/worktrunk/pull/2236))
+
+### Fixed
+
+- **Picker panic on terminal resize**: `Term::on_resize` panicked with `attempt to subtract with overflow` when the terminal was smaller than the picker's preferred height (reachable under `script(1)` with stdin closed, or in small tmux panes). Vendored skim-tuikit now uses `saturating_sub`. ([#2233](https://github.com/max-sixty/worktrunk/pull/2233))
+
+- **Picker previews no longer show stale "no commits ahead" text**: BranchDiff/UpstreamDiff tabs read async fields that sometimes hadn't landed at skeleton-time precompute, caching wrong "has no commits ahead" / "has no upstream tracking branch" text. Previews now derive only from skeleton-time fields plus direct git queries. ([#2245](https://github.com/max-sixty/worktrunk/pull/2245))
+
+- **Picker preview height with `--branches`/`--remotes`**: The Down-layout item count estimate only counted worktrees, so with `--branches` or `--remotes` the estimate underflowed and the preview claimed space the list needed. ([#2247](https://github.com/max-sixty/worktrunk/pull/2247))
+
+- **GitLab CI status in `wt list`**: `glab ci list` now runs with the correct working directory. ([#2244](https://github.com/max-sixty/worktrunk/pull/2244))
+
+- **Picker Summary tab empty state**: aligns with the other preview tabs (bullet + branch header) instead of a dimmed sentence. ([#2246](https://github.com/max-sixty/worktrunk/pull/2246))
+
+### Documentation
+
+- Use concurrent form in multi-key hook examples, now that pre-* concurrent is supported. ([#2248](https://github.com/max-sixty/worktrunk/pull/2248))
+
+- Catalog skim 4.x upgrade impact and stability assessment. ([#2239](https://github.com/max-sixty/worktrunk/pull/2239))
+
+- Picker and collect module docstrings gain phase timing tables and trace instrumentation at key picker phases. ([#2250](https://github.com/max-sixty/worktrunk/pull/2250))
+
+### Internal
+
+- Simplified `wt-perf` output; `cache-check` JSON adds wasted-time fields, sorts duplicates by wasted time, and renames `total_extra_calls` to `extra_calls`. ([#2253](https://github.com/max-sixty/worktrunk/pull/2253), [#2254](https://github.com/max-sixty/worktrunk/pull/2254))
+
 ## 0.37.1
 
 ### Improved
