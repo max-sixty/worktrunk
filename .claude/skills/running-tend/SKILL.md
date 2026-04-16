@@ -150,7 +150,6 @@ sed -i '' "s|REPLACE_WITH_CWD|$PWD|" /tmp/statusline-input.json
 
 RUST_LOG=debug cargo run --release -- list statusline --claude-code \
   < /tmp/statusline-input.json 2>&1 \
-  | grep wt-trace \
   | cargo run -p wt-perf -- cache-check
 ```
 

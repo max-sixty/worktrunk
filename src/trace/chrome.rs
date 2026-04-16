@@ -11,7 +11,7 @@
 //! # Usage
 //!
 //! ```bash
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
+//! RUST_LOG=debug wt list 2>&1 | cargo run -p wt-perf -- trace > trace.json
 //! # Then open trace.json in chrome://tracing or https://ui.perfetto.dev
 //! ```
 //!
