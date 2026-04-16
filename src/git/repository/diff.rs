@@ -81,25 +81,35 @@ impl Repository {
     }
 
     /// Get commit timestamp and message in a single git command.
+    ///
+    /// Results are cached in the shared repo cache by commit SHA, so multiple
+    /// items pointing at the same commit (e.g., worktrees on main) only run
+    /// `git log -1` once.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
-        // Use space separator - timestamps don't contain spaces, and %s (subject)
-        // is the first line only (no embedded newlines). Split on first space.
-        // --no-show-signature suppresses GPG verification output that otherwise
-        // contaminates stdout when log.showSignature is set.
-        let stdout = self.run_command(&[
-            "log",
-            "-1",
-            "--no-show-signature",
-            "--format=%ct %s",
-            commit,
-        ])?;
-        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
-        let line = stdout.trim_end_matches('\n');
-        let (timestamp_str, message) = line
-            .split_once(' ')
-            .context("Failed to parse commit details")?;
-        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        Ok((timestamp, message.trim().to_owned()))
+        use dashmap::mapref::entry::Entry;
+        match self.cache.commit_details.entry(commit.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // Use space separator - timestamps don't contain spaces, and %s (subject)
+                // is the first line only (no embedded newlines). Split on first space.
+                // --no-show-signature suppresses GPG verification output that otherwise
+                // contaminates stdout when log.showSignature is set.
+                let stdout = self.run_command(&[
+                    "log",
+                    "-1",
+                    "--no-show-signature",
+                    "--format=%ct %s",
+                    commit,
+                ])?;
+                // Only strip trailing newline, not spaces (empty subject = "timestamp ")
+                let line = stdout.trim_end_matches('\n');
+                let (timestamp_str, message) = line
+                    .split_once(' ')
+                    .context("Failed to parse commit details")?;
+                let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+                Ok(e.insert((timestamp, message.trim().to_owned())).clone())
+            }
+        }
     }
 
     /// Get commit subjects (first line of commit message) from a range.
@@ -294,17 +304,46 @@ impl Repository {
     ///
     /// For orphan branches with no common ancestor, returns zeros.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
+        use dashmap::mapref::entry::Entry;
+
         let base_sha = self.rev_parse_commit(base)?;
         let head_sha = self.rev_parse_commit(head)?;
 
         // Sparse checkout filters the diff by path, making the result
-        // environment-dependent rather than purely SHA-determined. Skip the
-        // persistent cache when sparse checkout is active.
+        // environment-dependent rather than purely SHA-determined. Skip
+        // caches when sparse checkout is active.
         let sparse_paths = self.sparse_checkout_paths();
         let use_cache = sparse_paths.is_empty();
 
-        if use_cache && let Some(cached) = super::sha_cache::diff_stats(self, &base_sha, &head_sha)
-        {
+        if use_cache {
+            // In-memory entry lock prevents parallel tasks from racing through
+            // the file-based cache for the same SHA pair.
+            match self
+                .cache
+                .diff_stats
+                .entry((base_sha.clone(), head_sha.clone()))
+            {
+                Entry::Occupied(e) => return Ok(*e.get()),
+                Entry::Vacant(e) => {
+                    let result =
+                        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)?;
+                    return Ok(*e.insert(result));
+                }
+            }
+        }
+
+        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)
+    }
+
+    fn compute_branch_diff_stats(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+        sparse_paths: &[String],
+    ) -> anyhow::Result<LineDiff> {
+        let use_cache = sparse_paths.is_empty();
+
+        if use_cache && let Some(cached) = super::sha_cache::diff_stats(self, base_sha, head_sha) {
             return Ok(cached);
         }
 
@@ -313,9 +352,9 @@ impl Repository {
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(&base_sha, &head_sha)? else {
+        let Some(merge_base) = self.merge_base(base_sha, head_sha)? else {
             if use_cache {
-                super::sha_cache::put_diff_stats(self, &base_sha, &head_sha, LineDiff::default());
+                super::sha_cache::put_diff_stats(self, base_sha, head_sha, LineDiff::default());
             }
             return Ok(LineDiff::default());
         };
@@ -331,7 +370,7 @@ impl Repository {
         let stdout = self.run_command(&args)?;
         let result = LineDiff::from_shortstat(&stdout);
         if use_cache {
-            super::sha_cache::put_diff_stats(self, &base_sha, &head_sha, result);
+            super::sha_cache::put_diff_stats(self, base_sha, head_sha, result);
         }
         Ok(result)
     }

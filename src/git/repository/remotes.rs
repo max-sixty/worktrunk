@@ -114,7 +114,7 @@ impl Repository {
                 if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
                 {
                     let default_remote = default_remote.trim();
-                    if !default_remote.is_empty() && self.remote_has_url(default_remote) {
+                    if !default_remote.is_empty() && self.remote_url(default_remote).is_some() {
                         return Some(default_remote.to_string());
                     }
                 }
@@ -143,23 +143,24 @@ impl Repository {
             .ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
-    /// Check if a remote has a URL configured.
-    fn remote_has_url(&self, remote: &str) -> bool {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .map(|url| !url.trim().is_empty())
-            .unwrap_or(false)
-    }
-
     /// Get the URL for a remote, if configured.
     ///
     /// Returns the raw value from `.git/config` without applying `url.insteadOf`
     /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
     /// need forge detection to work with `insteadOf` aliases.
+    ///
+    /// Results are cached per-remote in the shared repo cache.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .ok()
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
+        self.cache
+            .remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                self.run_command(&["config", &format!("remote.{}.url", remote)])
+                    .ok()
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+            })
+            .clone()
     }
 
     /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.
