@@ -1,20 +1,6 @@
 //! CLI for worktrunk performance testing and tracing.
 //!
-//! # Usage
-//!
-//! ```bash
-//! # Set up a benchmark repo
-//! wt-perf setup typical-8 --path /tmp/bench
-//!
-//! # Invalidate caches for cold run
-//! wt-perf invalidate /tmp/bench/main
-//!
-//! # Parse trace logs (pipe from wt command)
-//! RUST_LOG=debug wt list --progressive 2>&1 | wt-perf trace > trace.json
-//!
-//! # Set up picker test environment
-//! wt-perf setup picker-test
-//! ```
+//! Run `wt-perf --help` (and `wt-perf <subcommand> --help`) for usage.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
@@ -81,11 +67,6 @@ enum Commands {
 
   # From a file
   wt-perf cache-check trace.log
-
-  # With a benchmark repo
-  cargo run -p wt-perf -- setup typical-8 --persist
-  RUST_LOG=debug wt -C /tmp/wt-perf-typical-8 list --progressive 2>&1 \
-    | cargo run -p wt-perf -- cache-check
 "#)]
     CacheCheck {
         /// Path to trace log file (reads from stdin if omitted)
