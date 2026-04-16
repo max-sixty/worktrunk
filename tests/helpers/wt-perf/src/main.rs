@@ -326,7 +326,7 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         "contexts": contexts.len(),
         "total_time_us": total_time_us,
         "duplicated_commands": dup_count,
-        "total_extra_calls": dup_total,
+        "extra_calls": dup_total,
         "same_context_duplicates": duplicates,
         "same_context_extra_calls": total_extra,
         "same_context_extra_us": total_extra_us,
