@@ -145,9 +145,7 @@ impl Repository {
 
     /// Check if a remote has a URL configured.
     fn remote_has_url(&self, remote: &str) -> bool {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .map(|url| !url.trim().is_empty())
-            .unwrap_or(false)
+        self.remote_url(remote).is_some()
     }
 
     /// Get the URL for a remote, if configured.
@@ -155,11 +153,19 @@ impl Repository {
     /// Returns the raw value from `.git/config` without applying `url.insteadOf`
     /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
     /// need forge detection to work with `insteadOf` aliases.
+    ///
+    /// Results are cached per-remote in the shared repo cache.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .ok()
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
+        self.cache
+            .remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                self.run_command(&["config", &format!("remote.{}.url", remote)])
+                    .ok()
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+            })
+            .clone()
     }
 
     /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.
