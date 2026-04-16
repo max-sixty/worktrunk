@@ -101,7 +101,8 @@
               src = commonArgs.src;
               extraDummyScript = ''
                 rm -rf $out/vendor
-                cp -r --no-preserve=mode ${vendorSrc}/vendor $out/vendor
+                cp -r ${vendorSrc}/vendor $out/vendor
+                chmod -R u+w $out/vendor
               '';
             };
           }
