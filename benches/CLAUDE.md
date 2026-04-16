@@ -198,7 +198,7 @@ trace_processor trace.json -q /tmp/q.sql
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 \
+RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --progressive --branches 2>&1 \
   | cargo run -p wt-perf -- trace > rust-trace.json
 ```
 
