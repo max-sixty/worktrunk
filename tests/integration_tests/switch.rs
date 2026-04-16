@@ -2238,6 +2238,248 @@ fn test_switch_pr_base_conflict(repo: TestRepo) {
     });
 }
 
+/// `wt switch --create X --base pr:N` resolves the PR to its head branch for
+/// a same-repo PR, fetching the branch so it's usable as the base.
+#[rstest]
+fn test_switch_base_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create the PR source branch on the remote so we have something to fetch
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Rewrite origin so find_remote_for_repo matches owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "feat/visual-tweaks",
+                "--base",
+                "pr:101",
+                "--no-cd",
+            ],
+            None,
+        );
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_pr_same_repo", cmd);
+    });
+}
+
+/// `wt switch --create X --base pr:N` resolves a fork PR to its head commit
+/// SHA via refs/pull/N/head without creating a tracking branch.
+#[rstest]
+fn test_switch_base_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR head commit and push it as refs/pull/42/head on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // head.repo differs from base.repo → fork PR
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Fork base resolves to a commit SHA (no tracking branch created). Mask it
+    // so the snapshot is stable across the test repo's non-deterministic SHAs.
+    // Can't use \b because ANSI escape characters aren't word boundaries.
+    settings.add_filter(r"[0-9a-f]{40}", "[SHA]");
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "my-work", "--base", "pr:42", "--no-cd"],
+            None,
+        );
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_pr_fork", cmd);
+    });
+
+    // The PR branch name must NOT have been created as a local branch — we
+    // just based `my-work` on the PR's head commit.
+    let branches = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["branch", "--list"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned();
+    assert!(
+        !branches.contains("feature-fix"),
+        "fork PR head should not produce a local tracking branch: {branches}"
+    );
+    assert!(
+        !branches.contains("contributor/feature-fix"),
+        "prefixed fork PR branch should not be created: {branches}"
+    );
+}
+
+/// `wt switch --create X --base mr:N` resolves a same-repo MR to its source
+/// branch, fetching it so the base is usable.
+#[rstest]
+fn test_switch_base_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "feat/follow-up", "--base", "mr:101", "--no-cd"],
+            None,
+        );
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_mr_same_repo", cmd);
+    });
+}
+
+/// `--base pr:N` is ignored when `--create` is absent: we warn and do NOT
+/// hit the network. `gh` is intentionally not mocked — if the resolver ran,
+/// the command would fail with "gh: command not found".
+#[rstest]
+fn test_switch_base_pr_without_create(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // A branch that already exists so `wt switch` can succeed without --create
+    repo.add_worktree("existing");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["existing", "--base", "pr:101", "--no-cd"],
+            None,
+        );
+        assert_cmd_snapshot!("switch_base_pr_without_create", cmd);
+    });
+}
+
 /// Test fork PR where branch already exists and tracks same PR (should reuse)
 #[rstest]
 fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo) {

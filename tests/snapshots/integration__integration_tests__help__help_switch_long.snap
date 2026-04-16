@@ -52,7 +52,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
           Base branch[0m
           
-          Defaults to default branch.[0m
+          Defaults to default branch. Supports the same shortcuts as the branch argument: [1m^[0m, [1m@[0m, [1m-[0m, [1mpr:{N}[0m, [1mmr:{N}[0m.[0m
 
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Command to run after switch[0m
@@ -157,11 +157,14 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
  [2mpr:{N}[0m   GitHub PR #N's branch         
  [2mmr:{N}[0m   GitLab MR !N's branch         
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                      # Back to previous[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                      # Default branch worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m  # Branch from current HEAD[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                 # PR #123's branch[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # MR !101's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m       # Branch from current HEAD[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m pr:123  # Branch from PR #123's head[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
+
+Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 [1m[32mInteractive picker[0m
 

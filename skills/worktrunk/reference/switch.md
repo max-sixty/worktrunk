@@ -46,12 +46,15 @@ $ wt switch --create temp --no-hooks       # Skip hooks
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
-$ wt switch -                      # Back to previous
-$ wt switch ^                      # Default branch worktree
-$ wt switch --create fix --base=@  # Branch from current HEAD
-$ wt switch pr:123                 # PR #123's branch
-$ wt switch mr:101                 # MR !101's branch
+$ wt switch -                           # Back to previous
+$ wt switch ^                           # Default branch worktree
+$ wt switch --create fix --base=@       # Branch from current HEAD
+$ wt switch --create fix --base pr:123  # Branch from PR #123's head
+$ wt switch pr:123                      # PR #123's branch
+$ wt switch mr:101                      # MR !101's branch
 ```
+
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
@@ -136,7 +139,8 @@ Options:
   -b, --base <BASE>
           Base branch
 
-          Defaults to default branch.
+          Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
+          pr:{N}, mr:{N}.
 
   -x, --execute <EXECUTE>
           Command to run after switch

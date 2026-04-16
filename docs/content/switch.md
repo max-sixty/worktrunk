@@ -50,7 +50,9 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 | `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
-{{ terminal(cmd="wt switch -                      # Back to previous|||wt switch ^                      # Default branch worktree|||wt switch --create fix --base=@  # Branch from current HEAD|||wt switch pr:123                 # PR #123's branch|||wt switch mr:101                 # MR !101's branch") }}
+{{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
+
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
@@ -145,7 +147,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
           Base branch
 
-          Defaults to default branch.
+          Defaults to default branch. Supports the same shortcuts as the branch argument: <b>^</b>, <b>@</b>, <b>-</b>,
+<b>          pr:{N}</b>, <b>mr:{N}</b>.
 
   <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
           Command to run after switch
