@@ -279,6 +279,11 @@ pub(super) struct RepoCache {
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
+    /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
+    /// (working-tree diff + conflict detection) share one subprocess per worktree
+    /// instead of spawning `git status` twice.
+    pub(super) status_porcelain: DashMap<PathBuf, String>,
 }
 
 /// Result of resolving a worktree name.

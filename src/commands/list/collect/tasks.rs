@@ -406,10 +406,11 @@ impl Task for WorkingTreeDiffTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with
-        // WorkingTreeConflictsTask's `git write-tree`.
+        // Shared cache: WorkingTreeConflictsTask also needs porcelain. First
+        // accessor spawns the subprocess; second hits the cache. Uses
+        // --no-optional-locks to avoid index lock contention with `git write-tree`.
         let status_output = wt
-            .run_command(&["--no-optional-locks", "status", "--porcelain"])
+            .status_porcelain_cached()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
@@ -495,9 +496,9 @@ impl Task for WorkingTreeConflictsTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
+        // Shared cache with WorkingTreeDiffTask — single subprocess per worktree.
         let status_output = wt
-            .run_command(&["--no-optional-locks", "status", "--porcelain"])
+            .status_porcelain_cached()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let is_dirty = !status_output.trim().is_empty();
