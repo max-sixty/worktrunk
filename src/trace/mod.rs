@@ -14,7 +14,7 @@
 //! ```bash
 //! # Generate Chrome Trace Format (--progressive forces TTY-gated events
 //! # like `Skeleton rendered` to fire even when stdout is piped)
-//! RUST_LOG=debug wt list --progressive 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace > trace.json
+//! RUST_LOG=debug wt list --progressive 2>&1 | cargo run -p wt-perf -- trace > trace.json
 //!
 //! # Visualize: open trace.json in chrome://tracing or https://ui.perfetto.dev
 //!

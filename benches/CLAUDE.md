@@ -90,8 +90,8 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 # Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
 # events (Skeleton rendered, First result received) to fire even when stdout
 # is piped.
-RUST_LOG=debug wt list --progressive --branches 2>&1 | grep '\[wt-trace\]' | \
-  cargo run -p wt-perf -- trace > trace.json
+RUST_LOG=debug wt list --progressive --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > trace.json
 
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
@@ -198,8 +198,8 @@ trace_processor trace.json -q /tmp/q.sql
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 | \
-  grep '\[wt-trace\]' | cargo run -p wt-perf -- trace > rust-trace.json
+RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > rust-trace.json
 ```
 
 ## Key Performance Insights

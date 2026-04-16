@@ -62,6 +62,7 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -257,6 +258,10 @@ pub(super) struct RepoCache {
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
+    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
+    /// None means "no upstream configured". Lazily loaded on first access via
+    /// `Branch::upstream()` → `fetch_all_upstreams()`.
+    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
     /// Commit details cache: commit SHA -> (timestamp, subject).
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.

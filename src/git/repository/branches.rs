@@ -42,6 +42,10 @@ impl Repository {
 
     /// List all local branches with their HEAD commit SHA.
     /// Returns a vector of (branch_name, commit_sha) tuples.
+    ///
+    /// As a side effect, primes `resolved_refs` and `commit_shas` caches so
+    /// later `resolve_preferring_branch()` and `rev_parse_commit()` calls hit
+    /// the cache instead of spawning per-branch `git rev-parse` commands.
     pub fn list_local_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
         let output = self.run_command(&[
             "for-each-ref",
@@ -53,6 +57,14 @@ impl Repository {
             .lines()
             .filter_map(|line| {
                 let (branch, sha) = line.split_once(' ')?;
+                let qualified = format!("refs/heads/{branch}");
+                self.cache
+                    .resolved_refs
+                    .insert(branch.to_string(), qualified.clone());
+                self.cache.commit_shas.insert(qualified, sha.to_string());
+                self.cache
+                    .commit_shas
+                    .insert(branch.to_string(), sha.to_string());
                 Some((branch.to_string(), sha.to_string()))
             })
             .collect();
@@ -102,6 +114,32 @@ impl Repository {
             .collect();
 
         Ok(upstreams)
+    }
+
+    /// Fetch all upstream tracking branches in a single `git for-each-ref` call.
+    ///
+    /// Returns a map from local branch name to upstream ref (or None if no
+    /// upstream is configured). Called lazily via `OnceCell` on first
+    /// `Branch::upstream()` access.
+    pub(super) fn fetch_all_upstreams(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
+        let output = self.run_command(&[
+            "for-each-ref",
+            "--format=%(refname:lstrip=2)\t%(upstream:short)",
+            "refs/heads/",
+        ])?;
+
+        Ok(output
+            .lines()
+            .filter_map(|line| {
+                let (branch, upstream) = line.split_once('\t')?;
+                let value = if upstream.is_empty() {
+                    None
+                } else {
+                    Some(upstream.to_string())
+                };
+                Some((branch.to_string(), value))
+            })
+            .collect())
     }
 
     /// List remote branches that aren't tracked by any local branch.

@@ -96,17 +96,12 @@ impl<'a> Branch<'a> {
     ///
     /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let result =
-            self.repo
-                .run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", self.name)]);
-
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
-        }
+        let upstreams = self
+            .repo
+            .cache
+            .upstreams
+            .get_or_try_init(|| self.repo.fetch_all_upstreams())?;
+        Ok(upstreams.get(&self.name).cloned().unwrap_or(None))
     }
 
     /// Unset the upstream tracking branch for this branch.
