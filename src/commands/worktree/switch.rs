@@ -358,13 +358,9 @@ fn resolve_remote_ref_as_base(
         let remote = remote_ref::find_remote(repo, &info)?;
         let tracking_ref = provider.tracking_ref(number);
         // Use -- to guard against hypothetical ref names starting with -
+        let display = ref_type.display(number);
         repo.run_command(&["fetch", "--", &remote, &tracking_ref])
-            .with_context(|| {
-                cformat!(
-                    "Failed to fetch <bold>{}</> from {remote}",
-                    ref_type.display(number)
-                )
-            })?;
+            .with_context(|| cformat!("Failed to fetch <bold>{display}</> from {remote}"))?;
         let sha = repo
             .run_command(&["rev-parse", "FETCH_HEAD"])
             .context("Failed to resolve FETCH_HEAD to a commit SHA")?
